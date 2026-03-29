@@ -1513,7 +1513,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 		if (ctx.result_physical_reg == X64Register::Count) {
-			if (is_floating_point_type(categoryToType(ctx.result_value.type_index.category()))) {
+			if (is_floating_point_type(ctx.result_value.type_index.category())) {
 				ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 			} else {
 				ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1548,7 +1548,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
 		// This can happen when all registers are in use and spilling picks the same register twice
-		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !is_floating_point_type(categoryToType(ctx.result_value.type_index.category()))) {
+		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !is_floating_point_type(ctx.result_value.type_index.category())) {
 			// Get the LHS variable's stack location and reload it into a different register
 			auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 			if (reg_info.stackVariableOffset != INT_MIN) {
@@ -4065,7 +4065,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(categoryToType(arg.type_index.category())) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.type_index.category()) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4189,7 +4189,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(categoryToType(arg.type_index.category())) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.type_index.category()) && !arg.is_reference();
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4419,7 +4419,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
-						if (is_floating_point_type(categoryToType(arg.type_index.category()))) {
+						if (is_floating_point_type(arg.type_index.category())) {
 							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
 								va_temp_float_idx++;
@@ -5421,7 +5421,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			// First pass: handle stack arguments
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(categoryToType(arg.type_index.category()));
+				bool is_float_arg = is_floating_point_type(arg.type_index.category());
 
 				bool use_register = false;
 				if (is_float_arg) {
@@ -5448,7 +5448,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(categoryToType(arg.type_index.category()));
+				bool is_float_arg = is_floating_point_type(arg.type_index.category());
 
 				bool use_register = false;
 				X64Register target_reg;

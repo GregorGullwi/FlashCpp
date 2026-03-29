@@ -1026,6 +1026,11 @@ bool is_signed_integer_type(Type type);
 bool is_unsigned_integer_type(Type type);
 bool is_bool_type(Type type);
 bool is_floating_point_type(Type type);
+inline bool is_floating_point_type(TypeCategory cat) {
+	return cat == TypeCategory::Float ||
+		cat == TypeCategory::Double ||
+		cat == TypeCategory::LongDouble;
+}
 bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
 // Phase 15: standard arithmetic type = integer, floating-point, or bool.
 // Sema owns implicit conversion annotation for these types exclusively.
