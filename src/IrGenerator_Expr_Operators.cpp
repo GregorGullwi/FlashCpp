@@ -1432,7 +1432,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				Type resolved_ir_type = resolve_type_alias(ir_type, ir_type_index);
 				if (ir_type_index.index() < getTypeInfoCount()) {
-					resolved_ir_type = resolve_type_alias(categoryToType(getTypeInfo(ir_type_index).category()), ir_type_index);
+					resolved_ir_type = categoryToType(resolve_type_alias(ir_type_index).category());
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
 					return;
@@ -1486,7 +1486,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(categoryToType(type_info.category()), type_spec.type_index());
+				Type indexed_type = categoryToType(resolve_type_alias(type_spec.type_index()).category());
 				if (carriesSemanticTypeIndex(indexed_type)) {
 					return true;
 				}
@@ -1583,7 +1583,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(categoryToType(type_info.category()), type_index);
+				Type indexed_type = categoryToType(resolve_type_alias(type_index).category());
 				return carriesSemanticTypeIndex(indexed_type);
 			};
 
