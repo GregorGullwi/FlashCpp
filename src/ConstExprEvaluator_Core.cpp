@@ -8,6 +8,106 @@ namespace {
 	constexpr std::string_view kBreakExecuted = "Break executed";
 	constexpr std::string_view kContinueExecuted = "Continue executed";
 
+	enum class ConstexprScalarKind {
+		NonScalar,
+		Bool,
+		SignedInt,
+		UnsignedInt,
+		Floating,
+	};
+
+	constexpr ConstexprScalarKind getConstexprScalarKind(TypeCategory category) {
+		switch (category) {
+			case TypeCategory::Bool:
+				return ConstexprScalarKind::Bool;
+			case TypeCategory::Char:
+			case TypeCategory::Short:
+			case TypeCategory::Int:
+			case TypeCategory::Long:
+			case TypeCategory::LongLong:
+				return ConstexprScalarKind::SignedInt;
+			case TypeCategory::UnsignedChar:
+			case TypeCategory::UnsignedShort:
+			case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong:
+			case TypeCategory::UnsignedLongLong:
+				return ConstexprScalarKind::UnsignedInt;
+			case TypeCategory::Float:
+			case TypeCategory::Double:
+			case TypeCategory::LongDouble:
+				return ConstexprScalarKind::Floating;
+			default:
+				return ConstexprScalarKind::NonScalar;
+		}
+	}
+
+	EvalResult convertEvalResultToScalarType(
+		ConstexprScalarKind kind,
+		const TypeSpecifierNode& target_type,
+		const EvalResult& expr_result) {
+		switch (kind) {
+			case ConstexprScalarKind::Bool:
+			{
+				EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+				result.set_exact_type(target_type);
+				return result;
+			}
+			case ConstexprScalarKind::SignedInt:
+			{
+				EvalResult result = EvalResult::from_int(expr_result.as_int());
+				result.set_exact_type(target_type);
+				return result;
+			}
+			case ConstexprScalarKind::UnsignedInt:
+			{
+				EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
+				result.set_exact_type(target_type);
+				return result;
+			}
+			case ConstexprScalarKind::Floating:
+			{
+				EvalResult result = EvalResult::from_double(expr_result.as_double());
+				result.set_exact_type(target_type);
+				return result;
+			}
+			case ConstexprScalarKind::NonScalar:
+			default:
+				return EvalResult::error("Unsupported non-scalar type");
+		}
+	}
+
+	EvalResult makeDefaultScalarInitFromKind(ConstexprScalarKind kind, const TypeSpecifierNode& type_spec) {
+		switch (kind) {
+			case ConstexprScalarKind::Bool:
+			{
+				EvalResult result = EvalResult::from_bool(false);
+				result.set_exact_type(type_spec);
+				return result;
+			}
+			case ConstexprScalarKind::SignedInt:
+			{
+				EvalResult result = EvalResult::from_int(0);
+				result.set_exact_type(type_spec);
+				return result;
+			}
+			case ConstexprScalarKind::UnsignedInt:
+			{
+				EvalResult result = EvalResult::from_uint(0);
+				result.set_exact_type(type_spec);
+				return result;
+			}
+			case ConstexprScalarKind::Floating:
+			{
+				EvalResult result = EvalResult::from_double(0.0);
+				result.set_exact_type(type_spec);
+				return result;
+			}
+			case ConstexprScalarKind::NonScalar:
+			default:
+				return EvalResult::error("Unsupported non-scalar type");
+		}
+	}
+
 	bool isStatementExecutedWithoutReturn(const EvalResult& result) {
 		return !result.success() && result.error_message == kStatementExecutedWithoutReturn;
 	}
@@ -21,7 +121,7 @@ namespace {
 	}
 
 	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
-		return !isPlaceholderAutoType(type_spec.type());
+		return !isPlaceholderAutoType(type_spec.category());
 	}
 
 	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
@@ -66,48 +166,11 @@ namespace {
 }
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
-	switch (target_type.type()) {
-		case Type::Bool:
-		{
-			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		{
-			EvalResult result = EvalResult::from_int(expr_result.as_int());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-		{
-			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-		{
-			EvalResult result = EvalResult::from_double(expr_result.as_double());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		default:
-			return EvalResult::error(invalidTypeErrorStr);
+	ConstexprScalarKind scalar_kind = getConstexprScalarKind(target_type.category());
+	if (scalar_kind == ConstexprScalarKind::NonScalar) {
+		return EvalResult::error(invalidTypeErrorStr);
 	}
+	return convertEvalResultToScalarType(scalar_kind, target_type, expr_result);
 }
 
 // Main evaluation entry point
@@ -1318,55 +1381,22 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		// For struct types, this is valid - it's default initialization
 		// Return a success result with default value (0 for integers, false for bool, etc.)
 		// This allows the constructor call to be used for template argument deduction
-		switch (type_spec.type()) {
-			case Type::Bool:
-				{
-					EvalResult result = EvalResult::from_bool(false);
-					result.set_exact_type(type_spec);
-					return result;
-				}
-			case Type::Char:
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
-				{
-					EvalResult result = EvalResult::from_int(0);
-					result.set_exact_type(type_spec);
-					return result;
-				}
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
-				{
-					EvalResult result = EvalResult::from_uint(0);
-					result.set_exact_type(type_spec);
-					return result;
-				}
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
-				{
-					EvalResult result = EvalResult::from_double(0.0);
-					result.set_exact_type(type_spec);
-					return result;
-				}
-			case Type::Struct:
-			case Type::UserDefined:
-				// For struct types, return a success result with value 0
-				// This indicates successful default construction
-				return EvalResult::from_int(0);
-			default:
-				return EvalResult::error("Unsupported type for default construction in constant expression");
+		if (is_struct_type(type_spec.category())) {
+			// For struct types, return a success result with value 0
+			// This indicates successful default construction
+			return EvalResult::from_int(0);
 		}
+		ConstexprScalarKind scalar_kind = getConstexprScalarKind(type_spec.category());
+		if (scalar_kind != ConstexprScalarKind::NonScalar) {
+			return makeDefaultScalarInitFromKind(scalar_kind, type_spec);
+		}
+		return EvalResult::error("Unsupported type for default construction in constant expression");
 	}
 	
 	// Handle struct types with arguments: delegate to materialize_constructor_object_value
 	// which first attempts user-defined constructor matching and falls back to aggregate
 	// initialization only when no matching constructor is found.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		return materialize_constructor_object_value(ctor_call, context);
 	}
 
@@ -1476,25 +1506,18 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 
 // Helper: default-initialize a value of the given type (used by new-expression evaluation).
 static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
-	if (type_spec.type() == Type::Bool) {
-		EvalResult r = EvalResult::from_bool(false);
-		r.set_exact_type(type_spec);
-		return r;
+	if (is_struct_type(type_spec.category())) {
+		EvalResult result = EvalResult::from_int(0);
+		result.set_exact_type(type_spec);
+		return result;
 	}
-	if (is_unsigned_integer_type(type_spec.type())) {
-		EvalResult r = EvalResult::from_uint(0);
-		r.set_exact_type(type_spec);
-		return r;
+	ConstexprScalarKind scalar_kind = getConstexprScalarKind(type_spec.category());
+	if (scalar_kind != ConstexprScalarKind::NonScalar) {
+		return makeDefaultScalarInitFromKind(scalar_kind, type_spec);
 	}
-	if (type_spec.type() == Type::Float || type_spec.type() == Type::Double ||
-	    type_spec.type() == Type::LongDouble) {
-		EvalResult r = EvalResult::from_double(0.0);
-		r.set_exact_type(type_spec);
-		return r;
-	}
-	EvalResult r = EvalResult::from_int(0);
-	r.set_exact_type(type_spec);
-	return r;
+	EvalResult result = EvalResult::from_int(0);
+	result.set_exact_type(type_spec);
+	return result;
 }
 
 // C++20 constexpr new: allocate an object on the constexpr heap and return a pointer to it.
@@ -1543,7 +1566,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const auto& ctor_args = new_expr.constructor_args();
 
 	// Handle struct/class types via the constructor materialization path.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		TypeIndex type_index = type_spec.type_index();
 		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 			return EvalResult::error("new-expression: invalid struct type index");
@@ -1621,24 +1644,11 @@ EvalResult Evaluator::evaluate_new_expression(
 		auto arg_result = eval_arg(ctor_args[0]);
 		if (!arg_result.success()) return arg_result;
 		// Apply the type conversion to the evaluated value.
-		switch (type_spec.type()) {
-			case Type::Bool:
-				init_val = EvalResult::from_bool(arg_result.as_bool());
-				break;
-			case Type::Char: case Type::Short: case Type::Int: case Type::Long: case Type::LongLong:
-				init_val = EvalResult::from_int(arg_result.as_int());
-				break;
-			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
-			case Type::UnsignedLong: case Type::UnsignedLongLong:
-				init_val = EvalResult::from_uint(arg_result.as_uint_raw());
-				break;
-			case Type::Float: case Type::Double: case Type::LongDouble:
-				init_val = EvalResult::from_double(arg_result.as_double());
-				break;
-			default:
-				return EvalResult::error("new-expression: unsupported fundamental type");
+		ConstexprScalarKind scalar_kind = getConstexprScalarKind(type_spec.category());
+		if (scalar_kind == ConstexprScalarKind::NonScalar) {
+			return EvalResult::error("new-expression: unsupported fundamental type");
 		}
-		init_val.set_exact_type(type_spec);
+		init_val = convertEvalResultToScalarType(scalar_kind, type_spec, arg_result);
 	} else {
 		return EvalResult::error("new-expression: fundamental types can only be constructed with 0 or 1 argument");
 	}
