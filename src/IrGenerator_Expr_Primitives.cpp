@@ -996,7 +996,7 @@
 				// underlying integer type.
 				pointee_type = getRuntimeValueType(TypeIndex::fromTypeAndIndex(semantic_pointee_type, type_node.type_index()), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(
-semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
+					semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
