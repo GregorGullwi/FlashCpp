@@ -448,6 +448,8 @@ struct TypeIndex {
 	// Mutates only the category cache (not the index).  Use to stamp the correct
 	// TypeCategory onto a TypeIndex that was built with the legacy 1-arg ctor.
 	constexpr void setCategory(TypeCategory cat) noexcept { category_ = cat; }
+	// Returns a new TypeIndex with the same index but a different category.
+	constexpr TypeIndex withCategory(TypeCategory cat) const noexcept { return TypeIndex{index_, cat}; }
 
 	constexpr bool isStruct()              const noexcept { return category_ == TypeCategory::Struct; }
 	constexpr bool isEnum()               const noexcept { return category_ == TypeCategory::Enum; }
