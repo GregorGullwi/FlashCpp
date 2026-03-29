@@ -1282,7 +1282,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			if (existing_type_it != getTypesByNameMap().end()) {
 				// Found existing type - create alias pointing to it
 				const TypeInfo* source_type = existing_type_it->second;
-				auto& alias_type_info = add_type_alias_copy(target_type_name, categoryToType(source_type->typeEnum()), source_type->type_index_, source_type->type_size_);
+				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
 				
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it

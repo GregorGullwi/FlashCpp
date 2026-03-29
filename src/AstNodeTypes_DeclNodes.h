@@ -76,7 +76,7 @@ struct StructTypeInfo {
 		return namespace_handle;
 	}
 
-	void addMember(StringHandle member_name, TypeCategory member_type, TypeIndex type_index,
+	void addMember(StringHandle member_name, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
 	               ReferenceQualifier reference_qualifier,
@@ -119,7 +119,7 @@ struct StructTypeInfo {
 				bool can_pack_into_active_unit =
 					active_bitfield_unit_size == member_size &&
 					active_bitfield_unit_alignment == effective_alignment &&
-					active_bitfield_type == member_type &&
+					active_bitfield_type == type_index.category() &&
 					(active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
@@ -128,7 +128,7 @@ struct StructTypeInfo {
 					active_bitfield_unit_size = member_size;
 					active_bitfield_unit_alignment = effective_alignment;
 					active_bitfield_bits_used = 0;
-					active_bitfield_type = member_type;
+					active_bitfield_type = type_index.category();
 					total_size += member_size;
 				}
 
@@ -159,7 +159,7 @@ struct StructTypeInfo {
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
+		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), reference_qualifier,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
@@ -333,10 +333,10 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(StringHandle member_name, TypeCategory type, TypeIndex type_index, size_t size, size_t member_alignment,
+	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                     ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
-		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
 	}
 
 	// Update an existing static member's initializer (used for lazy instantiation)
@@ -729,9 +729,7 @@ struct QualifiedIdentifier {
 struct TypeInfo
 {
 	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), category_(typeToCategory(type)), type_index_(idx), type_size_(type_size) {
-	}
-	TypeInfo(StringHandle name, TypeCategory cat, TypeIndex idx, int type_size) : name_(name), category_(cat), type_index_(idx), type_size_(type_size) {
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), category_(idx.category()), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
@@ -995,10 +993,7 @@ inline TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t si
 }
 
 // For adding an alias entry that copies type info from another TypeInfo
-TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
-inline TypeInfo& add_type_alias_copy(StringHandle name, TypeCategory cat, TypeIndex source_type_index, uint32_t size_bits) {
-	return add_type_alias_copy(name, categoryToType(cat), source_type_index, size_bits);
-}
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();

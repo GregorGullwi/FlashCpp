@@ -1185,8 +1185,7 @@ ParseResult Parser::parse_lambda_expression() {
                 StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
-                    TypeCategory::Void,         // Base type (will be treated as pointer)
-                    TypeIndex{},        // No type index
+                    TypeIndex{0, TypeCategory::Void},  // Void pointer type
                     8,                  // Pointer size on x64
                     8,                  // Alignment
                     AccessSpecifier::Public,
@@ -1212,7 +1211,6 @@ ParseResult Parser::parse_lambda_expression() {
                             StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
                                 copy_this_member_handle,            // Special member name for copied this
-                                TypeCategory::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
                                 enclosing_struct->alignment,        // Alignment from enclosing struct
@@ -1293,18 +1291,20 @@ ParseResult Parser::parse_lambda_expression() {
 				// We store the base type (e.g., Int) but the member will be accessed as a pointer
 				member_size = 8;
 				member_alignment = 8;
-				member_type_cat = var_type.type();
-				if (var_type.category() == TypeCategory::Struct) {
-					type_index = var_type.type_index();
-				}
 			} else {
                 // By-value capture: store the actual value
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
-                member_type_cat = var_type.type();
-                if (var_type.category() == TypeCategory::Struct) {
-                    type_index = var_type.type_index();
-                }
+            }
+
+            // Resolve type category and type index from the captured variable's type.
+            // Primitive types (int, float, etc.) have TypeIndex with category Invalid
+            // since they don't need a gTypeInfo identity; fix up the category so that
+            // the StructMember carries a meaningful classification.
+            member_type_cat = var_type.type();
+            type_index = var_type.type_index();
+            if (type_index.category() == TypeCategory::Invalid) {
+                type_index = TypeIndex{type_index.index(), member_type_cat};
             }
 
 			size_t referenced_size_bits = member_size * 8;
@@ -1328,7 +1328,6 @@ ParseResult Parser::parse_lambda_expression() {
 
 			closure_struct_info->addMember(
 				var_name,
-				member_type_cat,
 				type_index,
 				member_size,
 				member_alignment,

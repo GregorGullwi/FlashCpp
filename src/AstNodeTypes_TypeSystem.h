@@ -1248,7 +1248,7 @@ struct StructMember {
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
 
-	StructMember(StringHandle n, TypeCategory t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	StructMember(StringHandle n, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
 	            std::optional<ASTNode> init,
 	            ReferenceQualifier ref_qual,
@@ -1257,7 +1257,7 @@ struct StructMember {
 	            std::vector<size_t> arr_dims,
 	            int ptr_depth,
 	            std::optional<size_t> bf_width)
-		: name(n), type_index(TypeIndex::fromTypeAndIndex(t, tidx)), offset(off), size(sz),
+		: name(n), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
@@ -1454,10 +1454,10 @@ struct StructStaticMember {
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
 
-	StructStaticMember(StringHandle n, TypeCategory t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	StructStaticMember(StringHandle n, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
-		: name(n), type_index(TypeIndex::fromTypeAndIndex(t, tidx)), size(sz), alignment(align), access(acc),
+		: name(n), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), cv_qualifier(cv_qual), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
 	
 	StringHandle getName() const {

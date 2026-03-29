@@ -940,7 +940,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							StringHandle member_name_handle = member_name_token.handle();
 							anon_struct_info->members.push_back(StructMember{
 								member_name_handle,
-								member_type_spec.type(),
 								member_type_spec.type_index(),
 								0,  // offset will be calculated below
 								member_size,
@@ -1520,7 +1519,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
 			struct_info->addStaticMember(
 				static_member_name_handle,
-				type_spec.type(),
 				type_spec.type_index(),
 				static_member_size,
 				static_member_alignment,
@@ -2633,7 +2631,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Manually add member to struct_info at the aligned offset
 				struct_info->members.emplace_back(
 					union_member.member_name,
-					typeToCategory(union_member.member_type),
 					union_member.type_index,
 					aligned_union_start,  // Same offset for all union members
 					union_member.member_size,
@@ -2726,7 +2723,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,
@@ -3827,8 +3823,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	
 	StructMember member{
 		funcptr_name_handle,
-		TypeCategory::FunctionPointer,
-		TypeIndex{},  // type_index for function pointers
+		TypeIndex{0, TypeCategory::FunctionPointer},  // type_index for function pointers
 		0,  // offset will be calculated later
 		pointer_size,
 		pointer_alignment,
@@ -3951,7 +3946,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				StringHandle outer_member_name_handle = outer_member_name_token.handle();
 				out_struct_info->members.push_back(StructMember{
 					outer_member_name_handle,
-					TypeCategory::Struct,
 					nested_anon_type_info.type_index_,
 					0,  // offset will be calculated later
 					nested_type_size,
@@ -4050,7 +4044,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		StringHandle member_name_handle = member_name_token.handle();
 		out_struct_info->members.push_back(StructMember{
 			member_name_handle,
-			member_type_spec.type(),
 			member_type_spec.type_index(),
 			0,  // offset will be calculated later
 			member_size,

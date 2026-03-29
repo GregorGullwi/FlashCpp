@@ -3429,14 +3429,14 @@ TEST_CASE("OverloadResolution:UserDefinedTypeIndex") {
 	REQUIRE(wrap_int_idx.is_valid());
 	REQUIRE(wrap_double_idx.is_valid());
 
-	auto assign_result = findBinaryOperatorOverload(assign_receiver_idx, wrap_double_idx, OverloadableOperator::Assign, Type::UserDefined);
+	auto assign_result = findBinaryOperatorOverload(assign_receiver_idx, wrap_double_idx, OverloadableOperator::Assign, TypeCategory::UserDefined);
 	REQUIRE(assign_result.has_match);
 	CHECK(!assign_result.is_ambiguous);
 	REQUIRE(assign_result.member_overload != nullptr);
 	const auto& assign_param = assign_result.member_overload->function_decl.as<FunctionDeclarationNode>().parameter_nodes()[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 	CHECK(assign_param.type_index() == wrap_double_idx);
 
-	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, Type::UserDefined);
+	auto free_result = findBinaryOperatorOverloadWithFreeFunction(free_receiver_idx, wrap_double_idx, OverloadableOperator::Plus, "+", gSymbolTable, TypeCategory::UserDefined);
 	REQUIRE(free_result.has_match);
 	CHECK(!free_result.is_ambiguous);
 	CHECK(free_result.is_free_function);

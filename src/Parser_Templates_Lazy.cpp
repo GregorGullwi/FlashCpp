@@ -882,7 +882,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		// Member doesn't exist yet - add it (shouldn't normally happen with lazy instantiation)
 		struct_info->addStaticMember(
 			lazy_info.member_name,
-			substituted_type,
 			substituted_type_index,
 			substituted_size,
 			lazy_info.alignment,
@@ -1133,7 +1132,6 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Add member to nested struct info
 		nested_struct_info->addMember(
 			member_name_handle,
-			substituted_type,
 			substituted_type_index,
 			member_size,
 			member_alignment,

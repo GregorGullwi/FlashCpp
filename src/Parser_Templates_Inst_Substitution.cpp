@@ -817,7 +817,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
-				categoryToType(alias_type_spec.type()),
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
@@ -901,7 +900,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type,
 			member_type_index,
 			member_size,
 			member_alignment,

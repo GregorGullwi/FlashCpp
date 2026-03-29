@@ -1496,7 +1496,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
-				member_type,
 				member_type_index,
 				member_size,
 				member_alignment,
@@ -1954,7 +1953,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 					struct_info->addStaticMember(
 						static_member_name_handle,
-						static_member.memberType(),
 						static_member.type_index,
 						static_member.size,
 						static_member.alignment,
@@ -2016,7 +2014,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				struct_info->addStaticMember(
 					static_member.name,
-					substituted_type,
 					substituted_type_index,
 					substituted_size,
 					static_member.alignment,
@@ -2196,7 +2193,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
-				substituted_type,
 				TypeIndex{substituted_type_index},
 				substituted_size
 			);
@@ -4003,7 +3999,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type,
 			member_type_index,
 			member_size,
 			member_alignment,
@@ -4120,7 +4115,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Add with nullopt initializer - will be filled in during lazy instantiation
 				struct_info->addStaticMember(
 					static_member.getName(),
-					substituted_type,
 					substituted_type_index,
 					substituted_size,
 					static_member.alignment,
@@ -4450,7 +4444,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			
 			struct_info->addStaticMember(
 				static_member.getName(),
-				substituted_type,
 				substituted_type_index,
 				substituted_size,
 				static_member.alignment,
@@ -4527,7 +4520,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		struct_info->addStaticMember(
 			static_member.name,
-			static_member.memberType(),
 			static_member.type_index,
 			static_member.size,
 			static_member.alignment,
@@ -4663,7 +4655,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
-					substituted_type_spec.type(),
 					substituted_type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -4702,7 +4693,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						: std::nullopt;
 					nested_struct_info->addStaticMember(
 						static_member.getName(),
-						substituted_type,
 						substituted_type_index,
 						substituted_size,
 						static_member.alignment,
@@ -4944,7 +4934,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		// Register the type alias in getTypesByNameMap()
-		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
+		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, TypeIndex{substituted_type_index}, substituted_size);
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 			if (const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo()) {
 				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
@@ -6270,7 +6260,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else {
 				struct_info_ptr->addStaticMember(
 					static_member_name_handle,
-					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -6531,7 +6520,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else {
 					struct_info_ptr->addStaticMember(
 						static_member_name_handle,
-						static_member.memberType(),
 						static_member.type_index,
 						static_member.size,
 						static_member.alignment,
