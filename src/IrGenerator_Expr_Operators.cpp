@@ -1430,17 +1430,16 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					return;
 				}
 
-				Type resolved_ir_type = resolve_type_alias(ir_type, ir_type_index);
-				if (ir_type_index.index() < getTypeInfoCount()) {
-					resolved_ir_type = categoryToType(resolve_type_alias(ir_type_index).category());
-				}
-				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
+				TypeCategory resolved_ir_category = ir_type_index.index() < getTypeInfoCount()
+					? resolve_type_alias(ir_type_index).category()
+					: typeToCategory(resolve_type_alias(ir_type, ir_type_index));
+				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_category)) {
 					return;
 				}
 
-				Type effective_spec_type = effectiveBinaryOperatorTypeFromSpec(type_spec);
-				if (!binaryOperatorUsesTypeIndexIdentity(effective_spec_type) || type_spec.type_index() != ir_type_index) {
-					type_spec.set_type(resolved_ir_type);
+				TypeCategory effective_spec_category = effectiveBinaryOperatorCategoryFromSpec(type_spec);
+				if (!binaryOperatorUsesTypeIndexIdentity(effective_spec_category) || type_spec.type_index() != ir_type_index) {
+					type_spec.set_category(resolved_ir_category);
 					type_spec.set_type_index(ir_type_index);
 				}
 			};
