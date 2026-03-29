@@ -892,9 +892,9 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_size = 8;
 		} else {
-			member_size = get_type_size_bits(categoryToType(member_type_index.category())) / 8;
+			member_size = get_type_size_bits(member_type_index.category()) / 8;
 		}
-		size_t member_alignment = get_type_alignment(categoryToType(member_type_index.category()), member_size);
+		size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
 		
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();

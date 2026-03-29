@@ -747,9 +747,9 @@
 			if (!source_type_index.is_valid() || source_type_index.index() >= getTypeInfoCount()) {
 				return false;
 			}
-			Type semantic_type = resolve_type_alias(source_type, source_type_index);
+			TypeCategory semantic_type = canonicalize_type_alias(source_type_index.category(), source_type_index).type_index.category();
 			if (!carriesSemanticTypeIndex(semantic_type)) {
-				semantic_type = resolve_type_alias(categoryToType(getTypeInfo(source_type_index).category()), source_type_index);
+				semantic_type = canonicalize_type_alias(getTypeInfo(source_type_index).category(), source_type_index).type_index.category();
 			}
 			return carriesSemanticTypeIndex(semantic_type);
 		};

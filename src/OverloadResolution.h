@@ -856,8 +856,8 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
-			TypeCategory resolved_arg_type = typeToCategory(resolve_type_alias(arg_type.type(), arg_type.type_index()));
-			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
+			TypeCategory resolved_arg_category = canonicalize_type_alias(arg_type.category(), arg_type.type_index()).type_index.category();
+			bool is_same_struct_type = is_struct_type(resolved_arg_category) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
 				continue;
