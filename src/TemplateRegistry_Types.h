@@ -136,6 +136,10 @@ struct TemplateArgumentValue {
 		v.value = val;
 		return v;
 	}
+
+	static TemplateArgumentValue makeValue(int64_t val) {
+		return makeValue(val, TypeCategory::Int);
+	}
 	
 	bool operator==(const TemplateArgumentValue& other) const {
 		return type == other.type && 
