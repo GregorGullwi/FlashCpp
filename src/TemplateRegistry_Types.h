@@ -118,19 +118,19 @@ enum class MemberPointerKind : uint8_t {
 // Provides a lightweight representation that can be reused across different contexts
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
-	Type type = Type::Invalid;
+	TypeCategory type = TypeCategory::Invalid;
 	TypeIndex type_index {};
 	int64_t value = 0;
 	
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
+	static TemplateArgumentValue makeType(TypeCategory type, TypeIndex idx) {
 		TemplateArgumentValue v;
-		v.type = t;
+		v.type = type;
 		v.type_index = idx;
 		return v;
 	}
 	
-	static TemplateArgumentValue makeValue(int64_t val, Type value_type = Type::Int) {
+	static TemplateArgumentValue makeValue(int64_t val, TypeCategory value_type) {
 		TemplateArgumentValue v;
 		v.type = value_type;
 		v.value = val;
@@ -184,8 +184,6 @@ struct TemplateTypeArg {
 	TypeCategory category() const noexcept { return type_index.category(); }
 	// Returns the legacy Type enum value for APIs that still require it.
 	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
-	// Set the type (updates type_index category without changing the index slot).
-	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
@@ -193,10 +191,10 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
-	// Helper: delegates to TypeIndex::fromTypeAndIndex — builds a TypeIndex with the
-	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
-	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
-		return TypeIndex::fromTypeAndIndex(t, idx);
+	// Helper: builds a TypeIndex carrying the provided category while preserving any
+	// already-populated category on the incoming index.
+	static TypeIndex makeTypeIndex(TypeCategory cat, TypeIndex idx) noexcept {
+		return TypeIndex{ idx.index(), idx.category() != TypeCategory::Invalid ? idx.category() : cat };
 	}
 
 	TemplateTypeArg()
@@ -217,7 +215,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type(), type_spec.type_index()))
+		: type_index(makeTypeIndex(type_spec.category(), type_spec.type_index()))
 		, ref_qualifier(type_spec.reference_qualifier())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
@@ -254,9 +252,9 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(Type t, TypeIndex idx) {
+	static TemplateTypeArg makeType(TypeCategory type, TypeIndex idx) {
 		TemplateTypeArg arg;
-		arg.type_index = makeTypeIndex(t, idx);
+		arg.type_index = makeTypeIndex(type, idx);
 		return arg;
 	}
 

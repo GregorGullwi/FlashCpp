@@ -970,7 +970,7 @@ ParseResult Parser::parse_template_declaration() {
 					TemplateTypeArg arg;
 					arg.is_value = true;
 					arg.value = std::stoll(std::string(value_token.value()));
-					arg.setType(Type::Int);
+					arg.setCategory(TypeCategory::Int);
 					specialization_pattern.push_back(arg);
 				} else {
 					// Parse the pattern type
@@ -1013,7 +1013,7 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Create template type argument
 					TemplateTypeArg arg;
-					arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.type(), type_spec.type_index());
+										arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.category(), type_spec.type_index());
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
 					arg.pointer_depth = type_spec.pointer_depth();

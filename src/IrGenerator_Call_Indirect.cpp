@@ -907,7 +907,7 @@
 
 					InlineVector<TemplateTypeArg, 4> template_args;
 					for (const auto& [arg_type, arg_type_index] : arg_types) {
-						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+						template_args.push_back(TemplateTypeArg::makeType(typeToCategory(arg_type), arg_type_index));
 					}
 
 					// Check if we already have this instantiation
@@ -932,7 +932,7 @@
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
-								type_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+								type_args.push_back(TemplateTypeArg::makeType(typeToCategory(arg_type), arg_type_index));
 							}
 
 							// Evaluate the constraint with the template arguments
@@ -1133,17 +1133,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(Type::Bool, TypeIndex{}));
+							template_args.push_back(TemplateTypeArg::makeType(TypeCategory::Bool, TypeIndex{}));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(lit.type(), TypeIndex{}));
+							template_args.push_back(TemplateTypeArg::makeType(lit.category(), TypeIndex{}));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(type.type(), TypeIndex{}));
+								template_args.push_back(TemplateTypeArg::makeType(type.category(), TypeIndex{}));
 							}
 						}
 					});

@@ -2981,7 +2981,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (param.kind() == TemplateParameterKind::Type) {
 				// Push a void-like placeholder type
 				TemplateTypeArg placeholder;
-				placeholder.setType(Type::Void);
+				placeholder.setCategory(TypeCategory::Void);
 				filled_template_args.push_back(placeholder);
 				FLASH_LOG(Templates, Warning, "Could not resolve type default for param ", i,
 				          " of '", template_name, "', using placeholder");
