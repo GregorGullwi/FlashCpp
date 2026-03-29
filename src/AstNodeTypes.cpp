@@ -286,133 +286,35 @@ void initialize_native_types() {
 }
 
 bool is_integer_type(Type type) {
-    switch (type) {
-        case Type::Char:
-        case Type::UnsignedChar:
-        case Type::WChar:      // wchar_t is an integer type
-        case Type::Char8:      // char8_t is an integer type (C++20)
-        case Type::Char16:     // char16_t is an integer type
-        case Type::Char32:     // char32_t is an integer type
-        case Type::Short:
-        case Type::UnsignedShort:
-        case Type::Int:
-        case Type::UnsignedInt:
-        case Type::Long:
-        case Type::UnsignedLong:
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
-            return true;
-        default:
-            return false;
-    }
+    return is_integer_type(typeToCategory(type));
 }
 
 bool is_bool_type(Type type) {
-    return type == Type::Bool;
+    return is_bool_type(typeToCategory(type));
 }
 
 bool is_floating_point_type(Type type) {
-    switch (type) {
-        case Type::Float:
-        case Type::Double:
-        case Type::LongDouble:
-            return true;
-        default:
-            return false;
-    }
+    return is_floating_point_type(typeToCategory(type));
 }
 
 bool is_struct_type(Type type) {
-    return type == Type::Struct || type == Type::UserDefined;
+    return is_struct_type(typeToCategory(type));
 }
 
 bool is_signed_integer_type(Type type) {
-    switch (type) {
-        case Type::Char:  // char is signed by default in most implementations
-        case Type::Short:
-        case Type::Int:
-        case Type::Long:
-        case Type::LongLong:
-            return true;
-        case Type::WChar:
-            return g_target_data_model != TargetDataModel::LLP64;  // signed on Linux
-        default:
-            return false;
-    }
+    return is_signed_integer_type(typeToCategory(type));
 }
 
 bool is_unsigned_integer_type(Type type) {
-    switch (type) {
-        case Type::UnsignedChar:
-        case Type::UnsignedShort:
-        case Type::UnsignedInt:
-        case Type::UnsignedLong:
-        case Type::UnsignedLongLong:
-            return true;
-        case Type::Char8:
-        case Type::Char16:
-        case Type::Char32:
-            return true;
-        case Type::WChar:
-            return g_target_data_model == TargetDataModel::LLP64;  // unsigned on Windows
-        default:
-            return false;
-    }
+    return is_unsigned_integer_type(typeToCategory(type));
 }
 
 int get_integer_rank(Type type) {
-    // C++20 integer conversion rank (higher rank = larger type)
-    // [conv.rank] specifies the conversion rank:
-    // - bool has the lowest rank
-    // - signed char/unsigned char have the same rank (less than short)
-    // - short/unsigned short have the same rank (less than int)
-    // - int/unsigned int have the same rank
-    // - long/unsigned long have the same rank
-    // - long long/unsigned long long have the highest standard integer rank
-    switch (type) {
-        case Type::Bool:
-            return 0;  // Bool has lowest rank
-        case Type::Char:
-        case Type::UnsignedChar:
-            return 1;
-        case Type::Short:
-        case Type::UnsignedShort:
-            return 2;
-        case Type::Int:
-        case Type::UnsignedInt:
-            return 3;
-        case Type::Long:
-        case Type::UnsignedLong:
-            return 4;
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
-            return 5;
-        case Type::Char8:
-            return 1;  // Same rank as unsigned char
-        case Type::Char16:
-            return 2;  // Same rank as uint_least16_t (short)
-        case Type::Char32:
-            return 3;  // Same rank as uint_least32_t (int)
-        case Type::WChar:
-            // wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
-            return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
-        default:
-            return -1;  // Invalid/unknown type
-    }
+    return get_integer_rank(typeToCategory(type));
 }
 
 int get_floating_point_rank(Type type) {
-    // Floating-point conversion rank (higher rank = larger type)
-    switch (type) {
-        case Type::Float:
-            return 1;
-        case Type::Double:
-            return 2;
-        case Type::LongDouble:
-            return 3;
-        default:
-            return 0;
-    }
+    return get_floating_point_rank(typeToCategory(type));
 }
 
 int get_type_size_bits(Type type) {
@@ -542,6 +444,25 @@ Type promote_integer_type(Type type) {
     }
 }
 
+TypeCategory promote_integer_type(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::Bool:
+        case TypeCategory::Char:
+        case TypeCategory::Short:
+        case TypeCategory::Char8:
+        case TypeCategory::Char16:
+        case TypeCategory::UnsignedChar:
+        case TypeCategory::UnsignedShort:
+            return TypeCategory::Int;
+        case TypeCategory::WChar:
+            return (get_wchar_size_bits() < 32) ? TypeCategory::Int : TypeCategory::WChar;
+        case TypeCategory::Char32:
+            return TypeCategory::Char32;
+        default:
+            return type;
+    }
+}
+
 Type promote_floating_point_type(Type type) {
     // Floating-point promotions: float promotes to double in some contexts
     // For now, keep types as-is (no automatic promotion)
@@ -571,6 +492,28 @@ static Type get_unsigned_version(Type type) {
     }
 }
 
+static TypeCategory get_unsigned_version(TypeCategory type) {
+    switch (type) {
+        case TypeCategory::Char:
+        case TypeCategory::UnsignedChar:
+            return TypeCategory::UnsignedChar;
+        case TypeCategory::Short:
+        case TypeCategory::UnsignedShort:
+            return TypeCategory::UnsignedShort;
+        case TypeCategory::Int:
+        case TypeCategory::UnsignedInt:
+            return TypeCategory::UnsignedInt;
+        case TypeCategory::Long:
+        case TypeCategory::UnsignedLong:
+            return TypeCategory::UnsignedLong;
+        case TypeCategory::LongLong:
+        case TypeCategory::UnsignedLongLong:
+            return TypeCategory::UnsignedLongLong;
+        default:
+            return type;
+    }
+}
+
 // Check if a signed type can represent all values of an unsigned type
 // This depends on platform-specific type sizes.
 // Per C++20 [conv.rank], a signed type can represent all values of an unsigned type
@@ -586,6 +529,12 @@ static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
     int unsigned_bits = get_type_size_bits(unsigned_type);
     
     // Strictly greater means all values can be represented
+    return signed_bits > unsigned_bits;
+}
+
+static bool can_represent_all_values(TypeCategory signed_type, TypeCategory unsigned_type) {
+    int signed_bits = get_type_size_bits(signed_type);
+    int unsigned_bits = get_type_size_bits(unsigned_type);
     return signed_bits > unsigned_bits;
 }
 
@@ -650,6 +599,56 @@ Type get_common_type(Type left, Type right) {
     }
 
     // Rule 3: Convert both to unsigned version of the signed type
+    return get_unsigned_version(signed_type);
+}
+
+TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
+    bool left_is_fp = is_floating_point_type(left);
+    bool right_is_fp = is_floating_point_type(right);
+
+    if (left_is_fp && right_is_fp) {
+        int left_fp_rank = get_floating_point_rank(left);
+        int right_fp_rank = get_floating_point_rank(right);
+        return (left_fp_rank > right_fp_rank) ? left : right;
+    }
+
+    if (left_is_fp) {
+        return left;
+    }
+
+    if (right_is_fp) {
+        return right;
+    }
+
+    left = promote_integer_type(left);
+    right = promote_integer_type(right);
+
+    if (left == right) {
+        return left;
+    }
+
+    bool left_unsigned = is_unsigned_integer_type(left);
+    bool right_unsigned = is_unsigned_integer_type(right);
+    int left_rank = get_integer_rank(left);
+    int right_rank = get_integer_rank(right);
+
+    if (left_unsigned == right_unsigned) {
+        return (left_rank > right_rank) ? left : right;
+    }
+
+    TypeCategory signed_type = left_unsigned ? right : left;
+    TypeCategory unsigned_type = left_unsigned ? left : right;
+    int signed_rank = left_unsigned ? right_rank : left_rank;
+    int unsigned_rank = left_unsigned ? left_rank : right_rank;
+
+    if (unsigned_rank >= signed_rank) {
+        return unsigned_type;
+    }
+
+    if (can_represent_all_values(signed_type, unsigned_type)) {
+        return signed_type;
+    }
+
     return get_unsigned_version(signed_type);
 }
 

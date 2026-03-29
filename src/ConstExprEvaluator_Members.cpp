@@ -23,16 +23,16 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {
-		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8);
 	}
 	if (std::holds_alternative<long long>(value.value)) {
-		return TypeSpecifierNode(Type::LongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::LongLong, TypeQualifier::None, 64);
 	}
 	if (value.is_uint()) {
-		return TypeSpecifierNode(Type::UnsignedLongLong, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::UnsignedLongLong, TypeQualifier::None, 64);
 	}
 	if (std::holds_alternative<double>(value.value)) {
-		return TypeSpecifierNode(Type::Double, TypeQualifier::None, 64);
+		return TypeSpecifierNode(TypeCategory::Double, TypeQualifier::None, 64);
 	}
 
 	return std::nullopt;
@@ -49,11 +49,11 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 	}
 
 	const TypeSpecifierNode& type_spec = *type_opt;
-	if (!isIntegralType(type_spec.type())) {
+	if (!isIntegralType(type_spec.category())) {
 		return std::nullopt;
 	}
 
-	const Type promoted_type = promote_integer_type(type_spec.type());
+	const TypeCategory promoted_type = promote_integer_type(type_spec.category());
 	const int promoted_width = get_type_size_bits(promoted_type);
 	if (promoted_width > 0) {
 		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width);
@@ -190,7 +190,7 @@ std::optional<TypeSpecifierNode> get_binary_arithmetic_result_type(
 	if (!lhs.exact_type.has_value() || !rhs.exact_type.has_value()) {
 		return std::nullopt;
 	}
-	const Type result_type = get_common_type(lhs.exact_type->type(), rhs.exact_type->type());
+	const TypeCategory result_type = get_common_type(lhs.exact_type->category(), rhs.exact_type->category());
 	const int result_bits = get_type_size_bits(result_type);
 	if (result_bits > 0) {
 		return TypeSpecifierNode(result_type, TypeQualifier::None, result_bits);
