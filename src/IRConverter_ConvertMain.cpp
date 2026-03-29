@@ -4079,7 +4079,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type)) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4203,7 +4203,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type)) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4433,7 +4433,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
-						if (is_floating_point_type(typeToCategory(arg.type))) {
+						if (is_floating_point_type(arg.type)) {
 							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
 								va_temp_float_idx++;
@@ -5435,7 +5435,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			// First pass: handle stack arguments
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type));
+				bool is_float_arg = is_floating_point_type(arg.type);
 
 				bool use_register = false;
 				if (is_float_arg) {
@@ -5462,7 +5462,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(typeToCategory(arg.type));
+				bool is_float_arg = is_floating_point_type(arg.type);
 
 				bool use_register = false;
 				X64Register target_reg;
@@ -7500,7 +7500,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Handle parameters
 			const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : 0;
 			struct ParameterInfo {
-				Type param_type;
+				TypeCategory param_type;
 				int param_size;
 				std::string_view param_name;
 				int paramNumber;
@@ -7526,7 +7526,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
 
 				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
-				parameters.push_back({Type::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
+				parameters.push_back({TypeCategory::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
 				regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
 
 				param_offset_adjustment = 1;  // Shift other parameters (including 'this') by 1
@@ -7552,7 +7552,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			// Store 'this' parameter info (register depends on param_offset_adjustment)
 			X64Register this_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
-			parameters.push_back({Type::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
+			parameters.push_back({TypeCategory::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
 			regAlloc.allocateSpecific(this_reg, this_offset);
 
 			param_offset_adjustment++;  // Shift regular parameters by 1 more
@@ -7592,7 +7592,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
-				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
+				auto param_type = instruction.getOperandAs<TypeCategory>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 				auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
 				auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
 				// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
@@ -7614,7 +7614,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (typeToCategory(param_type) == TypeCategory::Float || typeToCategory(param_type) == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
+				bool is_float_param = (param_type == TypeCategory::Float || param_type == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
 
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -7668,9 +7668,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
 				bool is_passed_by_reference = is_reference ||
-				                              (!is_two_reg_struct && typeToCategory(param_type) == TypeCategory::Struct && param_size > 64);
+				                              (!is_two_reg_struct && param_type == TypeCategory::Struct && param_size > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, TypeIndex{0, typeToCategory(param_type)}, param_size,
+					setReferenceInfo(offset, TypeIndex{0, param_type}, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 				}
 
@@ -7679,7 +7679,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				if (param_pointer_depth > 0) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					param_type_index = codeViewTypeIndex(typeToCategory(param_type));
+					param_type_index = codeViewTypeIndex(param_type);
 				}
 				writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
@@ -7869,7 +7869,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						// it does not need to be registered in regAlloc.
 					}
 
-					parameters.push_back({param.paramType(), param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
+					parameters.push_back({param.type_index.category(), param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
 				}
 			}
 		}
@@ -7892,11 +7892,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
-				bool is_float_param = (typeToCategory(param.param_type) == TypeCategory::Float || typeToCategory(param.param_type) == TypeCategory::Double) && !param.pointer_depth && !param.is_reference;
+				bool is_float_param = (param.param_type == TypeCategory::Float || param.param_type == TypeCategory::Double) && !param.pointer_depth && !param.is_reference;
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
-					bool is_float = (typeToCategory(param.param_type) == TypeCategory::Float);
+					bool is_float = (param.param_type == TypeCategory::Float);
 					emitFloatMovToFrame(param.src_reg, param.offset, is_float);
 				} else if (param.second_reg != X64Register::Count) {
 					// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
@@ -7910,7 +7910,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					// References are always passed as 64-bit pointers regardless of the type they refer to
 					// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
 					bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
-					                            (typeToCategory(param.param_type) == TypeCategory::Struct && param.param_size > 64);
+					                            (param.param_type == TypeCategory::Struct && param.param_size > 64);
 					int store_size = is_passed_by_pointer ? 64 : param.param_size;
 					emitMovToFrameSized(
 						SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
@@ -13657,7 +13657,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 		// Legacy format: Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
 
-		[[maybe_unused]] Type value_type = instruction.getOperandAs<Type>(1);
+		[[maybe_unused]] TypeCategory value_type = instruction.getOperandAs<TypeCategory>(1);
 		int value_size = instruction.getOperandAs<int>(2);
 
 		// Load the pointer operand into a register
@@ -14603,7 +14603,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
-					TypedValue source_value = makeTypedValue(throw_op.exceptionType(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
+					TypedValue source_value = makeTypedValue(throw_op.type_index.category(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 				}
 
@@ -14747,7 +14747,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 
 				bool exception_constructed = false;
 				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
-					TypedValue source_value = makeTypedValue(throw_op.exceptionType(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
+					TypedValue source_value = makeTypedValue(throw_op.type_index.category(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 

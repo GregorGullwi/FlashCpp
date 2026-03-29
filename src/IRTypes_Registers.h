@@ -356,7 +356,7 @@ struct TempVarMetadata {
 	}
 };
 
-using IrOperand = std::variant<int, unsigned long long, double, bool, char, Type, TempVar, StringHandle>;
+using IrOperand = std::variant<int, unsigned long long, double, bool, char, TypeCategory, TempVar, StringHandle>;
 
 // ============================================================================
 // OperandStorage - Abstraction for storing IR instruction operands

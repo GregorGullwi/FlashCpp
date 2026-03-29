@@ -719,7 +719,7 @@
 		// Set index as TypedValue
 		TypeCategory index_type = index_result.typeEnum();
 		int index_size = index_result.size_in_bits.value;
-		payload.index.type = categoryToType(index_type);
+		payload.index.type = index_type;
 		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 

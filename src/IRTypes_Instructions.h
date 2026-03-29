@@ -60,11 +60,11 @@ public:
 		if (index >= operands_.size())
 			return "";
 
-		if (!isOperandType<Type>(index))
+		if (!isOperandType<TypeCategory>(index))
 			return "<not-a-type>";
 
-		const Type type = getOperandAs<Type>(index);
-		if (const TypeInfo* type_info = findNativeType(typeToCategory(type)))
+		const TypeCategory type = getOperandAs<TypeCategory>(index);
+		if (const TypeInfo* type_info = findNativeType(type))
 			return StringTable::getStringView(type_info->name());
 		return "";
 	}

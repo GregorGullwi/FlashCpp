@@ -266,7 +266,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 }
 
 void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node) {
-	value.type = categoryToType(type_node.type());
+	value.type = type_node.type();
 	value.ir_type = toIrType(type_node.type());
 	if (type_node.pointer_depth() > 0
 		|| type_node.is_reference()
@@ -361,7 +361,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 				addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 
-				value.type = categoryToType(arg_type.type());
+				value.type = arg_type.type();
 				value.ir_type = toIrType(arg_type.type());
 				value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 				value.value = addr_var;
@@ -1092,7 +1092,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					{
 						AssignmentOp mat;
 						mat.result = store_temp;
-						mat.lhs = { gsi.bindingType(), gsi.size_in_bits, store_temp };
+						mat.lhs = { gsi.type_index.category(), gsi.size_in_bits, store_temp };
 						mat.rhs = toTypedValue(op_result);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(mat), binaryOperatorNode.get_token()));
 					}
@@ -3197,7 +3197,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ASTNode arg1 = functionCallNode.arguments()[1];
 
 		// Extract type information from the second argument
-		Type requested_type = Type::Int;
+		TypeCategory requested_type = TypeCategory::Int;
 		int requested_size = 32;
 		bool is_float_type = false;
 
@@ -3206,34 +3206,34 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (arg1.is<TypeSpecifierNode>()) {
 			// New parser path: TypeSpecifierNode passed directly
 			const auto& type_spec = arg1.as<TypeSpecifierNode>();
-			requested_type = categoryToType(type_spec.type());
+			requested_type = type_spec.type();
 			requested_size = static_cast<int>(type_spec.size_in_bits());
-			is_float_type = (typeToCategory(requested_type) == TypeCategory::Float || typeToCategory(requested_type) == TypeCategory::Double);
+			is_float_type = (requested_type == TypeCategory::Float || requested_type == TypeCategory::Double);
 		} else if (arg1.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
 			// Old path: IdentifierNode with type name
 			std::string_view type_name = std::get<IdentifierNode>(arg1.as<ExpressionNode>()).name();
 
 			// Map type names to Type enum
 			if (type_name == "int") {
-				requested_type = Type::Int;
+				requested_type = TypeCategory::Int;
 				requested_size = 32;
 			} else if (type_name == "double") {
-				requested_type = Type::Double;
+				requested_type = TypeCategory::Double;
 				requested_size = 64;
 				is_float_type = true;
 			} else if (type_name == "float") {
-				requested_type = Type::Float;
+				requested_type = TypeCategory::Float;
 				requested_size = 32;
 				is_float_type = true;
 			} else if (type_name == "long") {
-				requested_type = Type::Long;
+				requested_type = TypeCategory::Long;
 				requested_size = 64;
 			} else if (type_name == "char") {
-				requested_type = Type::Char;
+				requested_type = TypeCategory::Char;
 				requested_size = 8;
 			} else {
 				// Default to int
-				requested_type = Type::Int;
+				requested_type = TypeCategory::Int;
 				requested_size = 32;
 			}
 		}
@@ -3830,7 +3830,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				// Win64 ABI: structs > 8 bytes are passed by pointer in variadic calls,
 				// so the stack slot holds a pointer to the struct, not the struct itself.
 				// We need to read the pointer first, then dereference it.
-				bool is_indirect_struct = (typeToCategory(requested_type) == TypeCategory::Struct && requested_size > 64);
+				bool is_indirect_struct = (requested_type == TypeCategory::Struct && requested_size > 64);
 
 				TempVar value = var_counter.next();
 				if (is_indirect_struct) {
@@ -4238,7 +4238,7 @@ const Token& token) {
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
 	TypeCategory lvalue_cat = (lhs_meta.valueCategory() != TypeCategory::Invalid) ? lhs_meta.valueCategory() : lhs_operands.category();
-	Type lvalue_type = categoryToType(lvalue_cat);
+	TypeCategory lvalue_type = lvalue_cat;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
@@ -4353,7 +4353,7 @@ const Token& token) {
 			IrValue index_value = lv_info.array_index.value();
 			TypedValue index_tv;
 			index_tv.value = index_value;
-			index_tv.type = Type::Int;  // Index type (typically int)
+			index_tv.type = TypeCategory::Int;  // Index type (typically int)
 			index_tv.ir_type = IrType::Integer;
 			index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 
@@ -4423,7 +4423,7 @@ const Token& token) {
 			// Dereference assignment: *ptr = value
 			// This case works because we have all needed info in LValueInfo
 			FLASH_LOG(Codegen, Debug, "  -> DereferenceStore (handled via metadata)");
-			Type pointee_type = lvalue_type;
+			TypeCategory pointee_type = lvalue_type;
 			int pointee_size_bits = inferLValueSizeBits();
 			TypedValue value_tv;
 			value_tv.type = pointee_type;
@@ -4434,7 +4434,7 @@ const Token& token) {
 			// Emit the store using helper
 			emitDereferenceStore(
 				value_tv,
-				typeToCategory(pointee_type),
+				pointee_type,
 				pointee_size_bits,
 				lv_info.base,                    // pointer
 				token
@@ -4482,7 +4482,7 @@ std::string_view op) {
 
 	const LValueInfo& lv_info = lvalue_info_opt.value();
 	TypeCategory lvalue_cat = (lhs_meta.valueCategory() != TypeCategory::Invalid) ? lhs_meta.valueCategory() : lhs_operands.category();
-	Type lvalue_type = categoryToType(lvalue_cat);
+	TypeCategory lvalue_type = lvalue_cat;
 	auto inferLValueSizeBits = [&]() {
 		int inferred_size_bits = 0;
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
@@ -4617,7 +4617,7 @@ std::string_view op) {
 		IrValue index_value = lv_info.array_index.value();
 		TypedValue index_tv;
 		index_tv.value = index_value;
-		index_tv.type = Type::Int;  // Index type (typically int)
+		index_tv.type = TypeCategory::Int;  // Index type (typically int)
 		index_tv.ir_type = IrType::Integer;
 		index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 

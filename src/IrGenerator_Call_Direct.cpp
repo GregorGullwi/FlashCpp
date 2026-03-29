@@ -113,7 +113,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
-			irOperands.emplace_back(categoryToType(result.typeEnum()));
+			irOperands.emplace_back(result.typeEnum());
 			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
@@ -1089,7 +1089,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						// Argument is a reference variable being passed to a reference parameter
 						// Pass the identifier name directly - the IRConverter will use MOV to
 						// load the address stored in the reference variable
-						irOperands.emplace_back(categoryToType(type_node.type()));
+						irOperands.emplace_back(type_node.type());
 						irOperands.emplace_back(64);  // References are stored as 64-bit pointers
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 						arg_index++;
@@ -1345,7 +1345,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
 					// TODO: Add proper pointer type support to the Type enum
-					irOperands.emplace_back(categoryToType(type_node.type()));  // Element type (e.g., Char for char[])
+					irOperands.emplace_back(type_node.type());  // Element type (e.g., Char for char[])
 					irOperands.emplace_back(64);  // Pointer size is 64 bits on x64
 					irOperands.emplace_back(addr_var);
 				} else if (param_ref_qualifier != CVReferenceQualifier::None) {
@@ -1353,7 +1353,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
 						// References are stored as pointers (64 bits), not the pointee size
-						irOperands.emplace_back(categoryToType(type_node.type()));
+						irOperands.emplace_back(type_node.type());
 						irOperands.emplace_back(64);  // Pointer size, not pointee size
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
@@ -1361,7 +1361,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
-						irOperands.emplace_back(categoryToType(type_node.type()));
+						irOperands.emplace_back(type_node.type());
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					}
@@ -1371,14 +1371,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
-					irOperands.emplace_back(categoryToType(type_node.type()));
+					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 					irOperands.emplace_back(deref_var);
 				} else {
 					// Regular variable - pass by value
 					// For pointer types, size is always 64 bits regardless of pointee type
 					int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
-					irOperands.emplace_back(categoryToType(type_node.type()));
+					irOperands.emplace_back(type_node.type());
 					irOperands.emplace_back(arg_size);
 					irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 				}
@@ -1423,7 +1423,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						TempVar addr_var = emitAddressOf(literal_type, literal_size, IrValue(temp_var));
 
 						// Pass the address
-						irOperands.emplace_back(categoryToType(literal_type));
+						irOperands.emplace_back(literal_type);
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					} else {
@@ -1462,7 +1462,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								// Need to take address of the value
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-								irOperands.emplace_back(categoryToType(expr_type));
+								irOperands.emplace_back(expr_type);
 								irOperands.emplace_back(64);  // Pointer size
 								irOperands.emplace_back(addr_var);
 							}
@@ -1511,14 +1511,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		call_op.is_member_function = false;
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
-			Type this_type = Type::Struct;
+			TypeCategory this_type = TypeCategory::Struct;
 			TypeIndex this_type_index {};
 			std::string_view parent_struct = matched_func_decl->parent_struct_name();
 			if (!parent_struct.empty()) {
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
 				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
 				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-					this_type = categoryToType(parent_it->second->typeEnum());
+					this_type = parent_it->second->typeEnum();
 					this_type_index = parent_it->second->type_index_;
 				}
 			}

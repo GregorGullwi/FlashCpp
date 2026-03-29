@@ -222,7 +222,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						// Convert to TypedValue
 						TypedValue arg;
-						arg.type = categoryToType(type_node.type());
+						arg.type = type_node.type();
 						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1080,7 +1080,7 @@
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 					TypedValue tv;
-					tv.type = categoryToType(type_node.type());
+					tv.type = type_node.type();
 					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());

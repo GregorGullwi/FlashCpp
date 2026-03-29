@@ -407,7 +407,7 @@ enum class ValueStorage : uint8_t {
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
-	Type type = Type::Void;	// 4 bytes (enum) — semantic type (kept during transition, will be removed in Phase 4)
+	TypeCategory type = TypeCategory::Void;	// 4 bytes (enum) — semantic type (now TypeCategory; Phase 4 will remove entirely)
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrValue value;          // 32 bytes (variant)
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
@@ -423,7 +423,7 @@ struct TypedValue {
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	TypeCategory category() const {
 		const TypeCategory category_from_index = type_index.category();
-		return (category_from_index != TypeCategory::Invalid) ? category_from_index : typeToCategory(type);
+		return (category_from_index != TypeCategory::Invalid) ? category_from_index : type;
 	}
 	TypeCategory typeEnum() const { return category(); }
 
@@ -433,11 +433,10 @@ struct TypedValue {
 	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
 	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
 	void setType(TypeCategory cat) noexcept {
-		const Type t = categoryToType(cat);
-		type = t;
+		type = cat;
 		type_index = TypeIndex{type_index.index(), cat};
-		ir_type = toIrType(t);
-		is_signed = isSignedType(t);
+		ir_type = toIrType(cat);
+		is_signed = isSignedType(cat);
 	}
 
 	// Returns the effective runtime representation type.
@@ -448,7 +447,7 @@ struct TypedValue {
 	IrType effectiveIrType() const {
 		// Return ir_type if it was explicitly set (non-Void), or if the semantic
 		// type IS Void (to avoid toIrType recomputation for genuinely void values).
-		if (ir_type != IrType::Void || typeToCategory(type) == TypeCategory::Void)
+		if (ir_type != IrType::Void || type == TypeCategory::Void)
 			return ir_type;
 		return toIrType(type);
 	}

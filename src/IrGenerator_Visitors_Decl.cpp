@@ -549,8 +549,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
-							.rhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -568,8 +568,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
-							.rhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));
@@ -2486,7 +2486,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		store_ptr.offset = static_cast<int>(ptr_member.offset);
 		// Create TypedValue for pointer to array - need to set pointer_depth explicitly
 		TypedValue ptr_value;
-		ptr_value.type = categoryToType(element_type);  // TODO: remove when TypedValue::type is migrated to TypeCategory
+		ptr_value.type = element_type;
 		ptr_value.size_in_bits = SizeInBits{64};  // pointer size
 		ptr_value.value = array_name;
 		ptr_value.pointer_depth = PointerDepth{1};  // This is a pointer to the array

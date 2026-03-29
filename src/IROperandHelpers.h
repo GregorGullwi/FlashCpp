@@ -151,27 +151,27 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 // ============================================================================
 
 /// Basic TypedValue factory — sets ir_type, is_signed, and TypeCategory in type_index automatically.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value) {
+inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrValue value) {
 	TypedValue tv;
 	tv.type = type;
 	tv.ir_type = toIrType(type);
 	tv.is_signed = isSignedType(type);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
-	tv.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(type), {});
+	tv.type_index = TypeIndex::fromTypeAndIndex(type, {});
 	return tv;
 }
 
 /// TypedValue factory with type_index — for Struct/Enum/UserDefined types that
 /// carry a type_index for layout and identity information.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
+inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
-	tv.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(type), type_index);
+	tv.type_index = TypeIndex::fromTypeAndIndex(type, type_index);
 	return tv;
 }
 
 /// TypedValue factory with type_index and pointer_depth.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
+inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value), type_index);
 	tv.pointer_depth = pointer_depth;
 	return tv;
@@ -179,51 +179,23 @@ inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue val
 
 /// TypedValue factory with ReferenceQualifier — for reference-typed values
 /// (e.g. by-reference function arguments). Sets ir_type automatically.
-inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
+inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
 	tv.ref_qualifier = ref_qual;
 	return tv;
 }
 
-// ============================================================================
-// TypeCategory bridge overloads for makeTypedValue
-//
-// Call sites that have already adopted TypeCategory can use these overloads
-// directly instead of calling categoryToType() at every use.  They delegate
-// to the corresponding Type overloads above.
-// ============================================================================
-
-/// TypeCategory bridge — basic form.
-inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value) {
-	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value));
-}
-
-/// TypeCategory bridge — with type_index.
-inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
-	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), type_index);
-}
-
-/// TypeCategory bridge — with type_index and pointer_depth.
-inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, TypeIndex type_index, PointerDepth pointer_depth) {
-	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), type_index, pointer_depth);
-}
-
-/// TypeCategory bridge — with ReferenceQualifier.
-inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
-	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), ref_qual);
-}
-
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
-	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
+	assert(std::holds_alternative<TypeCategory>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	
 	TypedValue result;
-	result.type = std::get<Type>(operands[0]);
+	result.type = std::get<TypeCategory>(operands[0]);
 	result.ir_type = toIrType(result.type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(result.type), {});
+	result.type_index = TypeIndex::fromTypeAndIndex(result.type, {});
 	result.pointer_depth = PointerDepth{};
 	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
@@ -239,7 +211,7 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
-	tv.type = categoryToType(result.typeEnum());
+	tv.type = result.typeEnum();
 	tv.ir_type = result.ir_type;
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);

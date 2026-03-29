@@ -324,14 +324,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 			};
 			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, TypeCategory member_type) -> unsigned long long {
-				const TypeCategory member_cat = typeToCategory(member_type);
-				if (member_cat == TypeCategory::Float) {
+				if (member_type == TypeCategory::Float) {
 					float fval = static_cast<float>(r.as_double());
 					uint32_t fbits = 0;
 					std::memcpy(&fbits, &fval, sizeof(float));
 					return static_cast<unsigned long long>(fbits);
 				}
-				if (member_cat == TypeCategory::Double || member_cat == TypeCategory::LongDouble) {
+				if (member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
 					double dval = r.as_double();
 					unsigned long long dbits = 0;
 					std::memcpy(&dbits, &dval, sizeof(double));
@@ -463,13 +462,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					return 0;
 				}
 
-				const TypeCategory target_cat = typeToCategory(target_type);
-				if (target_cat == TypeCategory::Float) {
+				if (target_type == TypeCategory::Float) {
 					float f = static_cast<float>(eval_result.as_double());
 					uint32_t f_bits;
 					std::memcpy(&f_bits, &f, sizeof(float));
 					return f_bits;
-				} else if (target_cat == TypeCategory::Double || target_cat == TypeCategory::LongDouble) {
+				} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
 					double d = eval_result.as_double();
 					unsigned long long bits;
 					std::memcpy(&bits, &d, sizeof(double));
@@ -1017,12 +1015,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		std::vector<IrOperand> operands;
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
 			operands.reserve(operands.size() + 4);
-			operands.emplace_back(categoryToType(result.typeEnum()));
+			operands.emplace_back(result.typeEnum());
 			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
 			operands.emplace_back(static_cast<int>(result.storage));
 		};
-		operands.emplace_back(categoryToType(type_node.type()));
+		operands.emplace_back(type_node.type());
 		// For pointers, allocate 64 bits (pointer size on x64), not the pointed-to type size
 		int size_in_bits = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 		operands.emplace_back(size_in_bits);
@@ -1058,7 +1056,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 
 				// Add element type, size, and count as operands
-				operands.emplace_back(categoryToType(type_node.type()));  // element type
+				operands.emplace_back(type_node.type());  // element type
 				operands.emplace_back(size_in_bits);      // element size
 				operands.emplace_back(static_cast<unsigned long long>(array_count));
 			} else if (decl.is_unsized_array() && node.initializer().has_value()) {
@@ -1068,7 +1066,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 					array_count = init_list.initializers().size();
 					// Add the inferred size as an operand
-					operands.emplace_back(categoryToType(type_node.type()));  // element type
+					operands.emplace_back(type_node.type());  // element type
 					operands.emplace_back(size_in_bits);      // element size
 					operands.emplace_back(static_cast<unsigned long long>(array_count));
 				}
@@ -1467,7 +1465,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
-					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(TypeCategory::FunctionPointer);
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
@@ -1485,7 +1483,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
-					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(TypeCategory::FunctionPointer);
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
@@ -1619,14 +1617,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
-									Type from_t = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
-									const Type to_t = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
-									if (typeToCategory(from_t) != TypeCategory::Struct && typeToCategory(to_t) != TypeCategory::Struct) {
+									TypeCategory from_t = sema_->typeContext().get(cast_info.source_type_id).category();
+									const TypeCategory to_t = sema_->typeContext().get(cast_info.target_type_id).category();
+									if (from_t != TypeCategory::Struct && to_t != TypeCategory::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
-										if (typeToCategory(from_t) == TypeCategory::Enum && from_t != init_operands.typeEnum())
-											from_t = categoryToType(init_operands.typeEnum());
-										init_operands = generateTypeConversion(init_operands, typeToCategory(from_t), typeToCategory(to_t), decl.identifier_token());
+										if (from_t == TypeCategory::Enum && from_t != init_operands.typeEnum())
+											from_t = init_operands.typeEnum();
+										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
 										sema_applied = true;
 									}
 								}
@@ -1636,9 +1634,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								const TypeConversionResult conv =
 									can_convert_type(init_type, decl_type);
 								if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-									if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(init_type)) && is_standard_arithmetic_type(typeToCategory(decl_type)))
+									if (sema_normalized_current_function_ && is_standard_arithmetic_type(init_type) && is_standard_arithmetic_type(decl_type))
 										throw InternalError(std::string("Phase 15: sema missed variable init conversion (") + std::string(getTypeName(init_type)) + " -> " + std::string(getTypeName(decl_type)) + ")");
-									init_operands = generateTypeConversion(init_operands, typeToCategory(init_type), typeToCategory(decl_type), decl.identifier_token());
+									init_operands = generateTypeConversion(init_operands, init_type, decl_type, decl.identifier_token());
 								}
 							}
 						}
@@ -1693,7 +1691,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
-			decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(std::get<Type>(operands[7]), {});
+			decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(std::get<TypeCategory>(operands[7]), {});
 			decl_op.array_element_size = std::get<int>(operands[8]);
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 				decl_op.array_count = *ull_val;
@@ -1717,7 +1715,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 
 					// Extract element type/size once for both addr_op and metadata
-					const Type elem_type = std::get<Type>(operands[7]);
+					const TypeCategory elem_type = std::get<TypeCategory>(operands[7]);
 					const int  elem_size = std::get<int>(operands[8]);
 
 					// Build ArrayElementAddressOp
@@ -1738,7 +1736,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(addr_temp,
-						TempVarMetadata::makeAddressOnly(TypeIndex{0, typeToCategory(elem_type)}, SizeInBits{elem_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, elem_type}, SizeInBits{elem_size}, ValueCategory::LValue));
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
@@ -2233,7 +2231,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 											// Create TypedValue with the address
-											init_arg.type = categoryToType(init_type.type());
+											init_arg.type = init_type.type();
 											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
@@ -2556,7 +2554,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.operand.setType(typeToCategory(init_type));
+					addr_op.operand.setType(init_type);
 					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
@@ -2679,7 +2677,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark element_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(element_addr,
-						TempVarMetadata::makeAddressOnly(TypeIndex{0, typeToCategory(array_element_type)}, SizeInBits{array_element_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, array_element_type}, SizeInBits{array_element_size}, ValueCategory::LValue));
 
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
@@ -2722,7 +2720,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
 			return;  // Early return for array case
 
-		} else if (typeToCategory(init_type) != TypeCategory::Struct) {
+		} else if (init_type != TypeCategory::Struct) {
 			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
 			return;
 		}
@@ -2962,7 +2960,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						// Pass the hidden variable as argument
 						TypedValue arg;
-						arg.type = categoryToType(init_type);
+						arg.type = init_type;
 						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
@@ -2979,7 +2977,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						binding_var_decl.type_index = TypeIndex::fromCategory(element_type);
 						binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						TypedValue init_val3;
-						init_val3.type = categoryToType(element_type);  // TODO: remove when TypedValue::type is migrated to TypeCategory
+						init_val3.type = element_type;
 						init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						init_val3.value = result_temp;
 						init_val3.type_index = TypeIndex{element_type_index};
@@ -3111,7 +3109,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = categoryToType(member.memberType());
+				init_val.type = member.memberType();
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3144,7 +3142,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = categoryToType(member.memberType());
+				init_val2.type = member.memberType();
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

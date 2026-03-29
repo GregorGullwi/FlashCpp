@@ -1795,7 +1795,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if (carriesSemanticTypeIndex(typeToCategory(typed_value.type)) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
@@ -2056,7 +2056,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 
 			if (is_prefix) {
 				BinaryOp bin_op{
-					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
+					.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val),
 					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
@@ -2070,12 +2070,12 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				TempVar old_val = var_counter.next();
 				AssignmentOp save_op;
 				save_op.result = old_val;
-				save_op.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, old_val);
-				save_op.rhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val);
+				save_op.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, old_val);
+				save_op.rhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 
 				BinaryOp bin_op{
-					.lhs = makeTypedValue(categoryToType(elem_category), SizeInBits{elem_size}, loaded_val),
+					.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val),
 					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
@@ -2626,9 +2626,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		assign_op.rhs = toTypedValue(converted);
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 		// Take the address of the temporary and return it as the reference argument.
-		TempVar addr_var = emitAddressOf(typeToCategory(referred_type), ref_type_bits, IrValue(conv_temp), source_token);
+		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
-		result.type = categoryToType(referred_type);
+		result.type = referred_type;
 		result.ir_type = toIrType(referred_type);
 		result.size_in_bits = SizeInBits{64};
 		result.value = addr_var;
