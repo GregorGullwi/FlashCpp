@@ -235,7 +235,7 @@
 				});
 
 				// Capture return type info before moving call_op (use-after-move is UB)
-				Type lambda_return_type = call_op.returnType();
+				TypeCategory lambda_return_type = call_op.returnType();
 				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload

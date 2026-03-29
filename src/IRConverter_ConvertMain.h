@@ -24,7 +24,7 @@ private:
 		TypedValue result_value;
 		X64Register result_physical_reg;
 		X64Register rhs_physical_reg;
-		Type operand_type;  // Type of the operands (for comparisons, different from result_value.type)
+		TypeCategory operand_type;  // TypeCategory of the operands (for comparisons, different from result_value.type)
 		int operand_size_in_bits;  // Size of the operands (for comparisons, different from result_value.size_in_bits)
 	};
 
@@ -87,7 +87,7 @@ private:
 	// Handles both integer/pointer and floating-point types
 	// Returns the allocated register, or X64Register::Count on error
 	X64Register loadGlobalVariable(StringHandle var_handle, std::string_view var_name,
-	                                Type operand_type, int operand_size_in_bits,
+	                                TypeCategory operand_type, int operand_size_in_bits,
 	                                std::optional<X64Register> exclude_reg = std::nullopt);
 
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name);
@@ -1080,7 +1080,7 @@ private:
 	// Exception handling tracking
 	struct CatchHandler {
 		TypeIndex type_index;  // Type index for user-defined types
-		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
+		TypeCategory exception_type;   // TypeCategory for built-in types (Int, Double, etc.)
 		uint32_t handler_offset;  // Code offset of catch handler
 		uint32_t handler_end_offset;  // Code offset where catch handler ends
 		uint32_t funclet_entry_offset;  // Code offset of catch funclet entry

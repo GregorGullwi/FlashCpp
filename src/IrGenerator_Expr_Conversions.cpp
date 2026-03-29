@@ -1760,7 +1760,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	int result_size = call_op.return_size_in_bits.value;
 	TypeIndex result_type_index = call_op.return_type_index;
-	Type result_type = call_op.returnType();
+	TypeCategory result_type = call_op.returnType();
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
 	return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, ret_var, result_type_index, PointerDepth{}, ValueStorage::ContainsData);
 }
@@ -2387,7 +2387,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
 		//    Guard: pointer types (even float*/double*) are integer-width addresses
 		//    and must use TEST, not FloatNotEqual.
-		if (condition.pointer_depth.value == 0 && is_floating_point_type(typeToCategory(condition.typeEnum()))) {
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 			return emitFloatNonZeroTest(condition);
 		}
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
@@ -2483,7 +2483,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			arg_result.typeEnum() != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(arg_result.typeEnum())) && is_standard_arithmetic_type(typeToCategory(param_base_type)))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(typeToCategory(param_base_type)))
 					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
 				arg_result = generateTypeConversion(arg_result, arg_result.category(), typeToCategory(param_base_type), source_token);

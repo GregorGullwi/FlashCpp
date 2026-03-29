@@ -388,7 +388,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
-				TypeIndex{0, typeToCategory(argument_result.typeEnum())},
+				TypeIndex{0, argument_result.typeEnum()},
 				argument_result.size_in_bits,
 				category);
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
@@ -937,7 +937,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Phase 15: sema should annotate global/static assignment conversions.
 					if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), typeToCategory(gsi.bindingType())) &&
 						rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
-						if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhsExprResult.typeEnum())) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())))
+						if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(typeToCategory(gsi.bindingType())))
 							throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 						rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.category(), typeToCategory(gsi.bindingType()), binaryOperatorNode.get_token());
 					}
@@ -1021,19 +1021,19 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Phase 15: prefer sema annotation; log warning on fallback.
 					if (is_shift_op) {
 						// Reject float RHS before promotion to avoid unnecessary conversion work.
-						if (is_floating_point_type(typeToCategory(rhs_result.typeEnum())))
+						if (is_floating_point_type(rhs_result.typeEnum()))
 							throw CompileError("Shift compound assignment is not defined for floating-point operands (C++20 [expr.shift]/1)");
 						const TypeCategory promoted_rhs = promote_integer_type(rhs_result.category());
 						if (rhs_result.category() != promoted_rhs) {
 							if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs())) {
-								if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())))
+								if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.typeEnum()))
 								throw InternalError(std::string("Phase 15: sema missed shift RHS promotion (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(promoted_rhs)) + ")");
 								rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), promoted_rhs, binaryOperatorNode.get_token());
 							}
 						}
 					} else if (rhs_result.category() != commonType) {
 						if (!tryGlobalSemaConv(rhs_result, binaryOperatorNode.get_rhs(), commonType)) {
-							if (sema_normalized_current_function_ && is_standard_arithmetic_type(typeToCategory(rhs_result.typeEnum())) && is_standard_arithmetic_type(commonType))
+							if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhs_result.typeEnum()) && is_standard_arithmetic_type(commonType))
 							throw InternalError(std::string("Phase 15: sema missed compound assign global RHS (") + std::string(getTypeName(rhs_result.typeEnum())) + " -> " + std::string(getTypeName(commonType)) + ")");
 							rhs_result = generateTypeConversion(rhs_result, rhs_result.category(), commonType, binaryOperatorNode.get_token());
 						}

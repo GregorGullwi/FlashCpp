@@ -505,7 +505,7 @@ struct CallOp {
 	SizeInBits referenced_value_size_in_bits {}; // Referenced object size for T&/T&& returns
 	TypeIndex return_type_index {};      // TypeCategory embedded; replaces Type return_type
 
-	Type returnType() const { return categoryToType(return_type_index.category()); }
+	TypeCategory returnType() const { return return_type_index.category(); }
 	bool is_member_function = false;      // 1 byte
 	bool is_variadic = false;             // 1 byte
 	bool is_indirect_call = false;        // 1 byte - True if calling through function pointer/reference
@@ -586,14 +586,14 @@ struct ReturnOp {
 	TypeIndex return_type_index {};         // TypeCategory embedded; replaces optional<Type> return_type; category() != Invalid means non-void
 	int return_size = 0;                    // 4 bytes
 
-	Type returnType() const { return categoryToType(return_type_index.category()); }
+	TypeCategory returnType() const { return return_type_index.category(); }
 };
 
 // Array access (load element from array)
 struct ArrayAccessOp {
 	TempVar result;									// Result temp var
 	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
-	Type elementType() const { return categoryToType(element_type_index.category()); }
+	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -604,7 +604,7 @@ struct ArrayAccessOp {
 // Array store (store value to array element)
 struct ArrayStoreOp {
 	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
-	Type elementType() const { return categoryToType(element_type_index.category()); }
+	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -617,7 +617,7 @@ struct ArrayStoreOp {
 struct ArrayElementAddressOp {
 	TempVar result;									// Result temp var (pointer to element)
 	TypeIndex element_type_index {};				// Element type (TypeCategory embedded)
-	Type elementType() const { return categoryToType(element_type_index.category()); }
+	TypeCategory elementType() const { return element_type_index.category(); }
 	int element_size_in_bits = 0;					// Element size
 	std::variant<StringHandle, TempVar> array;		// Array (StringHandle for variables, TempVar for temporaries)
 	TypedValue index;								// Index value (type + value)
@@ -636,7 +636,7 @@ struct AddressOfMemberOp {
 	StringHandle base_object;						// Base object (variable name)
 	int member_offset = 0;							// Byte offset of member in struct
 	TypeIndex member_type_index {};					// Type of the member (TypeCategory embedded)
-	Type memberType() const { return categoryToType(member_type_index.category()); }
+	TypeCategory memberType() const { return member_type_index.category(); }
 	int member_size_in_bits = 0;					// Size of member
 };
 
@@ -652,7 +652,7 @@ struct ComputeAddressOp {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
 		SizeInBits element_size_bits;                // Size of array element
 		TypeIndex index_type_index {};               // Type of the index (for proper sign extension; TypeCategory embedded)
-		Type indexType() const { return categoryToType(index_type_index.category()); }
+		TypeCategory indexType() const { return index_type_index.category(); }
 		SizeInBits index_size_bits;                  // Size of the index in bits
 	};
 	std::vector<ArrayIndex> array_indices;
@@ -661,7 +661,7 @@ struct ComputeAddressOp {
 	int total_member_offset = 0;                     // Sum of all member offsets
 	
 	TypeIndex result_type_index {};                  // Type of final address (TypeCategory embedded)
-	Type resultType() const { return categoryToType(result_type_index.category()); }
+	TypeCategory resultType() const { return result_type_index.category(); }
 	SizeInBits result_size_bits;                            // Size in bits
 };
 
@@ -701,7 +701,7 @@ struct DestructorCallOp {
 struct VirtualCallOp {
 	TypedValue result;                               // Return value (type, size, and result temp var)
 	TypeIndex object_type_index {};                  // Type of the object (TypeCategory embedded)
-	Type objectType() const { return categoryToType(object_type_index.category()); }
+	TypeCategory objectType() const { return object_type_index.category(); }
 	int object_size;                                 // Size of object in bits
 	std::variant<StringHandle, TempVar> object;  // Object instance ('this')
 	int vtable_index;                                // Index into vtable
@@ -723,7 +723,7 @@ struct StackAllocOp {
 	std::variant<StringHandle, TempVar> result;  // Result variable
 	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	SizeInBits size_in_bits = SizeInBits{0};                             // Size in bits
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Assignment operation
@@ -756,7 +756,7 @@ struct FunctionParam {
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	CVQualifier cv_qualifier = CVQualifier::None;
 	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
-	Type paramType() const { return categoryToType(type_index.category()); }
+	TypeCategory paramType() const { return type_index.category(); }
 	
 	// Helper to get name as StringHandle
 	StringHandle getName() const {
@@ -774,7 +774,7 @@ struct FunctionDeclOp {
 	PointerDepth return_pointer_depth = PointerDepth{};
 	TypeIndex return_type_index {};  // TypeCategory embedded; replaces Type return_type
 
-	Type returnType() const { return categoryToType(return_type_index.category()); }
+	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference = false;   // True if function returns a reference (T& or T&&)
 	bool returns_rvalue_reference = false;  // True if function returns an rvalue reference (T&&)
 	StringHandle function_name;  // Pure StringHandle
@@ -840,7 +840,7 @@ struct ConversionOp {
 	TypeIndex to_type_index {};  // TypeCategory embedded; replaces Type to_type
 	int to_size = 0;     // 4 bytes
 	TempVar result;      // 4 bytes
-	Type toType() const { return categoryToType(to_type_index.category()); }
+	TypeCategory toType() const { return to_type_index.category(); }
 };
 
 // Global variable load
@@ -895,7 +895,7 @@ struct VariableDeclOp {
 	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == CVReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == CVReferenceQualifier::LValueReference; }
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Global variable declaration
@@ -913,7 +913,7 @@ struct GlobalVariableDeclOp {
 	StringHandle getVarName() const {
 		return var_name;
 	}
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Heap allocation (new operator)
@@ -922,7 +922,7 @@ struct HeapAllocOp {
 	TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Heap array allocation (new[] operator)
@@ -933,7 +933,7 @@ struct HeapAllocArrayOp {
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue count;               // Array element count (TempVar or constant)
 	bool needs_cookie = false;   // If true, prepend 8-byte count cookie; result points past cookie
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Heap free (delete operator)
@@ -954,7 +954,7 @@ struct PlacementNewOp {
 	int size_in_bytes = 0;
 	PointerDepth pointer_depth = PointerDepth{};
 	IrValue address;             // Placement address (TempVar, string_view, or constant)
-	Type opType() const { return categoryToType(type_index.category()); }
+	TypeCategory opType() const { return type_index.category(); }
 };
 
 // Type conversion operations (FloatToInt, IntToFloat, FloatToFloat)
@@ -963,7 +963,7 @@ struct TypeConversionOp {
 	TypedValue from;             // Source value with type information
 	TypeIndex to_type_index {};  // TypeCategory embedded; replaces Type to_type
 	SizeInBits to_size_in_bits;     // Target size
-	Type toType() const { return categoryToType(to_type_index.category()); }
+	TypeCategory toType() const { return to_type_index.category(); }
 };
 
 // RTTI: typeid operation
@@ -992,7 +992,7 @@ struct IndirectCallOp {
 struct CatchBeginOp {
 	TempVar exception_temp;       // Temporary holding the exception object
 	TypeIndex type_index;         // Type index for user-defined types
-	Type exceptionType() const { return categoryToType(type_index.category()); }
+	TypeCategory exceptionType() const { return type_index.category(); }
 	std::string_view catch_end_label;  // Label to jump to if not matched
 	std::string_view continuation_label;  // Parent-function continuation label after catch completes
 	bool is_const;                // True if caught by const
@@ -1028,7 +1028,7 @@ struct ElfCatchNoMatchOp {};
 // Throw exception operation
 struct ThrowOp {
 	TypeIndex type_index;         // Type of exception being thrown
-	Type exceptionType() const { return categoryToType(type_index.category()); }
+	TypeCategory exceptionType() const { return type_index.category(); }
 	size_t size_in_bytes;         // Size of exception object in bytes
 	IrValue exception_value;      // Value to throw (TempVar, unsigned long long, double, or StringHandle)
 	bool is_rvalue;               // True if throwing an rvalue (can be moved)
