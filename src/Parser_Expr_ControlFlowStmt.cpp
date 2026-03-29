@@ -1125,7 +1125,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 				TypeInfo::TemplateArgInfo info;
 				if (subst.is_value_param) {
-					info.type_index = TypeIndex{0, typeToCategory(subst.value_type)};
+					info.type_index = TypeIndex{0, subst.value_type};
 					info.value = subst.value;
 					info.is_value = true;
 				} else if (subst.is_type_param) {
@@ -1185,7 +1185,7 @@ ParseResult Parser::parse_lambda_expression() {
                 StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
-                    Type::Void,         // Base type (will be treated as pointer)
+                    TypeCategory::Void,         // Base type (will be treated as pointer)
                     TypeIndex{},        // No type index
                     8,                  // Pointer size on x64
                     8,                  // Alignment
@@ -1212,7 +1212,7 @@ ParseResult Parser::parse_lambda_expression() {
                             StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
                                 copy_this_member_handle,            // Special member name for copied this
-                                Type::Struct,                       // Struct type
+                                TypeCategory::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
                                 enclosing_struct->alignment,        // Alignment from enclosing struct
@@ -1285,7 +1285,7 @@ ParseResult Parser::parse_lambda_expression() {
             // Determine size and alignment based on capture kind
             size_t member_size;
             size_t member_alignment;
-            Type member_type;
+            TypeCategory member_type_cat;
             TypeIndex type_index {};
 
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
@@ -1293,7 +1293,7 @@ ParseResult Parser::parse_lambda_expression() {
 				// We store the base type (e.g., Int) but the member will be accessed as a pointer
 				member_size = 8;
 				member_alignment = 8;
-				member_type = categoryToType(var_type.type());
+				member_type_cat = var_type.type();
 				if (var_type.category() == TypeCategory::Struct) {
 					type_index = var_type.type_index();
 				}
@@ -1301,7 +1301,7 @@ ParseResult Parser::parse_lambda_expression() {
                 // By-value capture: store the actual value
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
-                member_type = categoryToType(var_type.type());
+                member_type_cat = var_type.type();
                 if (var_type.category() == TypeCategory::Struct) {
                     type_index = var_type.type_index();
                 }
@@ -1328,7 +1328,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 			closure_struct_info->addMember(
 				var_name,
-				member_type,
+				member_type_cat,
 				type_index,
 				member_size,
 				member_alignment,

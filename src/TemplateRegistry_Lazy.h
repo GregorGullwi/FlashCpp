@@ -357,7 +357,7 @@ struct LazyTypeAliasInfo {
 	bool needs_substitution = true;                // True if target contains template parameters
 	bool is_evaluated = false;                     // True once evaluation has been performed
 	// Cached evaluation result (to avoid re-computation)
-	Type evaluated_type = Type::Invalid;
+	TypeCategory evaluated_type = TypeCategory::Invalid;
 	TypeIndex evaluated_type_index {};
 };
 
@@ -411,7 +411,7 @@ public:
 	// Mark a type alias as evaluated and cache the result
 	// Returns true if the alias was found and marked, false if not registered
 	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
-	                   Type result_type, TypeIndex result_type_index) {
+	                   TypeCategory result_type, TypeIndex result_type_index) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end()) {
@@ -426,12 +426,12 @@ public:
 	}
 	
 	// Get cached evaluation result (only valid if is_evaluated is true)
-	std::optional<std::pair<Type, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
+	std::optional<std::pair<TypeCategory, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
 	                                                           StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
-			return std::pair<Type, TypeIndex>{it->second.evaluated_type, it->second.evaluated_type_index};
+			return std::pair<TypeCategory, TypeIndex>{it->second.evaluated_type, it->second.evaluated_type_index};
 		}
 		return std::nullopt;
 	}
@@ -1197,7 +1197,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-		type_arg.type_index = TypeIndex::fromTypeAndIndex(categoryToType(type_it->second->category_), type_it->second->type_index_);
+		type_arg.type_index = TypeIndex::fromTypeAndIndex(type_it->second->category_, type_it->second->type_index_);
 								concept_args.push_back(type_arg);
 							}
 						}

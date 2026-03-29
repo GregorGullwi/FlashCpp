@@ -136,7 +136,7 @@
 
 	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
-		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
+		auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
 			result.category_ = typeToCategory(type);
 			result.ir_type = toIrType(type);
@@ -167,7 +167,7 @@
 				// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
 
 				const StructMember* member = member_multi_dim.member_info;
-				Type element_type = member->memberType();
+				TypeCategory element_type = member->memberType();
 				int base_element_size = get_type_size_bits(element_type);
 
 				// Get all dimension sizes
@@ -270,7 +270,7 @@
 				// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
 
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
-				Type element_type = type_node.type();
+				TypeCategory element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
 				TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
 
@@ -431,7 +431,7 @@
 									ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 									// Get element type and size from the member
-									Type element_type = member->memberType();
+									TypeCategory element_type = member->memberType();
 									int element_size_bits = static_cast<int>(member->size * 8);
 
 									// Use array_dimensions to compute actual element size
@@ -512,7 +512,7 @@
 		ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
-		Type element_type = array_result.typeEnum();
+		TypeCategory element_type = array_result.typeEnum();
 		int element_size_bits = array_result.size_in_bits.value;
 
 		// Check if this is a pointer type (e.g., int* arr)
@@ -717,9 +717,9 @@
 		}
 
 		// Set index as TypedValue
-		Type index_type = index_result.typeEnum();
+		TypeCategory index_type = index_result.typeEnum();
 		int index_size = index_result.size_in_bits.value;
-		payload.index.type = index_type;
+		payload.index.type = categoryToType(index_type);
 		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
@@ -1885,7 +1885,7 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.typeEnum();
+			TypeCategory expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
@@ -1996,7 +1996,7 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.typeEnum();
+			TypeCategory expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
@@ -2154,7 +2154,7 @@
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		Type type = type_spec.type();
+		TypeCategory type = type_spec.type();
 		const TypeCategory type_category = type_spec.category();
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
@@ -3556,7 +3556,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 				const auto& return_type_node = decl_node.type_node();
 				if (return_type_node.is<TypeSpecifierNode>()) {
 					const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-					Type resolved_type = type_spec.type();
+					TypeCategory resolved_type = type_spec.type();
 
 					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 					// This handles cases like `operator value_type()` where `using value_type = T;`

@@ -65,7 +65,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							std::string_view orig_name = param_decl.identifier_token().value();
 							for (size_t pi = 0; pi < pack_size; ++pi) {
 								const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-								Type elem_type = elem.typeEnum();
+								TypeCategory elem_type = elem.typeEnum();
 								TypeIndex elem_type_index = elem.type_index;
 								TypeSpecifierNode sub_type(
 									elem_type, param_type_spec.qualifier(),
@@ -311,8 +311,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
-	auto resolve_self_type = [&lazy_info](Type& type, TypeIndex& type_index) {
-		if (typeToCategory(type) == TypeCategory::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	auto resolve_self_type = [&lazy_info](TypeCategory& type, TypeIndex& type_index) {
+		if (type == TypeCategory::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 			if (getTypeInfo(type_index).name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
 				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
@@ -391,7 +391,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						std::string_view orig_name = param_decl.identifier_token().value();
 						for (size_t pi = 0; pi < pack_size; ++pi) {
 							const TemplateTypeArg& elem = lazy_info.template_args[non_variadic + pi];
-							Type elem_type = elem.typeEnum();
+							TypeCategory elem_type = elem.typeEnum();
 							TypeIndex elem_type_index = elem.type_index;
 							TypeSpecifierNode sub_type(
 								elem_type, param_type_spec.qualifier(),
@@ -993,7 +993,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 
 // Phase 3: Evaluate a lazy type alias on-demand
 // Returns the evaluated type and type index, or nullopt if not found/failed
-std::optional<std::pair<Type, TypeIndex>> Parser::evaluateLazyTypeAlias(
+std::optional<std::pair<TypeCategory, TypeIndex>> Parser::evaluateLazyTypeAlias(
 	StringHandle instantiated_class_name, StringHandle member_name) {
 	
 	auto& registry = LazyTypeAliasRegistry::getInstance();

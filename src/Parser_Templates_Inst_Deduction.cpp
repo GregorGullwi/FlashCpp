@@ -141,7 +141,7 @@ void Parser::populateTemplateParamSubstitutions(
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
-			subst.value_type = categoryToType(arg.typeEnum());
+			subst.value_type = arg.typeEnum();
 		} else {
 			subst.is_value_param = false;
 			subst.is_type_param = true;
@@ -175,7 +175,7 @@ void Parser::populateTemplateParamSubstitutions(
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;
-			subst.value_type = categoryToType(arg.typeEnum());
+			subst.value_type = arg.typeEnum();
 		} else {
 			subst.is_value_param = false;
 			subst.is_type_param = true;
@@ -1939,13 +1939,13 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// arg_type_index here would be incorrect after a variadic pack
 					// expansion, since arg_type_index advances through multiple arg slots
 					// for a single function parameter, breaking the correspondence.
-					if (typeToCategory(subst_type) == TypeCategory::UserDefined &&
+					if (subst_type == TypeCategory::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
 					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
 					    i < arg_types.size() &&
 					    arg_types[i].category() == TypeCategory::Struct) {
-						subst_type = Type::Struct;
+						subst_type = TypeCategory::Struct;
 						subst_type_index = arg_types[i].type_index();
 						FLASH_LOG_FORMAT(Templates, Debug,
 							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",

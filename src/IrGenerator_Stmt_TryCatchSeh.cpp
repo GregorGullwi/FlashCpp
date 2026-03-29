@@ -127,7 +127,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
-					init_value.type = type_node.type();
+					init_value.type = categoryToType(type_node.type());
 					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					init_value.type_index = type_index;
 					init_value.value = exception_temp;
@@ -229,7 +229,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			// Generate code for the expression to throw
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
-			Type expr_type = expr_result.typeEnum();
+			TypeCategory expr_type = expr_result.typeEnum();
 			size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
 			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
@@ -277,7 +277,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
 
 					TypedValue materialized_init;
-					materialized_init.type = expr_type;
+					materialized_init.type = categoryToType(expr_type);
 					materialized_init.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_init.value = exception_value;
 					materialized_init.type_index = exception_type_index;

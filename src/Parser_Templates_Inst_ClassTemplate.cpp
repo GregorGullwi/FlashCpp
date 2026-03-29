@@ -15,7 +15,7 @@
 static StringHandle computeInstantiatedLookupName(
 	StringHandle original_name,
 	OverloadableOperator op_kind,
-	Type substituted_return_type,
+	TypeCategory substituted_return_type,
 	TypeIndex substituted_return_type_index)
 {
 	if (op_kind == OverloadableOperator::None) {
@@ -404,12 +404,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituteTemplateParameters(default_init.value(), params, args);
 	};
 
-	auto get_substituted_type_size_bytes = [&](Type substituted_type, TypeIndex substituted_type_index) -> size_t {
+	auto get_substituted_type_size_bytes = [&](TypeCategory substituted_type, TypeIndex substituted_type_index) -> size_t {
 		if (substituted_type_index.is_valid()) {
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == substituted_type_index) {
-					if (typeToCategory(substituted_type) == TypeCategory::Struct) {
+					if (substituted_type == TypeCategory::Struct) {
 						if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
 							return struct_info->total_size;
 						}
@@ -424,7 +424,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		return get_type_size_bits(substituted_type) / 8;
 	};
-	auto get_substituted_type_size_bits = [&](Type substituted_type, TypeIndex substituted_type_index) -> int {
+	auto get_substituted_type_size_bits = [&](TypeCategory substituted_type, TypeIndex substituted_type_index) -> int {
 		return static_cast<int>(get_substituted_type_size_bytes(substituted_type, substituted_type_index) * 8);
 	};
 
@@ -474,7 +474,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
 						const TemplateTypeArg& elem = tmpl_args[non_variadic + pi];
-						Type elem_type = elem.typeEnum();
+						TypeCategory elem_type = elem.typeEnum();
 						TypeIndex elem_type_index = elem.type_index;
 						TypeSpecifierNode sub_type(
 							elem_type, param_type_spec.qualifier(),
@@ -655,11 +655,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const TypeInfo* resolved_type_info = resolved_type_it->second;
 		
 		// Get the resolved type, following aliases if needed
-		Type resolved_base_type = resolved_type_info->resolvedType();
+		TypeCategory resolved_base_type = resolved_type_info->resolvedType();
 		TypeIndex resolved_type_index = resolved_type_info->type_index_;
 		
 		// Check if this is an alias to a concrete type
-		if (typeToCategory(resolved_type_info->resolvedType()) == TypeCategory::UserDefined && 
+		if (resolved_type_info->resolvedType() == TypeCategory::UserDefined && 
 		    resolved_type_index != resolved_type_info->type_index_ && 
 		    resolved_type_index.index() < getTypeInfoCount()) {
 			// Follow the alias
@@ -1441,7 +1441,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				// Pointers and references are always 8 bytes (64-bit)
 				member_size = 8;
-			} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+			} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -1467,7 +1467,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t member_alignment;
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_alignment = 8;  // Pointer/reference alignment on x64
-			} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+			} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual alignment from gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -2129,7 +2129,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// For partial specializations, we may need to substitute template parameters
 			// For example, if pattern has "using type = T;" and we're instantiating with int,
 			// we need to substitute T -> int
-			Type substituted_type = alias_type_spec.type();
+			TypeCategory substituted_type = alias_type_spec.type();
 			TypeIndex substituted_type_index = alias_type_spec.type_index();
 			int substituted_size = alias_type_spec.size_in_bits();
 			
@@ -2172,7 +2172,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									substituted_type = concrete_arg.typeEnum();
 									substituted_type_index = concrete_arg.type_index;
 									// Only call get_type_size_bits for basic types
-									if (!is_struct_type(typeToCategory(substituted_type))) {
+									if (!is_struct_type(substituted_type)) {
 										substituted_size = static_cast<unsigned char>(get_type_size_bits(substituted_type));
 									} else {
 										// For UserDefined types, look up the size from the type registry
@@ -2204,7 +2204,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// If this alias refers to an unscoped enum, track its TypeIndex so that
 			// Struct::Enumerator qualified access (e.g. Tagged<int>::None) works in codegen.
-			if (typeToCategory(substituted_type) == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
+			if (substituted_type == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 				const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo();
 				if (enum_info && !enum_info->is_scoped) {
 					struct_info->addNestedEnumIndex(substituted_type_index);
@@ -2374,7 +2374,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// instantiation arguments.
 					FlashCpp::TemplateParameterScope template_scope;
 					for (const auto& [param_name, deduced_arg] : deduced_args) {
-						Type concrete_type = deduced_arg.typeEnum();
+						TypeCategory concrete_type = deduced_arg.typeEnum();
 						auto& type_info = add_template_param_type(StringTable::getOrInternStringHandle(param_name), concrete_type, get_type_size_bits(concrete_type));
 						type_info.reference_qualifier_ = deduced_arg.is_rvalue_reference() ? ReferenceQualifier::RValueReference
 							: (deduced_arg.is_lvalue_reference() ? ReferenceQualifier::LValueReference : ReferenceQualifier::None);
@@ -3218,11 +3218,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Resolve dependent type arguments
 				if (arg_info.node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_info.node.as<TypeSpecifierNode>();
-					Type resolved_type = type_spec.type();
+					TypeCategory resolved_type = type_spec.type();
 					TypeIndex resolved_index = type_spec.type_index();
 					bool resolved = false;
 					
-					if ((is_struct_type(typeToCategory(resolved_type))) && resolved_index.index() < getTypeInfoCount()) {
+					if ((is_struct_type(resolved_type)) && resolved_index.index() < getTypeInfoCount()) {
 						std::string_view type_name = StringTable::getStringView(getTypeInfo(resolved_index).name());
 						auto subst_it = name_substitution_map.find(type_name);
 						if (subst_it != name_substitution_map.end()) {
@@ -3250,7 +3250,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
-									inst_arg.type_index = TypeIndex::fromTypeAndIndex(Type::Struct, inst_it->second->type_index_);
+									inst_arg.type_index = TypeIndex::fromTypeAndIndex(TypeCategory::Struct, inst_it->second->type_index_);
 									inst_arg.pointer_depth = type_spec.pointer_depth();
 									inst_arg.ref_qualifier = type_spec.reference_qualifier();
 									inst_arg.cv_qualifier = type_spec.cv_qualifier();
@@ -3316,12 +3316,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
 							
 							// Check if the type needs substitution
-							Type base_type = type_spec.type();
+							TypeCategory base_type = type_spec.type();
 							TypeIndex type_idx = type_spec.type_index();
 							[[maybe_unused]] bool substituted = false;
 							TypeSpecifierNode substituted_type_spec = type_spec;
 							
-							if ((is_struct_type(typeToCategory(base_type))) && type_idx.index() < getTypeInfoCount()) {
+							if ((is_struct_type(base_type)) && type_idx.index() < getTypeInfoCount()) {
 								std::string_view type_name = StringTable::getStringView(getTypeInfo(type_idx).name());
 								auto subst_it = name_substitution_map.find(type_name);
 								if (subst_it != name_substitution_map.end()) {
@@ -3622,11 +3622,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& base_type_spec = *type_spec_opt;
 				
 				// Get the type information from the evaluated expression
-				Type base_type = base_type_spec.type();
+				TypeCategory base_type = base_type_spec.type();
 				TypeIndex base_type_index = base_type_spec.type_index();
 				
 				// Look up the base class type by its type index
-				if (typeToCategory(base_type) == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
+				if (base_type == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 					std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 					
@@ -3646,11 +3646,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const TypeSpecifierNode& base_type_spec = deferred_base.decltype_expression.as<TypeSpecifierNode>();
 			
 			// Get the type information from the decltype expression
-			Type base_type = base_type_spec.type();
+			TypeCategory base_type = base_type_spec.type();
 			TypeIndex base_type_index = base_type_spec.type_index();
 			
 			// Look up the base class type by its type index
-			if (typeToCategory(base_type) == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
+			if (base_type == TypeCategory::Struct && base_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& base_type_info = getTypeInfo(base_type_index);
 				std::string_view base_class_name = StringTable::getStringView(base_type_info.name());
 				
@@ -3682,7 +3682,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		//   template<typename T> struct TD { TC<T> c; }; 
 		// where TC<T> is stored as a dependent placeholder with Type::UserDefined.
 		// We need to instantiate TC with the concrete args when instantiating TD.
-		if ((is_struct_type(typeToCategory(member_type))) && member_type_index.index() < getTypeInfoCount()) {
+		if ((is_struct_type(member_type)) && member_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
 			
@@ -3734,7 +3734,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// but gTypeInfo correctly stores them as Type::Struct. Synchronize member_type.
 		if (member_type_index.index() < getTypeInfoCount() && member_type_index.is_valid()) {
 			const TypeInfo& member_type_info = getTypeInfo(member_type_index);
-			if (member_type_info.getStructInfo() && typeToCategory(member_type) == TypeCategory::UserDefined) {
+			if (member_type_info.getStructInfo() && member_type == TypeCategory::UserDefined) {
 				// Fix Type::UserDefined to Type::Struct for instantiated templates
 				member_type = member_type_info.typeEnum();
 			}
@@ -3835,7 +3835,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Compute per-element size, looking up struct sizes from gTypeInfo
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+			} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -3917,7 +3917,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			size_t element_size;
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				element_size = 8;
-			} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+			} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -3939,7 +3939,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
 			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+			} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -3969,7 +3969,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		size_t member_alignment;
 		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_alignment = 8;  // Pointer/reference alignment on x64
-		} else if (typeToCategory(member_type) == TypeCategory::Struct && member_type_index.is_valid()) {
+		} else if (member_type == TypeCategory::Struct && member_type_index.is_valid()) {
 			// For struct types, look up the actual alignment from gTypeInfo
 			const TypeInfo* member_struct_info = nullptr;
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -4591,7 +4591,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					size_t element_size;
 					if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 						element_size = 8;
-					} else if (typeToCategory(substituted_type) == TypeCategory::Struct && substituted_type_index.is_valid()) {
+					} else if (substituted_type == TypeCategory::Struct && substituted_type_index.is_valid()) {
 						const TypeInfo* member_struct_info = nullptr;
 						for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -4611,7 +4611,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					member_size = element_size * total_elements;
 				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_size = 8;
-				} else if (typeToCategory(substituted_type) == TypeCategory::Struct && substituted_type_index.is_valid()) {
+				} else if (substituted_type == TypeCategory::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -4631,7 +4631,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				size_t member_alignment;
 				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_alignment = 8;
-				} else if (typeToCategory(substituted_type) == TypeCategory::Struct && substituted_type_index.is_valid()) {
+				} else if (substituted_type == TypeCategory::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -4903,13 +4903,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		
 		// Create a substituted type specifier
-		Type substituted_type = alias_type_spec.type();
+		TypeCategory substituted_type = alias_type_spec.type();
 		TypeIndex substituted_type_index = alias_type_spec.type_index();
 		int substituted_size = alias_type_spec.size_in_bits();
 		
 		// Substitute template parameters in the alias type
 		// Handle both UserDefined and Struct types (template types are often registered as Struct)
-		if (is_struct_type(typeToCategory(substituted_type))) {
+		if (is_struct_type(substituted_type)) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_idx);
@@ -4945,7 +4945,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		
 		// Register the type alias in getTypesByNameMap()
 		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, substituted_type, TypeIndex{substituted_type_index}, substituted_size);
-		if (typeToCategory(substituted_type) == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
+		if (substituted_type == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 			if (const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo()) {
 				alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 			}
@@ -4959,7 +4959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// If this alias refers to an unscoped enum, track its TypeIndex so that
 		// Struct::Enumerator qualified access works in codegen.
-		if (typeToCategory(substituted_type) == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
+		if (substituted_type == TypeCategory::Enum && substituted_type_index.index() < getTypeInfoCount()) {
 			const EnumTypeInfo* enum_info = getTypeInfo(substituted_type_index).getEnumInfo();
 			if (enum_info && !enum_info->is_scoped) {
 				struct_info->addNestedEnumIndex(substituted_type_index);
@@ -5134,13 +5134,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-				Type return_type = return_type_spec.type();
+				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
 				
 				// First, check if the return type is a type alias defined in this template class
 				// (e.g., "operator value_type()" where "using value_type = T;")
 				// This is needed because substitute_template_parameter doesn't have access to type aliases
-				if (typeToCategory(return_type) == TypeCategory::UserDefined && !return_type_index.is_valid()) {
+				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
 					// type_index=0 means this is a placeholder (type parsed inside template before registration)
 					// Try to find the type name from the token
 					std::string_view return_type_name = return_type_spec.token().value();
@@ -5157,7 +5157,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
 									);
-									if (typeToCategory(subst_type) != TypeCategory::UserDefined || subst_index.is_valid()) {
+									if (subst_type != TypeCategory::UserDefined || subst_index.is_valid()) {
 										return_type = subst_type;
 										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
@@ -5171,7 +5171,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				
 				// If not resolved via type alias, try normal substitution
-				if (typeToCategory(return_type) == TypeCategory::UserDefined) {
+				if (return_type == TypeCategory::UserDefined) {
 					auto [subst_type, subst_index] = substitute_template_parameter(
 						return_type_spec, template_params, template_args_to_use
 					);
@@ -5558,12 +5558,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
-				Type return_type = return_type_spec.type();
+				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
 				
 				// First, check if the return type is a type alias defined in this template class
 				// (e.g., "operator value_type()" where "using value_type = T;")
-				if (typeToCategory(return_type) == TypeCategory::UserDefined && !return_type_index.is_valid()) {
+				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
 					// type_index=0 means this is a placeholder (type parsed inside template before registration)
 					std::string_view return_type_name = return_type_spec.token().value();
 					if (!return_type_name.empty()) {
@@ -5578,7 +5578,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									auto [subst_type, subst_index] = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use
 									);
-									if (typeToCategory(subst_type) != TypeCategory::UserDefined || subst_index.is_valid()) {
+									if (subst_type != TypeCategory::UserDefined || subst_index.is_valid()) {
 										return_type = subst_type;
 										return_type_index = TypeIndex{subst_index};
 										FLASH_LOG(Templates, Debug, "Resolved return type alias '", return_type_name, 
@@ -5592,7 +5592,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				
 				// If not resolved via type alias, try normal substitution
-				if (typeToCategory(return_type) == TypeCategory::UserDefined) {
+				if (return_type == TypeCategory::UserDefined) {
 					auto [subst_type, subst_index] = substitute_template_parameter(
 						return_type_spec, template_params, template_args_to_use
 					);
@@ -5908,11 +5908,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
 						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 						
-						Type new_param_type = param_type_spec.type();
+						TypeCategory new_param_type = param_type_spec.type();
 						TypeIndex new_param_type_index = param_type_spec.type_index();
 						
 						// Only substitute UserDefined types (not Auto, which is inner template)
-						if (typeToCategory(new_param_type) == TypeCategory::UserDefined) {
+						if (new_param_type == TypeCategory::UserDefined) {
 							auto [subst_type, subst_idx] = substitute_template_parameter(
 								param_type_spec, template_params, template_args_to_use);
 							new_param_type = subst_type;

@@ -885,7 +885,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		
-		Type member_type = type_spec.type();
+		TypeCategory member_type = type_spec.type();
 		TypeIndex member_type_index = type_spec.type_index();
 		size_t ptr_depth = type_spec.pointer_depth();
 		
@@ -1063,7 +1063,7 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 		if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
 			if (i < args.size() && args[i].is_value) {
 				int64_t val = args[i].value;
-				Type val_type = args[i].typeEnum();
+				TypeCategory val_type = args[i].typeEnum();
 				StringBuilder value_str;
 				value_str.append(val);
 				std::string_view value_view = value_str.commit();

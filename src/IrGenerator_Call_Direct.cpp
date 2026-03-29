@@ -46,7 +46,7 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 }
 
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
-static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
+static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, TypeCategory member_type) {
 	if (typeToCategory(member_type) == TypeCategory::Float) {
 		float fval = static_cast<float>(r.as_double());
 		uint32_t fbits = 0;
@@ -175,7 +175,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 									int operand_size = 32;
 									if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
 										const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
-										operand_type = type.type();
+										operand_type = categoryToType(type.type());
 										operand_size = static_cast<int>(type.size_in_bits());
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
@@ -242,7 +242,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				functionCallNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
-					Type arg_type = argumentIrOperands.typeEnum();
+					TypeCategory arg_type = argumentIrOperands.typeEnum();
 					int arg_size = argumentIrOperands.size_in_bits.value;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
@@ -408,7 +408,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						} else {
 							// Normal argument - visit the expression
 							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							Type arg_type = argumentIrOperands.typeEnum();
+							TypeCategory arg_type = argumentIrOperands.typeEnum();
 							int arg_size = argumentIrOperands.size_in_bits.value;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
@@ -968,7 +968,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Materialize the constant result into an ExprResult without emitting a call instruction.
 			const TypeSpecifierNode& ret_spec =
 				matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
-			const Type ret_type = ret_spec.type();
+			const TypeCategory ret_type = ret_spec.type();
 			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
@@ -987,7 +987,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
-					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
+					eval_result, ret_spec, categoryToType(ret_type), ret_size, functionCallNode.called_from());
 				if (agg.category() != TypeCategory::Void) return agg;
 			}
 
@@ -1132,8 +1132,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type && !materialized_selected_ctor) {
-				Type arg_type = argumentIrOperands.typeEnum();
-				Type param_base_type = param_type->type();
+				TypeCategory arg_type = argumentIrOperands.typeEnum();
+				TypeCategory param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
 
@@ -1175,7 +1175,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
 							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
-								from_type = argumentIrOperands.typeEnum();
+								from_type = categoryToType(argumentIrOperands.typeEnum());
 							argumentIrOperands = generateTypeConversion(argumentIrOperands, typeToCategory(from_type), typeToCategory(to_type), functionCallNode.called_from());
 							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;
@@ -1395,7 +1395,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
-						Type literal_type = argumentIrOperands.typeEnum();
+						TypeCategory literal_type = argumentIrOperands.typeEnum();
 						int literal_size = argumentIrOperands.size_in_bits.value;
 
 						// Create a temporary variable to hold the literal value
@@ -1429,7 +1429,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-							Type expr_type = argumentIrOperands.typeEnum();
+							TypeCategory expr_type = argumentIrOperands.typeEnum();
 							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 
@@ -1518,7 +1518,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
 				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
 				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-					this_type = parent_it->second->typeEnum();
+					this_type = categoryToType(parent_it->second->typeEnum());
 					this_type_index = parent_it->second->type_index_;
 				}
 			}

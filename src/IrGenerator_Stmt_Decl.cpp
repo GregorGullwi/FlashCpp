@@ -323,7 +323,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 				}
 			};
-			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, Type member_type) -> unsigned long long {
+			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, TypeCategory member_type) -> unsigned long long {
 				const TypeCategory member_cat = typeToCategory(member_type);
 				if (member_cat == TypeCategory::Float) {
 					float fval = static_cast<float>(r.as_double());
@@ -447,7 +447,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			};
 
 			// Helper to evaluate a constexpr and get the raw value
-			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+			auto evalToValue = [&](const ASTNode& expr, TypeCategory target_type) -> unsigned long long {
 				auto ctx = makeStaticStorageEvalContext();
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 
@@ -920,7 +920,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				StaticLocalInfo info;
 				info.mangled_name = var_name;  // Phase 4: Using StringHandle directly
 				info.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
+				TypeCategory semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
 				info.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), carriesSemanticTypeIndex(typeToCategory(semantic_type)) ? type_node.type_index() : TypeIndex{});
 				// Phase 4: Using StringHandle for key
 				StringHandle key = decl.identifier_token().handle();
@@ -1529,7 +1529,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
-						Type init_type = init_operands.typeEnum();
+						TypeCategory init_type = init_operands.typeEnum();
 						TypeIndex init_type_index = init_operands.type_index;
 						const TypeCategory init_cat = init_operands.category();
 						const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
@@ -1591,8 +1591,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// info); then fall back to can_convert_type for types the sema pass couldn't
 					// infer (e.g., complex sub-expressions or function-call result values).
 					{
-						Type init_type  = init_operands.typeEnum();
-						const Type decl_type  = type_node.type();
+						TypeCategory init_type  = init_operands.typeEnum();
+						const TypeCategory decl_type  = type_node.type();
 						TypeCategory init_cat = init_operands.category();
 						const TypeCategory decl_cat = type_node.category();
 						// Resolve enum to underlying type for conversion purposes.
@@ -1603,7 +1603,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// consistent fromType (avoiding Enum vs Int mismatch in the operands).
 						if (init_cat == TypeCategory::Enum) {
 							init_cat = resolveEnumUnderlyingTypeCategory(init_cat, init_operands.type_index);
-							init_type = categoryToType(init_cat);
+							init_type = init_cat;
 							init_operands.category_ = init_cat;
 						}
 						if (init_type != decl_type
@@ -1625,7 +1625,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
 										if (typeToCategory(from_t) == TypeCategory::Enum && from_t != init_operands.typeEnum())
-											from_t = init_operands.typeEnum();
+											from_t = categoryToType(init_operands.typeEnum());
 										init_operands = generateTypeConversion(init_operands, typeToCategory(from_t), typeToCategory(to_t), decl.identifier_token());
 										sema_applied = true;
 									}
@@ -2067,7 +2067,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
 							{
-								Type init_type = init_operands.typeEnum();
+								TypeCategory init_type = init_operands.typeEnum();
 								TypeIndex init_type_index {};
 								const TypeCategory init_cat = init_operands.category();
 								if (init_operands.type_index.is_valid()) {
@@ -2233,7 +2233,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 											// Create TypedValue with the address
-											init_arg.type = init_type.type();
+											init_arg.type = categoryToType(init_type.type());
 											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
@@ -2441,7 +2441,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		ExprResult init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
 
 		// Extract initializer type information
-		Type init_type = init_operands.typeEnum();
+		TypeCategory init_type = init_operands.typeEnum();
 		int init_size = init_operands.size_in_bits.value;
 		TypeIndex init_type_index {};
 
@@ -2462,7 +2462,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 2: Determine if initializer is an array by checking the symbol table
 		bool is_array = false;
 		size_t array_size = 0;
-		Type array_element_type = init_type;
+		TypeCategory array_element_type = init_type;
 		int array_element_size = init_size;
 
 		// Check if initializer is an identifier (which could be an array variable)
@@ -2962,7 +2962,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						// Pass the hidden variable as argument
 						TypedValue arg;
-						arg.type = init_type;
+						arg.type = categoryToType(init_type);
 						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
@@ -3111,7 +3111,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = member.memberType();
+				init_val.type = categoryToType(member.memberType());
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3144,7 +3144,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = member.memberType();
+				init_val2.type = categoryToType(member.memberType());
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

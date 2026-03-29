@@ -358,7 +358,7 @@
 		emitAndClearFullExpressionTempDestructors();
 
 		// Get the condition type and value
-		Type condition_type = condition_result.typeEnum();
+		TypeCategory condition_type = condition_result.typeEnum();
 		int condition_size = condition_result.size_in_bits.value;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
@@ -566,7 +566,7 @@
 					resolved_member) {
 					inferred_range_type.emplace(
 						isIrStructType(toIrType(resolved_member->memberType()))
-							? Type::Struct
+							? TypeCategory::Struct
 							: resolved_member->memberType(),
 						resolved_member->type_index,
 						static_cast<int>(resolved_member->size * 8),

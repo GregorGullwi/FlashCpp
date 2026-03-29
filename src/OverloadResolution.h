@@ -206,6 +206,11 @@ inline TypeConversionResult can_convert_type(Type from, Type to) {
 	return buildConversionPlan(typeToCategory(from), typeToCategory(to)).toResult();
 }
 
+// TypeCategory overload — avoids bridge through categoryToType.
+inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to) {
+	return buildConversionPlan(from, to).toResult();
+}
+
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
@@ -370,14 +375,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Resolve type aliases for both types before comparing
 		// This handles cases where template parameters or typedefs resolve to the same underlying type
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
-		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
+		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 		TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
 		TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
 		const TypeCategory from_resolved_category = from_resolved_index.category();
 		const TypeCategory to_resolved_category = to_resolved_index.category();
 
-		// Helper to check if the pointed-to type is const for first-level pointers.
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
 		// not on the pointee. Top-level pointer cv must not affect pointee constness.
 		auto pointee_is_const = [](const TypeSpecifierNode& type_spec) -> bool {
@@ -483,14 +487,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				FLASH_LOG(Parser, Debug, "can_convert_type: both are references. from_is_rvalue=", from_is_rvalue, ", to_is_rvalue=", to_is_rvalue, ", from.type()=", (int)from.type(), ", to.type()=", (int)to.type(), ", from.type_index()=", from.type_index(), ", to.type_index()=", to.type_index());
 				
 				// Exact match: both lvalue ref or both rvalue ref, same base type
-				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
+				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
 				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
 				const TypeCategory from_base_category = from_base_index.category();
 				const TypeCategory to_base_category = to_base_index.category();
 				if (from_is_rvalue == to_is_rvalue && from_base_category == to_base_category) {
-					// For struct types, "same base type" requires the same type_index.
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
 					// Type::Struct, so we must also compare type_index.
 					if (from_base_index.isStruct() &&
@@ -539,8 +542,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				bool to_is_const = to.is_const();
 				
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
-				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
+				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
 				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
 				const TypeCategory from_base_category = from_base_index.category();
@@ -590,8 +593,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// (e.g., const T& can be copied to T)
 			
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
-			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
+			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 			TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
 			TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
 			const TypeCategory from_resolved_category = from_resolved_index.category();
@@ -650,8 +653,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Type aliases like 'size_t' may be stored as Type::UserDefined with type_index=0
 	// when they couldn't be fully resolved during parsing. Allow conversions between
 	// UserDefined and integral types as they're likely type aliases for integral types.
-	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
 	TypeIndex from_type_index = from_canonical.resolvedTypeIndex();
 	TypeIndex to_type_index = to_canonical.resolvedTypeIndex();
 	const TypeCategory from_type_category = from_type_index.category();

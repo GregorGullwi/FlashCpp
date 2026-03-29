@@ -18,7 +18,7 @@ struct StructTypeInfo {
 	size_t active_bitfield_unit_size = 0;
 	size_t active_bitfield_unit_alignment = 0;
 	size_t active_bitfield_bits_used = 0;
-	Type active_bitfield_type = Type::Invalid;
+	TypeCategory active_bitfield_type = TypeCategory::Invalid;
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 	bool is_union = false;      // True if this is a union (all members at offset 0)
 	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
@@ -113,7 +113,7 @@ struct StructTypeInfo {
 				active_bitfield_unit_size = 0;
 				active_bitfield_bits_used = 0;
 				active_bitfield_unit_alignment = 0;
-				active_bitfield_type = Type::Invalid;
+				active_bitfield_type = TypeCategory::Invalid;
 				offset = total_size;
 			} else {
 				bool can_pack_into_active_unit =
@@ -150,7 +150,7 @@ struct StructTypeInfo {
 			active_bitfield_unit_size = 0;
 			active_bitfield_bits_used = 0;
 			active_bitfield_unit_alignment = 0;
-			active_bitfield_type = Type::Invalid;
+			active_bitfield_type = TypeCategory::Invalid;
 			if (!placed_in_active_bitfield_unit) {
 				offset = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 			}
@@ -904,36 +904,31 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	TypeCategory type_cat = TypeCategory::Invalid;
 	TypeIndex type_index {};
 
-	// Implicit conversion constructor: stamp TypeCategory from the legacy Type.
+	// Constructor: TypeIndex must already have the correct category embedded.
+	explicit CanonicalTypeAlias(TypeIndex idx)
+		: type_index(idx) {}
+
+	// Legacy bridge: stamps TypeCategory from the legacy Type into TypeIndex.
 	CanonicalTypeAlias(Type t, TypeIndex idx)
-		: type_cat(typeToCategory(t)), type_index(idx) {}
+		: type_index(idx.category() != TypeCategory::Invalid ? idx : TypeIndex{idx.index(), typeToCategory(t)}) {}
 
-	// TypeCategory-based constructor (preferred, avoids bridge functions)
-	CanonicalTypeAlias(TypeCategory cat, TypeIndex idx)
-		: type_cat(cat), type_index(idx) {}
+	// Returns the TypeCategory for backward compat.
+	TypeCategory typeEnum() const { return type_index.category(); }
 
-	// Returns the legacy Type value derived from the embedded TypeCategory.
-	TypeCategory typeEnum() const { return type_cat; }
-
-	// Returns TypeIndex with category merged from type_cat when type_index lacks it.
-	TypeIndex resolvedTypeIndex() const noexcept {
-		if (type_index.category() != TypeCategory::Invalid)
-			return type_index;
-		return TypeIndex{type_index.index(), type_cat};
-	}
+	// Returns the TypeIndex (identity now since category is always embedded).
+	TypeIndex resolvedTypeIndex() const noexcept { return type_index; }
 };
 
-// Canonicalize chained typedef / using aliases represented as Type::UserDefined.
+// Canonicalize chained typedef / using aliases represented as TypeCategory::UserDefined.
 // Follows UserDefined -> UserDefined -> concrete type chains, but preserves the
 // original unresolved state when the chain does not bottom out in a concrete type
 // (placeholder / parse-time fallback cases).
-inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if (typeToCategory(type) != TypeCategory::UserDefined || !type_index.is_valid()) {
-		return {type, type_index};
+	if (type_index.category() != TypeCategory::UserDefined || !type_index.is_valid()) {
+		return CanonicalTypeAlias{type_index};
 	}
 
 	const TypeIndex original_type_index = type_index;
@@ -942,10 +937,11 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 	while (current_type_index.is_valid() &&
 		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
-		// resolvedType() returns the effective underlying type stored in type_.
-		// Stop when we reach a concrete non-void non-UserDefined type.
 		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
-			return {type_info.category(), type_info.type_index_};
+			TypeIndex resolved = type_info.type_index_;
+			if (resolved.category() == TypeCategory::Invalid)
+				resolved = TypeIndex{resolved.index(), type_info.category()};
+			return CanonicalTypeAlias{resolved};
 		}
 		if (type_info.category() != TypeCategory::UserDefined ||
 			!type_info.type_index_.is_valid() ||
@@ -955,12 +951,21 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 		current_type_index = type_info.type_index_;
 	}
 
-	return {type, original_type_index};
+	return CanonicalTypeAlias{original_type_index};
+}
+
+// Legacy overload — bridges Type into TypeIndex for callers not yet migrated.
+inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+	if (type_index.category() == TypeCategory::Invalid)
+		type_index = TypeIndex{type_index.index(), typeToCategory(type)};
+	return canonicalize_type_alias(type_index);
 }
 
 // TypeCategory overload — avoids bridge through categoryToType().
 inline CanonicalTypeAlias canonicalize_type_alias(TypeCategory cat, TypeIndex type_index) {
-	return canonicalize_type_alias(categoryToType(cat), type_index);
+	if (type_index.category() == TypeCategory::Invalid)
+		type_index = TypeIndex{type_index.index(), cat};
+	return canonicalize_type_alias(type_index);
 }
 
 inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
@@ -969,16 +974,6 @@ inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
 
 inline Type resolve_type_alias(Type type, TypeIndex type_index) {
 	return categoryToType(resolve_type_alias(typeToCategory(type), type_index));
-}
-
-// TypeIndex-only overload: derives the legacy Type from the TypeIndex category.
-// The bridge via categoryToType is required while canonicalize_type_alias(Type, TypeIndex)
-// still exists; once that overload is removed this wrapper can be inlined directly.
-// TODO: Once canonicalize_type_alias(Type, TypeIndex) is removed, rewrite this to
-// work with TypeCategory throughout without the bridge call.
-inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
-	Type type = categoryToType(type_index.category());
-	return canonicalize_type_alias(type, type_index);
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
@@ -1002,6 +997,9 @@ TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits
 
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
+inline TypeInfo& add_type_alias_copy(StringHandle name, TypeCategory cat, TypeIndex source_type_index, uint32_t size_bits) {
+	return add_type_alias_copy(name, categoryToType(cat), source_type_index, size_bits);
+}
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();

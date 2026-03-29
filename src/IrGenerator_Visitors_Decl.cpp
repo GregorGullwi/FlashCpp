@@ -549,8 +549,8 @@
 						// Compare: lhs != rhs
 						TempVar ne_result = var_counter.next();
 						BinaryOp ne_op{
-							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
-							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.lhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{ne_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(ne_op), func_decl.identifier_token()));
@@ -568,8 +568,8 @@
 						// Compare: lhs < rhs
 						TempVar lt_result = var_counter.next();
 						BinaryOp lt_op{
-							.lhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
-							.rhs = TypedValue{.type = member.memberType(), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.lhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
+							.rhs = TypedValue{.type = categoryToType(member.memberType()), .size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .ir_type = toIrType(member.memberType())},
 							.result = IrValue{lt_result}
 						};
 						ir_.addInstruction(IrInstruction(IrOpcode::LessThan, std::move(lt_op), func_decl.identifier_token()));

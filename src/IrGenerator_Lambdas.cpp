@@ -280,7 +280,7 @@
 							// For init-capture by reference [&y = x], we need to store the address of x
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init result
-								Type init_type = init_result.typeEnum();
+								TypeCategory init_type = init_result.typeEnum();
 								int init_size = init_result.size_in_bits.value;
 
 								// Generate AddressOf for the initializer
@@ -918,7 +918,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	int return_size = 0;
 	if (lambda.return_type().has_value()) {
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-		return_type = ret_type_node.type();
+		return_type = categoryToType(ret_type_node.type());
 		return_size = ret_type_node.size_in_bits();
 	}
 	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());

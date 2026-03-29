@@ -255,7 +255,7 @@
 					result.total_member_offset = accumulated_offset;
 					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
 					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
-					result.final_type_index = TypeIndex::fromTypeAndIndex(binding_info.bindingType(), {});
+					result.final_type_index = TypeIndex::fromTypeAndIndex(typeToCategory(binding_info.bindingType()), {});
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
@@ -352,7 +352,7 @@
 
 
 			const TypeCategory element_category = array_operands.category();
-			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), array_operands.type_index);
+			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(element_category, array_operands.type_index);
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -736,7 +736,7 @@
 									TempVar elem_addr_var = var_counter.next();
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
-									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), type_index);
+									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, type_index);
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
@@ -934,7 +934,7 @@
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
-						payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), element_type_index);
+						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.setType(TypeCategory::UnsignedLongLong);
@@ -995,7 +995,7 @@
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
-				payload.element_type_index = TypeIndex::fromTypeAndIndex(categoryToType(element_category), {});
+				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, {});
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)
@@ -1324,7 +1324,7 @@
 					if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
 						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
 						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
-							from_t = operandIrOperands.typeEnum();
+							from_t = categoryToType(operandIrOperands.typeEnum());
 						operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(from_t), typeToCategory(to_t), unaryOperatorNode.get_token());
 						operandType = typeToCategory(to_t);
 						promoted = true;
@@ -2414,7 +2414,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// For reference/rvalue-reference parameters, apply any sema-annotated or standard
 		// pre-bind type conversion (e.g. int → const double& needs int→double first).
 		// The *address-of* step for the converted value is handled by buildConstructorArgumentValue.
-		const Type param_base_type = param_type.type();
+		const TypeCategory param_base_type = param_type.type();
 		bool sema_applied = false;
 
 		// 1. Try sema annotation (most accurate path).
@@ -2459,10 +2459,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					const ASTNode& ptn = ctor_params[0].as<DeclarationNode>().type_node();
 					if (!ptn.is<TypeSpecifierNode>())
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
-					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
+					const TypeCategory ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
 					Type ctor_from_t = categoryToType(from_desc.category());
 					if (typeToCategory(ctor_from_t) == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
-						ctor_from_t = arg_result.typeEnum();
+						ctor_from_t = categoryToType(arg_result.typeEnum());
 					if (ctor_from_t != ctor_first_param_type) {
 						arg_result = generateTypeConversion(arg_result, typeToCategory(ctor_from_t), typeToCategory(ctor_first_param_type), source_token);
 					}
@@ -2471,7 +2471,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					// Sema may annotate as Type::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
 					if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum())
-						from_t = arg_result.typeEnum();
+						from_t = categoryToType(arg_result.typeEnum());
 					arg_result = generateTypeConversion(arg_result, typeToCategory(from_t), typeToCategory(to_t), source_token);
 					sema_applied = true;
 				}
@@ -2599,7 +2599,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			Type from_t = categoryToType(from_desc.category());
 			const Type to_t = categoryToType(to_desc.category());
 			if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
-				from_t = arg_result.typeEnum();
+				from_t = categoryToType(arg_result.typeEnum());
 			}
 			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) {
 				return std::nullopt;
@@ -2614,7 +2614,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		ExprResult source_result,
 		const TypeSpecifierNode& ref_param_type,
 		const Token& source_token) {
-		const Type referred_type = ref_param_type.type();
+		const TypeCategory referred_type = ref_param_type.type();
 		// Convert the source value to the referred-to type.
 		ExprResult converted = generateTypeConversion(source_result, source_result.category(), typeToCategory(referred_type), source_token);
 		const int ref_type_bits = get_type_size_bits(referred_type);
@@ -2628,7 +2628,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Take the address of the temporary and return it as the reference argument.
 		TempVar addr_var = emitAddressOf(typeToCategory(referred_type), ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
-		result.type = referred_type;
+		result.type = categoryToType(referred_type);
 		result.ir_type = toIrType(referred_type);
 		result.size_in_bits = SizeInBits{64};
 		result.value = addr_var;

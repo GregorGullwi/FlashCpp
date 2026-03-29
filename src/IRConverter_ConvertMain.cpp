@@ -961,7 +961,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		// Determine result type based on operation
 		// For comparisons, result is bool (8 bits for code generation)
 		// For arithmetic operations, result type matches operand type
-		Type result_type = bin_op.lhs.typeEnum();
+		TypeCategory result_type = bin_op.lhs.typeEnum();
 		int result_size = bin_op.lhs.size_in_bits.value;
 
 		auto opcode = instruction.getOpcode();
@@ -975,11 +975,11 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
 
 		// Store the operand type and size for register allocation and loading decisions
-		Type operand_type = bin_op.lhs.typeEnum();
+		TypeCategory operand_type = bin_op.lhs.typeEnum();
 		int operand_size = bin_op.lhs.size_in_bits.value;
 
 		if (is_comparison) {
-			result_type = Type::Bool;
+			result_type = TypeCategory::Bool;
 			result_size = 8;  // We store bool as 8 bits for register operations
 		}
 
@@ -988,7 +988,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			.result_value = makeTypedValue(result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result),
 			.result_physical_reg = X64Register::Count,
 			.rhs_physical_reg = X64Register::RCX,
-			.operand_type = operand_type,
+			.operand_type = categoryToType(operand_type),
 			.operand_size_in_bits = operand_size
 		};
 		// Propagate signedness so downstream consumers don't need to query via ctx.result_value.is_signed.
@@ -1082,7 +1082,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			else {
 				// Not found in local variables - check if it's a global variable
 				std::string_view lhs_var_name = StringTable::getStringView(lhs_var_op);
-				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
+				ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, categoryToType(operand_type), ctx.operand_size_in_bits);
 
 				if (ctx.result_physical_reg == X64Register::Count) {
 					throw InternalError(std::string("Missing variable: ") + std::string(lhs_var_name));
@@ -1313,7 +1313,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			else {
 				// Not found in local variables - check if it's a global variable
 				std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
-				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits.value, ctx.result_physical_reg);
+				ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, categoryToType(operand_type), bin_op.rhs.size_in_bits.value, ctx.result_physical_reg);
 
 				if (ctx.rhs_physical_reg == X64Register::Count) {
 					throw InternalError(std::string("Missing variable: ") + std::string(rhs_var_name));
@@ -4900,7 +4900,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// Fallback to old logic: infer from argument types
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
-				Type paramType = arg.typeEnum();
+				TypeCategory paramType = arg.typeEnum();
 				int paramSize = arg.size_in_bits.value;
 				TypeIndex arg_type_index = arg.type_index;
 				bool arg_is_reference = arg.is_reference();  // Check if marked as reference
@@ -5091,7 +5091,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
-			Type paramType = param_type_spec ? param_type_spec->type() : arg.typeEnum();
+			TypeCategory paramType = param_type_spec ? param_type_spec->type() : arg.typeEnum();
 			int paramSize = param_type_spec ? getTypeSpecSizeBits(*param_type_spec) : arg.size_in_bits.value;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = param_type_spec
@@ -6146,7 +6146,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		StringHandle global_name_handle = op.getGlobalName();
 		int size_in_bits = op.result.size_in_bits.value;
-		Type result_type = op.result.typeEnum();
+		TypeCategory result_type = op.result.typeEnum();
 		bool is_floating_point = (typeToCategory(result_type) == TypeCategory::Float || typeToCategory(result_type) == TypeCategory::Double);
 		bool is_float = (typeToCategory(result_type) == TypeCategory::Float);
 
@@ -10909,7 +10909,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// Use typed payload format
 		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
 		FLASH_LOG(Codegen, Debug, "handleAssignment called");
-		Type lhs_type = op.lhs.typeEnum();
+		TypeCategory lhs_type = op.lhs.typeEnum();
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for pointer store (assignment through pointer)
@@ -11224,7 +11224,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
-				value_type = op.lhs.typeEnum();
+				value_type = categoryToType(op.lhs.typeEnum());
 				value_size_bits = op.lhs.size_in_bits.value;
 			}
 			int value_size_bytes = value_size_bits / 8;
@@ -11302,7 +11302,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
-		Type rhs_type = op.rhs.typeEnum();
+		TypeCategory rhs_type = op.rhs.typeEnum();
 		X64Register source_reg = X64Register::RAX;
 
 		// Load RHS value into a register
@@ -13956,7 +13956,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// Process arguments (if any)
 		for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
 			const auto& arg = op.arguments[i];
-			Type argType = arg.typeEnum();
+			TypeCategory argType = arg.typeEnum();
 
 			// Determine if this is a floating-point argument
 			bool is_float_arg = is_floating_point_type(typeToCategory(argType));

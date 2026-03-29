@@ -748,12 +748,12 @@ struct StaticMemberDecl {
 	int pointer_depth = 0;        // Pointer indirection level (e.g., int* = 1, int** = 2)
 
 	// Returns the legacy Type enum derived from the embedded TypeCategory.
-	Type memberType() const { return categoryToType(type_index.category()); }
+	TypeCategory memberType() const { return type_index.category(); }
 
 	StaticMemberDecl(StringHandle name_, Type type_, TypeIndex type_index_, size_t size_, size_t alignment_,
 	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
 	                 ReferenceQualifier ref_qual_ = ReferenceQualifier::None, int ptr_depth_ = 0)
-		: name(name_), type_index(TypeIndex::fromTypeAndIndex(type_, type_index_)), size(size_), alignment(alignment_),
+		: name(name_), type_index(TypeIndex::fromTypeAndIndex(typeToCategory(type_), type_index_)), size(size_), alignment(alignment_),
 		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
 		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
 };
@@ -880,6 +880,12 @@ public:
 	                       AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 	                       ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
 		static_members_.emplace_back(name, type, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+	}
+
+	void add_static_member(StringHandle name, TypeCategory cat, TypeIndex type_index, size_t size, size_t alignment,
+	                       AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+	                       ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
+		static_members_.emplace_back(name, categoryToType(cat), type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
 	}
 
 	const std::vector<StaticMemberDecl>& static_members() const {

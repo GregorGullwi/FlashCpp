@@ -586,6 +586,11 @@ constexpr TypeCategory typeToCategory(Type t) noexcept {
 	return static_cast<TypeCategory>(v + 1);
 }
 
+// Identity overload — accepts TypeCategory and returns it unchanged.
+// Allows callers that already hold a TypeCategory to pass it through without
+// wrapping in categoryToType() first.
+constexpr TypeCategory typeToCategory(TypeCategory cat) noexcept { return cat; }
+
 // Convert a TypeCategory back to the legacy Type enum for APIs that still accept Type.
 // Values 0-23 map 1:1.  TypeAlias (24) has no direct Type equivalent — mapped to
 // Type::UserDefined as the closest semantic match.  Values >= 25 are shifted down by 1.
@@ -595,6 +600,13 @@ constexpr Type categoryToType(TypeCategory cat) noexcept {
 	if (v == 24) return Type::UserDefined;  // TypeAlias → UserDefined
 	return static_cast<Type>(v - 1);
 }
+
+// --- Cross-type comparison operators (migration bridge) ---
+// Allow comparing Type and TypeCategory directly without explicit conversion.
+constexpr bool operator==(Type lhs, TypeCategory rhs) noexcept { return typeToCategory(lhs) == rhs; }
+constexpr bool operator==(TypeCategory lhs, Type rhs) noexcept { return lhs == typeToCategory(rhs); }
+constexpr bool operator!=(Type lhs, TypeCategory rhs) noexcept { return !(lhs == rhs); }
+constexpr bool operator!=(TypeCategory lhs, Type rhs) noexcept { return !(lhs == rhs); }
 
 // --- TypeCategory classification helpers (Milestone 7 Step 2) ---
 // These mirror the Type-based helpers above and allow call sites that have
@@ -687,6 +699,11 @@ struct TypeIndex {
 	static constexpr TypeIndex fromTypeAndIndex(TypeCategory t, TypeIndex idx) noexcept {
 		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : t;
 		return TypeIndex{idx.index(), cat};
+	}
+
+	// Legacy overload — bridges Type into TypeCategory.
+	static constexpr TypeIndex fromTypeAndIndex(Type t, TypeIndex idx) noexcept {
+		return fromTypeAndIndex(typeToCategory(t), idx);
 	}
 
 	// Factory: build a category-only TypeIndex for APIs that only need semantic

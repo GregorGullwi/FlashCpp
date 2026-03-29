@@ -222,7 +222,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						// Convert to TypedValue
 						TypedValue arg;
-						arg.type = type_node.type();
+						arg.type = categoryToType(type_node.type());
 						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -235,7 +235,7 @@
 				});
 
 				// Capture return type info before moving call_op (use-after-move is UB)
-				TypeCategory lambda_return_type = call_op.returnType();
+				Type lambda_return_type = call_op.returnType();
 				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
@@ -579,7 +579,7 @@
 			// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
 			const TypeSpecifierNode& ret_spec =
 				func_decl_node.type_node().as<TypeSpecifierNode>();
-			const Type ret_type = ret_spec.type();
+			const TypeCategory ret_type = ret_spec.type();
 			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
@@ -595,7 +595,7 @@
 			}
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
-					eval_result, ret_spec, ret_type, ret_size,
+					eval_result, ret_spec, categoryToType(ret_type), ret_size,
 					memberFunctionCallNode.called_from());
 				if (agg.category() != TypeCategory::Void) return agg;
 			}
@@ -878,7 +878,7 @@
 					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 						const NumericLiteralNode& lit = *numeric_literal;
 						// DEBUG removed
-						arg_types.push_back({lit.type(), TypeIndex{}});
+						arg_types.push_back({categoryToType(lit.type()), TypeIndex{}});
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -888,7 +888,7 @@
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
 							// DEBUG removed
-							arg_types.push_back({type.type(), type.type_index()});
+							arg_types.push_back({categoryToType(type.type()), type.type_index()});
 						}
 					} else {
 						// DEBUG removed
@@ -1080,7 +1080,7 @@
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 					TypedValue tv;
-					tv.type = type_node.type();
+					tv.type = categoryToType(type_node.type());
 					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1595,7 +1595,7 @@
 
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
-							Type literal_type = argument_result.typeEnum();
+							TypeCategory literal_type = argument_result.typeEnum();
 							int literal_size = argument_result.size_in_bits.value;
 
 							// Create a temporary variable to hold the literal value
@@ -1628,7 +1628,7 @@
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
-								Type expr_type = argument_result.typeEnum();
+								TypeCategory expr_type = argument_result.typeEnum();
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 

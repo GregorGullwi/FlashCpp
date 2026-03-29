@@ -127,11 +127,24 @@ struct TemplateArgumentValue {
 	// Factory methods
 	static TemplateArgumentValue makeType(Type t, TypeIndex idx) {
 		TemplateArgumentValue v;
-		v.type_index = TypeIndex::fromTypeAndIndex(t, idx);
+		v.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(t), idx);
+		return v;
+	}
+
+	static TemplateArgumentValue makeType(TypeCategory cat, TypeIndex idx) {
+		TemplateArgumentValue v;
+		v.type_index = TypeIndex::fromTypeAndIndex(cat, idx);
 		return v;
 	}
 
 	static TemplateArgumentValue makeValue(int64_t val, Type value_type) {
+		TemplateArgumentValue v;
+		v.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(value_type), TypeIndex{});
+		v.value = val;
+		return v;
+	}
+
+	static TemplateArgumentValue makeValue(int64_t val, TypeCategory value_type) {
 		TemplateArgumentValue v;
 		v.type_index = TypeIndex::fromTypeAndIndex(value_type, TypeIndex{});
 		v.value = val;
@@ -201,7 +214,7 @@ struct TemplateTypeArg {
 	// Helper: delegates to TypeIndex::fromTypeAndIndex — builds a TypeIndex with the
 	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
 	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
-		return TypeIndex::fromTypeAndIndex(t, idx);
+		return TypeIndex::fromTypeAndIndex(typeToCategory(t), idx);
 	}
 	// TypeCategory overload — builds a TypeIndex with category directly.
 	static TypeIndex makeTypeIndex(TypeCategory cat, TypeIndex idx) noexcept {
@@ -299,6 +312,10 @@ struct TemplateTypeArg {
 	
 	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
 		return TemplateTypeArg(v, type);
+	}
+
+	static TemplateTypeArg makeValue(int64_t v, TypeCategory cat) {
+		return TemplateTypeArg(v, categoryToType(cat));
 	}
 	
 	static TemplateTypeArg makeTemplate(StringHandle name) {

@@ -613,7 +613,7 @@
 									static_member.type_index.index() < getTypeInfoCount()) {
 									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
 										op.init_data.resize(static_struct_info->total_size, 0);
-										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
 											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
 												if (typeToCategory(target_type) == TypeCategory::Float) {
@@ -1589,7 +1589,7 @@ const Token& token)
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-			typeToCategory(member.memberType()),
+			member.memberType(),
 			element_size_bits,
 			base_object,
 			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
@@ -1620,7 +1620,7 @@ const Token& token)
 		} else {
 			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-				typeToCategory(member.memberType()),
+				member.memberType(),
 				element_size_bits,
 				base_object,
 				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),

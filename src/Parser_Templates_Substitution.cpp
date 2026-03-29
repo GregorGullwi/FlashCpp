@@ -11,24 +11,24 @@ ASTNode Parser::substituteTemplateParameters(
 	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 	// Helper function to get type name as string
-	auto get_type_name = [](Type type) -> std::string_view {
+	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
-			case Type::Void: return "void";
-			case Type::Bool: return "bool";
-			case Type::Char: return "char";
-			case Type::UnsignedChar: return "unsigned char";
-			case Type::Short: return "short";
-			case Type::UnsignedShort: return "unsigned short";
-			case Type::Int: return "int";
-			case Type::UnsignedInt: return "unsigned int";
-			case Type::Long: return "long";
-			case Type::UnsignedLong: return "unsigned long";
-			case Type::LongLong: return "long long";
-			case Type::UnsignedLongLong: return "unsigned long long";
-			case Type::Float: return "float";
-			case Type::Double: return "double";
-			case Type::LongDouble: return "long double";
-			case Type::UserDefined: return "user_defined";  // This should be handled specially
+			case TypeCategory::Void: return "void";
+			case TypeCategory::Bool: return "bool";
+			case TypeCategory::Char: return "char";
+			case TypeCategory::UnsignedChar: return "unsigned char";
+			case TypeCategory::Short: return "short";
+			case TypeCategory::UnsignedShort: return "unsigned short";
+			case TypeCategory::Int: return "int";
+			case TypeCategory::UnsignedInt: return "unsigned int";
+			case TypeCategory::Long: return "long";
+			case TypeCategory::UnsignedLong: return "unsigned long";
+			case TypeCategory::LongLong: return "long long";
+			case TypeCategory::UnsignedLongLong: return "unsigned long long";
+			case TypeCategory::Float: return "float";
+			case TypeCategory::Double: return "double";
+			case TypeCategory::LongDouble: return "long double";
+			case TypeCategory::UserDefined: return "user_defined";  // This should be handled specially
 			default: return "unknown";
 		}
 	};
@@ -64,7 +64,7 @@ ASTNode Parser::substituteTemplateParameters(
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.typeEnum();
+						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
@@ -103,7 +103,7 @@ ASTNode Parser::substituteTemplateParameters(
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.typeEnum();
+						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
@@ -444,7 +444,7 @@ ASTNode Parser::substituteTemplateParameters(
 								} else {
 									// Determine the result type from the variadic parameter's declared type
 									// e.g., template<unsigned... args> -> Type::UnsignedInt, 32 bits
-									Type result_type = Type::Int;
+									TypeCategory result_type = TypeCategory::Int;
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
 										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
@@ -902,7 +902,7 @@ ASTNode Parser::substituteTemplateParameters(
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
-				if (typeToCategory(substituted_type) == TypeCategory::Struct || typeToCategory(substituted_type) == TypeCategory::UserDefined) {
+				if (substituted_type == TypeCategory::Struct || substituted_type == TypeCategory::UserDefined) {
 					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,

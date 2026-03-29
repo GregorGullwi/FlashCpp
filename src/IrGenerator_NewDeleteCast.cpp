@@ -9,7 +9,7 @@
 
 		const TypeSpecifierNode& type_spec = newExpr.type_node().as<TypeSpecifierNode>();
 		TypeCategory type_cat = type_spec.category();
-		const Type allocated_type_enum = type_spec.type();
+		const TypeCategory allocated_type_enum = type_spec.type();
 		int size_in_bits = static_cast<int>(type_spec.size_in_bits());
 		int pointer_depth = static_cast<int>(type_spec.pointer_depth());
 
@@ -741,14 +741,14 @@
 		ExprResult expr_operands = visitExpressionNode(staticCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Get the source type
-		Type source_type = expr_operands.typeEnum();
+		TypeCategory source_type = expr_operands.typeEnum();
 		int source_size = expr_operands.size_in_bits.value;
 		TypeIndex source_type_index = expr_operands.type_index;
 		auto source_has_semantic_identity = [&]() {
 			if (!source_type_index.is_valid() || source_type_index.index() >= getTypeInfoCount()) {
 				return false;
 			}
-			Type semantic_type = resolve_type_alias(source_type, source_type_index);
+			TypeCategory semantic_type = resolve_type_alias(source_type, source_type_index);
 			if (!carriesSemanticTypeIndex(typeToCategory(semantic_type))) {
 				semantic_type = resolve_type_alias(getTypeInfo(source_type_index).typeEnum(), source_type_index);
 			}

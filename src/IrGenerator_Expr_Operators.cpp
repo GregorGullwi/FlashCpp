@@ -203,7 +203,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		// Evaluate the initializer expression
 		IrValue store_value;
-		Type store_type = member.memberType();
+		TypeCategory store_type = member.memberType();
 		int store_size = static_cast<int>(member.size * 8);
 		bool store_value_set = false;
 
@@ -225,7 +225,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				TypeSpecifierNode nested_type_spec(member.memberType(), member.type_index, nested_size_bits);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
-					store_type = nested_result->type;
+					store_type = typeToCategory(nested_result->type);
 					store_size = nested_result->size_in_bits.value;
 					store_value = nested_result->value;
 					store_value_set = true;
@@ -266,7 +266,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 }
 
 void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node) {
-	value.type = type_node.type();
+	value.type = categoryToType(type_node.type());
 	value.ir_type = toIrType(type_node.type());
 	if (type_node.pointer_depth() > 0
 		|| type_node.is_reference()
@@ -361,7 +361,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 				addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 
-				value.type = arg_type.type();
+				value.type = categoryToType(arg_type.type());
 				value.ir_type = toIrType(arg_type.type());
 				value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 				value.value = addr_var;
@@ -882,7 +882,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			// constants to their underlying type early (via tryMakeEnumeratorConstantExpr).
 			if (from_t != expr.typeEnum()) {
 				if (typeToCategory(from_t) == TypeCategory::Enum)
-					from_t = expr.typeEnum();
+					from_t = categoryToType(expr.typeEnum());
 				else
 					throw InternalError("sema annotation source type does not match expr.type");
 			}
@@ -1204,7 +1204,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					|| type_spec.is_member_object_pointer()) {
 					return false;
 				}
-			Type base_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
+			TypeCategory base_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
 			return isIrStructType(toIrType(base_type)) && type_spec.type_index().is_valid();
 		};
 
@@ -1428,7 +1428,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				Type resolved_ir_type = resolve_type_alias(categoryToType(ir_type), ir_type_index);
 				if (ir_type_index.index() < getTypeInfoCount()) {
-					resolved_ir_type = resolve_type_alias(getTypeInfo(ir_type_index).typeEnum(), ir_type_index);
+					resolved_ir_type = categoryToType(resolve_type_alias(getTypeInfo(ir_type_index).typeEnum(), ir_type_index));
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
 					return;
@@ -1473,7 +1473,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (type_spec.pointer_depth() > 0) {
 				return false;
 			}
-			Type semantic_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
+			TypeCategory semantic_type = resolve_type_alias(type_spec.type(), type_spec.type_index());
 			if (carriesSemanticTypeIndex(typeToCategory(semantic_type))) {
 				return true;
 			}
@@ -1482,7 +1482,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_spec.type_index());
+				TypeCategory indexed_type = resolve_type_alias(type_info.typeEnum(), type_spec.type_index());
 				if (carriesSemanticTypeIndex(typeToCategory(indexed_type))) {
 					return true;
 				}
@@ -1579,7 +1579,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
 					return true;
 				}
-				Type indexed_type = resolve_type_alias(type_info.typeEnum(), type_index);
+				TypeCategory indexed_type = resolve_type_alias(type_info.typeEnum(), type_index);
 				return carriesSemanticTypeIndex(typeToCategory(indexed_type));
 			};
 
@@ -1873,11 +1873,11 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 				// Resolve actual return type - defaulted operator<=> has 'auto' return type
 				// that is deduced to int (returning -1/0/1)
-				Type resolved_return_type = return_type.type();
+				TypeCategory resolved_return_type = return_type.type();
 				TypeCategory resolved_cat = return_type.category();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (isPlaceholderAutoType(resolved_cat) && op == "<=>") {
-					resolved_return_type = Type::Int;
+					resolved_return_type = TypeCategory::Int;
 					resolved_cat = TypeCategory::Int;
 					actual_return_size = 32;
 				}
@@ -2035,12 +2035,12 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 							// Get return type from the function declaration
 							const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							Type return_type = return_type_node.type();
+							TypeCategory return_type = return_type_node.type();
 							int return_size = static_cast<int>(return_type_node.size_in_bits());
 
 							// Defaulted operator<=> with auto return type actually returns int
 							if (isPlaceholderAutoType(return_type)) {
-								return_type = Type::Int;
+								return_type = TypeCategory::Int;
 								return_size = 32;
 							}
 
@@ -3093,7 +3093,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = arg_result.typeEnum();
+		TypeCategory arg_type = arg_result.typeEnum();
 		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
@@ -3138,7 +3138,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 		// Extract argument details
-		Type arg_type = arg_result.typeEnum();
+		TypeCategory arg_type = arg_result.typeEnum();
 		int arg_size = arg_result.size_in_bits.value;
 		TypedValue arg_value = toTypedValue(arg_result);
 
@@ -3206,7 +3206,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		if (arg1.is<TypeSpecifierNode>()) {
 			// New parser path: TypeSpecifierNode passed directly
 			const auto& type_spec = arg1.as<TypeSpecifierNode>();
-			requested_type = type_spec.type();
+			requested_type = categoryToType(type_spec.type());
 			requested_size = static_cast<int>(type_spec.size_in_bits());
 			is_float_type = (typeToCategory(requested_type) == TypeCategory::Float || typeToCategory(requested_type) == TypeCategory::Double);
 		} else if (arg1.is<ExpressionNode>() && std::holds_alternative<IdentifierNode>(arg1.as<ExpressionNode>())) {
@@ -4128,7 +4128,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		ExprResult ptrExprResult = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 
 		// Extract pointer details
-		[[maybe_unused]] Type ptr_type = ptrExprResult.typeEnum();
+		[[maybe_unused]] TypeCategory ptr_type = ptrExprResult.typeEnum();
 		[[maybe_unused]] int ptr_size = ptrExprResult.size_in_bits.value;
 
 		// For now, we just return the pointer unchanged
@@ -4155,7 +4155,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		// from the function declaration so the intrinsic result matches what the caller
 		// expects — same as regular function calls derive their type from the declaration.
 		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
-		const Type result_type = ret_type_spec.type();
+		const TypeCategory result_type = ret_type_spec.type();
 		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
 		TempVar result = var_counter.next();
@@ -4181,7 +4181,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 	ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
 		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
-		const Type result_type = ret_type_spec.type();
+		const TypeCategory result_type = ret_type_spec.type();
 		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
 		TempVar result = var_counter.next();
@@ -4193,7 +4193,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 
 	ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
 		const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
-		const Type result_type = ret_type_spec.type();
+		const TypeCategory result_type = ret_type_spec.type();
 		const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
 		TempVar result = var_counter.next();

@@ -781,16 +781,16 @@ ParseResult Parser::validate_and_add_base_class(
 
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
+std::pair<TypeCategory, TypeIndex> Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
-	Type result_type = categoryToType(original_type.type());
+	TypeCategory result_type = original_type.type();
 	TypeIndex result_type_index = original_type.type_index();
 
 	// Only substitute UserDefined types (which might be template parameters)
-	if (typeToCategory(result_type) == TypeCategory::UserDefined) {
+	if (result_type == TypeCategory::UserDefined) {
 		// First try to get the type name from the token (useful for type aliases parsed inside templates
 		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
 		std::string_view type_name;
@@ -829,7 +829,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						// 1. The original type (e.g., const T& has const and reference)
 						// 2. The template argument (e.g., T=int* has pointer_depth=1)
 						
-						result_type = categoryToType(arg.typeEnum());
+						result_type = arg.typeEnum();
 						result_type_index = arg.type_index;
 						
 						// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
@@ -894,7 +894,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					
 					if (type_it != getTypesByNameMap().end()) {
 						const TypeInfo* resolved_info = type_it->second;
-						result_type = categoryToType(resolved_info->typeEnum());
+						result_type = resolved_info->typeEnum();
 						result_type_index = resolved_info->type_index_;
 						found_match = true;
 					}
@@ -933,7 +933,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_info = type_it->second;
-							result_type = categoryToType(resolved_info->typeEnum());
+							result_type = resolved_info->typeEnum();
 							result_type_index = resolved_info->type_index_;
 							found_match = true;
 						}
@@ -968,7 +968,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* resolved_info = type_it->second;
-								result_type = categoryToType(resolved_info->typeEnum());
+								result_type = resolved_info->typeEnum();
 								result_type_index = resolved_info->type_index_;
 								found_match = true;
 								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
@@ -997,7 +997,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								if (tparam.name() == alias_target_name) {
 									// The type alias resolves to a template parameter - substitute!
 									const TemplateTypeArg& arg = template_args[i];
-									result_type = categoryToType(arg.typeEnum());
+									result_type = arg.typeEnum();
 									result_type_index = arg.type_index;
 									FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name, 
 										"' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type));
@@ -1071,7 +1071,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::string_view inst_name = get_instantiated_class_name(concrete_tpl_name, concrete_args);
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
-									result_type = categoryToType(inst_it->second->typeEnum());
+									result_type = inst_it->second->typeEnum();
 									result_type_index = inst_it->second->type_index_;
 									found_match = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",

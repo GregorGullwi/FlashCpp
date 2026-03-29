@@ -233,7 +233,7 @@
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
-				Type expr_type = operands.typeEnum();
+				TypeCategory expr_type = operands.typeEnum();
 				TypeCategory expr_category = operands.category();
 				int expr_size = operands.size_in_bits.value;
 
@@ -295,7 +295,7 @@
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
 							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != operands.typeEnum())
-								from_type = operands.typeEnum();
+								from_type = categoryToType(operands.typeEnum());
 							operands = generateTypeConversion(operands, typeToCategory(from_type), typeToCategory(to_type), node.return_token());
 							sema_applied_conversion = true;
 						}

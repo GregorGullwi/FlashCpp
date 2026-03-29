@@ -1485,7 +1485,7 @@ ParseResult Parser::parse_static_member_block(
 		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
 			type_it->second->getStructInfo()->addStaticMember(
 				static_member_name_handle,
-				categoryToType(type_spec.type()),
+				type_spec.type(),
 				type_spec.type_index(),
 				member_size,
 				member_alignment,
@@ -1500,7 +1500,7 @@ ParseResult Parser::parse_static_member_block(
 		// Normal case - use provided struct_info directly
 		struct_info->addStaticMember(
 			static_member_name_handle,
-			categoryToType(type_spec.type()),
+			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,

@@ -158,7 +158,7 @@ inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue val
 	tv.is_signed = isSignedType(type);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
-	tv.type_index = TypeIndex::fromTypeAndIndex(type, {});
+	tv.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(type), {});
 	return tv;
 }
 
@@ -166,7 +166,7 @@ inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue val
 /// carry a type_index for layout and identity information.
 inline TypedValue makeTypedValue(Type type, SizeInBits size_in_bits, IrValue value, TypeIndex type_index) {
 	TypedValue tv = makeTypedValue(type, size_in_bits, std::move(value));
-	tv.type_index = TypeIndex::fromTypeAndIndex(type, type_index);
+	tv.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(type), type_index);
 	return tv;
 }
 
@@ -208,6 +208,11 @@ inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrVa
 	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), type_index, pointer_depth);
 }
 
+/// TypeCategory bridge — with ReferenceQualifier.
+inline TypedValue makeTypedValue(TypeCategory cat, SizeInBits size_in_bits, IrValue value, ReferenceQualifier ref_qual) {
+	return makeTypedValue(categoryToType(cat), size_in_bits, std::move(value), ref_qual);
+}
+
 inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<Type>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
@@ -218,7 +223,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.ir_type = toIrType(result.type);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = TypeIndex::fromTypeAndIndex(result.type, {});
+	result.type_index = TypeIndex::fromTypeAndIndex(typeToCategory(result.type), {});
 	result.pointer_depth = PointerDepth{};
 	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {

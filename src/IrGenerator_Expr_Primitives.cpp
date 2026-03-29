@@ -178,7 +178,7 @@
 				AddressOfOp addr_op;
 				addr_op.result = object_addr;
 				addr_op.operand = TypedValue{
-					.type = object_result.typeEnum(),
+					.type = categoryToType(object_result.typeEnum()),
 					.size_in_bits = object_result.size_in_bits,
 					.value = obj_name,
 					.pointer_depth = PointerDepth{},
@@ -200,7 +200,7 @@
 		add_op.result = member_addr;
 		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), ptmNode.operator_token()));
 
-		Type member_type = ptr_result.typeEnum();
+		TypeCategory member_type = ptr_result.typeEnum();
 		int member_size = ptr_result.size_in_bits.value;
 		TypeIndex member_type_index = ptr_result.type_index;
 
@@ -213,7 +213,7 @@
 		, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-	static void requireResolvedCodegenType(Type type, std::string_view context) {
+	static void requireResolvedCodegenType(TypeCategory type, std::string_view context) {
 		if (isPlaceholderAutoType(type)) {
 			throw InternalError(std::string(StringBuilder()
 				.append("Unresolved placeholder type reached codegen in ")
@@ -273,7 +273,7 @@
 	ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	ExpressionContext context) {
 		auto makeIdentifierResult = [](
-			Type type,
+			TypeCategory type,
 			int size_bits,
 			IrOperand value,
 			TypeIndex type_index = TypeIndex{},
@@ -287,14 +287,14 @@
 			// semantic identity types carry type_index in ExprResult, while legacy slot-4 metadata
 			// keeps enum values identifiable after integral lowering and keeps enum pointers usable
 			// for still-unmigrated pointer-depth consumers.
-			Type result_type = type_node.type();
+			TypeCategory result_type = type_node.type();
 			const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
 			if (!is_enum_pointer && type_node.category() == TypeCategory::Enum && type_node.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
-					result_type = enum_info->underlying_type;
+					result_type = typeToCategory(enum_info->underlying_type);
 				}
 			}
-			Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
+			TypeCategory semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
 			if (type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).typeEnum(), type_node.type_index());
 			}
@@ -313,7 +313,7 @@
 		// Capture-all ([=], [&]) variables are expanded at parse time into current_lambda_context_
 		// but keep Local binding, so we fall back to the runtime captures map for those.
 		StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
-		auto preserveSemanticTypeIndex = [](Type type, TypeIndex type_index) {
+		auto preserveSemanticTypeIndex = [](TypeCategory type, TypeIndex type_index) {
 			return carriesSemanticTypeIndex(typeToCategory(type)) ? type_index : TypeIndex{};
 		};
 		bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
@@ -950,7 +950,7 @@
 				// For compound assignments, we need to return a TempVar with lvalue metadata
 				// For simple assignments and function calls, we can return the reference directly
 				if (context == ExpressionContext::LValueAddress) {
-					Type pointee_type = type_node.type();
+					TypeCategory pointee_type = type_node.type();
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
 
 					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
@@ -989,13 +989,13 @@
 				TypeCategory pointee_type = type_node.category();
 				int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier load lowering");
 
-				Type semantic_pointee_type = type_node.type();
+				TypeCategory semantic_pointee_type = type_node.type();
 
 				// For enum references, lower the dereferenced value to its runtime
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
 				pointee_type = getRuntimeValueType(TypeIndex::fromTypeAndIndex(semantic_pointee_type, type_node.type_index()), PointerDepth{});
-				pointee_size = getRuntimeValueSizeBits(semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
+				pointee_size = getRuntimeValueSizeBits(categoryToType(semantic_pointee_type), type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1011,7 +1011,7 @@
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
-				return makeIdentifierResult(categoryToType(pointee_type), pointee_size, result_temp, type_index);
+				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 			}
 
 			// Regular local variable
@@ -1026,7 +1026,7 @@
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
 			TypeCategory return_type = getRuntimeValueType(type_node.type_index(), identifier_pointer_depth);
 			size_bits = getRuntimeValueSizeBits(
-				type_node.type(),
+				categoryToType(type_node.type()),
 				type_node.type_index(),
 				size_bits,
 				identifier_pointer_depth);
@@ -1047,7 +1047,7 @@
 				? 0
 				: static_cast<int>(type_node.pointer_depth())};
 			return makeIdentifierResult(
-				categoryToType(return_type),
+				return_type,
 				size_bits,
 				StringTable::getOrInternStringHandle(identifierNode.name()),
 				type_index,
@@ -1126,7 +1126,7 @@
 					// as an indirect lvalue (pointer that needs dereferencing for stores)
 					if (context == ExpressionContext::LValueAddress) {
 						FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
-						Type pointee_type = type_node.type();
+						TypeCategory pointee_type = type_node.type();
 						int pointee_size = resolveCodegenSizeBits(type_node, "reference variable lvalue lowering");
 
 						// The reference variable holds a pointer address
@@ -1158,7 +1158,7 @@
 
 					// For Load context (reading the value), dereference to get the value
 
-					Type pointee_type = type_node.type();
+					TypeCategory pointee_type = type_node.type();
 					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
 
 					int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
@@ -1180,7 +1180,7 @@
 
 				// Regular local variable (not a reference) - return variable name.
 				int size_bits = calculateIdentifierSizeBits(type_node, decl_node.is_array(), identifierNode.name());
-				Type result_type = type_node.type();
+				TypeCategory result_type = type_node.type();
 				TypeIndex result_type_index = type_node.type_index();
 				requireResolvedCodegenType(result_type, "identifier lowering");
 

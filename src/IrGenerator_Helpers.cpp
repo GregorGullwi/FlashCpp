@@ -338,13 +338,13 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 
 namespace {
 Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
-	Type canonical_type = semantic_type;
+	TypeCategory canonical_type = typeToCategory(semantic_type);
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		// Prefer the canonical type stored in gTypeInfo when available. This keeps
 		// typedef / alias lowering consistent with the resolved type table entry.
 		canonical_type = getTypeInfo(type_index).resolvedType();
 	}
-	return resolve_type_alias(canonical_type, type_index);
+	return categoryToType(resolve_type_alias(canonical_type, type_index));
 }
 }
 

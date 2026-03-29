@@ -290,8 +290,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Also tracks which inner template parameter index corresponds to each auto parameter
 	// so that we know which template argument supplies the concrete type for each auto param.
 	size_t auto_param_index = 0;
-	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
-		if (typeToCategory(type) == TypeCategory::Auto) {
+	auto resolve_template_type = [&](TypeCategory type, TypeIndex type_index) -> std::pair<TypeCategory, TypeIndex> {
+		if (type == TypeCategory::Auto) {
 			// Abbreviated function template parameter (concept auto / auto):
 			// Map this to the corresponding inner template parameter's argument type.
 			// Inner template params for auto are named _T0, _T1, etc.
@@ -302,7 +302,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type, type_index };
 		}
-		if (typeToCategory(type) == TypeCategory::UserDefined && type_index.index() < getTypeInfoCount()) {
+		if (type == TypeCategory::UserDefined && type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(type_index);
 			std::string_view tn = StringTable::getStringView(ti.name());
 
