@@ -957,6 +957,46 @@ inline bool isSignedType(Type t) {
 	}
 }
 
+inline bool isSignedType(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Char:
+		case TypeCategory::Short:
+		case TypeCategory::Int:
+		case TypeCategory::Long:
+		case TypeCategory::LongLong:
+			return true;
+		case TypeCategory::WChar:
+			return g_target_data_model != TargetDataModel::LLP64;
+		case TypeCategory::Bool:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
+		case TypeCategory::Char16:
+		case TypeCategory::Char32:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::UnsignedLongLong:
+		case TypeCategory::Float:
+		case TypeCategory::Double:
+		case TypeCategory::LongDouble:
+		case TypeCategory::Void:
+		case TypeCategory::UserDefined:
+		case TypeCategory::Auto:
+		case TypeCategory::DeclTypeAuto:
+		case TypeCategory::Function:
+		case TypeCategory::Struct:
+		case TypeCategory::Enum:
+		case TypeCategory::FunctionPointer:
+		case TypeCategory::Invalid:
+		default:
+			return false;
+	}
+}
+
+inline bool isSignedType(TypeIndex type_index) {
+	return isSignedType(type_index.category());
+}
+
 // Linkage specification for functions (C vs C++)
 enum class Linkage : uint8_t {
 	None,           // Default C++ linkage (with name mangling)
