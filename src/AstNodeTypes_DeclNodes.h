@@ -925,7 +925,7 @@ struct CanonicalTypeAlias {
 // (placeholder / parse-time fallback cases).
 inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if (type_index.category() != TypeCategory::UserDefined && type_index.category() != TypeCategory::TypeAlias || !type_index.is_valid()) {
+	if ((type_index.category() != TypeCategory::UserDefined && type_index.category() != TypeCategory::TypeAlias) || !type_index.is_valid()) {
 		return CanonicalTypeAlias{type_index};
 	}
 
