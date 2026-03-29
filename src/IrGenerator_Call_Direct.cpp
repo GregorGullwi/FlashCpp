@@ -1461,7 +1461,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								// Need to take address of the value
 								TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
-								irOperands.emplace_back(expr_type);
+								irOperands.emplace_back(categoryToType(expr_type.category()));
 								irOperands.emplace_back(64);  // Pointer size
 								irOperands.emplace_back(addr_var);
 							}

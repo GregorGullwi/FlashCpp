@@ -110,7 +110,7 @@
 				}
 
 				info.parameters.emplace_back(
-					param_type.type(),
+					param_type.type_index(),
 					param_type.size_in_bits(),
 					static_cast<int>(param_type.pointer_levels().size()),
 					std::string(param_decl.identifier_token().value())
