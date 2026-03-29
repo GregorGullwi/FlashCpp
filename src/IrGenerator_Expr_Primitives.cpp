@@ -298,7 +298,7 @@
 			if (type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 				semantic_type = resolve_type_alias(getTypeInfo(type_node.type_index()).typeEnum(), type_node.type_index());
 			}
-			const bool carries_type_index = carriesSemanticTypeIndex(typeToCategory(semantic_type));
+			const bool carries_type_index = carriesSemanticTypeIndex(semantic_type);
 			const PointerDepth pointer_depth{preserve_pointer_depth ? static_cast<int>(type_node.pointer_depth()) : 0};
 			return makeIdentifierResult(
 				result_type,

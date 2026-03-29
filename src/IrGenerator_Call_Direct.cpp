@@ -1353,7 +1353,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 						// Argument is already a reference - just pass it through
 						// References are stored as pointers (64 bits), not the pointee size
-						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(categoryToType(type_node.type()));
 						irOperands.emplace_back(64);  // Pointer size, not pointee size
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
@@ -1361,7 +1361,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
-						irOperands.emplace_back(type_node.type());
+						irOperands.emplace_back(categoryToType(type_node.type()));
 						irOperands.emplace_back(64);  // Pointer size
 						irOperands.emplace_back(addr_var);
 					}
@@ -1371,14 +1371,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
-					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(categoryToType(type_node.type()));
 					irOperands.emplace_back(static_cast<int>(type_node.size_in_bits()));
 					irOperands.emplace_back(deref_var);
 				} else {
 					// Regular variable - pass by value
 					// For pointer types, size is always 64 bits regardless of pointee type
 					int arg_size = (type_node.pointer_depth() > 0) ? 64 : static_cast<int>(type_node.size_in_bits());
-					irOperands.emplace_back(type_node.type());
+					irOperands.emplace_back(categoryToType(type_node.type()));
 					irOperands.emplace_back(arg_size);
 					irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 				}

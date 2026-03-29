@@ -204,7 +204,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, 0); // Do we need a correct size here?
+				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined, 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}

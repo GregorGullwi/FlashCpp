@@ -972,10 +972,6 @@ inline TypeCategory resolve_type_alias(TypeCategory cat, TypeIndex type_index) {
 	return canonicalize_type_alias(cat, type_index).typeEnum();
 }
 
-inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return categoryToType(resolve_type_alias(typeToCategory(type), type_index));
-}
-
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
 TypeCreationResult add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
@@ -1224,8 +1220,8 @@ public:
 		if (type_index_.category() != other.type_index_.category()) {
 			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
 			// types such as enum vs int just because they share a runtime size.
-			Type resolved_type = resolve_type_alias(categoryToType(type_index_.category()), type_index_);
-			Type other_resolved_type = resolve_type_alias(categoryToType(other.type_index_.category()), other.type_index_);
+			TypeCategory resolved_type = resolve_type_alias(type_index_.category(), type_index_);
+			TypeCategory other_resolved_type = resolve_type_alias(other.type_index_.category(), other.type_index_);
 			if (resolved_type != other_resolved_type) {
 				return false;
 			}

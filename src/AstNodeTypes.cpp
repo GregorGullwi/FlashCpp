@@ -162,8 +162,8 @@ size_t getTypeInfoCount() {
     return gTypeInfo.size();
 }
 
-TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits) {
-    auto& type_info = gTypeInfo.emplace_back(name, kind, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), typeToCategory(kind)}, size_bits);
+TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, kind, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), kind}, size_bits);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }

@@ -749,10 +749,10 @@
 				return false;
 			}
 			TypeCategory semantic_type = resolve_type_alias(source_type, source_type_index);
-			if (!carriesSemanticTypeIndex(typeToCategory(semantic_type))) {
+			if (!carriesSemanticTypeIndex(semantic_type)) {
 				semantic_type = resolve_type_alias(getTypeInfo(source_type_index).typeEnum(), source_type_index);
 			}
-			return carriesSemanticTypeIndex(typeToCategory(semantic_type));
+			return carriesSemanticTypeIndex(semantic_type);
 		};
 
 		// Special handling for rvalue reference casts: static_cast<T&&>(expr)

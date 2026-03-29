@@ -921,7 +921,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				info.mangled_name = var_name;  // Phase 4: Using StringHandle directly
 				info.size_in_bits = SizeInBits{type_node.size_in_bits()};
 				TypeCategory semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
-				info.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), carriesSemanticTypeIndex(typeToCategory(semantic_type)) ? type_node.type_index() : TypeIndex{});
+				info.type_index = carriesSemanticTypeIndex(semantic_type) ? type_node.type_index() : TypeIndex{};
 				// Phase 4: Using StringHandle for key
 				StringHandle key = decl.identifier_token().handle();
 				static_local_names_[key] = info;

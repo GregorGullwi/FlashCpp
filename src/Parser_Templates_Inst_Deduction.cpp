@@ -28,7 +28,7 @@ void registerTypeParamsInScope(
 		if (arg.is_template_template_arg) continue;  // Template-template params don't represent concrete types
 		auto& type_info = add_template_param_type(
 			param_names[i],
-			categoryToType(arg.typeEnum()), 0);
+			arg.typeEnum(), 0);
 		if (is_builtin_type(arg.typeEnum())) {
 			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 		} else {
@@ -65,10 +65,9 @@ void registerTypeParamsInScope(
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
 		if (template_args[i].is_value) continue;
 		if (template_args[i].is_template_template_arg) continue;
-		Type concrete_type = categoryToType(template_args[i].typeEnum());
 		auto& type_info = add_template_param_type(
 			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
-			concrete_type,
+			template_args[i].typeEnum(),
 			getTypeSizeFromTemplateArgument(template_args[i]));
 		scope.addParameter(&type_info);
 		if (sfinae_map)
@@ -92,12 +91,11 @@ void registerOuterBindingInScope(
 ) {
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
-		Type concrete_type = categoryToType(arg.typeEnum());
 		uint32_t size = (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount())
 			? getTypeInfo(arg.type_index).type_size_
-			: get_type_size_bits(concrete_type);
+			: get_type_size_bits(arg.typeEnum());
 		auto& type_info = add_template_param_type(
-			outer_binding.param_names[i], concrete_type, size);
+			outer_binding.param_names[i], arg.typeEnum(), size);
 		scope.addParameter(&type_info);
 		if (sfinae_map)
 			(*sfinae_map)[type_info.name()] = arg.type_index;
