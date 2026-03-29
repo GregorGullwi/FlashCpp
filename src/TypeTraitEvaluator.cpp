@@ -10,7 +10,10 @@ inline bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_dep
 	        cat == TypeCategory::UnsignedChar || cat == TypeCategory::UnsignedShort ||
 	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::UnsignedLong ||
 	        cat == TypeCategory::UnsignedLongLong || cat == TypeCategory::Float ||
-	        cat == TypeCategory::Double || cat == TypeCategory::LongDouble || cat == TypeCategory::Enum ||
+	        cat == TypeCategory::Double || cat == TypeCategory::LongDouble ||
+	        cat == TypeCategory::WChar || cat == TypeCategory::Char8 ||
+	        cat == TypeCategory::Char16 || cat == TypeCategory::Char32 ||
+	        cat == TypeCategory::Enum ||
 	        cat == TypeCategory::Nullptr || cat == TypeCategory::MemberObjectPointer ||
 	        cat == TypeCategory::MemberFunctionPointer);
 }
@@ -21,7 +24,9 @@ inline bool isIntegral(TypeCategory cat) {
 	        cat == TypeCategory::UnsignedShort || cat == TypeCategory::Int ||
 	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::Long ||
 	        cat == TypeCategory::UnsignedLong || cat == TypeCategory::LongLong ||
-	        cat == TypeCategory::UnsignedLongLong);
+	        cat == TypeCategory::UnsignedLongLong ||
+	        cat == TypeCategory::WChar || cat == TypeCategory::Char8 ||
+	        cat == TypeCategory::Char16 || cat == TypeCategory::Char32);
 }
 
 inline bool isFloatingPoint(TypeCategory cat) {
@@ -29,14 +34,19 @@ inline bool isFloatingPoint(TypeCategory cat) {
 }
 
 inline bool isSigned(TypeCategory cat) {
+	if (cat == TypeCategory::WChar)
+		return g_target_data_model != TargetDataModel::LLP64;
 	return (cat == TypeCategory::Char || cat == TypeCategory::Short || cat == TypeCategory::Int ||
 	        cat == TypeCategory::Long || cat == TypeCategory::LongLong);
 }
 
 inline bool isUnsigned(TypeCategory cat) {
+	if (cat == TypeCategory::WChar)
+		return g_target_data_model == TargetDataModel::LLP64;
 	return (cat == TypeCategory::Bool || cat == TypeCategory::UnsignedChar || cat == TypeCategory::UnsignedShort ||
 	        cat == TypeCategory::UnsignedInt || cat == TypeCategory::UnsignedLong ||
-	        cat == TypeCategory::UnsignedLongLong);
+	        cat == TypeCategory::UnsignedLongLong ||
+	        cat == TypeCategory::Char8 || cat == TypeCategory::Char16 || cat == TypeCategory::Char32);
 }
 
 

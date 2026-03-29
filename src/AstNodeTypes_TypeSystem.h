@@ -606,20 +606,21 @@ constexpr bool is_bool_type(TypeCategory cat) {
 	return cat == TypeCategory::Bool;
 }
 
-// Note: WChar/Char8/Char16/Char32 are always unsigned in this implementation;
-// the target-dependent signedness of WChar only matters at the Type level.
-constexpr bool is_unsigned_integer_type(TypeCategory cat) {
+// WChar signedness is target-dependent: unsigned on Windows (LLP64), signed on Linux (LP64).
+// Char8/Char16/Char32 are always unsigned per C++20.
+inline bool is_unsigned_integer_type(TypeCategory cat) {
 	switch (cat) {
 	case TypeCategory::UnsignedChar:
 	case TypeCategory::UnsignedShort:
 	case TypeCategory::UnsignedInt:
 	case TypeCategory::UnsignedLong:
 	case TypeCategory::UnsignedLongLong:
-	case TypeCategory::WChar:
 	case TypeCategory::Char8:
 	case TypeCategory::Char16:
 	case TypeCategory::Char32:
 		return true;
+	case TypeCategory::WChar:
+		return g_target_data_model == TargetDataModel::LLP64;
 	default:
 		return false;
 	}
@@ -629,11 +630,9 @@ constexpr bool is_floating_point_type(TypeCategory cat) {
 	return isFloatingPointType(cat);
 }
 
-constexpr bool is_signed_integer_type(TypeCategory cat) {
+inline bool is_signed_integer_type(TypeCategory cat) {
 	// Note: plain char is treated as signed, matching the most common implementations.
-	// WChar is NOT included — at the TypeCategory level WChar is treated as unsigned
-	// on all platforms (the target-dependent signedness of wchar_t was only modelled
-	// in the now-removed Type overload).
+	// WChar is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64).
 	switch (cat) {
 	case TypeCategory::Char:
 	case TypeCategory::Short:
@@ -641,6 +640,8 @@ constexpr bool is_signed_integer_type(TypeCategory cat) {
 	case TypeCategory::Long:
 	case TypeCategory::LongLong:
 		return true;
+	case TypeCategory::WChar:
+		return g_target_data_model != TargetDataModel::LLP64;
 	default:
 		return false;
 	}

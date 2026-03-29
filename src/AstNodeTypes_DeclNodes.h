@@ -1007,9 +1007,12 @@ inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
 			return 1;
 		case TypeCategory::Short:
 		case TypeCategory::UnsignedShort:
-		case TypeCategory::WChar:
 		case TypeCategory::Char16:
 			return 2;
+		case TypeCategory::WChar:
+			// wchar_t is 16-bit on LLP64 (Windows) → alignment 2
+			// wchar_t is 32-bit on LP64 (Linux) → alignment 4
+			return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 4;
 		case TypeCategory::Int:
 		case TypeCategory::UnsignedInt:
 		case TypeCategory::Long:

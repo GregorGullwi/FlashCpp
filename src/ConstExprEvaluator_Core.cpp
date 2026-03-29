@@ -1627,7 +1627,13 @@ EvalResult Evaluator::evaluate_new_expression(
 				break;
 			case TypeCategory::UnsignedChar: case TypeCategory::UnsignedShort: case TypeCategory::UnsignedInt:
 			case TypeCategory::UnsignedLong: case TypeCategory::UnsignedLongLong:
+			case TypeCategory::Char8: case TypeCategory::Char16: case TypeCategory::Char32:
 				init_val = EvalResult::from_uint(arg_result.as_uint_raw());
+				break;
+			case TypeCategory::WChar:
+				init_val = (g_target_data_model == TargetDataModel::LLP64)
+					? EvalResult::from_uint(arg_result.as_uint_raw())
+					: EvalResult::from_int(arg_result.as_int());
 				break;
 			case TypeCategory::Float: case TypeCategory::Double: case TypeCategory::LongDouble:
 				init_val = EvalResult::from_double(arg_result.as_double());
