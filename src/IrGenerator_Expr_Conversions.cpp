@@ -659,7 +659,7 @@
 
 				// Return pointer to result (64-bit pointer)
 				return makeExprResult(
-					categoryToType(addr_components->final_type_index.category()),
+					addr_components->final_type_index.category(),
 					SizeInBits{64},
 					result_var,
 					TypeIndex{},
@@ -945,7 +945,7 @@
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
-						return makeExprResult(categoryToType(element_category), SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(element_category, SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -1011,7 +1011,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
 				// Return pointer to element (64-bit pointer)
-				return makeExprResult(categoryToType(element_category), SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeExprResult(element_category, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 			}
 		}
 
@@ -1042,7 +1042,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 
 				// Load current value through pointer
-				TempVar current_val = emitDereference(typeToCategory(member->memberType()), 64, 1, ptr_temp, token);
+				TempVar current_val = emitDereference(member->memberType(), 64, 1, ptr_temp, token);
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
@@ -1319,14 +1319,14 @@
 				const auto slot = sema_->getSlot(key);
 				if (slot.has_value() && slot->has_cast()) {
 					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-					Type from_t = categoryToType(sema_->typeContext().get(ci.source_type_id).category());
-					const Type to_t = categoryToType(sema_->typeContext().get(ci.target_type_id).category());
-					if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
-						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
-						if (from_t != operandIrOperands.typeEnum() && typeToCategory(from_t) == TypeCategory::Enum)
-							from_t = categoryToType(operandIrOperands.typeEnum());
-						operandIrOperands = generateTypeConversion(operandIrOperands, typeToCategory(from_t), typeToCategory(to_t), unaryOperatorNode.get_token());
-						operandType = typeToCategory(to_t);
+					TypeCategory from_t = sema_->typeContext().get(ci.source_type_id).category();
+					const TypeCategory to_t = sema_->typeContext().get(ci.target_type_id).category();
+					if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
+						// Handle enum mismatch (sema annotates TypeCategory::Enum but codegen resolves early)
+						if (from_t != operandIrOperands.typeEnum() && from_t == TypeCategory::Enum)
+							from_t = operandIrOperands.typeEnum();
+						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
+						operandType = to_t;
 						promoted = true;
 					}
 				}
@@ -2425,8 +2425,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
 				const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
-				Type from_t = categoryToType(from_desc.category());
-				const Type to_t = categoryToType(to_desc.category());
+				TypeCategory from_t = from_desc.category();
+				const TypeCategory to_t = to_desc.category();
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					from_desc.category() == TypeCategory::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
@@ -2435,13 +2435,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), typeToCategory(param_base_type), param_type.type_index(), source_is_const);
+							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
 								StringTable::getStringView(src_type_info.name()), " to parameter type");
 							const int param_size = static_cast<int>(param_type.size_in_bits());
 							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
-									typeToCategory(param_base_type), param_type.type_index(), param_size, source_token)) {
+									param_base_type, param_type.type_index(), param_size, source_token)) {
 								arg_result = *result;
 								sema_applied = true;
 							}
@@ -2450,7 +2450,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					ci.selected_constructor &&
 					from_desc.category() != TypeCategory::Struct &&
-					typeToCategory(param_base_type) != TypeCategory::Struct) {
+					param_base_type != TypeCategory::Struct) {
 					// Pre-bind conversion: target is the selected constructor's first parameter type,
 					// not the outer param type (which may be the struct being constructed).
 					const auto& ctor_params = ci.selected_constructor->parameter_nodes();
@@ -2460,19 +2460,19 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					if (!ptn.is<TypeSpecifierNode>())
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
 					const TypeCategory ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
-					Type ctor_from_t = categoryToType(from_desc.category());
-					if (typeToCategory(ctor_from_t) == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
-						ctor_from_t = categoryToType(arg_result.typeEnum());
+					TypeCategory ctor_from_t = from_desc.category();
+					if (ctor_from_t == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
+						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
-						arg_result = generateTypeConversion(arg_result, typeToCategory(ctor_from_t), typeToCategory(ctor_first_param_type), source_token);
+						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 					}
 					sema_applied = true;
-				} else if (!is_struct_type(typeToCategory(from_t)) && !is_struct_type(typeToCategory(to_t))) {
-					// Sema may annotate as Type::Enum while codegen resolves enum
+				} else if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
+					// Sema may annotate as TypeCategory::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
-					if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum())
-						from_t = categoryToType(arg_result.typeEnum());
-					arg_result = generateTypeConversion(arg_result, typeToCategory(from_t), typeToCategory(to_t), source_token);
+					if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum())
+						from_t = arg_result.typeEnum();
+					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
 				}
 			}
@@ -2483,10 +2483,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			arg_result.typeEnum() != param_base_type) {
 			TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(typeToCategory(param_base_type)))
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
 					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
-				arg_result = generateTypeConversion(arg_result, arg_result.category(), typeToCategory(param_base_type), source_token);
+				arg_result = generateTypeConversion(arg_result, arg_result.category(), param_base_type, source_token);
 			}
 		}
 
@@ -2596,15 +2596,15 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
 			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
-			Type from_t = categoryToType(from_desc.category());
-			const Type to_t = categoryToType(to_desc.category());
-			if (typeToCategory(from_t) == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
-				from_t = categoryToType(arg_result.typeEnum());
+			TypeCategory from_t = from_desc.category();
+			const TypeCategory to_t = to_desc.category();
+			if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
+				from_t = arg_result.typeEnum();
 			}
-			if (typeToCategory(from_t) == TypeCategory::Struct || typeToCategory(to_t) == TypeCategory::Struct) {
+			if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct) {
 				return std::nullopt;
 			}
-			arg_result = generateTypeConversion(arg_result, typeToCategory(from_t), typeToCategory(to_t), source_token);
+			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 		}
 
 		return materializeTemporaryAndTakeAddress(arg_result);
@@ -2616,7 +2616,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const Token& source_token) {
 		const TypeCategory referred_type = ref_param_type.type();
 		// Convert the source value to the referred-to type.
-		ExprResult converted = generateTypeConversion(source_result, source_result.category(), typeToCategory(referred_type), source_token);
+		ExprResult converted = generateTypeConversion(source_result, source_result.category(), referred_type, source_token);
 		const int ref_type_bits = get_type_size_bits(referred_type);
 		// Materialize the converted value into a stack temporary.
 		TempVar conv_temp = var_counter.next();

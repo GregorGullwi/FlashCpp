@@ -816,12 +816,8 @@ private:
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
 
-	// Convenience accessor: converts the embedded TypeCategory back to the legacy Type
-	// enum for call sites that still require a Type value (emitReturn, member_type, etc.).
-	// Returns Type::Invalid when the TypeIndex has not been stamped with a category yet,
-	// which only happens before any function definition has been visited.
-	Type currentFunctionReturnType() const {
-		return categoryToType(current_function_return_type_index_.category());
+	TypeCategory currentFunctionReturnType() const {
+		return current_function_return_type_index_.category();
 	}
 	TypeIndex currentFunctionReturnTypeIndex() const {
 		return current_function_return_type_index_;

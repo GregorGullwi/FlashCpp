@@ -192,7 +192,7 @@
 								emitAndClearFullExpressionTempDestructors();
 								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								typeToCategory(currentFunctionReturnType()), current_function_return_size_,
+								currentFunctionReturnType(), current_function_return_size_,
 								node.return_token());
 								return;
 							}
@@ -239,7 +239,7 @@
 
 				// Get the current function's return type
 				TypeCategory return_category = current_function_return_type_index_.category();
-				Type return_type = categoryToType(return_category);
+				TypeCategory return_type = return_category;
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
 					return_type,
@@ -266,10 +266,10 @@
 					if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type annotated_source_type = categoryToType(sema_->typeContext().get(cast_info.source_type_id).category());
-						const Type to_type   = categoryToType(sema_->typeContext().get(cast_info.target_type_id).category());
+						const TypeCategory annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).category();
+						const TypeCategory to_type   = sema_->typeContext().get(cast_info.target_type_id).category();
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							typeToCategory(annotated_source_type) == TypeCategory::Struct) {
+							annotated_source_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
@@ -279,24 +279,24 @@
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, typeToCategory(return_type), ret_type_idx, source_is_const);
+									src_struct_info, return_type, ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");
 									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
-											typeToCategory(return_type), ret_type_idx, return_size, node.return_token())) {
+											return_type, ret_type_idx, return_size, node.return_token())) {
 										operands = *result;
 										sema_applied_conversion = true;
 									}
 								}
 							}
-						} else if (!is_struct_type(typeToCategory(annotated_source_type)) && !is_struct_type(typeToCategory(to_type))) {
-							Type from_type = annotated_source_type;
+						} else if (!is_struct_type(annotated_source_type) && !is_struct_type(to_type)) {
+							TypeCategory from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (typeToCategory(from_type) == TypeCategory::Enum && from_type != operands.typeEnum())
-								from_type = categoryToType(operands.typeEnum());
-							operands = generateTypeConversion(operands, typeToCategory(from_type), typeToCategory(to_type), node.return_token());
+							if (from_type == TypeCategory::Enum && from_type != operands.typeEnum())
+								from_type = operands.typeEnum();
+							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;
 						}
 					}
@@ -318,22 +318,22 @@
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, typeToCategory(return_type), ret_type_idx, isExprConstQualified(*expr_opt));
+								source_struct_info, return_type, ret_type_idx, isExprConstQualified(*expr_opt));
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
 									StringTable::getStringView(source_type_info.name()),
 									" to return type");
 								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
-										typeToCategory(return_type), ret_type_idx, return_size, node.return_token()))
+										return_type, ret_type_idx, return_size, node.return_token()))
 									operands = *result;
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
-								operands = generateTypeConversion(operands, typeToCategory(expr_type), typeToCategory(return_type), node.return_token());
+								operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 							}
 						} else {
 							// No valid type_index - fall back to generateTypeConversion
-							operands = generateTypeConversion(operands, typeToCategory(expr_type), typeToCategory(return_type), node.return_token());
+							operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 						}
 					} else {
 						// Phase 15: sema should annotate standard arithmetic return conversions.
@@ -341,11 +341,11 @@
 						// some expression contexts). Same-type size mismatches are not type
 						// conversions — no annotation expected.
 						if (sema_normalized_current_function_ && expr_type != return_type &&
-							is_standard_arithmetic_type(typeToCategory(expr_type)) && is_standard_arithmetic_type(typeToCategory(return_type))) {
+							is_standard_arithmetic_type(expr_type) && is_standard_arithmetic_type(return_type)) {
 							throw InternalError(std::string("Phase 15: sema missed return conversion (") + std::string(getTypeName(expr_type)) + " -> " + std::string(getTypeName(return_type)) + ")");
 						}
 						// Fallback for non-arithmetic types (enum, user_defined, etc.)
-						operands = generateTypeConversion(operands, typeToCategory(expr_type), typeToCategory(return_type), node.return_token());
+						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				}
 			}
@@ -410,7 +410,7 @@
 				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
-			emitReturn(return_value, typeToCategory(currentFunctionReturnType()), current_function_return_size_,
+			emitReturn(return_value, currentFunctionReturnType(), current_function_return_size_,
 			node.return_token());
 		}
 		else {
