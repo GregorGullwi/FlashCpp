@@ -69,7 +69,7 @@
 
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(TypeCategory::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
+				TypeSpecifierNode return_type_node(TypeIndex{}.withCategory(TypeCategory::Void), 0, memberFunctionCallNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
@@ -252,8 +252,7 @@
 
 			immediate_lambda_object_name = std::get<StringHandle>(lambda_result.value);
 			immediate_lambda_object_type = TypeSpecifierNode(
-				TypeCategory::Struct,
-				lambda_result.type_index,
+				lambda_result.type_index.withCategory(TypeCategory::Struct),
 				static_cast<int>(lambda_result.size_in_bits.value),
 				memberFunctionCallNode.called_from(),
 				CVQualifier::None,
@@ -314,8 +313,7 @@
 									? closure_type->getStructInfo()->total_size * 8
 									: 64;
 								object_type = TypeSpecifierNode(
-									TypeCategory::Struct,
-									closure_type->type_index_,
+									closure_type->type_index_.withCategory(TypeCategory::Struct),
 									closure_size,
 									object_decl->identifier_token(),
 									CVQualifier::None,
@@ -505,7 +503,7 @@
 							}
 
 							// Not a function pointer member - set object_type for regular member function lookup
-							object_type = TypeSpecifierNode(TypeCategory::Struct, resolved_member->type_index,
+							object_type = TypeSpecifierNode(resolved_member->type_index.withCategory(TypeCategory::Struct),
 							resolved_member->size * 8, Token(), CVQualifier::None, ReferenceQualifier::None);  // size in bits
 							resolved_member_object_type = true;
 						}
@@ -909,7 +907,7 @@
 
 					InlineVector<TemplateTypeArg, 4> template_args;
 					for (const auto& [arg_type, arg_type_index] : arg_types) {
-						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+						template_args.push_back(TemplateTypeArg::makeType(arg_type_index.withCategory(arg_type)));
 					}
 
 					// Check if we already have this instantiation
@@ -934,7 +932,7 @@
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
 							for (const auto& [arg_type, arg_type_index] : arg_types) {
-								type_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+								type_args.push_back(TemplateTypeArg::makeType(arg_type_index.withCategory(arg_type)));
 							}
 
 							// Evaluate the constraint with the template arguments
@@ -1135,17 +1133,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(TypeCategory::Bool, TypeIndex{}));
+							template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(TypeCategory::Bool)));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(lit.type(), TypeIndex{}));
+							template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(lit.type())));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(type.type(), TypeIndex{}));
+								template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(type.type())));
 							}
 						}
 					});
@@ -1203,8 +1201,7 @@
 														? closure_type->getStructInfo()->total_size * 8
 														: 64;
 													type_node = TypeSpecifierNode(
-														TypeCategory::Struct,
-														closure_type->type_index_,
+														closure_type->type_index_.withCategory(TypeCategory::Struct),
 														closure_size,
 														decl->identifier_token(),
 														CVQualifier::None,
@@ -1267,8 +1264,7 @@
 							sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
 							if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
 								resolved_generic_return_type.emplace(
-									matched_lambda_info->returnType(),
-									matched_lambda_info->return_type_index,
+									matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
 									matched_lambda_info->return_size,
 									matched_lambda_info->lambda_token,
 									CVQualifier::None,

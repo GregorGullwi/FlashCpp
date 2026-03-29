@@ -4661,7 +4661,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(TypeCategory::Void, TypeIndex{}, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+		TypeSpecifierNode void_return(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -4806,7 +4806,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
-				? TypeSpecifierNode(arg.typeEnum(), arg.type_index, arg.size_in_bits.value, Token{}, CVQualifier::None, ReferenceQualifier::None)
+				? TypeSpecifierNode(arg.type_index.withCategory(arg.typeEnum()), arg.size_in_bits.value, Token{}, CVQualifier::None, ReferenceQualifier::None)
 				: TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg.size_in_bits.value, Token{}, CVQualifier::None);
 			if (arg.pointer_depth.is_pointer()) {
 				for (int i = 0; i < arg.pointer_depth.value; ++i) {
@@ -4969,12 +4969,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							}
 						}
 
-						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv, ReferenceQualifier::None);
+						param_type = TypeSpecifierNode(struct_type_index.withCategory(paramType), static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv, ReferenceQualifier::None);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
 				} else if (paramType == TypeCategory::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
-					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier, ReferenceQualifier::None);
+					param_type = TypeSpecifierNode(arg_type_index.withCategory(paramType), static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier, ReferenceQualifier::None);
 					// Add pointer levels (rebuild after creating with type_index)
 					for (int p = 0; p < arg_pointer_depth; ++p) {
 						param_type.add_pointer_level(CVQualifier::None);

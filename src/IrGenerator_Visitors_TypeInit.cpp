@@ -1925,8 +1925,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	if (struct_type_info) {
 		// Create a 'this' pointer type (pointer to the struct)
 		auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			TypeCategory::Struct,
-			struct_type_info->type_index_,
+			struct_type_info->type_index_.withCategory(TypeCategory::Struct),
 			64,  // Pointer size in bits
 			template_decl.identifier_token(),
 			CVQualifier::None,

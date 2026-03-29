@@ -907,7 +907,7 @@ ParseResult Parser::create_function_from_header(
 		type_node = ASTNode::emplace_node<TypeSpecifierNode>(*header.return_type);
 	} else {
 		// For constructors/destructors, create a void return type
-		type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeIndex{}, 0, Token(), CVQualifier::None, ReferenceQualifier::None);
+		type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	// Create the declaration node with type and name

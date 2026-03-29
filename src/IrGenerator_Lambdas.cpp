@@ -519,7 +519,7 @@
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()
 				// We need this so member function calls can generate the correct mangled name
-				TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index,
+				TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
 					lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 
@@ -596,7 +596,7 @@
 		}
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -741,7 +741,7 @@
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.returnType(), lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -1094,7 +1094,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, static_cast<int>(member->size * 8), Token{}, CVQualifier::None);
 							if (member->type_index.isStruct()) {
 								// Need to set type_index for struct types
-								member_type = TypeSpecifierNode(member->memberType(), member->type_index, static_cast<int>(member->size * 8), Token(), CVQualifier::None, ReferenceQualifier::None);
+								member_type = TypeSpecifierNode(member->type_index.withCategory(member->memberType()), static_cast<int>(member->size * 8), Token(), CVQualifier::None, ReferenceQualifier::None);
 							}
 							current_lambda_context_.capture_types[var_name] = member_type;
 						}
@@ -1210,8 +1210,7 @@ const Token& fallback_token) const {
 		? closure_type->getStructInfo()->total_size * 8
 		: 64;
 	return TypeSpecifierNode(
-		TypeCategory::Struct,
-		closure_type->type_index_,
+		closure_type->type_index_.withCategory(TypeCategory::Struct),
 		closure_size,
 		fallback_token,
 		CVQualifier::None,

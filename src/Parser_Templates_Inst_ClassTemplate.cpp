@@ -1566,8 +1566,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					orig_return_type, template_params, template_args);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(
-					substituted_return_type,
-					substituted_return_type_index,
+					substituted_return_type_index.withCategory(substituted_return_type),
 					get_substituted_type_size_bits(substituted_return_type, substituted_return_type_index),
 					orig_decl.identifier_token(),
 					orig_return_type.cv_qualifier(),
@@ -3324,8 +3323,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									// Substitute the type
 									const TemplateTypeArg& subst = subst_it->second;
 									substituted_type_spec = TypeSpecifierNode(
-										subst.typeEnum(),
-										subst.type_index,
+										subst.type_index.withCategory(subst.typeEnum()),
 										0,  // size will be looked up
 										Token(),
 										type_spec.cv_qualifier(),
@@ -3805,8 +3803,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// IMPORTANT: Preserve the base CV qualifier from the original type!
 		// For example: const T* should become const int* when T=int
 		auto substituted_type = emplace_node<TypeSpecifierNode>(
-			member_type,
-			member_type_index,
+			member_type_index.withCategory(member_type),
 			get_type_size_bits(member_type),
 			Token(),
 			type_spec.cv_qualifier(),  // Preserve const/volatile qualifier

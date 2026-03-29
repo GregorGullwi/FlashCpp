@@ -1274,11 +1274,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(TypeCategory::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(TypeCategory::Struct, TypeIndex{}, 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1588,11 +1588,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(TypeCategory::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(TypeCategory::Struct, TypeIndex{}, 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
@@ -1652,7 +1652,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(member_ctx.struct_type_index);
-						object_type_opt = TypeSpecifierNode(TypeCategory::Struct, type_info.type_index_, type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
+						object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
 					}
 				}
 			}

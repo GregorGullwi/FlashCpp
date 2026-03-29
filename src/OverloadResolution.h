@@ -1308,8 +1308,8 @@ inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec
 	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index().is_valid();
 }
 
-inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, TypeIndex type_index) {
-	TypeCategory effective_type = type;
+inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
+	TypeCategory effective_type = type_index.category();
 	int size_bits = 0;
 
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
@@ -1334,7 +1334,7 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeCategory type, Type
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {
-		return TypeSpecifierNode(effective_type, type_index, size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
+		return TypeSpecifierNode(type_index.withCategory(effective_type), size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
@@ -1567,8 +1567,8 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		}
 	}
 	return findBinaryOperatorOverload(
-		makeBinaryOperatorTypeSpecifier(TypeCategory::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind);
 }
 
@@ -1814,8 +1814,8 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		}
 	}
 	return findBinaryOperatorOverloadWithFreeFunction(
-		makeBinaryOperatorTypeSpecifier(TypeCategory::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind,
 		operator_symbol,
 		symbol_table);

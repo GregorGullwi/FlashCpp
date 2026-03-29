@@ -356,7 +356,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					
 					// Create a TypeSpecifierNode for the instantiated type
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-						TypeCategory::Struct, new_type_index, 64, Token{}, CVQualifier::None, ReferenceQualifier::None
+						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None
 					);
 					
 					// Create a ConstructorCallNode instead of FunctionCallNode
@@ -694,8 +694,7 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		// Handle type template parameters
 		// Create a TypeSpecifierNode from the template argument
 		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.typeEnum(),
-			arg.type_index,
+			arg.type_index.withCategory(arg.typeEnum()),
 			64,  // Default size, will be adjusted by type system
 			Token{},
 			arg.cv_qualifier,
@@ -1022,8 +1021,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			}
 			
 			TypeSpecifierNode substituted_type(
-				subst.typeEnum(),
-				subst.type_index,
+				subst.type_index.withCategory(subst.typeEnum()),
 				size_in_bits,
 				Token{},
 				subst.cv_qualifier,
@@ -1091,7 +1089,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					if (type_it != getTypesByNameMap().end()) {
 						TypeIndex new_type_index = type_it->second->type_index_;
 						FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
-						return TypeSpecifierNode(TypeCategory::Struct, new_type_index, 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
+						return TypeSpecifierNode(new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
 					}
 					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
 				} else {

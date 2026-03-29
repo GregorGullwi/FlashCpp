@@ -676,8 +676,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
 			}
 			TypeSpecifierNode type_spec(
-				TypeCategory::Struct,
-				struct_type_index,
+				struct_type_index.withCategory(TypeCategory::Struct),
 				struct_size_bits,
 				alias_token,
 				CVQualifier::None,
@@ -818,7 +817,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token,
+						enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
 						CVQualifier::None, ReferenceQualifier::None);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
@@ -1297,7 +1296,7 @@ ParseResult Parser::parse_typedef_declaration()
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					TypeCategory::Enum, enum_type_index, underlying_size, enumerator_name_token,
+					enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
 					CVQualifier::None, ReferenceQualifier::None);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
@@ -1900,8 +1899,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
-			TypeCategory::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
 			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
 			CVQualifier::None,

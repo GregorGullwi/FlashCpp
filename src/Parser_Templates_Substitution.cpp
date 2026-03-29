@@ -923,8 +923,7 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 				TypeSpecifierNode substituted_spec(
-					substituted_type,
-					substituted_type_index,
+					substituted_type_index.withCategory(substituted_type),
 					substituted_size_bits,
 					substituted_token,
 					type_spec.cv_qualifier(),

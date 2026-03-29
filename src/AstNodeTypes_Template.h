@@ -617,13 +617,13 @@ struct AnonymousUnionMemberInfo {
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	
-	AnonymousUnionMemberInfo(StringHandle name, TypeCategory cat, TypeIndex tidx, size_t size, size_t align,
+	AnonymousUnionMemberInfo(StringHandle name, TypeIndex tidx, size_t size, size_t align,
 	                         std::optional<size_t> bitfield_w,
 	                         size_t ref_size_bits, ReferenceQualifier ref_qual,
 	                         bool is_arr,
 	                         int ptr_depth,
 	                         std::vector<size_t> arr_dims)
-		: member_name(name), member_type(cat), type_index(tidx), member_size(size),
+		: member_name(name), member_type(tidx.category()), type_index(tidx), member_size(size),
 		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
 		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}
@@ -893,7 +893,7 @@ public:
 	
 	// Add a member to the most recently created anonymous union
 	// Must be called after add_anonymous_union_marker()
-	void add_anonymous_union_member(StringHandle member_name, TypeCategory cat, TypeIndex type_index,
+	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index,
 	                                 size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
 	                                 size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
 	                                 bool is_array,
@@ -902,7 +902,7 @@ public:
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
-				member_name, cat, type_index, member_size, member_alignment,
+				member_name, type_index, member_size, member_alignment,
 				bitfield_width, referenced_size_bits, reference_qualifier, is_array,
 				pointer_depth,
 				std::move(array_dimensions)

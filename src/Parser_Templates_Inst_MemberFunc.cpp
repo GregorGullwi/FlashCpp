@@ -59,11 +59,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
 				arg_index++;
 			} else {
 				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type(), arg_types[0].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type_index().withCategory(arg_types[0].type())));
 			}
 		} else {
 			// Non-type parameter - not yet supported
@@ -505,8 +505,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Add 'this' pointer to symbol table
 	ASTNode this_type = emplace_node<TypeSpecifierNode>(
-		TypeCategory::Struct,
-		struct_type_index,
+		struct_type_index.withCategory(TypeCategory::Struct),
 		64,  // Pointer size
 		Token(),
 		CVQualifier::None,

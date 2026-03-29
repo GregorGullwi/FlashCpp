@@ -51,7 +51,7 @@
 				Token enum_type_token(Token::Type::Identifier,
 					StringTable::getStringView(enum_name), 0, 0, 0);
 				auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					TypeCategory::Enum, enum_type_index, enum_info->underlying_size, enum_type_token,
+					enum_type_index.withCategory(TypeCategory::Enum), enum_info->underlying_size, enum_type_token,
 					CVQualifier::None, ReferenceQualifier::None);
 
 				// Create a declaration node for the enumerator
@@ -242,8 +242,7 @@
 				TypeCategory return_type = return_category;
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
-					return_type,
-					current_function_return_type_index_,
+					current_function_return_type_index_.withCategory(return_type),
 					return_size,
 					node.return_token(),
 					CVQualifier::None,

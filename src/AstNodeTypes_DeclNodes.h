@@ -1083,11 +1083,6 @@ public:
 		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
 		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
-	// Constructor 4: TypeCategory + TypeIndex — preferred for new code involving struct/enum/alias types.
-	TypeSpecifierNode(TypeCategory cat, TypeIndex type_index, int sizeInBits,
-		const Token& token, CVQualifier cv_qualifier,
-		ReferenceQualifier reference_qualifier)
-		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{type_index.index(), cat}), reference_qualifier_(reference_qualifier) {}
 
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }

@@ -597,8 +597,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							const TypeInfo* resolved_info = qualified_type_it->second;
 							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 							TypeSpecifierNode resolved_spec(
-								resolved_info->typeEnum(),
-								resolved_info->type_index_,
+								resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 								resolved_size_bits,
 								ts.token(),
 								ts.cv_qualifier(),
@@ -685,8 +684,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	
 	// Create return type with substituted type, preserving qualifiers
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		substituted_return_type,
-		substituted_return_type_index,
+		substituted_return_type_index.withCategory(substituted_return_type),
 		get_type_size_bits(substituted_return_type),
 		orig_return_type.token(),
 		orig_return_type.cv_qualifier(),
@@ -718,8 +716,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			
 			// Create new type specifier with substituted type
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				substituted_type,
-				substituted_type_index,
+				substituted_type_index.withCategory(substituted_type),
 				get_type_size_bits(substituted_type),
 				orig_param_type.token(),
 				orig_param_type.cv_qualifier(),
@@ -732,8 +729,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
 			if (resolved_param_size_bits > 0) {
 				param_type_ref = TypeSpecifierNode(
-						param_type_ref.type(),
-						param_type_ref.type_index(),
+						param_type_ref.type_index().withCategory(param_type_ref.type()),
 						resolved_param_size_bits,
 						param_type_ref.token(),
 						param_type_ref.cv_qualifier(),
@@ -1058,7 +1054,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// entire pipeline (TemplateTypeArg →
 							// substitute_template_parameter / registerTypeParamsInScope).
 							TypeSpecifierNode synth_ts(
-								c.typeEnum(), c.type_index,
+								c.type_index.withCategory(c.typeEnum()),
 								get_type_size_bits(c.typeEnum()),
 								Token(), c.cv_qualifier, ReferenceQualifier::None);
 							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
@@ -1258,7 +1254,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
 					TypeCategory deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateTypeArg::makeType(deduced_type, TypeIndex{}));
+					template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(deduced_type)));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {
 					// Skip any arg slots fully consumed by the pre-deduction pass
@@ -1643,8 +1639,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						const TypeInfo* resolved_info = qualified_type_it->second;
 						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 						TypeSpecifierNode resolved_spec(
-							resolved_info->typeEnum(),
-							resolved_info->type_index_,
+							resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 							resolved_size_bits,
 							ts.token(),
 							ts.cv_qualifier(),

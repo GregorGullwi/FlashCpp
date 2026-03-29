@@ -104,7 +104,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 }
 
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
-	TypeSpecifierNode type_node(desc.category(), desc.type_index, 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
+	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
 	type_node.set_reference_qualifier(desc.ref_qualifier);
 	for (const auto& pointer_level : desc.pointer_levels) {
@@ -1099,8 +1099,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	SemanticContext lambda_ctx;
 	if (!isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		TypeSpecifierNode lambda_return_type(
-			lambda_info.returnType(),
-			lambda_info.return_type_index,
+			lambda_info.return_type_index.withCategory(lambda_info.returnType()),
 			lambda_info.return_size,
 			lambda_info.lambda_token,
 			CVQualifier::None,

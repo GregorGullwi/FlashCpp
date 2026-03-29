@@ -130,7 +130,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 
@@ -271,7 +271,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 
@@ -545,7 +545,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			if (ttype_arg.is_value) {
 				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
 			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.typeEnum(), ttype_arg.type_index));
+				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
 			}
 		}
 

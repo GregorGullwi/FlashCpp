@@ -222,7 +222,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			if (nested_type_info.getStructInfo()) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
 				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
-				TypeSpecifierNode nested_type_spec(member.memberType(), member.type_index, nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
+				TypeSpecifierNode nested_type_spec(member.type_index.withCategory(member.memberType()), nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
 					store_type = nested_result->type;

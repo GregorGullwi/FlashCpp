@@ -125,9 +125,9 @@ struct TemplateArgumentValue {
 	TypeCategory typeEnum() const { return type_index.category(); }
 
 	// Factory methods
-	static TemplateArgumentValue makeType(TypeCategory cat, TypeIndex idx) {
+	static TemplateArgumentValue makeType(TypeIndex idx) {
 		TemplateArgumentValue v;
-		v.type_index = TypeIndex::fromTypeAndIndex(cat, idx);
+		v.type_index = idx;
 		return v;
 	}
 
@@ -198,8 +198,8 @@ struct TemplateTypeArg {
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
 	// Builds a TypeIndex with category directly.
-	static TypeIndex makeTypeIndex(TypeCategory cat, TypeIndex idx) noexcept {
-		return TypeIndex{idx.index(), cat};
+	static TypeIndex makeTypeIndex(TypeIndex idx) noexcept {
+		return idx;
 	}
 
 	TemplateTypeArg()
@@ -220,7 +220,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type(), type_spec.type_index()))
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type())))
 		, ref_qualifier(type_spec.reference_qualifier())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
@@ -274,9 +274,9 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(TypeCategory cat, TypeIndex idx) {
+	static TemplateTypeArg makeType(TypeIndex idx) {
 		TemplateTypeArg arg;
-		arg.type_index = makeTypeIndex(cat, idx);
+		arg.type_index = makeTypeIndex(idx);
 		return arg;
 	}
 	

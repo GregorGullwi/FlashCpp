@@ -172,7 +172,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				}
 				
 				// Create a member function call node for the operator
-				auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
+				auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 				auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 				
@@ -239,7 +239,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				} else if (known_member_func) {
 					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
 					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 					func_ref_ptr = &func_decl_node;
@@ -319,7 +319,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				} else if (known_member_func) {
 					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
 					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 					func_ref_ptr = &func_decl_node;
@@ -611,7 +611,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							if (!consume(")"_tok)) {
 								return ParseResult::error("Expected ')' after qualified member function call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, qualified_member_token, CVQualifier::None, ReferenceQualifier::None);
+							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, qualified_member_token, CVQualifier::None, ReferenceQualifier::None);
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
@@ -651,7 +651,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								discard_saved_token(saved_pos);
 								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, op_token, CVQualifier::None, ReferenceQualifier::None);
+							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
@@ -1218,7 +1218,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			// Create a member function call node for the operator
 			// The operator is treated as a regular member function with a special name
-			auto type_spec = emplace_node<TypeSpecifierNode>(TypeCategory::Auto, TypeIndex{}, 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 			

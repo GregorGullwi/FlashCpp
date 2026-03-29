@@ -74,7 +74,7 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 	// parameter of type StructName* (C++20 [class.this]).
 	if (struct_type_index.index() < getTypeInfoCount()) {
 		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-			TypeCategory::Struct, struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			64,  // Pointer size in bits
 			Token(),
 			CVQualifier::None,

@@ -369,7 +369,7 @@
 					if (struct_info) {
 						Token this_token = func_decl.identifier_token();
 						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-							TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+							struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 						this_type.as<TypeSpecifierNode>().add_pointer_level();
 						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 						symbol_table.insert("this"sv, this_decl);
@@ -626,7 +626,7 @@
 					if (struct_info) {
 						Token this_token = func_decl.identifier_token();
 						auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-							TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+							struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 						this_type.as<TypeSpecifierNode>().add_pointer_level();
 						auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 						symbol_table.insert("this"sv, this_decl);
@@ -737,7 +737,7 @@
 					// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 					Token this_token = func_decl.identifier_token();  // Use function token for location
 					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-						TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+						struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 					// Mark 'this' as a pointer to struct (not a struct value)
 					this_type.as<TypeSpecifierNode>().add_pointer_level();
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -1229,7 +1229,7 @@
 			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
 			Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				TypeCategory::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
+				type_info.type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
 			symbol_table.insert(node.name(), decl_node);
 			return;
@@ -1242,7 +1242,7 @@
 			std::string_view enumerator_name = StringTable::getStringView(e.name);
 			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				TypeCategory::Enum, type_info.type_index_, static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
+				type_info.type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
 			symbol_table.insert(enumerator_name, decl_node);
 		}
@@ -1396,7 +1396,7 @@
 				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 				Token this_token = node.name_token();  // Use constructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-					TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+					struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 				// Mark 'this' as a pointer to struct (not a struct value)
 				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -2315,7 +2315,7 @@
 				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
 				Token this_token = node.name_token();  // Use destructor token for location
 				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-					TypeCategory::Struct, struct_type_info->type_index_, 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+					struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 				// Mark 'this' as a pointer to struct (not a struct value)
 				this_type.as<TypeSpecifierNode>().add_pointer_level();
 				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
@@ -2668,7 +2668,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
 					if (nested_ti.getStructInfo()) {
 						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
-						TypeSpecifierNode nested_spec(member.memberType(), member.type_index, nested_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
+						TypeSpecifierNode nested_spec(member.type_index.withCategory(member.memberType()), nested_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {
 							MemberStoreOp store_op;

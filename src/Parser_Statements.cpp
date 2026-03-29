@@ -1519,7 +1519,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			ctor_args.push_back(init_list_construction);
 			
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				TypeCategory::Struct, type_index, 
+				type_index.withCategory(TypeCategory::Struct),
 					getStructTypeSizeBits(type_index),
 				brace_token, CVQualifier::None, ReferenceQualifier::None
 			);
@@ -1755,8 +1755,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				const TypeInfo& member_type_info = getTypeInfo(target_member.type_index);
 				if (is_struct_type(target_member.type_index.category())) {
 					member_type_spec = TypeSpecifierNode(
-						member_type_info.resolvedType(),
-						target_member.type_index,
+						target_member.type_index.withCategory(member_type_info.resolvedType()),
 						member_type_info.type_size_ * 8,
 						Token(),
 						CVQualifier::None,
@@ -2287,7 +2286,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 		size_bits = static_cast<int>(struct_info->total_size * 8);
 	}
 
-	TypeSpecifierNode resolved(TypeCategory::Struct, struct_type_info->type_index_, size_bits, type_specifier.token(), type_specifier.cv_qualifier(), ReferenceQualifier::None);
+	TypeSpecifierNode resolved(struct_type_info->type_index_.withCategory(TypeCategory::Struct), size_bits, type_specifier.token(), type_specifier.cv_qualifier(), ReferenceQualifier::None);
 	resolved.copy_indirection_from(type_specifier);
 	type_specifier = resolved;
 	return true;

@@ -830,8 +830,7 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 			
 			// Create type node for 'this' (pointer to struct)
 			auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				TypeCategory::Struct,
-				struct_type_index,
+				struct_type_index.withCategory(TypeCategory::Struct),
 				64,  // Pointer size
 				this_token,
 				CVQualifier::None,
