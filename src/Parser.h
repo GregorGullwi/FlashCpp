@@ -795,8 +795,6 @@ private:
         struct ConstantValue {
                 int64_t value;
                 TypeCategory type;
-
-                Type typeEnum() const noexcept { return categoryToType(type); }
         };
         
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
@@ -1568,8 +1566,6 @@ struct TypedNumeric {
         TypeQualifier typeQualifier = TypeQualifier::None;
         unsigned char sizeInBits = 0;
         NumericLiteralValue value = 0ULL;
-
-        Type typeEnum() const noexcept { return categoryToType(type); }
 };
 
 // =============================================================================

@@ -3451,7 +3451,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 														// Try to evaluate the return expression as a constant
 														if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
 															FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
-															TemplateTypeArg val_arg(ret_value->value, ret_value->typeEnum());
+															TemplateTypeArg val_arg(ret_value->value, ret_value->type);
 															val_arg.is_pack = arg_info.is_pack;
 															resolved_args.push_back(val_arg);
 															continue;

@@ -5467,7 +5467,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		if (!literal_type) {
 			return ParseResult::error("Expected numeric literal", current_token_);
 		}
-		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_, literal_type->value, literal_type->typeEnum(), literal_type->typeQualifier, literal_type->sizeInBits));
+		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_, literal_type->value, literal_type->type, literal_type->typeQualifier, literal_type->sizeInBits));
 		advance();
 	}
 	else if (current_token_.type() == Token::Type::StringLiteral) {
