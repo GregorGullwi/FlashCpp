@@ -1022,13 +1022,64 @@ inline size_t get_type_alignment(TypeIndex type_index, size_t type_size_bytes) {
 
 // Type utilities
 bool is_integer_type(Type type);
-bool is_integer_type(TypeCategory cat);
+inline bool is_integer_type(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::WChar:
+		case TypeCategory::Char8:
+		case TypeCategory::Char16:
+		case TypeCategory::Char32:
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+			return true;
+		default:
+			return false;
+	}
+}
 bool is_signed_integer_type(Type type);
-bool is_signed_integer_type(TypeCategory cat);
+inline bool is_signed_integer_type(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Char:
+		case TypeCategory::Short:
+		case TypeCategory::Int:
+		case TypeCategory::Long:
+		case TypeCategory::LongLong:
+			return true;
+		case TypeCategory::WChar:
+			return g_target_data_model != TargetDataModel::LLP64;
+		default:
+			return false;
+	}
+}
 bool is_unsigned_integer_type(Type type);
-bool is_unsigned_integer_type(TypeCategory cat);
+inline bool is_unsigned_integer_type(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::UnsignedLongLong:
+		case TypeCategory::Char8:
+		case TypeCategory::Char16:
+		case TypeCategory::Char32:
+			return true;
+		case TypeCategory::WChar:
+			return g_target_data_model == TargetDataModel::LLP64;
+		default:
+			return false;
+	}
+}
 bool is_bool_type(Type type);
-bool is_bool_type(TypeCategory cat);
+inline bool is_bool_type(TypeCategory cat) {
+	return cat == TypeCategory::Bool;
+}
 bool is_floating_point_type(Type type);
 inline bool is_floating_point_type(TypeCategory cat) {
 	return cat == TypeCategory::Float ||
