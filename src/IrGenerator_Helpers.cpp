@@ -336,18 +336,6 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 
 
 
-namespace {
-TypeCategory resolveRuntimeBaseType(TypeCategory semantic_type, TypeIndex type_index) {
-	TypeCategory canonical_type = semantic_type;
-	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		// Prefer the canonical type stored in gTypeInfo when available. This keeps
-		// typedef / alias lowering consistent with the resolved type table entry.
-		canonical_type = getTypeInfo(type_index).resolvedType();
-	}
-	return resolve_type_alias(type_index);
-}
-}
-
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
@@ -386,7 +374,7 @@ TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, Pointer
 		return semantic_type;
 	}
 
-	TypeCategory lowered_cat = resolveRuntimeBaseType(semantic_type, semantic_type_index);
+	TypeCategory lowered_cat = resolve_type_alias(semantic_type_index);
 
 	if (lowered_cat == TypeCategory::Enum && semantic_type_index.is_valid() && semantic_type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* enum_info = getTypeInfo(semantic_type_index).getEnumInfo()) {
@@ -402,7 +390,7 @@ int AstToIr::getRuntimeValueSizeBits(TypeCategory semantic_type, TypeIndex type_
 		return semantic_size_bits;
 	}
 
-	TypeCategory lowered_cat = resolveRuntimeBaseType(semantic_type, type_index);
+	TypeCategory lowered_cat = resolve_type_alias(type_index);
 	const TypeCategory semantic_cat = semantic_type;
 
 	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {

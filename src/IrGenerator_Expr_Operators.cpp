@@ -1421,7 +1421,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return std::nullopt;
 			}
 
-			auto patchTypeSpecFromIr = [](TypeSpecifierNode& type_spec, TypeCategory ir_type, TypeIndex ir_type_index) {
+			auto patchTypeSpecFromIr = [](TypeSpecifierNode& type_spec, TypeIndex ir_type_index) {
 				if (!ir_type_index.is_valid()) {
 					return;
 				}
@@ -1441,8 +1441,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 			};
 
-			patchTypeSpecFromIr(type_specs->first, lhsCat, lhs_type_index);
-			patchTypeSpecFromIr(type_specs->second, rhsCat, rhs_type_index);
+			patchTypeSpecFromIr(type_specs->first, lhs_type_index);
+			patchTypeSpecFromIr(type_specs->second, rhs_type_index);
 			return type_specs;
 		};
 
@@ -1567,7 +1567,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			rhs_has_user_defined_identity = concrete_operands_require_user_defined_operator
 				&& isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second);
 		} else {
-			auto hasUserDefinedIdentityFromIr = [](TypeCategory lowered_type, TypeIndex type_index) {
+			auto hasUserDefinedIdentityFromIr = [](TypeIndex type_index) {
 				if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 					return false;
 				}
@@ -1583,8 +1583,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				return carriesSemanticTypeIndex(indexed_type);
 			};
 
-			lhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(lhsCat, lhs_type_index);
-			rhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(rhsCat, rhs_type_index);
+			lhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(lhs_type_index);
+			rhs_has_user_defined_identity = hasUserDefinedIdentityFromIr(rhs_type_index);
 			lhs_syntax_requires_user_defined = syntaxOperandRequiresUserDefinedOperator(binaryOperatorNode.get_lhs());
 			rhs_syntax_requires_user_defined = syntaxOperandRequiresUserDefinedOperator(binaryOperatorNode.get_rhs());
 			if (lhs_syntax_requires_user_defined.has_value()) {
