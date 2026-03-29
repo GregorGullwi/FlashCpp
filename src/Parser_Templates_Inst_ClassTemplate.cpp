@@ -4770,7 +4770,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				instantiated_name, qualified_name, template_params, template_args_to_use);
 
 			// Register the nested class in the type system
-			auto& nested_type_info = add_instantiated_type(qualified_name, Type::Struct, 0); // Placeholder size
+			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;

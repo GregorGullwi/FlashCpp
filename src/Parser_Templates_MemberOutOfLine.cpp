@@ -800,13 +800,12 @@ std::optional<ASTNode> Parser::parseTemplateBody(
 	// Bind template parameters to concrete types using RAII scope guard (Phase 6)
 	FlashCpp::TemplateParameterScope template_scope;
 	for (size_t i = 0; i < template_param_names.size() && i < concrete_types.size(); ++i) {
-		Type concrete_type = concrete_types[i];
 		auto param_name = StringTable::getOrInternStringHandle(template_param_names[i]);
 
 		// Add a TypeInfo for this concrete type with the template parameter name
 		auto& type_info = add_instantiated_type(
 			param_name,
-			concrete_type,
+			typeToCategory(concrete_types[i]),
 			0 // Placeholder size
 		);
 
