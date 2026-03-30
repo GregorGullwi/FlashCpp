@@ -1106,22 +1106,12 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		TypeIndex substituted_type_index = substitute_template_parameter(
 			type_spec, lazy_info->parent_template_params, lazy_info->parent_template_args);
 		
-		// Get size for the member
-		size_t member_size = 0;
-		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
-			if (member_type_info->getStructInfo()) {
-				member_size = member_type_info->getStructInfo()->total_size;
-			} else {
-				member_size = get_type_size_bits(substituted_type_index.category()) / 8;
-			}
-		} else {
-			member_size = get_type_size_bits(substituted_type_index.category()) / 8;
-		}
-		
-		// Get alignment for the member
+		// Get size and alignment for the member
+		size_t member_size = get_type_size_bits(substituted_type_index.category()) / 8;
 		size_t member_alignment = member_size > 0 ? member_size : 1;
 		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
 			if (member_type_info->getStructInfo()) {
+				member_size = member_type_info->getStructInfo()->total_size;
 				member_alignment = member_type_info->getStructInfo()->alignment;
 			}
 		}
