@@ -859,9 +859,9 @@ struct TypeInfo
 	bool isStructLike()          const { return category() == TypeCategory::Struct
 	                                         || category() == TypeCategory::UserDefined
 	                                         || (isTypeAlias() && category_ == TypeCategory::UserDefined); }
-	bool isVoid()                const { return category_ == TypeCategory::Void; }
-	bool isPrimitive()           const { return is_primitive_type(category_); }
-	bool needsTypeIndex()        const { return needs_type_index(category_); }
+	bool isVoid()                const { return category() == TypeCategory::Void; }
+	bool isPrimitive()           const { return is_primitive_type(category()); }
+	bool needsTypeIndex()        const { return needs_type_index(category()); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
