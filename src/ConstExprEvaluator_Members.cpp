@@ -2820,7 +2820,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				auto evaluateTypeTraitFromInput = [](TypeTraitKind trait_kind, const TraitInput& input) {
-					return evaluateTypeTrait(trait_kind, input.base_type, input.type_index,
+					return evaluateTypeTrait(trait_kind, input.type_index.category(), input.type_index,
 						input.ref_qualifier != ReferenceQualifier::None,
 						input.ref_qualifier == ReferenceQualifier::RValueReference,
 						input.ref_qualifier == ReferenceQualifier::LValueReference,
@@ -2839,7 +2839,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					const auto& arg_info = resolved_type_info->template_args_[0];
 					TraitInput input{
-						.base_type = arg_info.category(),
 						.type_index = arg_info.type_index,
 						.pointer_depth = arg_info.pointer_depth ? arg_info.pointer_depth : arg_info.pointer_cv_qualifiers.size(),
 						.ref_qualifier = arg_info.ref_qualifier,
@@ -2852,7 +2851,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					
 					if (input.type_index.is_valid() && input.type_index.index() < getTypeInfoCount()) {
 						input.type_info = &getTypeInfo(input.type_index);
-						input.base_type = input.type_index.category();
 						input.pointer_depth = input.type_info->pointer_depth_;
 						input.ref_qualifier = input.type_info->reference_qualifier_;
 						input.struct_info = input.type_info->getStructInfo();
@@ -4458,7 +4456,6 @@ EvalResult Evaluator::materialize_constructor_object_value(
 }
 
 EvalResult Evaluator::materialize_array_value(
-	TypeCategory element_type,
 	TypeIndex element_type_index,
 	const InitializerListNode& init_list,
 	EvaluationContext& context,
@@ -4471,7 +4468,7 @@ EvalResult Evaluator::materialize_array_value(
 	for (const auto& element : init_list.initializers()) {
 		EvalResult element_result;
 		if (element.is<InitializerListNode>() &&
-			(is_struct_type(element_type)) &&
+			(is_struct_type(element_type_index.category())) &&
 			element_type_index.is_valid() && element_type_index.index() < getTypeInfoCount()) {
 			if (const StructTypeInfo* element_struct_info = getTypeInfo(element_type_index).getStructInfo()) {
 				element_result = materialize_aggregate_object_value(
@@ -4486,7 +4483,7 @@ EvalResult Evaluator::materialize_array_value(
 		} else if (element.is<InitializerListNode>()) {
 			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
 			element_result = materialize_array_value(
-				element_type, element_type_index,
+				element_type_index,
 				element.as<InitializerListNode>(),
 				context, bindings);
 		} else if (bindings) {
@@ -4553,7 +4550,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
 		// Single-dimension or unspecified: delegate to the base overload.
-		auto base_result = materialize_array_value(type_spec.type(), type_spec.type_index(), init_list, context, bindings);
+		auto base_result = materialize_array_value(type_spec.type_index(), init_list, context, bindings);
 		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
@@ -4692,7 +4689,7 @@ EvalResult materialize_member_initializer_value(
 		const InitializerListNode& init_list = initializer.as<InitializerListNode>();
 
 		if (member_info.is_array) {
-			return Evaluator::materialize_array_value(member_info.memberType(), member_info.type_index, init_list, context);
+			return Evaluator::materialize_array_value(member_info.type_index, init_list, context, nullptr);
 		}
 
 		if ((is_struct_type(member_info.type_index.category())) &&
@@ -4744,7 +4741,6 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				val = Evaluator::materialize_array_value(
-					member_info->memberType(),
 					member_info->type_index,
 					member_init_list,
 					context,
@@ -4828,7 +4824,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			EvalResult member_result;
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
-					member_info->memberType(), member_info->type_index, init_list, context, &ctor_param_bindings);
+					member_info->type_index, init_list, context, &ctor_param_bindings);
 				// C++ aggregate init: zero-fill remaining elements up to the declared array size
 				// using a type-correct zero for each native type.
 				if (member_result.success() && !member_info->array_dimensions.empty()) {
@@ -5333,7 +5329,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
-			return materialize_array_value(TypeCategory::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context, nullptr);
 		}
 		return evaluate(elem, context);
 	};
@@ -5401,10 +5397,10 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (elem.is<InitializerListNode>()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-				return materialize_array_value(type_spec.type(), type_spec.type_index(),
-				                               elem.as<InitializerListNode>(), context);
+				return materialize_array_value(type_spec.type_index(),
+				                               elem.as<InitializerListNode>(), context, nullptr);
 			}
-			return materialize_array_value(TypeCategory::Auto, TypeIndex{}, elem.as<InitializerListNode>(), context);
+			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context, nullptr);
 		}
 		
 		return evaluate(elem, context);
