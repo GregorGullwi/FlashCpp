@@ -849,16 +849,15 @@ struct TypeInfo
 	}
 
 	// Classification helpers.
+	// typeEnum() / resolvedType() delegate to category() which prefers the
+	// authoritative TypeCategory embedded in type_index_ over raw category_.
+	TypeCategory typeEnum()      const { return category(); }
+	TypeCategory resolvedType()  const { return category(); }
 	// isStructLike: checks category() for the declared kind.  TypeAlias entries
-	// whose resolved (effective) type is a struct/UserDefined are treated as
-	// struct-like because struct-info traversal must follow alias chains.
-	// resolvedType() returns the effective/resolved underlying type.
-	// typeEnum() returns the legacy Type enum for the category.
-	TypeCategory typeEnum()      const { return category_; }
-	TypeCategory resolvedType()  const { return category_; }
-	bool isStructLike()          const { return category() == TypeCategory::Struct
-	                                         || category() == TypeCategory::UserDefined
-	                                         || (isTypeAlias() && category_ == TypeCategory::UserDefined); }
+	// whose underlying type is struct/UserDefined are treated as struct-like
+	// because struct-info traversal must follow alias chains.
+	bool isStructLike()          const { return is_struct_type(category())
+	                                         || (isTypeAlias() && is_struct_type(category_)); }
 	bool isVoid()                const { return category() == TypeCategory::Void; }
 	bool isPrimitive()           const { return is_primitive_type(category()); }
 	bool needsTypeIndex()        const { return needs_type_index(category()); }
