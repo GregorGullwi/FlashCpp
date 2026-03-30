@@ -437,11 +437,7 @@ struct TemplateTypeArg {
 				case TypeCategory::Struct:
 				case TypeCategory::Enum:
 					// For user-defined types, look up the name from gTypeInfo
-					if (type_index.index() < getTypeInfoCount()) {
-						result += StringTable::getStringView(getTypeInfo(type_index).name());
-					} else {
-						result += "?";
-					}
+					result += StringTable::getStringView(getTypeInfo(type_index).name());
 					break;
 				case TypeCategory::FunctionPointer:
 				case TypeCategory::MemberFunctionPointer: {

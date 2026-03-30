@@ -262,7 +262,7 @@ struct TemplatePattern {
 		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions)
 	{
-		bool has_valid_type_index = pattern_type.is_valid() && pattern_type.index() < getTypeInfoCount();
+		bool has_valid_type_index = pattern_type.is_valid();
 		bool is_template_param_candidate = (pattern_type.category() == TypeCategory::UserDefined) ||
 			(pattern_type.category() == TypeCategory::Invalid && has_valid_type_index &&
 			 !getTypeInfo(pattern_type).isTemplateInstantiation());
