@@ -80,7 +80,6 @@ inline IrValue toIrValue(const IrOperand& operand) {
 }
 
 struct ExprResult {
-	TypeCategory category_ = TypeCategory::Void;
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrOperand value{};
 	TypeIndex type_index {};
@@ -94,16 +93,16 @@ struct ExprResult {
 	// Both will be unified when ExprResult's type field is replaced by IrType
 	// (Phase 5).
 	IrType effectiveIrType() const {
-		if (ir_type != IrType::Void || category_ == TypeCategory::Void)
+		if (ir_type != IrType::Void || category() == TypeCategory::Void)
 			return ir_type;
-		return toIrType(category_);
+		return toIrType(category());
 	}
 
-	// For ExprResult, category_ is the authoritative type of the expression (pointer level, not element level).
-	// type_index carries identity info (struct/enum gTypeInfo slot) which may be the element type for pointers.
-	// So category() and typeEnum() delegate to the semantic type field directly.
-	TypeCategory category() const { return category_; }
-	TypeCategory typeEnum() const { return category_; }
+	// The expression's TypeCategory is embedded in type_index.category() so that
+	// the gTypeInfo slot (index) and the expression-level category (e.g. Pointer
+	// vs the pointed-to Struct) are stored together without a separate field.
+	TypeCategory category() const { return type_index.category(); }
+	TypeCategory typeEnum() const { return type_index.category(); }
 };
 
 inline ExprResult makeExprResultImpl(
@@ -115,10 +114,12 @@ inline ExprResult makeExprResultImpl(
 	ValueStorage storage
 ) {
 	return {
-		.category_ = cat,
 		.size_in_bits = size_in_bits,
 		.value = std::move(value),
-		.type_index = type_index,
+		// Embed the expression-level category into type_index so that
+		// type_index.category() == cat while preserving the gTypeInfo slot
+		// (e.g. pointer-to-struct keeps the struct's slot, category = Pointer).
+		.type_index = TypeIndex{type_index.index(), cat},
 		.pointer_depth = pointer_depth,
 		.ir_type = toIrType(cat),
 		.storage = storage

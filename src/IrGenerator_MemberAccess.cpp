@@ -138,11 +138,11 @@
 	ExpressionContext context) {
 		auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
-			result.category_ = type;
 			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
-			result.type_index = TypeIndex{type_index};
+			// Embed the expression-level category into type_index (preserves gTypeInfo slot).
+			result.type_index = TypeIndex{type_index.index(), type};
 			result.pointer_depth = pointer_depth;
 			result.storage = storage;
 			return result;
@@ -846,7 +846,6 @@
 
 	ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 		ExprResult result;
-		result.category_ = type_index.category();
 		result.ir_type = toIrType(type_index);
 		result.size_in_bits = size_bits;
 		result.value = result_var;

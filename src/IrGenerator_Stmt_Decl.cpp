@@ -1602,7 +1602,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						if (init_cat == TypeCategory::Enum) {
 							init_cat = resolveEnumUnderlyingTypeCategory(init_operands.type_index);
 							init_type = init_cat;
-							init_operands.category_ = init_cat;
+							// Embed the resolved category into type_index (preserves gTypeInfo slot).
+							init_operands.type_index = TypeIndex{init_operands.type_index.index(), init_cat};
 						}
 						if (init_type != decl_type
 							&& init_cat  != TypeCategory::Struct && decl_cat  != TypeCategory::Struct
