@@ -1069,7 +1069,7 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 		
 		// Use shared evaluation function from TypeTraitEvaluator.h (overload that takes TypeSpecifierNode)
-		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr.kind(), type_spec, type_info, struct_info);
+		TypeTraitResult eval_result = evaluateTypeTrait(trait_expr.kind(), type_spec, struct_info);
 		
 		if (!eval_result.success) {
 			// Trait requires special handling (binary trait, etc.) or is not supported

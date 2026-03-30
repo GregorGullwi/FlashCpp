@@ -3000,7 +3000,7 @@
 			default:
 				// For all other unary type traits, use the shared evaluator from TypeTraitEvaluator.h
 				{
-					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_type_info, outer_struct_info);
+					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_struct_info);
 					if (eval_result.success) {
 						result = eval_result.value;
 					} else {

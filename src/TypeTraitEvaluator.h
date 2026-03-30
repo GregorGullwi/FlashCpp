@@ -62,6 +62,5 @@ TypeTraitResult evaluateTypeTrait(
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec,
-	const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 );
