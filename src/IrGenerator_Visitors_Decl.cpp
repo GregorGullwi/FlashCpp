@@ -2509,7 +2509,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
-	return makeExprResult(TypeIndex{(TypeIndex{init_list_type_index}).index(), TypeCategory::Struct}, SizeInBits{static_cast<int>(init_list_size_bits)}, IrOperand{init_list_name}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(init_list_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(init_list_size_bits)}, IrOperand{init_list_name}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -2699,7 +2699,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 			TypeIndex result_type_index = type_spec.type_index();
-			return makeExprResult(TypeIndex{(TypeIndex{result_type_index}).index(), type_spec.type()}, SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(result_type_index.withCategory(type_spec.type()), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 
@@ -2806,5 +2806,5 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	TypeIndex result_type_index = type_spec.type_index();
-	return makeExprResult(TypeIndex{(TypeIndex{result_type_index}).index(), type_spec.type()}, SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(result_type_index.withCategory(type_spec.type()), SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

@@ -938,7 +938,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
 			TypeIndex resolved = type_info.type_index_;
 			if (resolved.category() == TypeCategory::Invalid)
-				resolved = TypeIndex{resolved.index(), type_info.category()};
+				resolved = resolved.withCategory(type_info.category());
 			return CanonicalTypeAlias{resolved};
 		}
 		if ((type_info.category() != TypeCategory::UserDefined &&
@@ -1169,7 +1169,7 @@ public:
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
-	void set_category(TypeCategory cat) { type_index_ = TypeIndex{type_index_.index(), cat}; }
+	void set_category(TypeCategory cat) { type_index_ = type_index_.withCategory(cat); }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;

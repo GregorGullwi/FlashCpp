@@ -692,7 +692,7 @@
 		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
 		// source TypeIndex in that case.
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(TypeIndex{(result_type_index).index(), target_type}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.withCategory(target_type), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
@@ -720,7 +720,7 @@
 		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
 		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(TypeIndex{(result_type_index).index(), target_type}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.withCategory(target_type), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {

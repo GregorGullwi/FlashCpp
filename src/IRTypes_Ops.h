@@ -431,7 +431,7 @@ struct TypedValue {
 	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
 	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
 	void setType(TypeCategory cat) noexcept {
-		type_index = TypeIndex{type_index.index(), cat};
+		type_index = type_index.withCategory(cat);
 		ir_type = toIrType(cat);
 		is_signed = isSignedType(cat);
 	}

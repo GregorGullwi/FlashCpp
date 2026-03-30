@@ -201,7 +201,7 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 	tv.is_signed = isSignedType(result.typeEnum());
 	tv.size_in_bits = result.size_in_bits;
 	tv.value = toIrValue(result.value);
-	tv.type_index = TypeIndex{result.type_index.index(), result.typeEnum()};
+	tv.type_index = result.type_index.withCategory(result.typeEnum());
 	tv.pointer_depth = result.pointer_depth;
 	tv.storage = result.storage;
 	return tv;

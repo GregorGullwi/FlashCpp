@@ -105,7 +105,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(TypeIndex{(ret_spec.type_index()).index(), ret_type}, ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(ret_spec.type_index().withCategory(ret_type), ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -1516,7 +1516,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
-			call_op.args.push_back(makeTypedValue(TypeIndex{this_type_index.index(), this_type}, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
+			call_op.args.push_back(makeTypedValue(this_type_index.withCategory(this_type), SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 		}
 
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
@@ -1625,6 +1625,6 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
 				? ValueStorage::ContainsAddress
 				: ValueStorage::ContainsData;
-			return makeExprResult(TypeIndex{(type_index_result).index(), return_type.type()}, SizeInBits{result_size}, IrOperand{ret_var}, PointerDepth{}, st);
+			return makeExprResult(type_index_result.withCategory(return_type.type()), SizeInBits{result_size}, IrOperand{ret_var}, PointerDepth{}, st);
 		}
 	}

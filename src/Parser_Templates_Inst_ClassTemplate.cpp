@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
@@ -478,7 +478,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeIndex elem_type_index = elem.type_index;
 						TypeSpecifierNode sub_type(
 							elem_type, param_type_spec.qualifier(),
-							get_substituted_type_size_bits(TypeIndex{elem_type_index.index(), elem_type}),
+							get_substituted_type_size_bits(elem_type_index.withCategory(elem_type)),
 							param_decl.identifier_token(), param_type_spec.cv_qualifier());
 						sub_type.set_type_index(elem_type_index);
 						for (const auto& pl : param_type_spec.pointer_levels())
@@ -669,7 +669,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		TemplateTypeArg resolved_arg;
-		resolved_arg.type_index = TypeIndex{(resolved_type_index).index(), resolved_base_type};
+		resolved_arg.type_index = resolved_type_index.withCategory(resolved_base_type);
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
 		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
@@ -1364,7 +1364,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.type_index = TypeIndex{(type_it->second->type_index_).index(), type_it->second->typeEnum()};
+									a.type_index = type_it->second->type_index_.withCategory(type_it->second->typeEnum());
 									resolved_args.push_back(a);
 									resolved = true;
 								}
@@ -3245,7 +3245,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
-									inst_arg.type_index = TypeIndex{(inst_it->second->type_index_).index(), TypeCategory::Struct};
+									inst_arg.type_index = inst_it->second->type_index_.withCategory(TypeCategory::Struct);
 									inst_arg.pointer_depth = type_spec.pointer_depth();
 									inst_arg.ref_qualifier = type_spec.reference_qualifier();
 									inst_arg.cv_qualifier = type_spec.cv_qualifier();
@@ -5188,7 +5188,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					return_type_spec.qualifier(),
-					get_substituted_type_size_bits(TypeIndex{return_type_index.index(), return_type}),
+					get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
 					decl.identifier_token(),
 					CVQualifier::None
 				);
@@ -5594,7 +5594,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeSpecifierNode substituted_return_type(
 					return_type,
 					return_type_spec.qualifier(),
-					get_substituted_type_size_bits(TypeIndex{return_type_index.index(), return_type}),
+					get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
 					decl.identifier_token(),
 					CVQualifier::None
 				);

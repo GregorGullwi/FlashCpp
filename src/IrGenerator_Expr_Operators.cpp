@@ -246,7 +246,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 		// Emit MemberStoreOp
 		MemberStoreOp ms;
-		ms.value = makeTypedValue(TypeIndex{member.type_index.index(), store_type}, SizeInBits{store_size}, store_value);
+		ms.value = makeTypedValue(member.type_index.withCategory(store_type), SizeInBits{store_size}, store_value);
 		ms.object = temp;
 		ms.member_name = member.name;
 		ms.offset = static_cast<int>(member.offset);
@@ -1882,7 +1882,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
 					}
 				}
-				call_op.return_type_index = TypeIndex{return_type.type_index().index(), resolved_return_type};
+				call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
 				call_op.return_size_in_bits = SizeInBits{actual_return_size};
 				call_op.is_member_function = true;  // This is a member function call
 
@@ -1929,7 +1929,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 				// Return the result with resolved types
-				return makeExprResult(TypeIndex{(return_type.type_index()).index(), resolved_return_type}, SizeInBits{static_cast<int>(actual_return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(return_type.type_index().withCategory(resolved_return_type), SizeInBits{static_cast<int>(actual_return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			}
 

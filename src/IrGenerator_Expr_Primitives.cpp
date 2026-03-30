@@ -205,7 +205,7 @@
 		TypeIndex member_type_index = ptr_result.type_index;
 
 		TempVar result_var = emitDereference(member_type, member_size, 1, member_addr, ptmNode.operator_token());
-		return makeExprResult(TypeIndex{(member_type_index).index(), member_type}, SizeInBits{static_cast<int>(member_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(member_type_index.withCategory(member_type), SizeInBits{static_cast<int>(member_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	static void requireResolvedCodegenType(TypeCategory type, std::string_view context) {
@@ -274,7 +274,7 @@
 			TypeIndex type_index = TypeIndex{},
 			PointerDepth pointer_depth = PointerDepth{}
 		) -> ExprResult {
-			return makeExprResult(TypeIndex{(type_index).index(), type}, SizeInBits{static_cast<int>(size_bits)}, std::move(value), pointer_depth, ValueStorage::ContainsData);
+			return makeExprResult(type_index.withCategory(type), SizeInBits{static_cast<int>(size_bits)}, std::move(value), pointer_depth, ValueStorage::ContainsData);
 		};
 		auto makeIdentifierResultFromTypeNode = [&](const TypeSpecifierNode& type_node, int size_bits, IrOperand value,
 			bool preserve_pointer_depth = false) -> ExprResult {
@@ -973,7 +973,7 @@
 
 					// Return with TempVar that has lvalue metadata
 					// The type/size are for the pointee (what the reference refers to)
-					return makeExprResult(TypeIndex{(type_index).index(), pointee_type}, SizeInBits{pointee_size}, IrOperand{lvalue_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
+					return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{lvalue_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
 				}
 
 				// For non-array references in Load context, we need to dereference to get the value
@@ -986,7 +986,7 @@
 				// For enum references, lower the dereferenced value to its runtime
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
-				pointee_type = getRuntimeValueType(TypeIndex{(type_node.type_index()).index(), semantic_pointee_type}, PointerDepth{});
+				pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(
 					semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
 
@@ -1147,7 +1147,7 @@
 						setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 						TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
-						return makeExprResult(TypeIndex{(type_index).index(), pointee_type}, SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
+						return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
 					// For Load context (reading the value), dereference to get the value
@@ -1506,12 +1506,12 @@
 							deref_op.pointer.value = result_temp;
 							ir_.addInstruction(IrInstruction(IrOpcode::Dereference, deref_op, Token()));
 							TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
-							return makeExprResult(TypeIndex{(type_index).index(), static_member->memberType()}, SizeInBits{get_type_size_bits(static_member->memberType())}, IrOperand{deref_temp}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(type_index.withCategory(static_member->memberType()), SizeInBits{get_type_size_bits(static_member->memberType())}, IrOperand{deref_temp}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 
 						// Return the temp variable that will hold the loaded value
 						TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
-						return makeExprResult(TypeIndex{(type_index).index(), static_member->memberType()}, SizeInBits{qsm_size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(type_index.withCategory(static_member->memberType()), SizeInBits{qsm_size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1590,11 +1590,11 @@
 
 				// Return the temp variable that will hold the loaded value
 				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-					return makeExprResult(TypeIndex{(type_index).index(), type_node.type()}, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// Local variable - just return the name
 				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-				return makeExprResult(TypeIndex{(type_index).index(), type_node.type()}, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -1630,7 +1630,7 @@
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
 			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-			return makeExprResult(TypeIndex{(type_index).index(), type_node.type()}, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {

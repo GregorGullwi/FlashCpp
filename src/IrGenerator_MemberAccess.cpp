@@ -142,7 +142,7 @@
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
 			// Embed the expression-level category into type_index (preserves gTypeInfo slot).
-			result.type_index = TypeIndex{type_index.index(), type};
+			result.type_index = type_index.withCategory(type);
 			result.pointer_depth = pointer_depth;
 			result.storage = storage;
 			return result;
@@ -380,7 +380,7 @@
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
-					payload.element_type_index = TypeIndex{(TypeIndex{element_type_index}).index(), element_type};
+					payload.element_type_index = element_type_index.withCategory(element_type);
 					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
@@ -468,7 +468,7 @@
 									// Create typed payload for ArrayAccess with qualified member name
 									ArrayAccessOp payload;
 									payload.result = result_var;
-									payload.element_type_index = TypeIndex{(member->type_index).index(), element_type};
+									payload.element_type_index = member->type_index.withCategory(element_type);
 									payload.element_size_in_bits = element_size_bits;
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
@@ -704,7 +704,7 @@
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
 		payload.result = result_var;
-		payload.element_type_index = TypeIndex{(TypeIndex{element_type_index}).index(), element_type};
+		payload.element_type_index = TypeIndex{element_type_index, element_type};
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
@@ -3715,7 +3715,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = TypeIndex{(target_type_index).index(), target_type};
+	call_op.return_type_index = target_type_index.withCategory(target_type);
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
@@ -3780,5 +3780,5 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(TypeIndex{(target_type_index).index(), target_type}, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(target_type_index.withCategory(target_type), SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

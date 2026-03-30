@@ -1701,7 +1701,7 @@
 			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
 				? ValueStorage::ContainsAddress
 				: ValueStorage::ContainsData;
-			return makeExprResult(TypeIndex{(ret_type_index).index(), return_type.type()}, SizeInBits{return_size_bits}, IrOperand{ret_var}, PointerDepth{}, st);
+			return makeExprResult(ret_type_index.withCategory(return_type.type()), SizeInBits{return_size_bits}, IrOperand{ret_var}, PointerDepth{}, st);
 		}
 	}
 

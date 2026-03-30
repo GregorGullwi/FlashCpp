@@ -132,7 +132,7 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex{member.type_index.index(), member.memberType()};
+	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.ref_qualifier = member.reference_qualifier;
 	if (member.is_array) {
 		desc.array_dimensions = member.array_dimensions;
@@ -151,7 +151,7 @@ CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, 
 
 CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& member) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex{member.type_index.index(), member.memberType()};
+	desc.type_index = member.type_index.withCategory(member.memberType());
 	desc.base_cv = member.cv_qualifier;
 	desc.ref_qualifier = member.reference_qualifier;
 	for (int i = 0; i < member.pointer_depth; ++i) {
@@ -162,7 +162,7 @@ CanonicalTypeDesc canonicalTypeDescFromStaticMember(const StructStaticMember& me
 
 CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateArgInfo& arg) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex{arg.type_index.index(), arg.typeEnum()};
+	desc.type_index = arg.type_index.withCategory(arg.typeEnum());
 	desc.base_cv = arg.cv_qualifier;
 	desc.ref_qualifier = arg.ref_qualifier;
 	for (size_t i = 0; i < arg.pointer_depth; ++i) {
@@ -1089,7 +1089,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
 			deduced_type.has_value()) {
-			lambda_info.return_type_index = TypeIndex{deduced_type->type_index().index(), deduced_type->type()};
+			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
 			lambda_info.returns_reference =
 				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);

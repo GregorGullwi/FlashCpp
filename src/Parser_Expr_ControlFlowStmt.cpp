@@ -1304,7 +1304,7 @@ ParseResult Parser::parse_lambda_expression() {
             member_type_cat = var_type.type();
             type_index = var_type.type_index();
             if (type_index.category() == TypeCategory::Invalid) {
-                type_index = TypeIndex{type_index.index(), member_type_cat};
+                type_index = type_index.withCategory(member_type_cat);
             }
 
 			size_t referenced_size_bits = member_size * 8;

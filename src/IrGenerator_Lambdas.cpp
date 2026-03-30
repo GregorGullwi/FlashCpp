@@ -483,7 +483,7 @@
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
 		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
-		return makeExprResult(TypeIndex{(closure_type_index).index(), TypeCategory::Struct}, SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
