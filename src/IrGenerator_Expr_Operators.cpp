@@ -214,14 +214,13 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type_index.category() == TypeCategory::Struct &&
-				   member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+				   member.type_index.is_valid()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
 			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
 			// initialize sub-aggregate members recursively.
-			const TypeInfo& nested_type_info = getTypeInfo(member.type_index);
-			if (nested_type_info.getStructInfo()) {
+			if (const StructTypeInfo* nested_struct_info = tryGetStructTypeInfo(member.type_index)) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
-				int nested_size_bits = static_cast<int>(nested_type_info.getStructInfo()->total_size * 8);
+				int nested_size_bits = static_cast<int>(nested_struct_info->total_size * 8);
 				TypeSpecifierNode nested_type_spec(member.type_index.withCategory(member.memberType()), nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
@@ -275,9 +274,8 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 		|| type_node.is_member_function_pointer()
 		|| type_node.is_member_object_pointer()) {
 		value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
-	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
+	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid()) {
+		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index());
 		if (struct_info) {
 			value.size_in_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
 		} else {
@@ -1286,7 +1284,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				? rhsExprResult.type_index
 				: TypeIndex{};
 
-			if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
+			if (lhs_type_index.is_valid()) {
 				// Check for user-defined operator= that takes the RHS type
 				OperatorOverloadResult overload_result;
 				if (binaryOperatorNode.has_ambiguous_operator_overload()) {
@@ -1310,7 +1308,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				if (overload_result.has_match) {
 					const StructMemberFunction& member_func = *overload_result.member_overload;
 					const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
+					if (lhs_type_index.is_valid()) {
 						if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 								same_type_assignment_kind.has_value()) {
@@ -1427,7 +1425,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				TypeCategory resolved_ir_type = resolve_type_alias(ir_type_index);
-				if (ir_type_index.index() < getTypeInfoCount()) {
+				if (ir_type_index.is_valid()) {
 					resolved_ir_type = resolve_type_alias(ir_type_index);
 				}
 				if (!binaryOperatorUsesTypeIndexIdentity(resolved_ir_type)) {
@@ -1447,9 +1445,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		};
 
 		auto normalizeSyntaxTypeSpec = [](const TypeSpecifierNode& type_spec) {
-			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
-				const TypeInfo& owner_type_info = getTypeInfo(type_spec.type_index());
-				if (const StructTypeInfo* owner_struct = owner_type_info.getStructInfo()) {
+			if (const TypeInfo* owner_type_info = tryGetTypeInfo(type_spec.type_index())) {
+				if (const StructTypeInfo* owner_struct = owner_type_info->getStructInfo()) {
 					std::string_view token_name = type_spec.token().value();
 					if (!token_name.empty() && token_name != StringTable::getStringView(owner_struct->name)) {
 						StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
@@ -1477,9 +1474,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			if (carriesSemanticTypeIndex(semantic_type)) {
 				return true;
 			}
-			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-				if (type_info.getStructInfo() || type_info.getEnumInfo()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				if (type_info->getStructInfo() || type_info->getEnumInfo()) {
 					return true;
 				}
 				TypeCategory indexed_type = resolve_type_alias(type_spec.type_index());
@@ -1732,8 +1728,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				call_op.return_type_index = return_type.type_index();
 				int actual_return_size = static_cast<int>(return_type.size_in_bits());
 				if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
-					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
-						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
+					if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
+						actual_return_size = static_cast<int>(ret_struct->total_size * 8);
 					}
 				}
 				call_op.return_size_in_bits = SizeInBits{actual_return_size};
@@ -1779,7 +1775,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 				if (op == "=") {
-					if (lhs_type_index.is_valid() && lhs_type_index.index() < getTypeInfoCount()) {
+					if (lhs_type_index.is_valid()) {
 						if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 							if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
 								same_type_assignment_kind.has_value()) {
@@ -1878,8 +1874,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 				if (actual_return_size == 0 && resolved_cat == TypeCategory::Struct && return_type.type_index().is_valid()) {
 					// Look up struct size from type info
-					if (return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
-						actual_return_size = static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8);
+					if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
+						actual_return_size = static_cast<int>(ret_struct->total_size * 8);
 					}
 				}
 				call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
@@ -2003,147 +1999,144 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				}
 
 				// Look up the operator<=> function in the struct
-				if (spaceship_lhs_type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(spaceship_lhs_type_index);
-					if (type_info.struct_info_) {
-						const StructTypeInfo& struct_info = *type_info.struct_info_;
+				if (const StructTypeInfo* spaceship_struct = tryGetStructTypeInfo(spaceship_lhs_type_index)) {
+					const StructTypeInfo& struct_info = *spaceship_struct;
 
-						// Find operator<=> in member functions
-						const StructMemberFunction* spaceship_op = nullptr;
-						for (const auto& func : struct_info.member_functions) {
-							if (func.operator_kind == OverloadableOperator::Spaceship) {
-								spaceship_op = &func;
-								break;
+					// Find operator<=> in member functions
+					const StructMemberFunction* spaceship_op = nullptr;
+					for (const auto& func : struct_info.member_functions) {
+						if (func.operator_kind == OverloadableOperator::Spaceship) {
+							spaceship_op = &func;
+							break;
+						}
+					}
+
+					if (spaceship_op && spaceship_op->function_decl.is<FunctionDeclarationNode>()) {
+						const auto& func_decl = spaceship_op->function_decl.as<FunctionDeclarationNode>();
+
+						// Generate a member function call: lhs.operator<=>(rhs)
+						TempVar result_var = var_counter.next();
+
+						// Get return type from the function declaration
+						const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+						TypeCategory return_type = return_type_node.type();
+						int return_size = static_cast<int>(return_type_node.size_in_bits());
+
+						// Defaulted operator<=> with auto return type actually returns int
+						if (isPlaceholderAutoType(return_type)) {
+							return_type = TypeCategory::Int;
+							return_size = 32;
+						}
+
+						TypeSpecifierNode resolved_return_type_node = return_type_node;
+						if (resolved_return_type_node.type() != return_type) {
+							resolved_return_type_node = TypeSpecifierNode(return_type, TypeQualifier::None, return_size, return_type_node.token(), CVQualifier::None);
+						}
+
+						// Generate mangled name for the operator<=> call
+						std::vector<TypeSpecifierNode> param_types;
+						for (const auto& param_node : func_decl.parameter_nodes()) {
+							if (param_node.is<DeclarationNode>()) {
+								const auto& param_decl = param_node.as<DeclarationNode>();
+								TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
+								resolveSelfReferentialType(param_type, spaceship_lhs_type_index);
+								param_types.push_back(param_type);
 							}
 						}
 
-						if (spaceship_op && spaceship_op->function_decl.is<FunctionDeclarationNode>()) {
-							const auto& func_decl = spaceship_op->function_decl.as<FunctionDeclarationNode>();
+						std::string_view mangled_name = generateMangledNameForCall(
+							"operator<=>",
+							resolved_return_type_node,
+							param_types,
+							false, // not variadic
+							StringTable::getStringView(spaceship_struct->name),
+							{}, // namespace_path
+							func_decl.is_const_member_function()
+						);
 
-							// Generate a member function call: lhs.operator<=>(rhs)
-							TempVar result_var = var_counter.next();
+						// Create the call operation
+						CallOp call_op;
+						call_op.result = result_var;
+						call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+						call_op.return_type_index = nativeTypeIndex(return_type);
+						call_op.return_size_in_bits = SizeInBits{return_size};
+						call_op.is_member_function = true;
+						call_op.is_variadic = func_decl.is_variadic();
 
-							// Get return type from the function declaration
-							const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-							TypeCategory return_type = return_type_node.type();
-							int return_size = static_cast<int>(return_type_node.size_in_bits());
+						// Determine if return slot is needed (same logic as generateFunctionCallIr)
+						bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
+						bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
 
-							// Defaulted operator<=> with auto return type actually returns int
-							if (isPlaceholderAutoType(return_type)) {
-								return_type = TypeCategory::Int;
-								return_size = 32;
-							}
+						FLASH_LOG_FORMAT(Codegen, Debug,
+							"Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
+							return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
 
-							TypeSpecifierNode resolved_return_type_node = return_type_node;
-							if (resolved_return_type_node.type() != return_type) {
-								resolved_return_type_node = TypeSpecifierNode(return_type, TypeQualifier::None, return_size, return_type_node.token(), CVQualifier::None);
-							}
-
-							// Generate mangled name for the operator<=> call
-							std::vector<TypeSpecifierNode> param_types;
-							for (const auto& param_node : func_decl.parameter_nodes()) {
-								if (param_node.is<DeclarationNode>()) {
-									const auto& param_decl = param_node.as<DeclarationNode>();
-									TypeSpecifierNode param_type = param_decl.type_node().as<TypeSpecifierNode>();
-									resolveSelfReferentialType(param_type, spaceship_lhs_type_index);
-									param_types.push_back(param_type);
-								}
-							}
-
-							std::string_view mangled_name = generateMangledNameForCall(
-								"operator<=>",
-								resolved_return_type_node,
-								param_types,
-								false, // not variadic
-								StringTable::getStringView(type_info.name()),
-								{}, // namespace_path
-								func_decl.is_const_member_function()
-							);
-
-							// Create the call operation
-							CallOp call_op;
-							call_op.result = result_var;
-							call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-							call_op.return_type_index = nativeTypeIndex(return_type);
-							call_op.return_size_in_bits = SizeInBits{return_size};
-							call_op.is_member_function = true;
-							call_op.is_variadic = func_decl.is_variadic();
-
-							// Determine if return slot is needed (same logic as generateFunctionCallIr)
-							bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
-							bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
-
-							FLASH_LOG_FORMAT(Codegen, Debug,
-								"Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
-								return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
-
-							if (needs_hidden_return_param) {
-								call_op.return_slot = result_var;
-								FLASH_LOG(Codegen, Debug, "Using return slot for spaceship operator");
-							} else {
-								FLASH_LOG(Codegen, Debug, "No return slot for spaceship operator (small struct return in RAX)");
-							}
-
-							// Add the LHS object as the first argument (this pointer)
-							// For member functions, the this pointer is passed by name or temp var
-							TypedValue lhs_arg;
-							lhs_arg.setType(lhsCat);
-							lhs_arg.ir_type = toIrType(lhsCat);
-							lhs_arg.size_in_bits = SizeInBits{lhsSize};
-							// Convert lhs_value (which can be string_view or TempVar) to IrValue
-							if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
-								lhs_arg.value = IrValue(*string);
-							} else {
-								lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
-							}
-							call_op.args.push_back(lhs_arg);
-
-							// Add the RHS as the second argument
-							// Check if parameter expects a reference
-							TypedValue rhs_arg = toTypedValue(rhsExprResult);
-							if (param_types.size() > 0) {
-								// Check if first parameter is a reference
-								const TypeSpecifierNode& param_type = param_types[0];
-								if (param_type.is_rvalue_reference()) {
-									rhs_arg.ref_qualifier = ReferenceQualifier::RValueReference;
-								} else if (param_type.is_reference()) {
-									rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
-								}
-							}
-							call_op.args.push_back(rhs_arg);
-
-							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-
-								if (op == "<=>") {
-									return makeExprResult(nativeTypeIndex(return_type), SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
-								}
-
-								TempVar cmp_result = var_counter.next();
-								BinaryOp cmp_op{
-									.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, result_var),
-									.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL),
-									.result = cmp_result,
-								};
-
-								IrOpcode cmp_opcode = IrOpcode::Equal;
-								if (op == "<") cmp_opcode = IrOpcode::LessThan;
-								else if (op == "<=") cmp_opcode = IrOpcode::LessEqual;
-								else if (op == ">") cmp_opcode = IrOpcode::GreaterThan;
-								else if (op == ">=") cmp_opcode = IrOpcode::GreaterEqual;
-								else if (op == "==") cmp_opcode = IrOpcode::Equal;
-								else if (op == "!=") cmp_opcode = IrOpcode::NotEqual;
-
-								ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), binaryOperatorNode.get_token()));
-								return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{cmp_result}, PointerDepth{}, ValueStorage::ContainsData);
+						if (needs_hidden_return_param) {
+							call_op.return_slot = result_var;
+							FLASH_LOG(Codegen, Debug, "Using return slot for spaceship operator");
+						} else {
+							FLASH_LOG(Codegen, Debug, "No return slot for spaceship operator (small struct return in RAX)");
 						}
+
+						// Add the LHS object as the first argument (this pointer)
+						// For member functions, the this pointer is passed by name or temp var
+						TypedValue lhs_arg;
+						lhs_arg.setType(lhsCat);
+						lhs_arg.ir_type = toIrType(lhsCat);
+						lhs_arg.size_in_bits = SizeInBits{lhsSize};
+						// Convert lhs_value (which can be string_view or TempVar) to IrValue
+						if (const auto* string = std::get_if<StringHandle>(&lhs_value)) {
+							lhs_arg.value = IrValue(*string);
+						} else {
+							lhs_arg.value = IrValue(std::get<TempVar>(lhs_value));
+						}
+						call_op.args.push_back(lhs_arg);
+
+						// Add the RHS as the second argument
+						// Check if parameter expects a reference
+						TypedValue rhs_arg = toTypedValue(rhsExprResult);
+						if (param_types.size() > 0) {
+							// Check if first parameter is a reference
+							const TypeSpecifierNode& param_type = param_types[0];
+							if (param_type.is_rvalue_reference()) {
+								rhs_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+							} else if (param_type.is_reference()) {
+								rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+							}
+						}
+						call_op.args.push_back(rhs_arg);
+
+						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
+
+						if (op == "<=>") {
+							return makeExprResult(nativeTypeIndex(return_type), SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+						}
+
+						TempVar cmp_result = var_counter.next();
+						BinaryOp cmp_op{
+							.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, result_var),
+							.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL),
+							.result = cmp_result,
+						};
+
+						IrOpcode cmp_opcode = IrOpcode::Equal;
+						if (op == "<") cmp_opcode = IrOpcode::LessThan;
+						else if (op == "<=") cmp_opcode = IrOpcode::LessEqual;
+						else if (op == ">") cmp_opcode = IrOpcode::GreaterThan;
+						else if (op == ">=") cmp_opcode = IrOpcode::GreaterEqual;
+						else if (op == "==") cmp_opcode = IrOpcode::Equal;
+						else if (op == "!=") cmp_opcode = IrOpcode::NotEqual;
+
+						ir_.addInstruction(IrInstruction(cmp_opcode, std::move(cmp_op), binaryOperatorNode.get_token()));
+						return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{cmp_result}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
 
-				// If we get here, operator<=> is not defined or not found
-				if (can_try_spaceship_rewrite) {
-					throw CompileError("Operator" + std::string(op) + " not defined for operand types");
-				}
+			// If we get here, operator<=> is not defined or not found
+			if (can_try_spaceship_rewrite) {
+				throw CompileError("Operator" + std::string(op) + " not defined for operand types");
+			}
 		}
 
 		// Try to get pointer depth for pointer arithmetic

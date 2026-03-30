@@ -694,9 +694,8 @@
 		} else if (array_type.category() == TypeCategory::Struct) {
 			// Array of structs - lookup size from type info
 			TypeIndex type_index = array_type.type_index();
-			if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_index);
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					element_size_bits = static_cast<int>(struct_info->total_size * 8);
 				} else {

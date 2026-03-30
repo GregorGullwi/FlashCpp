@@ -587,10 +587,11 @@
 					op.type_index = static_member.type_index;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
-					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.index() < getTypeInfoCount()) {
-						const StructTypeInfo* member_si = getTypeInfo(static_member.type_index).getStructInfo();
-						if (member_si) {
-							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
+					if (!op.size_in_bits.is_set()) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(static_member.type_index)) {
+							if (const StructTypeInfo* member_si = type_info->getStructInfo()) {
+								op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
+							}
 						}
 					}
 					op.var_name = name_handle;  // Phase 3: Now using StringHandle instead of string_view
@@ -608,10 +609,8 @@
 							zero_initialize();
 						} else if (op.is_initialized) {
 							if (static_member.initializer->is<InitializerListNode>()) {
-								if (static_member.type_index.category() == TypeCategory::Struct &&
-									static_member.type_index.is_valid() &&
-									static_member.type_index.index() < getTypeInfoCount()) {
-									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
+								if (static_member.type_index.category() == TypeCategory::Struct) {
+									if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
 										op.init_data.resize(static_struct_info->total_size, 0);
 										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
@@ -686,93 +685,90 @@
 							if (ctor_type_node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ctor_type_spec = ctor_type_node.as<TypeSpecifierNode>();
 								TypeIndex ctor_type_index = ctor_type_spec.type_index();
-								if (ctor_type_index.index() < getTypeInfoCount()) {
-									const StructTypeInfo* ctor_struct_info = getTypeInfo(ctor_type_index).getStructInfo();
-									if (ctor_struct_info) {
-										const ConstructorDeclarationNode* matching_ctor = nullptr;
-										if (parser_) {
-											std::vector<TypeSpecifierNode> arg_types;
-											arg_types.reserve(ctor_call.arguments().size());
-											for (const auto& arg : ctor_call.arguments()) {
-												auto arg_type_opt = parser_->get_expression_type(arg);
-												if (!arg_type_opt.has_value()) {
-													arg_types.clear();
-													break;
-												}
-												TypeSpecifierNode arg_type = *arg_type_opt;
-												adjust_argument_type_for_overload_resolution(arg, arg_type);
-												arg_types.push_back(std::move(arg_type));
+								if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
+									const ConstructorDeclarationNode* matching_ctor = nullptr;
+									if (parser_) {
+										std::vector<TypeSpecifierNode> arg_types;
+										arg_types.reserve(ctor_call.arguments().size());
+										for (const auto& arg : ctor_call.arguments()) {
+											auto arg_type_opt = parser_->get_expression_type(arg);
+											if (!arg_type_opt.has_value()) {
+												arg_types.clear();
+												break;
 											}
-											if (arg_types.size() == ctor_call.arguments().size()) {
-												auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
-												if (resolution.is_ambiguous) {
-													throw CompileError("Ambiguous constructor call");
-												}
-												matching_ctor = resolution.selected_overload;
+											TypeSpecifierNode arg_type = *arg_type_opt;
+											adjust_argument_type_for_overload_resolution(arg, arg_type);
+											arg_types.push_back(std::move(arg_type));
+										}
+										if (arg_types.size() == ctor_call.arguments().size()) {
+											auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
+											if (resolution.is_ambiguous) {
+												throw CompileError("Ambiguous constructor call");
+											}
+											matching_ctor = resolution.selected_overload;
+										}
+									}
+									if (!matching_ctor) {
+										auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
+										matching_ctor = arity_resolution.selected_overload;
+									}
+									if (matching_ctor) {
+										// Evaluate arguments
+										ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+										std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
+										eval_ctx.local_bindings = &param_bindings;
+										std::unordered_map<std::string_view, long long> param_values;
+										bool args_ok = true;
+										const auto& params = matching_ctor->parameter_nodes();
+										for (size_t ai = 0; ai < params.size(); ++ai) {
+											if (!params[ai].is<DeclarationNode>()) continue;
+											const auto& param_decl = params[ai].as<DeclarationNode>();
+											ConstExpr::EvalResult arg_result;
+											if (ai < ctor_call.arguments().size()) {
+												arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
+											} else if (param_decl.has_default_value()) {
+												arg_result = ConstExpr::Evaluator::evaluate(param_decl.default_value(), eval_ctx);
+											} else {
+												args_ok = false;
+												break;
+											}
+											if (arg_result.success()) {
+												param_bindings[param_decl.identifier_token().value()] = arg_result;
+												param_values[param_decl.identifier_token().value()] = arg_result.as_int();
+											} else {
+												args_ok = false;
+												break;
 											}
 										}
-										if (!matching_ctor) {
-											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
-											matching_ctor = arity_resolution.selected_overload;
-										}
-										if (matching_ctor) {
-											// Evaluate arguments
-											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
-											std::unordered_map<std::string_view, ConstExpr::EvalResult> param_bindings;
-											eval_ctx.local_bindings = &param_bindings;
-											std::unordered_map<std::string_view, long long> param_values;
-											bool args_ok = true;
-											const auto& params = matching_ctor->parameter_nodes();
-											for (size_t ai = 0; ai < params.size(); ++ai) {
-												if (!params[ai].is<DeclarationNode>()) continue;
-												const auto& param_decl = params[ai].as<DeclarationNode>();
-												ConstExpr::EvalResult arg_result;
-												if (ai < ctor_call.arguments().size()) {
-													arg_result = ConstExpr::Evaluator::evaluate(ctor_call.arguments()[ai], eval_ctx);
-												} else if (param_decl.has_default_value()) {
-													arg_result = ConstExpr::Evaluator::evaluate(param_decl.default_value(), eval_ctx);
-												} else {
-													args_ok = false;
-													break;
-												}
-												if (arg_result.success()) {
-													param_bindings[param_decl.identifier_token().value()] = arg_result;
-													param_values[param_decl.identifier_token().value()] = arg_result.as_int();
-												} else {
-													args_ok = false;
-													break;
-												}
-											}
-											if (args_ok) {
-												// Evaluate each member's value from constructor initializer list
-												size_t total_bytes = op.size_in_bits.value / 8;
-												op.init_data.resize(total_bytes, 0);
-												for (const auto& member : ctor_struct_info->members) {
-													long long member_val = 0;
-													for (const auto& mem_init : matching_ctor->member_initializers()) {
-														if (mem_init.member_name == StringTable::getStringView(member.getName())) {
-															// Try identifier lookup in param_values first
-															if (mem_init.initializer_expr.is<ExpressionNode>()) {
-																const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
-																if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&init_e)) {
-																	auto it = param_values.find(identifier_ptr->name());
-																	if (it != param_values.end()) member_val = it->second;
-																}
+										if (args_ok) {
+											// Evaluate each member's value from constructor initializer list
+											size_t total_bytes = op.size_in_bits.value / 8;
+											op.init_data.resize(total_bytes, 0);
+											for (const auto& member : ctor_struct_info->members) {
+												long long member_val = 0;
+												for (const auto& mem_init : matching_ctor->member_initializers()) {
+													if (mem_init.member_name == StringTable::getStringView(member.getName())) {
+														// Try identifier lookup in param_values first
+														if (mem_init.initializer_expr.is<ExpressionNode>()) {
+															const auto& init_e = mem_init.initializer_expr.as<ExpressionNode>();
+															if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&init_e)) {
+																auto it = param_values.find(identifier_ptr->name());
+																if (it != param_values.end()) member_val = it->second;
 															}
-															// Also try full constexpr eval as fallback
-															auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
-															if (eval_r.success()) member_val = eval_r.as_int();
-															break;
 														}
-													}
-													for (size_t bi = 0; bi < member.size && (member.offset + bi) < total_bytes; ++bi) {
-														op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+														// Also try full constexpr eval as fallback
+														auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
+														if (eval_r.success()) member_val = eval_r.as_int();
+														break;
 													}
 												}
-												evaluated_ctor = true;
-												FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",
-												qualified_name, "'");
+												for (size_t bi = 0; bi < member.size && (member.offset + bi) < total_bytes; ++bi) {
+													op.init_data[member.offset + bi] = static_cast<char>((static_cast<unsigned long long>(member_val) >> (bi * 8)) & 0xFF);
+												}
 											}
+											evaluated_ctor = true;
+											FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",
+											qualified_name, "'");
 										}
 									}
 								}
@@ -955,11 +951,12 @@
 
 					// If base_type is a type alias (no struct_info), follow type_index_ to get the actual struct
 					// This handles cases like `struct Test : wrapper<true_type>::type` where `::type` is a type alias
-					if (!base_info && base_type.type_index_ != base.type_index && base_type.type_index_.index() < getTypeInfoCount()) {
-						const TypeInfo& resolved_type = getTypeInfo(base_type.type_index_);
-						base_info = resolved_type.getStructInfo();
-						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_),
-						"' to struct '", StringTable::getStringView(resolved_type.name_), "'");
+					if (!base_info && base_type.type_index_ != base.type_index) {
+						if (const TypeInfo* resolved_type = tryGetTypeInfo(base_type.type_index_)) {
+							base_info = resolved_type->getStructInfo();
+							FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_),
+							"' to struct '", StringTable::getStringView(resolved_type->name_), "'");
+						}
 					}
 
 					// Special handling for type aliases like "bool_constant_true::type"
@@ -1006,11 +1003,8 @@
 
 							// Add base classes to queue
 							for (const auto& base_spec : current->base_classes) {
-								if (base_spec.type_index.index() < getTypeInfoCount()) {
-									const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
-									if (const StructTypeInfo* base_struct = base_type_info.getStructInfo()) {
-										to_visit.push(base_struct);
-									}
+								if (const StructTypeInfo* base_struct = tryGetStructTypeInfo(base_spec.type_index)) {
+									to_visit.push(base_struct);
 								}
 							}
 						}
@@ -1315,16 +1309,17 @@
 // Important: only resolves when the unfinalized type's name matches the base name of the
 // enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.category() == TypeCategory::Struct && type.type_index().is_valid() && type.type_index().index() < getTypeInfoCount()) {
-		auto& ti = getTypeInfo(type.type_index());
-		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
-			if (enclosing_type_index.index() < getTypeInfoCount()) {
+	if (type.category() == TypeCategory::Struct) {
+		const TypeInfo* ti = tryGetTypeInfo(type.type_index());
+		if (!ti) return;
+		if (!ti->struct_info_ || ti->struct_info_->total_size == 0) {
+			if (const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index)) {
 				// Verify this is actually a self-reference by checking that the unfinalized
 				// type's name matches the base name of the enclosing struct.
 				// For template instantiations: W (unfinalized) matches W$hash (enclosing)
 				// For nested classes: Outer (unfinalized) does NOT match Outer::Inner (enclosing)
-				auto unfinalized_name = StringTable::getStringView(ti.name());
-				auto enclosing_name = StringTable::getStringView(getTypeInfo(enclosing_type_index).name());
+				auto unfinalized_name = StringTable::getStringView(ti->name());
+				auto enclosing_name = StringTable::getStringView(enc_ti->name());
 
 				// Extract the base name of the enclosing struct (strip template hash and nested class prefix)
 				// Template hash: "Name$hash" -> "Name"
@@ -1476,14 +1471,14 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
+		const StructTypeInfo* sub_struct_info = tryGetStructTypeInfo(sub_member.type_index);
 		bool is_nested_struct = isIrStructType(toIrType(sub_member.memberType()))
-			&& sub_member.type_index.index() < getTypeInfoCount()
-			&& getTypeInfo(sub_member.type_index).struct_info_
+			&& sub_struct_info
 			&& (sub_member.size * 8) > 64;
 
 		if (is_nested_struct) {
 			emitRecursiveZeroFill(
-				*getTypeInfo(sub_member.type_index).struct_info_,
+				*sub_struct_info,
 				base_object,
 				base_offset + static_cast<int>(sub_member.offset),
 				token);
@@ -1525,14 +1520,13 @@ const Token& token)
 	}
 
 	int element_size_bits = 0;
-	if (member.type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& elem_type_info = getTypeInfo(member.type_index);
-		if (elem_type_info.struct_info_) {
+	if (const TypeInfo* elem_type_info = tryGetTypeInfo(member.type_index)) {
+		if (elem_type_info->struct_info_) {
 			// Struct types store type_size_ in bytes
-			element_size_bits = static_cast<int>(elem_type_info.type_size_ * 8);
-		} else if (elem_type_info.type_size_ > 0) {
+			element_size_bits = static_cast<int>(elem_type_info->type_size_ * 8);
+		} else if (elem_type_info->type_size_ > 0) {
 			// Non-struct types (enums, typedefs, etc.) store type_size_ in bits
-			element_size_bits = static_cast<int>(elem_type_info.type_size_);
+			element_size_bits = static_cast<int>(elem_type_info->type_size_);
 		}
 	}
 	if (element_size_bits <= 0) {
@@ -1603,9 +1597,9 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
+	const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index);
 	const bool is_struct_element = isIrStructType(toIrType(member.memberType()))
-		&& member.type_index.index() < getTypeInfoCount()
-		&& getTypeInfo(member.type_index).struct_info_
+		&& member_struct_info
 		&& element_size_bits > 64;
 
 	for (size_t i = emit_count; i < element_count; ++i) {
@@ -1615,7 +1609,7 @@ const Token& token)
 				+ static_cast<int>(member.offset)
 				+ static_cast<int>(i) * (element_size_bits / 8);
 
-			emitRecursiveZeroFill(*getTypeInfo(member.type_index).struct_info_,
+			emitRecursiveZeroFill(*member_struct_info,
 				base_object, element_byte_offset, token);
 		} else {
 			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
@@ -1687,13 +1681,11 @@ const Token& token)
 				continue;
 			}
 
-			if (member.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-
-				if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
+			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member.type_index)) {
+				if (!member_struct_info->members.empty()) {
 					// RECURSIVE CALL for nested struct
 					generateNestedMemberStores(
-					*member_type_info.struct_info_,
+					*member_struct_info,
 					nested_init_list,
 					base_object,
 					base_offset + static_cast<int>(member.offset),

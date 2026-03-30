@@ -74,10 +74,9 @@
 					// For struct types, call constructor for each element
 					if (type_cat == TypeCategory::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_index);
-							if (type_info.struct_info_) {
-								const StructTypeInfo* struct_info = type_info.struct_info_.get();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+							if (type_info->struct_info_) {
+								const StructTypeInfo* struct_info = type_info->struct_info_.get();
 								size_t element_size = struct_info->total_size;
 
 								// Generate initialization for each element
@@ -108,7 +107,7 @@
 										// If struct has a constructor, call it with initializer list elements
 										if (struct_info->hasAnyConstructor()) {
 											ConstructorCallOp ctor_op;
-											ctor_op.struct_name = type_info.name();
+											ctor_op.struct_name = type_info->name();
 											ctor_op.object = element_ptr;
 											ctor_op.is_heap_allocated = true;
 
@@ -180,13 +179,12 @@
 				StringHandle array_struct_name_handle{};
 				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(type_index);
-						if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
-							array_struct_info = type_info.struct_info_.get();
-							array_struct_name_handle = type_info.name();
+					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+						if (type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
+							array_struct_info = type_info->struct_info_.get();
+							array_struct_name_handle = type_info->name();
 							needs_ctor_loop = true;
-							op.needs_cookie = type_info.struct_info_->hasDestructor();
+							op.needs_cookie = type_info->struct_info_->hasDestructor();
 						}
 					}
 				}
@@ -199,10 +197,9 @@
 					// For struct types, call constructor for each element
 					if (type_cat == TypeCategory::Struct) {
 						TypeIndex type_index = type_spec.type_index();
-						if (type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_index);
-							if (type_info.struct_info_) {
-								const StructTypeInfo* struct_info = type_info.struct_info_.get();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+							if (type_info->struct_info_) {
+								const StructTypeInfo* struct_info = type_info->struct_info_.get();
 								size_t element_size = struct_info->total_size;
 
 								for (size_t i = 0; i < array_inits.size(); ++i) {
@@ -225,7 +222,7 @@
 									if (init.is<InitializerListNode>() && struct_info->hasAnyConstructor()) {
 										const InitializerListNode& init_list = init.as<InitializerListNode>();
 										ConstructorCallOp ctor_op;
-										ctor_op.struct_name = type_info.name();
+										ctor_op.struct_name = type_info->name();
 										ctor_op.object = element_ptr;
 										ctor_op.is_heap_allocated = true;
 
@@ -357,19 +354,18 @@
 			// If this is a struct type with a constructor, generate constructor call
 			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_index);
-					if (type_info.struct_info_) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+					if (type_info->struct_info_) {
 						// Check if this is an abstract class
-						if (type_info.struct_info_->is_abstract) {
-							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
+						if (type_info->struct_info_->is_abstract) {
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 							throw CompileError("Cannot instantiate abstract class");
 						}
 
-						if (type_info.struct_info_->hasAnyConstructor()) {
+						if (type_info->struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the placement address
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name();
+							ctor_op.struct_name = type_info->name();
 							ctor_op.object = result_var;
 							ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
 
@@ -401,19 +397,18 @@
 			// If this is a struct type with a constructor, generate constructor call
 			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_index);
-					if (type_info.struct_info_) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+					if (type_info->struct_info_) {
 						// Check if this is an abstract class
-						if (type_info.struct_info_->is_abstract) {
-							std::cerr << "Error: Cannot instantiate abstract class '" << type_info.name() << "'\n";
+						if (type_info->struct_info_->is_abstract) {
+							std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 							throw CompileError("Cannot instantiate abstract class");
 						}
 
-						if (type_info.struct_info_->hasAnyConstructor()) {
+						if (type_info->struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the newly allocated object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name();
+							ctor_op.struct_name = type_info->name();
 							ctor_op.object = result_var;
 							ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
 
@@ -453,15 +448,13 @@
 		// ptr_operands[3] is the type_index when the expression type is TypeCategory::Struct (index 0 is invalid).
 		// The 4th operand (index 3) is present when the expression type returns a struct type_index.
 		if (ptr_type == TypeCategory::Struct && !deleteExpr.is_array() &&
-		(ptr_operands.type_index.is_valid())) {
-			unsigned long long type_idx_val = ptr_operands.type_index.index();
+			(ptr_operands.type_index.is_valid())) {
 			// type_idx_val == 0 means no type information (invalid/non-struct pointer)
-			if (type_idx_val > 0 && type_idx_val < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(TypeIndex{type_idx_val});
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (const TypeInfo* type_info = tryGetTypeInfo(ptr_operands.type_index)) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					DestructorCallOp dtor_op;
-					dtor_op.struct_name = type_info.name();
+					dtor_op.struct_name = type_info->name();
 					dtor_op.object_is_pointer = true;
 					if (const auto* temp_var = std::get_if<TempVar>(&ptr_value)) {
 						dtor_op.object = *temp_var;
@@ -480,11 +473,9 @@
 			// Array delete: call destructor for each element if the type has one, using cookie
 			bool has_dtor_loop = false;
 			if (ptr_type == TypeCategory::Struct &&
-			(ptr_operands.type_index.is_valid())) {
-				unsigned long long type_idx_val = ptr_operands.type_index.index();
-				if (type_idx_val > 0 && type_idx_val < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(TypeIndex{type_idx_val});
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				(ptr_operands.type_index.is_valid())) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(ptr_operands.type_index)) {
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (struct_info && struct_info->hasDestructor()) {
 						has_dtor_loop = true;
 						size_t elem_sz = struct_info->total_size;
@@ -559,7 +550,7 @@
 						}, Token()));
 
 						DestructorCallOp dtor_op;
-						dtor_op.struct_name      = type_info.name();
+						dtor_op.struct_name      = type_info->name();
 						dtor_op.object           = elem_ptr;
 						dtor_op.object_is_pointer = true;
 						ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
@@ -919,9 +910,8 @@
 			StringHandle type_name;
 			if (type_node.category() == TypeCategory::Struct) {
 				TypeIndex type_idx = type_node.type_index();
-				if (type_idx.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_idx);
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (struct_info) {
 						type_name = struct_info->getName();
 					}
@@ -985,9 +975,8 @@
 		std::string target_type_name;
 		if (target_type_node.category() == TypeCategory::Struct) {
 			TypeIndex type_idx = target_type_node.type_index();
-			if (type_idx.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_idx);
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
 					target_type_name = StringTable::getStringView(struct_info->getName());
 				}
