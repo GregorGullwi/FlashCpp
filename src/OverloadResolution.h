@@ -274,8 +274,9 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 // Per C++20 [class.derived], a derived class implicitly converts to any of its base classes.
 inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) {
 	if (!source_idx.is_valid() || !base_idx.is_valid()) return false;
-	if (source_idx.index() >= getTypeInfoCount()) return false;
-	const StructTypeInfo* source = getTypeInfo(source_idx).getStructInfo();
+	const TypeInfo* source_type = tryGetTypeInfo(source_idx);
+	if (!source_type) return false;
+	const StructTypeInfo* source = source_type->getStructInfo();
 	if (!source) return false;
 	for (const auto& b : source->base_classes) {
 		if (b.type_index == base_idx) return true;
@@ -293,8 +294,9 @@ inline bool isTransitivelyDerivedFrom(TypeIndex source_idx, TypeIndex base_idx) 
 // getStructInfo() separately and fall back to UserDefined) and when no constructor is found.
 inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_idx) {
 	if (!target_idx.is_valid() || !source_idx.is_valid()) return false;
-	if (target_idx.index() >= getTypeInfoCount() || source_idx.index() >= getTypeInfoCount()) return false;
-	const StructTypeInfo* target = getTypeInfo(target_idx).getStructInfo();
+	const TypeInfo* target_type = tryGetTypeInfo(target_idx);
+	if (!target_type || !tryGetTypeInfo(source_idx)) return false;
+	const StructTypeInfo* target = target_type->getStructInfo();
 	if (!target) return false;
 	auto count_min_required_params = [](const std::vector<ASTNode>& params) {
 		size_t min_required = params.size();

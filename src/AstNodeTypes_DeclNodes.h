@@ -889,6 +889,8 @@ struct StringEqual {
 // Use these instead of accessing gTypeInfo / gTypesByName / gNativeTypes directly.
 const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
+const TypeInfo* tryGetTypeInfo(TypeIndex idx);    // nullable lookup; returns nullptr for invalid/out-of-range
+TypeInfo*       tryGetTypeInfoMut(TypeIndex idx); // nullable lookup; returns nullptr for invalid/out-of-range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
 const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
 TypeIndex       nativeTypeIndex(TypeCategory cat);  // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native

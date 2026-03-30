@@ -5,12 +5,12 @@
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
 const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
-	if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return nullptr;
-	const TypeInfo* ti = &getTypeInfo(type_idx);
+	const TypeInfo* ti = tryGetTypeInfo(type_idx);
+	if (!ti) return nullptr;
 	// Chase aliases up to 64 levels deep.
 	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
-		if (!ti->type_index_.is_valid() || ti->type_index_.index() >= getTypeInfoCount()) break;
-		ti = &getTypeInfo(ti->type_index_);
+		ti = tryGetTypeInfo(ti->type_index_);
+		if (!ti) break;
 	}
 	return ti;
 }

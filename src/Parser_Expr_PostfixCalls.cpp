@@ -20,9 +20,10 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.category())) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.index() >= getTypeInfoCount()) return std::nullopt;
-	auto struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
-	instantiateLazyClassToPhase(getTypeInfo(type_idx).name(), ClassInstantiationPhase::Full);
+	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	if (!type_info) return std::nullopt;
+	auto struct_name = StringTable::getStringView(type_info->name());
+	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
 		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
 	} else if (!arg_types.empty()) {
@@ -40,11 +41,12 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.category())) return nullptr;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.index() >= getTypeInfoCount()) return nullptr;
+	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	if (!type_info) return nullptr;
 
-	StringHandle type_name = getTypeInfo(type_idx).name();
+	StringHandle type_name = type_info->name();
 	instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
-	const StructTypeInfo* struct_info = getTypeInfo(type_idx).getStructInfo();
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info) return nullptr;
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
