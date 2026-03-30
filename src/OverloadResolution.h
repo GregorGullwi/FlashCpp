@@ -70,19 +70,14 @@ struct ConversionPlan {
 	}
 };
 
-// Build a unified conversion plan for two primitive Type values.
+// Build a unified conversion plan for two primitive TypeCategory values.
 // Returns both the ConversionRank (for overload resolution) and the
 // StandardConversionKind (for semantic annotation) in a single call.
 // Implements C++20 [conv], [conv.prom], [conv.rank] rules.
-inline ConversionPlan buildConversionPlan(Type from, Type to) {
-	// Use TypeCategory for safe classification checks in this helper, but keep the
-	// raw Type values available for rank/underlying-type helpers that still accept Type.
-	const TypeCategory from_category = typeToCategory(from);
-	const TypeCategory to_category = typeToCategory(to);
-
+inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCategory to_category) {
 	// Exact match (including Struct==Struct — same type, different struct variants
 	// are handled by the TypeSpecifierNode overload which has type_index).
-	if (from == to) {
+	if (from_category == to_category) {
 		return ConversionPlan::exact_match();
 	}
 
@@ -122,8 +117,8 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	// --- Integral -> Integral ---
 	if (isIntegralType(from_category) && isIntegralType(to_category)) {
 		const int INT_RANK = 3;  // rank of int/unsigned int in get_integer_rank()
-		const int from_rank = get_integer_rank(from);
-		const int to_rank = get_integer_rank(to);
+		const int from_rank = get_integer_rank(from_category);
+		const int to_rank = get_integer_rank(to_category);
 
 		// C++20 [conv.prom]: IntegralPromotion applies only to types with rank < int
 		// being promoted to exactly int or unsigned int (rank == INT_RANK).
@@ -185,27 +180,28 @@ inline ConversionPlan buildConversionPlan(Type from, Type to) {
 	return ConversionPlan::no_match();
 }
 
-// Resolve Type::Enum to its underlying integer type (e.g., int, short, long long).
-// Returns the type unchanged if it is not an enum or the TypeIndex is invalid.
-inline Type resolveEnumUnderlyingType(Type base_type, TypeIndex type_index) {
-	if (base_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+// Resolve Enum to its underlying integer category.
+// Returns the category unchanged if it is not an enum or the TypeIndex is invalid.
+inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeIndex type_index) {
+	TypeCategory cat = type_index.category();
+	if (cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
 			return ei->underlying_type;
 	}
-	return base_type;
+	return cat;
 }
 
 // Check if one type can be implicitly converted to another.
 // Returns the conversion rank. Delegates to buildConversionPlan() for the
 // unified conversion logic.
-inline TypeConversionResult can_convert_type(Type from, Type to) {
+inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to) {
 	return buildConversionPlan(from, to).toResult();
 }
 
 // Helper function to find a conversion operator in a struct
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
-inline bool hasConversionOperator(TypeIndex source_type_index, Type target_type, TypeIndex target_type_index = TypeIndex{}) {
+inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_type, TypeIndex target_type_index) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
 	if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
@@ -344,7 +340,7 @@ inline bool hasConvertingConstructorFrom(TypeIndex target_idx, TypeIndex source_
 //   • lvalue / rvalue references (binding rules, ref-qualification compatibility)
 //   • user-defined conversions (conversion operators and single-argument constructors)
 //   • struct-type matching (by TypeIndex, not just Type::Struct equality)
-//   • primitive types — delegates to buildConversionPlan(Type,Type)
+//   • primitive types — delegates to buildConversionPlan(TypeCategory, TypeCategory)
 // Returns ConversionPlan (rank + StandardConversionKind + validity) covering all cases.
 //
 // IMPORTANT: For correct lvalue-vs-rvalue-reference matching the caller must:
@@ -366,14 +362,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Resolve type aliases for both types before comparing
 		// This handles cases where template parameters or typedefs resolve to the same underlying type
 		// For example: CharT* (where CharT=wchar_t) should match wchar_t*
-		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-		Type from_resolved = from_canonical.type;
-		Type to_resolved = to_canonical.type;
-		TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
-		TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
+		const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+		const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
+		TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
+		TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
+		const TypeCategory from_resolved_category = from_resolved_index.category();
+		const TypeCategory to_resolved_category = to_resolved_index.category();
 
-		// Helper to check if the pointed-to type is const for first-level pointers.
 		// Note: pointer_levels_[0].cv_qualifier is cv on the pointer itself (e.g., T* const),
 		// not on the pointee. Top-level pointer cv must not affect pointee constness.
 		auto pointee_is_const = [](const TypeSpecifierNode& type_spec) -> bool {
@@ -396,7 +391,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Exact type match for pointers (after resolving aliases).
 		// For struct types we must additionally compare type_index so that Foo*
 		// and Bar* (both Type::Struct) are not treated as the same type.
-		if (from_resolved == to_resolved && from_pointee_is_const == to_pointee_is_const) {
+		if (from_resolved_category == to_resolved_category && from_pointee_is_const == to_pointee_is_const) {
 			// For struct pointer types, "same resolved Type" is not sufficient —
 			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
 			if (from_resolved_index.isStruct() &&
@@ -409,7 +404,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		
 		// If base types match but const qualifiers differ.
 		// For struct pointer types, different type_index means different types — no match.
-		if (from_resolved == to_resolved) {
+		if (from_resolved_category == to_resolved_category) {
 			if (from_resolved_index.isStruct() &&
 				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
 				from_resolved_index != to_resolved_index) {
@@ -451,7 +446,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		//   - T*       → void*        : allowed
 		// Note: For "const T*", the const applies to the pointed-to type (checked via pointee const),
 		//       while "T* const" would have const on the pointer level itself.
-		if (to_resolved_index.category() == TypeCategory::Void) {
+		if (to_resolved_category == TypeCategory::Void) {
 			// Check const-correctness for the pointed-to type
 			// from_pointee_is_const checks if the pointee is const (e.g., "const char*")
 			// to_pointee_is_const checks if the target pointee is const (e.g., "const void*")
@@ -479,14 +474,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				FLASH_LOG(Parser, Debug, "can_convert_type: both are references. from_is_rvalue=", from_is_rvalue, ", to_is_rvalue=", to_is_rvalue, ", from.type()=", (int)from.type(), ", to.type()=", (int)to.type(), ", from.type_index()=", from.type_index(), ", to.type_index()=", to.type_index());
 				
 				// Exact match: both lvalue ref or both rvalue ref, same base type
-				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.type;
-				Type to_base = to_canonical.type;
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
-				if (from_is_rvalue == to_is_rvalue && from_base == to_base) {
-					// For struct types, "same base type" requires the same type_index.
+				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
+				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
+				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
+				const TypeCategory from_base_category = from_base_index.category();
+				const TypeCategory to_base_category = to_base_index.category();
+				if (from_is_rvalue == to_is_rvalue && from_base_category == to_base_category) {
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
 					// Type::Struct, so we must also compare type_index.
 					if (from_base_index.isStruct() &&
@@ -512,13 +506,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// rvalue reference can bind to a temporary materialized from an xvalue when
 				// a standard conversion is required.
 				if (!to_is_rvalue && to.is_const()) {
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
 						return plan;
 					}
 				}
 				if (from_is_rvalue && to_is_rvalue) {
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if (plan.is_valid) {
 						return plan;
 					}
@@ -535,13 +529,13 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				bool to_is_const = to.is_const();
 				
 				// Check if base types are compatible (resolve aliases like char_type → wchar_t)
-				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-				Type from_base = from_canonical.type;
-				Type to_base = to_canonical.type;
-				TypeIndex from_base_index = TypeIndex::fromTypeAndIndex(from_base, from_canonical.type_index);
-				TypeIndex to_base_index = TypeIndex::fromTypeAndIndex(to_base, to_canonical.type_index);
-				bool types_match = (from_base == to_base);
+				const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+				const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
+				TypeIndex from_base_index = from_canonical.resolvedTypeIndex();
+				TypeIndex to_base_index = to_canonical.resolvedTypeIndex();
+				const TypeCategory from_base_category = from_base_index.category();
+				const TypeCategory to_base_category = to_base_index.category();
+				bool types_match = (from_base_category == to_base_category);
 				// For struct types, "same base type" requires the same type_index.
 				if (types_match && from_base_index.isStruct() &&
 					from_base_index.is_valid() && to_base_index.is_valid() &&
@@ -551,7 +545,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				if (!types_match) {
 					// Allow conversions for const lvalue refs and rvalue refs by
 					// materializing a temporary of the referred-to type.
-					auto plan = buildConversionPlan(from_base, to_base);
+					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
 						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
@@ -586,14 +580,14 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// (e.g., const T& can be copied to T)
 			
 			// Resolve type aliases before comparing (e.g., char_type → wchar_t)
-			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-			Type from_resolved = from_canonical.type;
-			Type to_resolved = to_canonical.type;
-			TypeIndex from_resolved_index = TypeIndex::fromTypeAndIndex(from_resolved, from_canonical.type_index);
-			TypeIndex to_resolved_index = TypeIndex::fromTypeAndIndex(to_resolved, to_canonical.type_index);
+			const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+			const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
+			TypeIndex from_resolved_index = from_canonical.resolvedTypeIndex();
+			TypeIndex to_resolved_index = to_canonical.resolvedTypeIndex();
+			const TypeCategory from_resolved_category = from_resolved_index.category();
+			const TypeCategory to_resolved_category = to_resolved_index.category();
 			
-			if (from_resolved == to_resolved) {
+			if (from_resolved_category == to_resolved_category) {
 				// For struct types, "same base type" requires the same type_index.
 				// Two different struct types (e.g. Bar& → Foo) both resolve to
 				// Type::Struct, so we must also compare type_index.
@@ -621,14 +615,14 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
-			return buildConversionPlan(from_resolved, to_resolved);
+			return buildConversionPlan(from_resolved_category, to_resolved_category);
 		}
 	}
 
 	// Check for user-defined conversion operators
 	// If 'from' is a struct type and 'to' is a different type, assume conversion might be possible
 	// The actual conversion operator existence will be checked during CodeGen
-	if (from.type() == Type::Struct && to.type() != Type::Struct) {
+	if (from.category() == TypeCategory::Struct && to.category() != TypeCategory::Struct) {
 		// For struct-to-primitive conversions, optimistically assume a conversion operator exists
 		// CodeGen will verify and generate the actual call
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -636,7 +630,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 
 	// Check for user-defined conversions in reverse: if 'to' is Struct and 'from' is not
 	// This handles constructor conversions (not conversion operators, but similar concept)
-	if (to.type() == Type::Struct && from.type() != Type::Struct) {
+	if (to.category() == TypeCategory::Struct && from.category() != TypeCategory::Struct) {
 		// Could be a converting constructor in 'to' struct - accept it tentatively
 		// CodeGen will handle the actual constructor call
 		return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
@@ -646,14 +640,12 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// Type aliases like 'size_t' may be stored as Type::UserDefined with type_index=0
 	// when they couldn't be fully resolved during parsing. Allow conversions between
 	// UserDefined and integral types as they're likely type aliases for integral types.
-	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type(), from.type_index());
-	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type(), to.type_index());
-	Type from_type = from_canonical.type;
-	Type to_type = to_canonical.type;
-	TypeIndex from_type_index = TypeIndex::fromTypeAndIndex(from_type, from_canonical.type_index);
-	TypeIndex to_type_index = TypeIndex::fromTypeAndIndex(to_type, to_canonical.type_index);
-	const TypeCategory from_type_category = typeToCategory(from_type);
-	const TypeCategory to_type_category = typeToCategory(to_type);
+	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from.type_index());
+	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to.type_index());
+	TypeIndex from_type_index = from_canonical.resolvedTypeIndex();
+	TypeIndex to_type_index = to_canonical.resolvedTypeIndex();
+	const TypeCategory from_type_category = from_type_index.category();
+	const TypeCategory to_type_category = to_type_index.category();
 	
 	// If either type is still UserDefined with type_index=0, assume it's an unresolved type alias
 	// Allow conversion if the other type is an integral type (common for size_t, ptrdiff_t, etc.)
@@ -689,7 +681,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 		return ConversionPlan::no_match();
 	}
-	return buildConversionPlan(from_type, to_type);
+	return buildConversionPlan(from_type_category, to_type_category);
 }
 
 // Check if one type can be implicitly converted to another (considering pointers and references).
@@ -812,7 +804,7 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 	// Implicit copy/move ctors always have exactly 1 param that is a reference
 	// (lvalue for copy, rvalue for move) to the struct's own type.
 	if (!(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) ||
-		!is_struct_type(param_type.type())) {
+		!is_struct_type(param_type.category())) {
 		return false;
 	}
 
@@ -850,7 +842,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		if (is_implicit_copy_or_move && argument_types.size() == 1) {
 			const TypeSpecifierNode& arg_type = argument_types[0];
-			Type resolved_arg_type = resolve_type_alias(arg_type.type(), arg_type.type_index());
+			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type_index());
 			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
 				arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
@@ -978,7 +970,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 		if (!ptype_node.is<TypeSpecifierNode>()) return false;
 		const auto& ptype = ptype_node.as<TypeSpecifierNode>();
 		if (!(ptype.is_reference() || ptype.is_rvalue_reference())) return false;
-		if (ptype.type() != Type::Struct) return false;
+		if (ptype.category() != TypeCategory::Struct) return false;
 		return struct_info.isOwnTypeIndex(ptype.type_index());
 	};
 
@@ -1279,24 +1271,24 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	return (template_base_name == base_name) ? left_type_index : param_idx;
 }
 
-inline bool binaryOperatorUsesTypeIndexIdentity(Type type) {
-	return needs_type_index(type);
+inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
+	return needs_type_index(cat);
 }
 
-inline Type effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
-	Type type = spec.type();
-	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
-		type = getTypeInfo(spec.type_index()).type_;
+inline TypeCategory effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
+	TypeCategory type = spec.category();
+	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
+		type = getTypeInfo(spec.type_index()).category();
 	}
-	if ((type == Type::Invalid || type == Type::Void) && spec.type_index().is_valid()) {
-		return Type::Struct;
+	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
+		return TypeCategory::Struct;
 	}
 	return type;
 }
 
 inline bool isConcreteBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
-	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
-	if (type == Type::Invalid || type == Type::Void) {
+	TypeCategory type = effectiveBinaryOperatorTypeFromSpec(spec);
+	if (type == TypeCategory::Invalid || type == TypeCategory::Void) {
 		return false;
 	}
 	if (binaryOperatorUsesTypeIndexIdentity(type)) {
@@ -1312,21 +1304,21 @@ inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec
 		|| spec.is_member_object_pointer()) {
 		return false;
 	}
-	Type type = effectiveBinaryOperatorTypeFromSpec(spec);
+	TypeCategory type = effectiveBinaryOperatorTypeFromSpec(spec);
 	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index().is_valid();
 }
 
-inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex type_index) {
-	Type effective_type = type;
+inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
+	TypeCategory effective_type = type_index.category();
 	int size_bits = 0;
 
 	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const auto& type_info = getTypeInfo(type_index);
-		if (effective_type == Type::Invalid || effective_type == Type::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (type_info.type_ != Type::Invalid && type_info.type_ != Type::Void) {
-				effective_type = type_info.type_;
-			} else if (effective_type == Type::Invalid || effective_type == Type::Void) {
-				effective_type = Type::Struct;
+		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
+			if (type_info.category() != TypeCategory::Invalid && !type_info.isVoid()) {
+				effective_type = type_info.category();
+			} else if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void) {
+				effective_type = TypeCategory::Struct;
 			}
 		}
 
@@ -1337,20 +1329,20 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(Type type, TypeIndex ty
 		}
 	}
 
-	if (size_bits == 0 && effective_type != Type::Invalid && effective_type != Type::Void) {
+	if (size_bits == 0 && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
 		size_bits = get_type_size_bits(effective_type);
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {
-		return TypeSpecifierNode(effective_type, type_index, size_bits);
+		return TypeSpecifierNode(type_index.withCategory(effective_type), size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	}
 
-	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits);
+	return TypeSpecifierNode(effective_type, TypeQualifier::None, size_bits, Token{}, CVQualifier::None);
 }
 
 inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpecifierNode& type_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved = type_spec;
-	Type resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
+	TypeCategory resolved_type = effectiveBinaryOperatorTypeFromSpec(resolved);
 	if (binaryOperatorUsesTypeIndexIdentity(resolved_type)) {
 		resolved.set_type_index(resolveSelfRefParamIndex(resolved.type_index(), enclosing_type_index));
 	}
@@ -1566,17 +1558,17 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 	return OperatorOverloadResult(best_candidates[0]->member_func);
 }
 
-inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, Type right_type) {
-	Type effective_right_type = right_type;
+inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
+	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
-			effective_right_type = Type::Invalid;
+			effective_right_type = TypeCategory::Invalid;
 		}
 	}
 	return findBinaryOperatorOverload(
-		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind);
 }
 
@@ -1812,18 +1804,18 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	OverloadableOperator operator_kind,
 	std::string_view operator_symbol,
 	const SymbolTable& symbol_table,
-	Type right_type)
+		TypeCategory right_type)
 {
-	Type effective_right_type = right_type;
+	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
-		Type indexed_right_type = resolve_type_alias(getTypeInfo(right_type_index).type_, right_type_index);
+		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
-			effective_right_type = Type::Invalid;
+			effective_right_type = TypeCategory::Invalid;
 		}
 	}
 	return findBinaryOperatorOverloadWithFreeFunction(
-		makeBinaryOperatorTypeSpecifier(Type::Invalid, left_type_index),
-		makeBinaryOperatorTypeSpecifier(effective_right_type, right_type_index),
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind,
 		operator_symbol,
 		symbol_table);
@@ -1842,7 +1834,6 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& spec) {
 	FlashCpp::TypeIndexArg arg;
 	arg.type_index = spec.type_index();
-	arg.base_type = spec.type();  // Include base type for primitive types
 	arg.cv_qualifier = spec.cv_qualifier();
 	arg.ref_qualifier = spec.reference_qualifier();
 	arg.pointer_depth = static_cast<uint8_t>(std::min(spec.pointer_depth(), size_t(255)));

@@ -24,11 +24,11 @@ namespace TypeTraitEval {
 // isArithmeticType and isFundamentalType are available as global constexpr
 // helpers in AstNodeTypes_TypeSystem.h; the namespace declarations were removed
 // to avoid ambiguity now that both are in scope.
-bool isScalarType(Type type, bool is_reference, size_t pointer_depth);
-bool isIntegral(Type type);
-bool isFloatingPoint(Type type);
-bool isSigned(Type type);
-bool isUnsigned(Type type);
+bool isScalarType(TypeCategory cat, bool is_reference, size_t pointer_depth);
+bool isIntegral(TypeCategory cat);
+bool isFloatingPoint(TypeCategory cat);
+bool isSigned(TypeCategory cat);
+bool isUnsigned(TypeCategory cat);
 
 } // namespace TypeTraitEval
 
@@ -48,7 +48,6 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
-	Type base_type,
 	TypeIndex type_idx,
 	bool is_reference,
 	bool is_rvalue_reference,
@@ -57,13 +56,11 @@ TypeTraitResult evaluateTypeTrait(
 	CVQualifier cv_qualifier,
 	bool is_array,
 	std::optional<size_t> array_size,
-	const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 );
 
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec,
-	const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 );

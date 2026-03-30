@@ -21,7 +21,7 @@ namespace {
 	}
 
 	bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
-		return !isPlaceholderAutoType(type_spec.type());
+		return !isPlaceholderAutoType(type_spec.category());
 	}
 
 	void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
@@ -63,51 +63,48 @@ namespace {
 		}
 	}
 
-}
-
-EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
-	switch (target_type.type()) {
-		case Type::Bool:
-		{
+	EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
+		const TypeCategory category = target_type.category();
+		if (category == TypeCategory::Bool) {
 			EvalResult result = EvalResult::from_bool(expr_result.as_bool());
 			result.set_exact_type(target_type);
 			return result;
 		}
-
-		case Type::Char:
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
-		{
-			EvalResult result = EvalResult::from_int(expr_result.as_int());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::UnsignedChar:
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-		{
-			EvalResult result = EvalResult::from_uint(expr_result.as_uint_raw());
-			result.set_exact_type(target_type);
-			return result;
-		}
-
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-		{
+		if (isFloatingPointType(category)) {
 			EvalResult result = EvalResult::from_double(expr_result.as_double());
 			result.set_exact_type(target_type);
 			return result;
 		}
-
-		default:
-			return EvalResult::error(invalidTypeErrorStr);
+		// For enum types, resolve the underlying type to determine signedness.
+		// is_unsigned_integer_type(Enum) is always false, so we must check the
+		// actual underlying type (e.g., unsigned int) to pick from_uint vs from_int.
+		TypeCategory effective_category = category;
+		if (category == TypeCategory::Enum) {
+			TypeIndex ti = target_type.type_index();
+			if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
+				if (const EnumTypeInfo* ei = getTypeInfo(ti).getEnumInfo()) {
+					effective_category = ei->underlying_type;
+				}
+			}
+		}
+		EvalResult result = is_unsigned_integer_type(effective_category)
+			? EvalResult::from_uint(expr_result.as_uint_raw())
+			: EvalResult::from_int(expr_result.as_int());
+		result.set_exact_type(target_type);
+		return result;
 	}
+
+}
+
+EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
+	const TypeCategory category = target_type.category();
+	if (isIntegralType(category) ||
+		isFloatingPointType(category) ||
+		category == TypeCategory::Enum) {
+		return makeConvertedEvalResult(target_type, expr_result);
+	}
+
+	return EvalResult::error(invalidTypeErrorStr);
 }
 
 // Main evaluation entry point
@@ -134,7 +131,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// Check what type of expression it is
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		EvalResult result = EvalResult::from_bool(bool_literal->value());
-		result.set_exact_type(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+		result.set_exact_type(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 		return result;
 	}
 
@@ -292,7 +289,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 			? std::string_view(raw.data() + 1, raw.size() - 2) : raw;
 		// Build an is_array result whose elements are the individual characters.
 		// The null terminator is appended so that str[n] == '\0' comparisons work.
-		const TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8);
+		const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		EvalResult result = EvalResult::from_int(0LL);
 		result.is_array = true;
 		for (size_t si = 0; si < str_content.size(); ++si) {
@@ -338,7 +335,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 // Internal evaluation methods for different node types
 EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal) {
 	const auto& value = literal.value();
-	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits());
+	const TypeSpecifierNode literal_type(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
@@ -995,7 +992,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			const auto& type_spec = type_node.as<TypeSpecifierNode>();
 			
 			// For struct types, look up alignment from type info
-			if (type_spec.type() == Type::Struct) {
+			if (type_spec.category() == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (type_index.index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1010,10 +1007,10 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			// For primitive types, use standard alignment calculation
 			int size_bits = type_spec.size_in_bits();
 			if (size_bits == 0) {
-				size_bits = get_type_size_bits(type_spec.type());
+				size_bits = get_type_size_bits(type_spec.category());
 			}
 			size_t size_in_bytes = size_bits / 8;
-			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
+			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 			
 			return EvalResult::from_int(static_cast<long long>(alignment));
 		}
@@ -1041,7 +1038,7 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								const auto& type_spec = type_node.as<TypeSpecifierNode>();
 								
 								// Handle struct types
-								if (type_spec.type() == Type::Struct) {
+								if (type_spec.category() == TypeCategory::Struct) {
 									TypeIndex type_index = type_spec.type_index();
 									if (type_index.index() < getTypeInfoCount()) {
 										const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1055,10 +1052,10 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								// For primitive types
 								int size_bits = type_spec.size_in_bits();
 								if (size_bits == 0) {
-									size_bits = get_type_size_bits(type_spec.type());
+									size_bits = get_type_size_bits(type_spec.category());
 								}
 								size_t size_in_bytes = size_bits / 8;
-								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.type());
+								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 								
 								return EvalResult::from_int(static_cast<long long>(alignment));
 							}
@@ -1085,7 +1082,7 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.type() != Type::Struct) {
+	if (type_spec.category() != TypeCategory::Struct) {
 		return EvalResult::error("offsetof requires a struct type");
 	}
 
@@ -1318,46 +1315,102 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		// For struct types, this is valid - it's default initialization
 		// Return a success result with default value (0 for integers, false for bool, etc.)
 		// This allows the constructor call to be used for template argument deduction
-		switch (type_spec.type()) {
-			case Type::Bool:
+		switch (type_spec.category()) {
+			case TypeCategory::Bool:
 				{
 					EvalResult result = EvalResult::from_bool(false);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Char:
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
+			case TypeCategory::Char:
+			case TypeCategory::Short:
+			case TypeCategory::Int:
+			case TypeCategory::Long:
+			case TypeCategory::LongLong:
 				{
 					EvalResult result = EvalResult::from_int(0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
+			case TypeCategory::UnsignedChar:
+			case TypeCategory::UnsignedShort:
+			case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong:
+			case TypeCategory::UnsignedLongLong:
 				{
 					EvalResult result = EvalResult::from_uint(0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
+			case TypeCategory::Char8:
+			case TypeCategory::Char16:
+			case TypeCategory::Char32:
+				{
+					EvalResult result = EvalResult::from_uint(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
+			case TypeCategory::WChar:
+				{
+					// wchar_t is signed on LP64, unsigned on LLP64
+					EvalResult result = (g_target_data_model == TargetDataModel::LLP64)
+						? EvalResult::from_uint(0)
+						: EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
+			case TypeCategory::Float:
+			case TypeCategory::Double:
+			case TypeCategory::LongDouble:
 				{
 					EvalResult result = EvalResult::from_double(0.0);
 					result.set_exact_type(type_spec);
 					return result;
 				}
-			case Type::Struct:
-			case Type::UserDefined:
-				// For struct types, return a success result with value 0
-				// This indicates successful default construction
-				return EvalResult::from_int(0);
+			case TypeCategory::Struct:
+			case TypeCategory::UserDefined:
+				{
+					// For struct types, return a success result with value 0
+					// This indicates successful default construction
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
+			case TypeCategory::TypeAlias:
+				{
+					// Resolve the alias to determine the correct zero-init representation.
+					// An alias to an unsigned type (e.g., using size_type = unsigned long long)
+					// should produce from_uint(0), not from_int(0).
+					TypeIndex ti = type_spec.type_index();
+					if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
+						const TypeInfo& alias_info = getTypeInfo(ti);
+						TypeCategory resolved = alias_info.category();
+						if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
+							EvalResult result = EvalResult::from_int(0);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+						if (is_unsigned_integer_type(resolved)) {
+							EvalResult result = EvalResult::from_uint(0);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+						if (isFloatingPointType(resolved)) {
+							EvalResult result = EvalResult::from_double(0.0);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+						if (resolved == TypeCategory::Bool) {
+							EvalResult result = EvalResult::from_bool(false);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+					}
+					// Unresolvable alias — fall back to signed zero with exact type metadata
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			default:
 				return EvalResult::error("Unsupported type for default construction in constant expression");
 		}
@@ -1366,7 +1419,7 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 	// Handle struct types with arguments: delegate to materialize_constructor_object_value
 	// which first attempts user-defined constructor matching and falls back to aggregate
 	// initialization only when no matching constructor is found.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		return materialize_constructor_object_value(ctor_call, context);
 	}
 
@@ -1395,13 +1448,20 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 	if (lhs.has_function_signature()) {
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
-		if (lhs_sig.return_type != rhs_sig.return_type ||
-			lhs_sig.parameter_types != rhs_sig.parameter_types ||
+		if (lhs_sig.returnType() != rhs_sig.returnType() ||
+			lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||
 			lhs_sig.is_const != rhs_sig.is_const ||
 			lhs_sig.is_volatile != rhs_sig.is_volatile) {
 			return false;
+		}
+		for (size_t i = 0; i < lhs_sig.parameter_type_indices.size(); ++i) {
+			if (lhs_sig.parameter_type_indices[i].category() != rhs_sig.parameter_type_indices[i].category() ||
+			    lhs_sig.parameter_type_indices[i] != rhs_sig.parameter_type_indices[i]) {
+				return false;
+			}
 		}
 	}
 
@@ -1476,18 +1536,18 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 
 // Helper: default-initialize a value of the given type (used by new-expression evaluation).
 static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
-	if (type_spec.type() == Type::Bool) {
+	if (type_spec.category() == TypeCategory::Bool) {
 		EvalResult r = EvalResult::from_bool(false);
 		r.set_exact_type(type_spec);
 		return r;
 	}
-	if (is_unsigned_integer_type(type_spec.type())) {
+	if (is_unsigned_integer_type(type_spec.category())) {
 		EvalResult r = EvalResult::from_uint(0);
 		r.set_exact_type(type_spec);
 		return r;
 	}
-	if (type_spec.type() == Type::Float || type_spec.type() == Type::Double ||
-	    type_spec.type() == Type::LongDouble) {
+	if (type_spec.category() == TypeCategory::Float || type_spec.category() == TypeCategory::Double ||
+	    type_spec.category() == TypeCategory::LongDouble) {
 		EvalResult r = EvalResult::from_double(0.0);
 		r.set_exact_type(type_spec);
 		return r;
@@ -1543,7 +1603,7 @@ EvalResult Evaluator::evaluate_new_expression(
 	const auto& ctor_args = new_expr.constructor_args();
 
 	// Handle struct/class types via the constructor materialization path.
-	if (is_struct_type(type_spec.type())) {
+	if (is_struct_type(type_spec.category())) {
 		TypeIndex type_index = type_spec.type_index();
 		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
 			return EvalResult::error("new-expression: invalid struct type index");
@@ -1621,18 +1681,24 @@ EvalResult Evaluator::evaluate_new_expression(
 		auto arg_result = eval_arg(ctor_args[0]);
 		if (!arg_result.success()) return arg_result;
 		// Apply the type conversion to the evaluated value.
-		switch (type_spec.type()) {
-			case Type::Bool:
+		switch (type_spec.category()) {
+			case TypeCategory::Bool:
 				init_val = EvalResult::from_bool(arg_result.as_bool());
 				break;
-			case Type::Char: case Type::Short: case Type::Int: case Type::Long: case Type::LongLong:
+			case TypeCategory::Char: case TypeCategory::Short: case TypeCategory::Int: case TypeCategory::Long: case TypeCategory::LongLong:
 				init_val = EvalResult::from_int(arg_result.as_int());
 				break;
-			case Type::UnsignedChar: case Type::UnsignedShort: case Type::UnsignedInt:
-			case Type::UnsignedLong: case Type::UnsignedLongLong:
+			case TypeCategory::UnsignedChar: case TypeCategory::UnsignedShort: case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong: case TypeCategory::UnsignedLongLong:
+			case TypeCategory::Char8: case TypeCategory::Char16: case TypeCategory::Char32:
 				init_val = EvalResult::from_uint(arg_result.as_uint_raw());
 				break;
-			case Type::Float: case Type::Double: case Type::LongDouble:
+			case TypeCategory::WChar:
+				init_val = (g_target_data_model == TargetDataModel::LLP64)
+					? EvalResult::from_uint(arg_result.as_uint_raw())
+					: EvalResult::from_int(arg_result.as_int());
+				break;
+			case TypeCategory::Float: case TypeCategory::Double: case TypeCategory::LongDouble:
 				init_val = EvalResult::from_double(arg_result.as_double());
 				break;
 			default:
@@ -1781,7 +1847,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		const DeclarationNode& decl = symbol_node.as<DeclarationNode>();
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-			if (type_spec.type() == Type::Enum) {
+			if (type_spec.category() == TypeCategory::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
 				if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
@@ -1834,7 +1900,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			// Preserve the older generic array materialization for declarations whose
 			// array element type is not represented as a TypeSpecifierNode (for example,
 			// decltype()-spelled or still-dependent array element types).
-			return materialize_array_value(Type::Auto, TypeIndex{}, init_list, context);
+			return materialize_array_value(TypeIndex{}, init_list, context, nullptr);
 		}
 	}
 
@@ -1847,7 +1913,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (initializer->is<InitializerListNode>() &&
 			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if ((is_struct_type(type_spec.type())) &&
+			if ((is_struct_type(type_spec.category())) &&
 				type_spec.type_index().is_valid() &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo()) {
@@ -2707,11 +2773,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 			if (!arg_val.success()) {
 				return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
 			}
-			Type arg_type = Type::Int;
+			TypeCategory arg_type = TypeCategory::Int;
 			if (std::holds_alternative<bool>(arg_val.value)) {
-				arg_type = Type::Bool;
+				arg_type = TypeCategory::Bool;
 			} else if (arg_val.is_uint()) {
-				arg_type = Type::UnsignedLongLong;
+				arg_type = TypeCategory::UnsignedLongLong;
 			}
 			template_args.emplace_back(arg_val.as_int(), arg_type);
 		} else {
@@ -2829,14 +2895,14 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 				
 				if (type_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-					Type base_type = type_spec.type();
+					TypeCategory base_type = type_spec.type();
 					bool is_reference = type_spec.is_reference();
 					size_t pointer_depth = type_spec.pointer_depth();
 					bool is_array = type_spec.is_array();
 					std::optional<size_t> array_size = type_spec.array_size();
 					
 					// Check for void - always incomplete
-					if (base_type == Type::Void && pointer_depth == 0 && !is_reference) {
+					if (base_type == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 						return EvalResult::from_bool(false);
 					}
 					
@@ -3520,7 +3586,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 							return EvalResult::error("Statement executed (not a return)");
 						}
 
-						auto array_result = materialize_array_value(Type::Auto, TypeIndex{}, init_list, context, &bindings);
+						auto array_result = materialize_array_value(TypeIndex{}, init_list, context, &bindings);
 						if (!array_result.success()) {
 							return array_result;
 						}
@@ -3530,7 +3596,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if ((is_struct_type(type_spec.type())) &&
+						if ((is_struct_type(type_spec.category())) &&
 							type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
@@ -3591,7 +3657,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 				if (ctor_call && decl.type_node().is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-					if (is_struct_type(type_spec.type())) {
+					if (is_struct_type(type_spec.category())) {
 						auto object_result = materialize_constructor_object_value(*ctor_call, context, &bindings);
 						if (!object_result.success()) {
 							return object_result;
@@ -3618,7 +3684,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Uninitialized variable — check if it's a struct/class type requiring default construction
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				if ((is_struct_type(type_spec.type())) &&
+				if ((is_struct_type(type_spec.category())) &&
 					type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {

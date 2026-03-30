@@ -51,7 +51,8 @@
 				Token enum_type_token(Token::Type::Identifier,
 					StringTable::getStringView(enum_name), 0, 0, 0);
 				auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					Type::Enum, enum_type_index, enum_info->underlying_size, enum_type_token);
+					enum_type_index.withCategory(TypeCategory::Enum), enum_info->underlying_size, enum_type_token,
+					CVQualifier::None, ReferenceQualifier::None);
 
 				// Create a declaration node for the enumerator
 				Token enumerator_token(Token::Type::Identifier,
@@ -89,10 +90,10 @@
 				const InitializerListNode& init_list = expr_opt->as<InitializerListNode>();
 
 				// Get struct type information
-				Type return_type = current_function_return_type_;
+				TypeCategory return_category = current_function_return_type_index_.category();
 				int return_size = current_function_return_size_;
 
-				if (return_type != Type::Struct) {
+				if (return_category != TypeCategory::Struct) {
 					FLASH_LOG(Codegen, Error, "InitializerListNode in return statement for non-struct type");
 					return;
 				}
@@ -165,7 +166,7 @@
 				emitDestructorsForNonLocalExit(0);
 
 				// Now return the temporary variable
-				emitReturn(temp_var, return_type, return_size, node.return_token());
+				emitReturn(temp_var, return_category, return_size, node.return_token());
 				return;
 			}
 
@@ -191,7 +192,7 @@
 								emitAndClearFullExpressionTempDestructors();
 								emitDestructorsForNonLocalExit(0);
 								emitReturn(StringTable::getOrInternStringHandle("this"),
-								current_function_return_type_, current_function_return_size_,
+								currentFunctionReturnType(), current_function_return_size_,
 								node.return_token());
 								return;
 							}
@@ -212,11 +213,11 @@
 
 			// Check if this is a void return with a void expression (e.g., return void_func();)
 			{
-				Type expr_type = operands.type;
+				TypeCategory expr_category = operands.category();
 
 				// If returning a void expression in a void function, just emit void return
 				// (the expression was already evaluated for its side effects)
-				if (expr_type == Type::Void && current_function_return_type_ == Type::Void) {
+				if (expr_category == TypeCategory::Void && current_function_return_type_index_.category() == TypeCategory::Void) {
 					emitSehFinallyCallsBeforeReturn(node.return_token());
 					emitAndClearFullExpressionTempDestructors();
 					emitDestructorsForNonLocalExit(0);
@@ -225,24 +226,27 @@
 				}
 			}
 
-			if (isPlaceholderAutoType(current_function_return_type_)) {
+			if (isPlaceholderAutoType(current_function_return_type_index_.category())) {
 				throw InternalError("Unresolved placeholder return type reached IR return lowering");
 			}
 
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
 			if (!current_function_returns_reference_) {
-				Type expr_type = operands.type;
+				TypeCategory expr_type = operands.typeEnum();
+				TypeCategory expr_category = operands.category();
 				int expr_size = operands.size_in_bits.value;
 
 				// Get the current function's return type
-				Type return_type = current_function_return_type_;
+				TypeCategory return_category = current_function_return_type_index_.category();
+				TypeCategory return_type = return_category;
 				int return_size = current_function_return_size_;
 				TypeSpecifierNode return_type_spec(
-					return_type,
-					current_function_return_type_index_,
+					current_function_return_type_index_.withCategory(return_type),
 					return_size,
-					node.return_token());
+					node.return_token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
 				const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
 
 				// Check whether the semantic pass has already computed a cast annotation.
@@ -252,7 +256,8 @@
 				if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
 						operands, *expr_opt, return_type_spec, node.return_token(), use_return_slot_for_ctor)) {
 					operands = *materialized;
-					expr_type = operands.type;
+					expr_type = operands.typeEnum();
+					expr_category = operands.category();
 					expr_size = operands.size_in_bits.value;
 					sema_applied_conversion = true;
 				}
@@ -262,36 +267,36 @@
 					if (!sema_applied_conversion && slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						const Type annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						const TypeCategory annotated_source_type = sema_->typeContext().get(cast_info.source_type_id).category();
+						const TypeCategory to_type   = sema_->typeContext().get(cast_info.target_type_id).category();
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							annotated_source_type == Type::Struct) {
+							annotated_source_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
-								const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, return_type, ret_type_idx, source_is_const);
+									src_struct_info, ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");
 									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
-											return_type, ret_type_idx, return_size, node.return_token())) {
+											ret_type_idx, return_size, node.return_token())) {
 										operands = *result;
 										sema_applied_conversion = true;
 									}
 								}
 							}
-						} else if (annotated_source_type != Type::Struct && to_type != Type::Struct) {
-							Type from_type = annotated_source_type;
+						} else if (!is_struct_type(annotated_source_type) && !is_struct_type(to_type)) {
+							TypeCategory from_type = annotated_source_type;
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != operands.type)
-								from_type = operands.type;
+							if (from_type == TypeCategory::Enum && from_type != operands.typeEnum())
+								from_type = operands.typeEnum();
 							operands = generateTypeConversion(operands, from_type, to_type, node.return_token());
 							sema_applied_conversion = true;
 						}
@@ -304,24 +309,24 @@
 				if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 					// Check for user-defined conversion operator (fallback when sema did not run)
 					// If expr is a struct type with a conversion operator to return_type, call it
-					if (expr_type == Type::Struct) {
+					if (expr_category == TypeCategory::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
 						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							const TypeIndex ret_type_idx = (return_type == Type::Struct) ? current_function_return_type_index_ : TypeIndex{};
+							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, ret_type_idx, isExprConstQualified(*expr_opt));
+								source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
 									StringTable::getStringView(source_type_info.name()),
 									" to return type");
 								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
-										return_type, ret_type_idx, return_size, node.return_token()))
+										ret_type_idx, return_size, node.return_token()))
 									operands = *result;
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion
@@ -362,10 +367,10 @@
 						addr_member_op.result = address_temp;
 						addr_member_op.base_object = std::get<StringHandle>(lv_info.base);
 						addr_member_op.member_offset = lv_info.offset;
-						addr_member_op.member_type = current_function_return_type_;
+						addr_member_op.member_type_index = current_function_return_type_index_;
 						addr_member_op.member_size_in_bits = current_function_return_size_;
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.return_token()));
-						TempVarMetadata address_meta = TempVarMetadata::makeReference(current_function_return_type_, SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+						TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 						address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 						setTempVarMetadata(address_temp, std::move(address_meta));
 						operands.value = address_temp;
@@ -406,7 +411,7 @@
 				return_value = *d_val;
 			}
 			// Use the function's return type, not the expression type
-			emitReturn(return_value, current_function_return_type_, current_function_return_size_,
+			emitReturn(return_value, currentFunctionReturnType(), current_function_return_size_,
 			node.return_token());
 		}
 		else {

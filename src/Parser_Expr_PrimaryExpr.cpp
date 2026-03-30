@@ -195,7 +195,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, op_token);
+		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
 		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 		auto func_call = FunctionCallNode(op_decl, std::move(args_result.args), op_token);
 		if (!namespaces.empty()) {
@@ -365,8 +365,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		Token type_token(Token::Type::Identifier, interned_type_name, 
 		                 first_type_token.line(), first_type_token.column(), first_type_token.file_index());
 		
-		// Create a dependent/placeholder type (Type::UserDefined with special marker)
-		auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, type_token);
+		// Create a dependent/placeholder type (TypeCategory::UserDefined with special marker)
+		auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, type_token, CVQualifier::None);
 		
 		// Create ConstructorCallNode with the dependent type
 		result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), init_token));
@@ -528,7 +528,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
 			
 			// Create a placeholder type spec and decl for the deferred call
-			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 			result = emplace_node<ExpressionNode>(
@@ -551,7 +551,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			
 			// Operator function not found - create a deferred call that will be resolved at instantiation
 			// This is common in template/requires contexts where the operator is dependent
-			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 			result = emplace_node<ExpressionNode>(
 				FunctionCallNode(operator_decl, std::move(args), operator_name_token));
@@ -902,7 +902,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Create a forward declaration for the operator (returns void* for new, void for delete)
 			bool is_new = op_name.find("new") != std::string_view::npos;
-			auto type_node = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, Token());
+			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
 			if (is_new) {
 				type_node.as<TypeSpecifierNode>().add_pointer_level(); // void* return type for new
 			}
@@ -1017,7 +1017,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							.append("'").commit()),
 						qual_id.identifier_token());
 				}
-				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
 			}
@@ -1471,7 +1471,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																		const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																		if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																			bool val = bool_literal_ptr->value();
-																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																			filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeCategory::Bool));
 																		} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																			const NumericLiteralNode& lit = *numeric_literal;
 																			const auto& val = lit.value();
@@ -1498,7 +1498,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										}
 									} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr_default)) {
 										const BoolLiteralNode& lit = *bool_literal;
-										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+										filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeCategory::Bool));
 									}
 								}
 							}
@@ -1616,7 +1616,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						if (!decl_ptr) {
 							// Create a forward declaration
-							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
 							member_lookup = forward_decl;
 							decl_ptr = &forward_decl.as<DeclarationNode>();
@@ -1695,7 +1695,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 
 				int type_size = struct_info ? static_cast<int>(struct_info->total_size * 8) : 0;
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 				return ParseResult::success(*result);
 			}
@@ -1769,7 +1769,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							.append("'").commit()),
 						qual_id.identifier_token());
 				}
-				auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+				auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 				auto forward_decl = emplace_node<DeclarationNode>(type_node, qual_id.identifier_token());
 				identifierType = forward_decl;
 			}
@@ -2383,7 +2383,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							if (type_info.struct_info_) {
 								type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
 							}
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, final_identifier);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 							
 							// Create ConstructorCallNode
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
@@ -2561,7 +2561,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Create TypeSpecifierNode for the class
 				TypeIndex type_index = type_it->second->type_index_;
 					int type_size = getStructTypeSizeBits(type_index);
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 				
 				// Create ConstructorCallNode
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -2601,7 +2601,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				}
 				
 				// Create TypeSpecifierNode for the template parameter (dependent type)
-				auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, identifier_token);
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 				
 				// Create ConstructorCallNode for brace initialization
 				result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -2677,19 +2677,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (node->is<ExpressionNode>()) {
 						const auto& expr = node->as<ExpressionNode>();
 						std::optional<TypeSpecifierNode> arg_type_node_opt;
-						Type arg_type = Type::Int;  // Default assumption
+						TypeCategory arg_type = TypeCategory::Int;  // Default assumption
 						bool is_lvalue = false;  // Track if this is an lvalue for perfect forwarding
 					
 						std::visit([&](const auto& inner) {
 							using T = std::decay_t<decltype(inner)>;
 							if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-								arg_type = Type::Bool;
+								arg_type = TypeCategory::Bool;
 								// Boolean literals are rvalues
 							} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 								arg_type = inner.type();
 								// Literals are rvalues
 							} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-								arg_type = Type::Char;  // const char*
+								arg_type = TypeCategory::Char;  // const char*
 								// String literals are lvalues (but typically decay to pointers)
 							} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 								// Look up the identifier's type
@@ -2710,7 +2710,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}, expr);
 					
 						TypeSpecifierNode arg_type_node = arg_type_node_opt.value_or(
-							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token())
+							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None)
 						);
 						if (is_lvalue) {
 							// Mark as lvalue reference for perfect forwarding template deduction
@@ -2943,10 +2943,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Set identifierType to prevent "Missing identifier" error
 							identifierType = emplace_node<DeclarationNode>(
 								emplace_node<TypeSpecifierNode>(
-									static_member->type,
-									static_member->type_index,
+									static_member->type_index.withCategory(static_member->memberType()),
 									static_cast<unsigned char>(static_member->size * 8),
-									identifier_token
+									identifier_token,
+									CVQualifier::None, ReferenceQualifier::None
 								),
 								identifier_token
 							);
@@ -3101,7 +3101,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (type_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = type_node.as<TypeSpecifierNode>();
 						// Check if it's a struct type (lambdas are represented as structs)
-						if (type_spec.type() == Type::Struct) {
+						if (type_spec.category() == TypeCategory::Struct) {
 							// Get the type index to look up the type name
 							TypeIndex type_idx = type_spec.type_index();
 							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, getTypeInfoCount()={}", 
@@ -3138,7 +3138,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							ASTNode def_val = params[i].as<DeclarationNode>().default_value();
 							if (def_val.is<InitializerListNode>()) {
 								const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-								if (is_struct_type(param_type_node.type())) {
+								if (is_struct_type(param_type_node.category())) {
 									auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
 									const InitializerListNode& init_list = def_val.as<InitializerListNode>();
 									ChunkedVector<ASTNode> ctor_args;
@@ -3158,7 +3158,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									Token zero_tok(Token::Type::Literal, "0"sv,
 										identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 									args_ref.push_back(emplace_node<ExpressionNode>(
-										NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+										NumericLiteralNode(zero_tok, 0ULL, TypeCategory::Int, TypeQualifier::None, 32)));
 									continue;
 								}
 								return ParseResult::error(
@@ -3380,7 +3380,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					TypeIndex type_index = type_it->second->type_index_;
 					int type_size = getStructTypeSizeBits(type_index);
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						Type::Struct, type_index, type_size, identifier_token);
+						type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 				
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -3412,16 +3412,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// For now, we'll use a simple heuristic
 							if (node->is<ExpressionNode>()) {
 								const auto& expr = node->as<ExpressionNode>();
-								Type arg_type = Type::Int;  // Default assumption
+								TypeCategory arg_type = TypeCategory::Int;  // Default assumption
 								
 								std::visit([&](const auto& inner) {
 									using T = std::decay_t<decltype(inner)>;
 									if constexpr (std::is_same_v<T, BoolLiteralNode>) {
-										arg_type = Type::Bool;
+										arg_type = TypeCategory::Bool;
 									} else if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 										arg_type = inner.type();
 									} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-										arg_type = Type::Char;  // const char*
+										arg_type = TypeCategory::Char;  // const char*
 									} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 										// Look up the identifier's type
 										auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
@@ -3435,7 +3435,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									}
 								}, expr);
 								
-								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token());
+								arg_types.emplace_back(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None);
 							}
 						}
 
@@ -3480,7 +3480,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				// Skip if we already found this as a member function in the class context
 				if (!found_member_function_in_context && !identifierType.has_value()) {
 					// We'll assume it returns int for now (this is a simplification)
-					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 
 					// Add to GLOBAL symbol table as a forward declaration
@@ -3718,7 +3718,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 																				const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
 																				if (const auto* bool_literal_ptr = std::get_if<BoolLiteralNode>(&init_expr)) {
 																					bool val = bool_literal_ptr->value();
-																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, Type::Bool));
+																					filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeCategory::Bool));
 																				} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
 																					const NumericLiteralNode& lit = *numeric_literal;
 																					const auto& val = lit.value();
@@ -3745,7 +3745,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												}
 											} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr_default)) {
 												const BoolLiteralNode& lit = *bool_literal;
-												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, Type::Bool));
+												filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeCategory::Bool));
 											}
 										}
 									}
@@ -3852,7 +3852,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// For dependent args, create a placeholder ConstructorCallNode
 									// The actual type will be resolved during template instantiation
 									// Use a placeholder type for now
-									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, identifier_token);
+									auto placeholder_type_node = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 									result = emplace_node<ExpressionNode>(ConstructorCallNode(placeholder_type_node, std::move(args), identifier_token));
 									return ParseResult::success(*result);
 								}
@@ -3923,7 +3923,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (type_info.struct_info_) {
 										type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
 									}
-									auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
+									auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 									
 									// Create ConstructorCallNode
 									result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -3992,10 +3992,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (inst_type_info.struct_info_) {
 										inst_type_size = static_cast<int>(inst_type_info.struct_info_->total_size * 8);
 									}
-									type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, inst_type_index, inst_type_size, inst_type_token);
+									type_spec_node = emplace_node<TypeSpecifierNode>(inst_type_index.withCategory(TypeCategory::Struct), inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
 								} else {
 									// Type not found yet (e.g. dependent/incomplete); size 0 is the standard placeholder
-									type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
 								}
 								
 								// Create ConstructorCallNode for functional-style cast
@@ -4065,7 +4065,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
 											// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", identifier_token.value(), qualified_name);
-											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, identifier_token);
+											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 											DeclarationNode& stub_decl_sv = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_sv), identifier_token);
 											ChunkedVector<ASTNode> no_args_sv;
 											FunctionCallNode& var_call_sv = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_sv, std::move(no_args_sv), identifier_token);
@@ -4078,7 +4078,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 														TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 													targ_nodes_sv.push_back(ASTNode(&dep_expr));
 												} else {
-													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
+													TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.type_index.withCategory(targ.typeEnum()), get_type_size_bits(targ.category()), identifier_token, CVQualifier::None, ReferenceQualifier::None);
 													targ_nodes_sv.push_back(ASTNode(&tts));
 												}
 											}
@@ -4116,7 +4116,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
 									// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", identifier_token.value());
-									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, identifier_token);
+									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 									DeclarationNode& stub_decl_vt = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt), identifier_token);
 									ChunkedVector<ASTNode> no_args_vt;
 									FunctionCallNode& var_call_vt = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt, std::move(no_args_vt), identifier_token);
@@ -4129,7 +4129,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 												TemplateParameterReferenceNode(targ.dependent_name, dep_token));
 											targ_nodes_vt.push_back(ASTNode(&dep_expr));
 										} else {
-											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.typeEnum(), targ.type_index, get_type_size_bits(targ.category()), identifier_token);
+											TypeSpecifierNode& tts = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(targ.type_index.withCategory(targ.typeEnum()), get_type_size_bits(targ.category()), identifier_token, CVQualifier::None, ReferenceQualifier::None);
 											targ_nodes_vt.push_back(ASTNode(&tts));
 										}
 									}
@@ -4165,7 +4165,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Create a dummy declaration for the concept call
 									Token void_token(Token::Type::Keyword, "void"sv, concept_token.line(), concept_token.column(), concept_token.file_index());
 									auto void_type = emplace_node<TypeSpecifierNode>(
-										Type::Void, TypeIndex{}, 0, void_token, CVQualifier::None);
+										TypeIndex{}.withCategory(TypeCategory::Void), 0, void_token, CVQualifier::None, ReferenceQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
 									
 									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
@@ -4670,7 +4670,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Variable template found but couldn't instantiate (likely dependent args).
 							// Preserve template args in a FunctionCallNode for later substitution.
 							FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args, path 3)", template_name_to_use);
-							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Auto, TypeQualifier::None, 0, identifier_token);
+							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), identifier_token);
 							ChunkedVector<ASTNode> no_args_vt3;
 							FunctionCallNode& var_call_vt3 = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt3, std::move(no_args_vt3), identifier_token);
@@ -4729,7 +4729,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					// Create TypeSpecifierNode for the instantiated template type
 					Token inst_type_token(Token::Type::Identifier, instantiated_type_name,
 					                      identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, inst_type_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
 					
 					// Create ConstructorCallNode for functional-style cast
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), inst_type_token));
@@ -4782,14 +4782,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
 						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
-						auto type_spec = TypeSpecifierNode(Type::Struct, type_index, type_size, identifier_token);
+						auto type_spec = TypeSpecifierNode(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
 							return init_result;
 						}
 						// Wrap the result in a ConstructorCallNode so codegen knows the target type
 						if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 							// Convert InitializerListNode initializers to ConstructorCallNode args
 							const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
 							ChunkedVector<ASTNode> args;
@@ -4826,7 +4826,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						}
 						
 						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
-						auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, identifier_token);
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);
 					}
@@ -4855,7 +4855,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						return ParseResult::error("Expected '}' after brace initializer", current_token_);
 					}
 					
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, identifier_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 					return ParseResult::success(*result);
 				}
@@ -4886,9 +4886,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						is_function_pointer, type_node.is_function_pointer(), type_node.has_function_signature(), identifier_token.value());
 
 					// Check if this is a struct with operator(). Placeholder-auto lambda
-					// variables may still carry Type::Auto here while already pointing at
+					// variables may still carry TypeCategory::Auto here while already pointing at
 					// the synthesized closure type via type_index().
-					if (is_struct_type(type_node.type()) ||
+					if (is_struct_type(type_node.category()) ||
 						isPlaceholderAutoType(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
@@ -4956,7 +4956,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (def_val.is<InitializerListNode>()) {
 									const auto& param_type_node = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 									// For struct/aggregate parameters, convert InitializerListNode to ConstructorCallNode
-									if (is_struct_type(param_type_node.type())) {
+									if (is_struct_type(param_type_node.category())) {
 										auto type_copy = emplace_node<TypeSpecifierNode>(param_type_node);
 										const InitializerListNode& init_list = def_val.as<InitializerListNode>();
 										ChunkedVector<ASTNode> ctor_args;
@@ -4976,7 +4976,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										Token zero_tok(Token::Type::Literal, "0"sv,
 											identifier_token.line(), identifier_token.column(), identifier_token.file_index());
 										args.push_back(emplace_node<ExpressionNode>(
-											NumericLiteralNode(zero_tok, 0ULL, Type::Int, TypeQualifier::None, 32)));
+											NumericLiteralNode(zero_tok, 0ULL, TypeCategory::Int, TypeQualifier::None, 32)));
 										continue;
 									}
 									return ParseResult::error("Cannot use multi-element braced-init-list as default argument for non-aggregate parameter '"
@@ -5087,7 +5087,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const auto& template_param = identifierType->as<TemplateParameterReferenceNode>();
 					// Create a TypeSpecifierNode for the template parameter
 					Token param_token(Token::Type::Identifier, template_param.param_name().view(), identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-					auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token, CVQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 				}
 				// For function pointers, skip overload resolution and create FunctionCallNode directly
@@ -5147,7 +5147,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 							// Create a TypeSpecifierNode for the template parameter
 							Token param_token(Token::Type::Identifier, template_param.param_name().view(), identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::UserDefined, TypeQualifier::None, 0, param_token);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token, CVQualifier::None);
 							result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						} else {
 							FLASH_LOG_FORMAT(Parser, Debug, "result is NOT TemplateParameterReferenceNode, proceeding to overload resolution, args.size()={}", args.size());
@@ -5285,7 +5285,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 										FLASH_LOG(Templates, Debug, "Creating dependent FunctionCallNode for call to '", identifier_token.value(), "'");
 										
 										// Create a placeholder declaration for the dependent function call
-										auto type_node = emplace_node<TypeSpecifierNode>(Type::Bool, TypeQualifier::None, 1, identifier_token);
+										auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 										auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 										
@@ -5540,7 +5540,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					std::string_view len_placeholder_sv = "0";
 					Token len_token(Token::Type::Literal, len_placeholder_sv, suffix_token.line(), suffix_token.column(), suffix_token.file_index());
 					auto len_node = emplace_node<ExpressionNode>(
-						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), Type::UnsignedLong, TypeQualifier::None, 64));
+						NumericLiteralNode(len_token, static_cast<unsigned long long>(str_len), TypeCategory::UnsignedLong, TypeQualifier::None, 64));
 					args.push_back(len_node);
 					
 					result = emplace_node<ExpressionNode>(
@@ -5568,25 +5568,25 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// - char16_t: u'x' (char_offset = 2)
 		// - char32_t: U'x' (char_offset = 2)
 		size_t char_offset = 1;  // Default: regular char literal 'x'
-		Type char_type = Type::Char;
+		TypeCategory char_type = TypeCategory::Char;
 		int char_size_bits = 8;
 
 		// Check for prefix (wide character literals)
 		if (value.size() > 0 && value[0] == 'L') {
 			char_offset = 2;  // L'x'
-			char_type = Type::WChar;
+			char_type = TypeCategory::WChar;
 			char_size_bits = get_wchar_size_bits();
 		} else if (value.size() > 1 && value[0] == 'u' && value[1] == '8') {
 			char_offset = 3;  // u8'x'
-			char_type = Type::Char8;
+			char_type = TypeCategory::Char8;
 			char_size_bits = 8;
 		} else if (value.size() > 0 && value[0] == 'u') {
 			char_offset = 2;  // u'x'
-			char_type = Type::Char16;
+			char_type = TypeCategory::Char16;
 			char_size_bits = 16;
 		} else if (value.size() > 0 && value[0] == 'U') {
 			char_offset = 2;  // U'x'
-			char_type = Type::Char32;
+			char_type = TypeCategory::Char32;
 			char_size_bits = 32;
 		}
 
@@ -5636,7 +5636,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// Handle nullptr literal - represented as null pointer constant (0)
 		// The actual type will be determined by context (can convert to any pointer type)
 		result = emplace_node<ExpressionNode>(NumericLiteralNode(current_token_,
-			0ULL, Type::Int, TypeQualifier::None, 64));
+			0ULL, TypeCategory::Int, TypeQualifier::None, 64));
 		advance();
 	}
 	else if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "this"sv) {
@@ -5692,7 +5692,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// (e.g., function parameter type, variable declaration type, etc.)
 			// The actual value doesn't matter, only that it represents a braced initializer
 			NumericLiteralValue val = static_cast<unsigned long long>(0);
-			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, Type::Int, TypeQualifier::None, 32));
+			result = emplace_node<ExpressionNode>(NumericLiteralNode(brace_token, val, TypeCategory::Int, TypeQualifier::None, 32));
 			return ParseResult::success(*result);
 		}
 		

@@ -122,7 +122,7 @@ struct TemplatePattern {
 	// fields including dependent_name), this helper is specifically for building *resolved*
 	// parameter bindings (e.g., T=int). It intentionally omits dependent_name because the
 	// result represents a concrete type, not a dependent placeholder. It also defaults
-	// base_type to Type::Int for value args with Type::Invalid, which toTemplateTypeArg does not.
+	// base_type to TypeCategory::Int for value args with TypeCategory::Invalid, which toTemplateTypeArg does not.
 	static TemplateTypeArg createDeducedArgFromConcrete(const TypeInfo::TemplateArgInfo& c) {
 		TemplateTypeArg deduced;
 		if (c.is_value) {
@@ -392,7 +392,7 @@ struct TemplatePattern {
 			// template parameter T, so we can't use position i
 		
 			// Find which template parameter this pattern arg refers to
-			// base_type == Type::UserDefined (15) means it's a template parameter reference
+			// base_type == TypeCategory::UserDefined means it's a template parameter reference
 			// BUT it could also be a dependent template instantiation placeholder
 			// (e.g., ratio<_Num, _Den> stored as UserDefined with isTemplateInstantiation())
 			// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct

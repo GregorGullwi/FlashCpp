@@ -168,7 +168,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					sizeof_node.sizeof_token()
+					sizeof_node.sizeof_token(), CVQualifier::None
 				);
 				new_type.set_type_index(arg.type_index);
 				
@@ -187,7 +187,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// If not found by type_index, try to find by matching type name with any substitution value
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
-			if (type_node.type() == Type::UserDefined && type_node.type_index().index() < getTypeInfoCount()) {
+			if ((type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) && type_node.type_index().index() < getTypeInfoCount()) {
 				std::string_view type_name = StringTable::getStringView(getTypeInfo(type_node.type_index()).name());
 				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
 				
@@ -203,7 +203,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 								arg.typeEnum(),
 								TypeQualifier::None,
 								get_type_size_bits(arg.category()),
-								sizeof_node.sizeof_token()
+								sizeof_node.sizeof_token(), CVQualifier::None
 							);
 							new_type.set_type_index(arg.type_index);
 							
@@ -246,7 +246,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 			std::string_view val_str = StringBuilder().append(value).commit();
 			Token value_token(Token::Type::Literal, val_str, 0, 0, 0);
 			return emplace_node<ExpressionNode>(
-				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), Type::Int, TypeQualifier::None, 32));
+				NumericLiteralNode(value_token, static_cast<unsigned long long>(value), TypeCategory::Int, TypeQualifier::None, 32));
 		}
 	}
 	
@@ -259,7 +259,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 		// For variable templates with cleaned-up template parameters, the constructor
 		// might have type_index=0 or some other invalid value. So we check if there's
 		// exactly one entry in the map and assume any UserDefined constructor is for that type.
-		if (ctor_type.type() == Type::UserDefined) {
+		if (ctor_type.category() == TypeCategory::UserDefined || ctor_type.category() == TypeCategory::TypeAlias || ctor_type.category() == TypeCategory::Template) {
 			// If we have exactly one type substitution and this is a UserDefined constructor,
 			// assume it's for the template parameter
 			if (type_substitution_map.size() == 1) {
@@ -270,7 +270,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					ctor.called_from()
+					ctor.called_from(), CVQualifier::None
 				);
 				
 				// Recursively substitute in arguments
@@ -334,7 +334,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					unop.get_token()
+					unop.get_token(), CVQualifier::None
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
 				new_type.set_reference_qualifier(arg.ref_qualifier);
@@ -510,7 +510,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				init_expr = *spec_var_decl.initializer();
 			}
 		} else if (spec_decl.type_node().is<TypeSpecifierNode>() &&
-		           spec_decl.type_node().as<TypeSpecifierNode>().type() == Type::Bool) {
+		           spec_decl.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Bool) {
 			Token true_token(Token::Type::Keyword, "true"sv, orig_token.line(), orig_token.column(), orig_token.file_index());
 			init_expr = emplace_node<ExpressionNode>(BoolLiteralNode(true_token, true));
 		}
@@ -593,7 +593,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// we should use orig_type.type_index() directly, as it's the correct type_index
 			// for THIS template's parameter. Searching by name can find the wrong type_index
 			// when multiple templates use the same parameter name (e.g., 'T').
-			if (orig_type.type() == Type::UserDefined) {
+			if (orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) {
 				// Check if orig_type's type name matches this template parameter
 				if (orig_type.type_index().index() < getTypeInfoCount()) {
 					std::string_view orig_type_name = StringTable::getStringView(getTypeInfo(orig_type.type_index()).name());
@@ -611,7 +611,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				// Search for the template parameter in gTypeInfo
 				// Template parameters have Type::UserDefined or Type::Template
 				for (TypeIndex ti {}; ti.index() < getTypeInfoCount(); ++ti) {
-					if (getTypeInfo(ti).type_ == Type::UserDefined || getTypeInfo(ti).type_ == Type::Template) {
+					if ((getTypeInfo(ti).isStructLike() && !getTypeInfo(ti).isStruct()) || getTypeInfo(ti).isTemplatePlaceholder()) {
 						if (StringTable::getStringView(getTypeInfo(ti).name()) == param_name) {
 							param_type_index = TypeIndex{ti};
 							found_param = true;
@@ -630,14 +630,14 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			
 			// Also check if the variable's return type itself is the template parameter
 			// (for cases like template<typename T> T value = T();)
-			if (orig_type.type() == Type::UserDefined && orig_type.type_index() == param_type_index) {
+			if ((orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) && orig_type.type_index() == param_type_index) {
 				// Use original token info for better diagnostics
 				const Token& orig_token = orig_decl.identifier_token();
 				substituted_type = TypeSpecifierNode(
 					arg.typeEnum(),
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
-					orig_token
+					orig_token, CVQualifier::None
 				);
 				// Apply cv-qualifiers, references, and pointers from template argument
 				substituted_type.set_reference_qualifier(arg.ref_qualifier);
@@ -817,11 +817,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			// Register the type alias globally with its qualified name
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
-				alias_type_spec.type(),
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
-			if (alias_type_spec.type() == Type::Enum && alias_type_spec.type_index().index() < getTypeInfoCount()) {
+			if (alias_type_spec.category() == TypeCategory::Enum && alias_type_spec.type_index().index() < getTypeInfoCount()) {
 				if (const EnumTypeInfo* enum_info = getTypeInfo(alias_type_spec.type_index()).getEnumInfo()) {
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}
@@ -885,7 +884,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 		const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 		
-		Type member_type = type_spec.type();
+		TypeCategory member_type = type_spec.type();
 		TypeIndex member_type_index = type_spec.type_index();
 		size_t ptr_depth = type_spec.pointer_depth();
 		
@@ -901,7 +900,6 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type,
 			member_type_index,
 			member_size,
 			member_alignment,
@@ -1063,7 +1061,7 @@ std::optional<ASTNode> Parser::substitute_nontype_template_param(
 		if (tparam.name() == param_name && tparam.kind() == TemplateParameterKind::NonType) {
 			if (i < args.size() && args[i].is_value) {
 				int64_t val = args[i].value;
-				Type val_type = args[i].typeEnum();
+				TypeCategory val_type = args[i].typeEnum();
 				StringBuilder value_str;
 				value_str.append(val);
 				std::string_view value_view = value_str.commit();

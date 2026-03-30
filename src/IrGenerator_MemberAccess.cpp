@@ -54,9 +54,9 @@
 						const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
 
 						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}",
-							is_struct_type(type_node.type()), type_node.type_index());
+							is_struct_type(type_node.category()), type_node.type_index());
 
-						if (is_struct_type(type_node.type()) && type_node.type_index().index() < getTypeInfoCount()) {
+						if (is_struct_type(type_node.category()) && type_node.type_index().index() < getTypeInfoCount()) {
 							TypeIndex type_index = type_node.type_index();
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_index,
@@ -136,13 +136,13 @@
 
 	ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 	ExpressionContext context) {
-		auto makeArrayResult = [](Type type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
+		auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 			ExprResult result;
-			result.type = type;
 			result.ir_type = toIrType(type);
 			result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			result.value = std::move(value);
-			result.type_index = TypeIndex{type_index};
+			// Embed the expression-level category into type_index (preserves gTypeInfo slot).
+			result.type_index = type_index.withCategory(type);
 			result.pointer_depth = pointer_depth;
 			result.storage = storage;
 			return result;
@@ -167,7 +167,7 @@
 				// For obj.arr[M][N] accessed as obj.arr[i][j], compute flat_index = i*N + j
 
 				const StructMember* member = member_multi_dim.member_info;
-				Type element_type = member->type;
+				TypeCategory element_type = member->memberType();
 				int base_element_size = get_type_size_bits(element_type);
 
 				// Get all dimension sizes
@@ -187,13 +187,13 @@
 				if (strides[0] == 1) {
 					BinaryOp add_op;
 					add_op.lhs = toTypedValue(idx0_operands);
-					add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
+					add_op.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL);
 					add_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 				} else {
 					BinaryOp mul_op;
 					mul_op.lhs = toTypedValue(idx0_operands);
-					mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
+					mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 					mul_op.result = IrValue{flat_index};
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 				}
@@ -205,7 +205,7 @@
 					if (strides[k] == 1) {
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+						add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 						add_op.rhs = toTypedValue(idx_operands);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -214,14 +214,14 @@
 						TempVar temp_prod = var_counter.next();
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx_operands);
-						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
+						mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 						mul_op.result = IrValue{temp_prod};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 						TempVar new_flat = var_counter.next();
 						BinaryOp add_op;
-						add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
-						add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
+						add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+						add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, temp_prod);
 						add_op.result = IrValue{new_flat};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 						flat_index = new_flat;
@@ -240,16 +240,16 @@
 				);
 				lvalue_info.array_index = IrValue{flat_index};
 				lvalue_info.is_pointer_to_array = false;
-				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+				setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				ArrayAccessOp payload;
 				payload.result = result_var;
-				payload.element_type = element_type;
+				payload.element_type_index = nativeTypeIndex(element_type);
 				payload.element_size_in_bits = base_element_size;
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
 				payload.is_pointer_to_array = false;
-				payload.index.type = Type::UnsignedLongLong;
+				payload.index.setType(TypeCategory::UnsignedLongLong);
 				payload.index.ir_type = IrType::Integer;
 				payload.index.size_in_bits = SizeInBits{64};
 				payload.index.value = flat_index;
@@ -270,12 +270,12 @@
 				// For arr[M][N][P] accessed as arr[i][j][k], compute flat_index = i*N*P + j*P + k
 
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
-				Type element_type = type_node.type();
+				TypeCategory element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
-				TypeIndex element_type_index = (element_type == Type::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 
 				// Get element size for struct types
-				if (element_size_bits == 0 && element_type == Type::Struct && element_type_index.is_valid()) {
+				if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
 					const TypeInfo& type_info = getTypeInfo(element_type_index);
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
@@ -319,14 +319,14 @@
 						// Use Add with 0 to effectively copy
 						BinaryOp add_op;
 						add_op.lhs = toTypedValue(idx0_operands);
-						add_op.rhs = makeTypedValue(Type::Int, SizeInBits{32}, 0ULL);
+						add_op.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL);
 						add_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 					} else {
 						// flat_index = indices[0] * strides[0]
 						BinaryOp mul_op;
 						mul_op.lhs = toTypedValue(idx0_operands);
-						mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
+						mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[0]));
 						mul_op.result = IrValue{flat_index};
 						ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 					}
@@ -339,7 +339,7 @@
 							// flat_index += indices[k]
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+							add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 							add_op.rhs = toTypedValue(idx_operands);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -349,15 +349,15 @@
 							TempVar temp_prod = var_counter.next();
 							BinaryOp mul_op;
 							mul_op.lhs = toTypedValue(idx_operands);
-							mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
+							mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 							mul_op.result = IrValue{temp_prod};
 							ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
 							// flat_index += temp
 							TempVar new_flat = var_counter.next();
 							BinaryOp add_op;
-							add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
-							add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
+							add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+							add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, temp_prod);
 							add_op.result = IrValue{new_flat};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 							flat_index = new_flat;
@@ -375,29 +375,29 @@
 					);
 					lvalue_info.array_index = IrValue{flat_index};
 					lvalue_info.is_pointer_to_array = false;  // This is a real array, not a pointer
-					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+					setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
-					payload.element_type = element_type;
+					payload.element_type_index = element_type_index;
 					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
 					payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-					payload.index.type = Type::UnsignedLongLong;
+					payload.index.setType(TypeCategory::UnsignedLongLong);
 					payload.index.ir_type = IrType::Integer;
 					payload.index.size_in_bits = SizeInBits{64};
 					payload.index.value = flat_index;
 
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
-						return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
+						return makeArrayResult(element_type, element_size_bits, result_var, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-					return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeArrayResult(element_type, element_size_bits, result_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}
@@ -418,7 +418,7 @@
 					const DeclarationNode* member_decl_ptr = symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 					if (member_decl_ptr) {
 						const auto& type_node = member_decl_ptr->type_node().as<TypeSpecifierNode>();
-							if (is_struct_type(type_node.type())) {
+							if (is_struct_type(type_node.category())) {
 							TypeIndex struct_type_index = type_node.type_index();
 								if (struct_type_index.index() < getTypeInfoCount()) {
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(
@@ -431,7 +431,7 @@
 									ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 									// Get element type and size from the member
-									Type element_type = member->type;
+									TypeCategory element_type = member->memberType();
 									int element_size_bits = static_cast<int>(member->size * 8);
 
 									// Use array_dimensions to compute actual element size
@@ -463,19 +463,19 @@
 									// Store index information for unified assignment handler
 									lvalue_info.array_index = toIrValue(index_result.value);
 									lvalue_info.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
-									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+									setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 									// Create typed payload for ArrayAccess with qualified member name
 									ArrayAccessOp payload;
 									payload.result = result_var;
-									payload.element_type = element_type;
+									payload.element_type_index = member->type_index.withCategory(element_type);
 									payload.element_size_in_bits = element_size_bits;
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
 									payload.is_pointer_to_array = false;  // Member arrays are actual arrays, not pointers
 
 									// Set index as TypedValue
-									payload.index.type = index_result.type;
+									payload.index.setType(index_result.category());
 									payload.index.ir_type = index_result.effectiveIrType();
 									payload.index.size_in_bits = index_result.size_in_bits;
 									payload.index.value = toIrValue(index_result.value);
@@ -512,14 +512,14 @@
 		ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
 
 		// Get array type information
-		Type element_type = array_result.type;
+		TypeCategory element_type = array_result.typeEnum();
 		int element_size_bits = array_result.size_in_bits.value;
 
 		// Check if this is a pointer type (e.g., int* arr)
 		// If so, we need to get the base type size, not the pointer size (64)
 		// Look up the identifier to get the actual type info
 		bool is_pointer_to_array = false;
-		size_t element_type_index = 0;  // Track type_index for struct elements
+		TypeIndex element_type_index = TypeIndex{};  // Track type_index for struct elements
 		int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
@@ -528,9 +528,11 @@
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 
-				// Capture type_index for struct types (important for member access on array elements)
-				if (type_node.type() == Type::Struct) {
-					element_type_index = type_node.type_index().index();
+				// Capture type_index for struct and native types (important for member access on array elements)
+				if (type_node.category() == TypeCategory::Struct) {
+					element_type_index = type_node.type_index();
+				} else {
+					element_type_index = nativeTypeIndex(type_node.type());
 				}
 
 				// For array types, ALWAYS get the element size from type_node, not from array_operands
@@ -547,8 +549,8 @@
 						// Get the element size from type_node
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						// If still 0, compute from type info for struct types
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
-							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
+							const TypeInfo& type_info = getTypeInfo(element_type_index);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -578,15 +580,15 @@
 					} else {
 						// Single-level pointer/reference indexing yields the base object.
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						if (element_size_bits == 0 && type_node.type() == Type::Struct && element_type_index != 0) {
-							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
+							const TypeInfo& type_info = getTypeInfo(element_type_index);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
 							}
 						}
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(type_node.type());
+							element_size_bits = get_type_size_bits(type_node.category());
 						}
 					}
 					is_pointer_to_array = true;  // This is a pointer or reference, not an actual array
@@ -630,7 +632,7 @@
 					if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
-						if (is_struct_type(type_node.type()) && type_node.type_index().index() < getTypeInfoCount()) {
+						if (is_struct_type(type_node.category()) && type_node.type_index().index() < getTypeInfoCount()) {
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 								type_node.type_index(),
 								StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
@@ -699,12 +701,12 @@
 		lvalue_info.array_index = toIrValue(index_result.value);
 		FLASH_LOG(Codegen, Debug, "Array index stored in metadata (supports constants and variables)");
 		lvalue_info.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
-		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
 		payload.result = result_var;
-		payload.element_type = element_type;
+		payload.element_type_index = element_type_index;
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
@@ -717,9 +719,9 @@
 		}
 
 		// Set index as TypedValue
-		Type index_type = index_result.type;
+		TypeCategory index_type = index_result.typeEnum();
 		int index_size = index_result.size_in_bits.value;
-		payload.index.type = index_type;
+		payload.index.setType(index_type);
 		payload.index.ir_type = toIrType(index_type);
 		payload.index.size_in_bits = SizeInBits{static_cast<int>(index_size)};
 
@@ -740,7 +742,7 @@
 				element_type,
 				element_size_bits,
 				result_var,
-				TypeIndex{element_type_index},
+				element_type_index,
 				PointerDepth{element_pointer_depth},
 				ValueStorage::ContainsAddress);
 		}
@@ -752,7 +754,7 @@
 			element_type,
 			element_size_bits,
 			result_var,
-			TypeIndex{element_type_index},
+			element_type_index,
 			PointerDepth{element_pointer_depth},
 			ValueStorage::ContainsData);
 	}
@@ -760,7 +762,6 @@
 	bool AstToIr::validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
@@ -780,7 +781,6 @@
 				// This is a type name - set up for static member access
 				FLASH_LOG(Codegen, Debug, "Found type '", object_name, "' in getTypesByNameMap() with type_index=", type_it->second->type_index_);
 				base_object = StringTable::getOrInternStringHandle(object_name);
-				base_type = Type::Struct;
 				base_type_index = type_it->second->type_index_;
 				is_pointer_dereference = false;  // Type names don't need dereferencing
 				return true;
@@ -803,7 +803,7 @@
 		// References and pointers are automatically dereferenced for member access
 		// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 		// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
-		bool is_valid_for_member_access = is_struct_type(object_type.type()) ||
+		bool is_valid_for_member_access = is_struct_type(object_type.category()) ||
 		(object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
 		if (!is_valid_for_member_access) {
 			FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
@@ -811,7 +811,6 @@
 		}
 
 		base_object = StringTable::getOrInternStringHandle(object_name);
-		base_type = object_type.type();
 		base_type_index = object_type.type_index();
 
 		// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
@@ -827,11 +826,9 @@
 	bool AstToIr::extractBaseFromOperands(
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context) {
 
-		base_type = operands.type;
 		if (const auto* temp_var = std::get_if<TempVar>(&operands.value)) {
 			base_object = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
@@ -844,19 +841,21 @@
 		return true;
 	}
 
-	ExprResult AstToIr::makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
+	ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) {
 		ExprResult result;
-		result.type = type;
-		result.ir_type = toIrType(type);
+		result.ir_type = toIrType(type_index);
 		result.size_in_bits = size_bits;
 		result.value = result_var;
 		result.pointer_depth = pointer_depth;
 		result.storage = storage;
 		// Include type_index for struct types and for UserDefined types that have actual struct info
 		// (i.e., are instantiated template structs, not placeholders or primitive type params)
-		if (type == Type::Struct ||
-			(type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
+		TypeCategory cat = type_index.category();
+		if (cat == TypeCategory::Struct ||
+			(cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
 			result.type_index = TypeIndex{type_index};
+		} else {
+			result.type_index = nativeTypeIndex(cat);
 		}
 		return result;
 	}
@@ -865,7 +864,6 @@
 		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
@@ -873,20 +871,18 @@
 			// First try [*this] capture - returns copy of the object
 			if (auto copy_this_temp = emitLoadCopyThis(member_token)) {
 				base_object = *copy_this_temp;
-				base_type = Type::Struct;
 				base_type_index = current_lambda_context_.enclosing_struct_type_index;
 				return true;
 			}
 			// Then try [this] capture - returns pointer to the object
 			if (auto this_ptr_temp = emitLoadThisPointer(member_token)) {
 				base_object = *this_ptr_temp;
-				base_type = Type::Struct;
 				base_type_index = current_lambda_context_.enclosing_struct_type_index;
 				is_pointer_dereference = true;
 				return true;
 			}
 		}
-		if (!validateAndSetupIdentifierMemberAccess(identifier.name(), base_object, base_type, base_type_index, is_pointer_dereference)) {
+		if (!validateAndSetupIdentifierMemberAccess(identifier.name(), base_object, base_type_index, is_pointer_dereference)) {
 			return false;
 		}
 		const auto binding_info = resolveGlobalOrStaticBinding(identifier);
@@ -907,7 +903,6 @@
 
 		// Variables to hold the base object info
 		std::variant<StringHandle, TempVar> base_object;
-		Type base_type = Type::Void;
 		TypeIndex base_type_index{};
 		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
 		bool base_setup_complete = false;
@@ -936,7 +931,7 @@
 			}
 
 				// Check if it's a struct with operator-> overload
-				if (type_node && type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+				if (type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
 					auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
 
 					if (overload_result.has_match) {
@@ -973,10 +968,10 @@
 
 						CallOp call_op;
 						call_op.result = ptr_result;
-						call_op.return_type = return_type.type();
+						call_op.return_type_index = return_type.type_index();
 						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 						if (!call_op.return_size_in_bits.is_set()) {
-						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
+						call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 						}
 						call_op.function_name = mangled_name;
 						call_op.is_variadic = false;
@@ -991,7 +986,6 @@
 						// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
 						if (return_type.pointer_depth() > 0) {
 							base_object = ptr_result;
-							base_type = return_type.type();
 							base_type_index = return_type.type_index();
 							is_pointer_dereference = true;
 							base_setup_complete = true;
@@ -1004,13 +998,13 @@
 		if (!base_setup_complete) {
 			if (const IdentifierNode* ident = get_identifier()) {
 				if (!setupBaseFromIdentifier(*ident, memberAccessNode.member_token(),
-				base_object, base_type, base_type_index, is_pointer_dereference)) {
+				base_object, base_type_index, is_pointer_dereference)) {
 					throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
 			}
 			else if (const QualifiedIdentifierNode* qualified_ident = tryGetQualifiedIdentifier(object_node)) {
 				auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident);
-				if (!extractBaseFromOperands(qualified_result, base_object, base_type, base_type_index, "qualified identifier")) {
+				if (!extractBaseFromOperands(qualified_result, base_object, base_type_index, "qualified identifier")) {
 					throw InternalError(std::string("Failed to extract base from qualified identifier result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1019,7 +1013,7 @@
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 					throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1028,10 +1022,10 @@
 			}
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
-				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
+				if (!extractBaseFromOperands(nested_result, base_object, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
-				if (!isIrStructType(toIrType(base_type))) {
+				if (!base_type_index.isStructLike()) {
 					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
@@ -1087,7 +1081,7 @@
 							TempVar copy_this_ref = var_counter.next();
 							MemberLoadOp load_copy_this;
 							load_copy_this.result.value = copy_this_ref;
-							load_copy_this.result.type = Type::Struct;
+							load_copy_this.result.setType(TypeCategory::Struct);
 							load_copy_this.result.ir_type = IrType::Struct;
 							load_copy_this.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_size_bits)};
 							load_copy_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1104,10 +1098,9 @@
 							);
 							lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 							lvalue_info.is_pointer_to_member = true;
-							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info));
+							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 							base_object = copy_this_ref;
-							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
@@ -1116,7 +1109,7 @@
 							TempVar this_ptr = var_counter.next();
 							MemberLoadOp load_this;
 							load_this.result.value = this_ptr;
-							load_this.result.type = Type::Void;
+							load_this.result.setType(TypeCategory::Void);
 							load_this.result.ir_type = IrType::Void;
 							load_this.result.size_in_bits = SizeInBits{64};
 							load_this.object = StringTable::getOrInternStringHandle("this"sv);
@@ -1127,7 +1120,6 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
 
 							base_object = this_ptr;
-							base_type = Type::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						}
 					}
@@ -1135,7 +1127,7 @@
 
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
-					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
+					if (!extractBaseFromOperands(pointer_operands, base_object, base_type_index, "pointer expression")) {
 						throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
@@ -1143,13 +1135,13 @@
 			}
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
-				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
+				if (!extractBaseFromOperands(array_operands, base_object, base_type_index, "array subscript")) {
 					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
 					throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1161,7 +1153,7 @@
 				// casts, conditional expressions, etc.) so member access can operate on the
 				// resulting temporary instead of special-casing each AST variant.
 				auto object_result = visitExpressionNode(*expr);
-				if (!extractBaseFromOperands(object_result, base_object, base_type, base_type_index, "object expression")) {
+				if (!extractBaseFromOperands(object_result, base_object, base_type_index, "object expression")) {
 					throw InternalError(std::string("Failed to extract base from object expression result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1180,7 +1172,7 @@
 		// Try to find by direct index lookup
 		if (base_type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(base_type_index);
-			if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+			if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 				type_info = &ti;
 			}
 		}
@@ -1190,7 +1182,7 @@
 		if (!type_info) {
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					type_info = &ti;
 					break;
 				}
@@ -1205,13 +1197,13 @@
 			std::cerr << "  Available struct types in gTypeInfo:\n";
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (isIrStructType(toIrType(ti.type_)) && ti.getStructInfo()) {
+				if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.index() << ")\n";
 				}
 			}
 			std::cerr << "  Available types in getTypesByNameMap():\n";
 			for (const auto& [name, ti] : getTypesByNameMap()) {
-				if (isIrStructType(toIrType(ti->type_))) {
+				if (isIrStructType(toIrType(*ti))) {
 					std::cerr << "    - " << name << " (type_index=" << ti->type_index_.index() << ")\n";
 				}
 			}
@@ -1250,13 +1242,13 @@
 			// Build GlobalLoadOp for the static member
 			GlobalLoadOp global_load;
 			global_load.result.value = result_var;
-			global_load.result.type = static_member->type;
+			global_load.result.setType(static_member->type_index.category());
 			global_load.result.size_in_bits = SizeInBits{static_cast<int>(sm_size_bits)};
 			global_load.global_name = StringTable::getOrInternStringHandle(qualified_name);
 
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
-			return makeMemberResult(static_member->type, SizeInBits{sm_size_bits}, result_var, static_member->type_index,
+			return makeMemberResult(SizeInBits{sm_size_bits}, result_var, static_member->type_index,
 				PointerDepth{static_cast<int>(static_member->pointer_depth)}, ValueStorage::ContainsData);
 		}
 
@@ -1346,15 +1338,15 @@
 		lvalue_info.bitfield_width = member->bitfield_width;
 		lvalue_info.bitfield_bit_offset = member->bitfield_bit_offset;
 		if (member_is_xvalue && !member->is_reference()) {
-			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type, member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, member->type_index.category(), member_size_bits));
 		} else {
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type, member_size_bits));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, member->type_index.category(), member_size_bits));
 		}
 
 		// Build MemberLoadOp
 		MemberLoadOp member_load;
 		member_load.result.value = result_var;
-		member_load.result.type = member->type;
+		member_load.result.setType(member->type_index.category());
 		member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};  // Convert bytes to bits
 
 		// Set base object, member name, and offset — using unwrapped values when applicable
@@ -1374,7 +1366,7 @@
 		// EXCEPTION: For reference members, we must emit MemberAccess to load the stored address
 		// because references store a pointer value that needs to be returned
 		if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
-			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+			return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1390,8 +1382,8 @@
 				result_var,  // The TempVar holding the loaded pointer
 				0            // No offset - the pointer points directly to the target
 			);
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
+			return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
@@ -1412,23 +1404,23 @@
 			// member access (e.g. wp.p.x) needs this pointer as a base with is_pointer_dereference
 			// semantics — just like accessing through a struct pointer (ptr->x). Dereferencing
 			// would load the struct's raw bytes into a scalar TempVar, making field access impossible.
-			if (isIrStructType(toIrType(member->type)) && member->type_index.is_valid()) {
+			if (isIrStructType(toIrType(member->memberType())) && member->type_index.is_valid()) {
 				// Return the loaded pointer directly — the next level of member access will
 				// treat it as a pointer-to-struct base (is_pointer_dereference = true).
-				return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, result_var, member->type_index,
+				return makeMemberResult(SizeInBits{pointee_size_bits}, result_var, member->type_index,
 					PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 			}
 
-			TempVar deref_var = emitDereference(member->type, 64, 1, IrValue(result_var), Token());
+			TempVar deref_var = emitDereference(member->memberType(), 64, 1, IrValue(result_var), Token());
 			// Mark dereferenced value as lvalue via Indirect metadata so that compound
 			// assignments on the reference member (e.g. obj.ref_member += 1) go through the pointer.
 			LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
-			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info));
-			return makeMemberResult(member->type, SizeInBits{pointee_size_bits}, deref_var, member->type_index,
+			setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
+			return makeMemberResult(SizeInBits{pointee_size_bits}, deref_var, member->type_index,
 				PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 		}
 
-		return makeMemberResult(member->type, SizeInBits{member_size_bits}, result_var, member->type_index,
+		return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
 			PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 
@@ -1441,7 +1433,7 @@
 		size_t element_size = type_spec.size_in_bits() / 8;
 
 		// For struct types, get size from gTypeInfo instead of size_in_bits()
-		if (element_size == 0 && type_spec.type() == Type::Struct) {
+		if (element_size == 0 && type_spec.category() == TypeCategory::Struct) {
 			size_t type_index = type_spec.type_index().index();
 			if (type_index < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1512,8 +1504,8 @@
 					if (static_member) {
 						// sizeof on a reference yields the size of the referenced type
 						if (static_member->is_reference()) {
-							size_t ref_size = get_type_size_bits(static_member->type) / 8;
-							if (ref_size == 0 && static_member->type == Type::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
+							size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
+							if (ref_size == 0 && static_member->memberType() == TypeCategory::Struct && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
 								const StructTypeInfo* si = getTypeInfo(static_member->type_index).getStructInfo();
 								if (si) ref_size = si->total_size;
 							}
@@ -1550,7 +1542,6 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
 
 			// Workaround for parser limitation: when sizeof(arr) is parsed where arr is an
 			// array variable, the parser may incorrectly parse it as a type.
@@ -1570,7 +1561,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
 						size_t member_size = lookupStructMemberSize(struct_name, member_name);
 						if (member_size > 0) {
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -1581,7 +1572,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -1594,7 +1585,7 @@
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 
 					if (param_size_bytes > 0) {
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1615,8 +1606,7 @@
 				}
 			}
 			// Handle struct types
-			else if (type == Type::Struct) {
-				size_t type_index = type_spec.type_index().index();
+			else if (type_spec.category() == TypeCategory::Struct) {				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
 					return ExprResult{};
@@ -1665,36 +1655,36 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					// For regular variables, get the type size from the declaration
 					const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-					if (var_type.type() == Type::Struct) {
+					if (var_type.category() == TypeCategory::Struct) {
 						size_t type_index = var_type.type_index().index();
 						if (type_index < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && struct_info->total_size > 0) {
-								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 							// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
 							if (type_info.type_size_ > 0) {
-								return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
 						// Fallback: use size_in_bits from the type specifier node
 						if (var_type.size_in_bits() > 0) {
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					} else {
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
 						int size_bits = var_type.size_in_bits();
 						if (size_bits == 0) {
-							size_bits = get_type_size_bits(var_type.type());
+							size_bits = get_type_size_bits(var_type.category());
 						}
 						size_in_bytes = size_bits / 8;
-						return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1717,7 +1707,7 @@
 						if (decl) {
 							const TypeSpecifierNode& obj_type = decl->type_node().as<TypeSpecifierNode>();
 							FLASH_LOG(Codegen, Debug, "sizeof(member_access): obj_type=", (int)obj_type.type(), " type_index=", obj_type.type_index());
-							if (obj_type.type() == Type::Struct) {
+							if (obj_type.category() == TypeCategory::Struct) {
 								size_t type_index = obj_type.type_index().index();
 								if (type_index < getTypeInfoCount()) {
 									const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1743,7 +1733,7 @@
 									// Otherwise, search for instantiated types (template vs instantiation mismatch)
 									if (direct_member_size > 1) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+										return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 									}
 
 									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
@@ -1763,7 +1753,7 @@
 												for (const auto& member : inst_struct_info->members) {
 													if (StringTable::getStringView(member.getName()) == member_name) {
 														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-														return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+														return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, PointerDepth{}, ValueStorage::ContainsData);
 													}
 												}
 											}
@@ -1773,7 +1763,7 @@
 									// If no instantiation found but direct lookup had a result, use that
 									if (direct_member_size > 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-										return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+										return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 									}
 								}
 							}
@@ -1801,11 +1791,11 @@
 							// Get the base element type size
 							size_t element_size = var_type.size_in_bits() / 8;
 							if (element_size == 0) {
-								element_size = get_type_size_bits(var_type.type()) / 8;
+								element_size = get_type_size_bits(var_type.category()) / 8;
 							}
 
 							// Handle struct element types
-							if (element_size == 0 && var_type.type() == Type::Struct) {
+							if (element_size == 0 && var_type.category() == TypeCategory::Struct) {
 								size_t type_index = var_type.type_index().index();
 								if (type_index < getTypeInfoCount()) {
 									const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
@@ -1855,7 +1845,7 @@
 							}
 
 							// Return the size without generating runtime IR
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 
 						fallback_to_ir:
@@ -1875,7 +1865,7 @@
 
 				size_t member_size = lookupStructMemberSize(struct_name, member_name);
 				if (member_size > 0) {
-					return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -1884,11 +1874,11 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.type;
+			TypeCategory expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (expr_type == Type::Struct) {
+			if (expr_type == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("sizeof(struct_expression) not fully implemented yet");
@@ -1907,7 +1897,7 @@
 
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
@@ -1922,10 +1912,9 @@
 			}
 
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			Type type = type_spec.type();
 
 			// Handle struct types
-			if (type == Type::Struct) {
+			if (type_spec.category() == TypeCategory::Struct) {
 				size_t type_index = type_spec.type_index().index();
 				if (type_index >= getTypeInfoCount()) {
 					throw InternalError("Invalid type index for struct");
@@ -1944,7 +1933,7 @@
 			else {
 				// For primitive types, use standard alignment calculation
 				size_t size_in_bytes = type_spec.size_in_bits() / 8;
-				alignment = calculate_alignment_from_size(size_in_bytes, type);
+				alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
 			}
 		}
 		else {
@@ -1968,24 +1957,24 @@
 					if (decl) {
 						// Get the type alignment from the declaration
 						const TypeSpecifierNode& var_type = decl->type_node().as<TypeSpecifierNode>();
-						if (var_type.type() == Type::Struct) {
+						if (var_type.category() == TypeCategory::Struct) {
 							size_t type_index = var_type.type_index().index();
 							if (type_index < getTypeInfoCount()) {
 								const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
-									return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+									return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
 						} else {
 							// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
 							int size_bits = var_type.size_in_bits();
 							if (size_bits == 0) {
-								size_bits = get_type_size_bits(var_type.type());
+								size_bits = get_type_size_bits(var_type.category());
 							}
 							size_t size_in_bytes = size_bits / 8;
-							alignment = calculate_alignment_from_size(size_in_bytes, var_type.type());
-							return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							alignment = calculate_alignment_from_size(size_in_bytes, var_type.category());
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -1996,11 +1985,11 @@
 			ExprResult expr_result = visitExpressionNode(expr_node.as<ExpressionNode>());
 
 			// Extract type and size from the expression result
-			Type expr_type = expr_result.type;
+			TypeCategory expr_type = expr_result.typeEnum();
 			int size_in_bits = expr_result.size_in_bits.value;
 
 			// Handle struct types
-			if (expr_type == Type::Struct) {
+			if (expr_type == TypeCategory::Struct) {
 				// For struct expressions, we need to look up the type index
 				// This is a simplification - in a full implementation we'd track type_index through expressions
 				throw InternalError("alignof(struct_expression) not fully implemented yet");
@@ -2018,7 +2007,7 @@
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
@@ -2030,7 +2019,7 @@
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		if (type_spec.type() != Type::Struct) {
+		if (type_spec.category() != TypeCategory::Struct) {
 			throw InternalError("offsetof requires a struct type");
 			return ExprResult{};
 		}
@@ -2048,20 +2037,17 @@
 			return ExprResult{};
 		}
 
-		return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
-	bool AstToIr::isScalarType(Type type, bool is_reference, size_t pointer_depth) const {
+	bool AstToIr::isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const {
 		if (is_reference) return false;
 		if (pointer_depth > 0) return true;  // Pointers are scalar
-		return (type == Type::Bool || type == Type::Char || type == Type::Short ||
-		type == Type::Int || type == Type::Long || type == Type::LongLong ||
-		type == Type::UnsignedChar || type == Type::UnsignedShort ||
-		type == Type::UnsignedInt || type == Type::UnsignedLong ||
-		type == Type::UnsignedLongLong || type == Type::Float ||
-		type == Type::Double || type == Type::LongDouble || type == Type::Enum ||
-		type == Type::Nullptr || type == Type::MemberObjectPointer ||
-		type == Type::MemberFunctionPointer);
+		return is_standard_arithmetic_type(type)
+			|| type == TypeCategory::Enum
+			|| type == TypeCategory::Nullptr
+			|| type == TypeCategory::MemberObjectPointer
+			|| type == TypeCategory::MemberFunctionPointer;
 	}
 
 	// Recursively check whether a struct is trivially copyable:
@@ -2078,7 +2064,7 @@
 		if (struct_info->hasUserDefinedDestructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (isIrStructType(toIrType(member.type))) {
+			if (isIrStructType(toIrType(member.memberType()))) {
 				if (member.type_index.index() >= getTypeInfoCount()) return false;
 				const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
 				if (!isTriviallyCopyableStruct(member_info)) return false;
@@ -2103,7 +2089,7 @@
 		if (struct_info->hasUserDefinedConstructor()) return false;
 		// Recursively check all non-static data members of class type
 		for (const auto& member : struct_info->members) {
-			if (isIrStructType(toIrType(member.type))) {
+			if (isIrStructType(toIrType(member.memberType()))) {
 				if (member.type_index.index() >= getTypeInfoCount()) return false;
 				const StructTypeInfo* member_info = getTypeInfo(member.type_index).getStructInfo();
 				if (!isTrivialStruct(member_info)) return false;
@@ -2119,11 +2105,11 @@
 		return true;
 	}
 
-	bool AstToIr::isArithmeticType(Type type) const {
+	bool AstToIr::isArithmeticType(TypeCategory type) const {
 		return ::isArithmeticType(type);
 	}
 
-	bool AstToIr::isFundamentalType(Type type) const {
+	bool AstToIr::isFundamentalType(TypeCategory type) const {
 		return ::isFundamentalType(type);
 	}
 
@@ -2146,7 +2132,7 @@
 					break;
 			}
 			// Return result as a bool constant
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For traits that require type arguments, extract the type information
@@ -2157,14 +2143,29 @@
 		}
 
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-		Type type = type_spec.type();
+		TypeCategory type = type_spec.type();
+		const TypeCategory type_category = type_spec.category();
 		bool is_reference = type_spec.is_reference();
 		bool is_rvalue_reference = type_spec.is_rvalue_reference();
 		size_t pointer_depth = type_spec.pointer_depth();
+		auto getStructInfoIfPlainObject = [](const TypeSpecifierNode& spec) -> const StructTypeInfo* {
+			if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.pointer_depth() != 0 ||
+				spec.type_index().index() >= getTypeInfoCount()) {
+				return nullptr;
+			}
+			return getTypeInfo(spec.type_index()).getStructInfo();
+		};
+
+		auto getStructPairIfPlainObjects = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs)
+			-> std::pair<const StructTypeInfo*, const StructTypeInfo*> {
+			const StructTypeInfo* lhs_struct = getStructInfoIfPlainObject(lhs);
+			const StructTypeInfo* rhs_struct = getStructInfoIfPlainObject(rhs);
+			return {lhs_struct, rhs_struct};
+		};
 
 		// Get TypeInfo and StructTypeInfo for use by shared evaluator and binary traits
 		[[maybe_unused]] const TypeInfo* outer_type_info = (type_spec.type_index().index() < getTypeInfoCount()) ? &getTypeInfo(type_spec.type_index()) : nullptr;
-		[[maybe_unused]] const StructTypeInfo* outer_struct_info = outer_type_info ? outer_type_info->getStructInfo() : nullptr;
+		[[maybe_unused]] const StructTypeInfo* outer_struct_info = getStructInfoIfPlainObject(type_spec);
 
 		// Handle binary traits that require a second type argument
 		switch (traitNode.kind()) {
@@ -2176,17 +2177,8 @@
 						const TypeSpecifierNode& derived_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Both types must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
-						!is_reference && pointer_depth == 0 &&
-						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index().index() < getTypeInfoCount() &&
-						derived_spec.type_index().index() < getTypeInfoCount()) {
-
-							const TypeInfo& base_info = getTypeInfo(type_spec.type_index());
-							const TypeInfo& derived_info = getTypeInfo(derived_spec.type_index());
-							const StructTypeInfo* base_struct = base_info.getStructInfo();
-							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-
+						if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
+							base_struct && derived_struct) {
 							if (base_struct && derived_struct) {
 								// Same type is considered base of itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2214,7 +2206,7 @@
 						const TypeSpecifierNode& second_spec = second_type_node.as<TypeSpecifierNode>();
 
 						// Check if all properties match exactly
-						result = (type == second_spec.type() &&
+						result = (type_category == second_spec.category() &&
 						is_reference == second_spec.is_reference() &&
 						is_rvalue_reference == second_spec.is_rvalue_reference() &&
 						pointer_depth == second_spec.pointer_depth() &&
@@ -2234,8 +2226,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2260,11 +2252,11 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2294,8 +2286,8 @@
 						const TypeSpecifierNode& to_spec = second_type_node.as<TypeSpecifierNode>();
 						const TypeSpecifierNode& from_spec = type_spec;
 
-						Type from_type = from_spec.type();
-						Type to_type = to_spec.type();
+						TypeCategory from_type = from_spec.category();
+						TypeCategory to_type = to_spec.category();
 						bool from_is_ref = from_spec.is_reference();
 						bool to_is_ref = to_spec.is_reference();
 						size_t from_ptr_depth = from_spec.pointer_depth();
@@ -2319,11 +2311,11 @@
 							result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 						}
 						// nullptr_t is nothrow convertible to any pointer type
-						else if (from_type == Type::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
+						else if (from_type == TypeCategory::Nullptr && to_ptr_depth > 0 && !to_is_ref) {
 							result = true;
 						}
 						// Derived to base conversion for class types (nothrow if no virtual base)
-						else if (from_type == Type::Struct && to_type == Type::Struct &&
+						else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
 						!from_is_ref && !to_is_ref &&
 						from_ptr_depth == 0 && to_ptr_depth == 0 &&
 						from_spec.type_index().index() < getTypeInfoCount() &&
@@ -2347,10 +2339,7 @@
 
 			case TypeTraitKind::IsPolymorphic:
 				// A polymorphic class has at least one virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					result = struct_info && struct_info->has_vtable;
 				}
 				break;
@@ -2359,10 +2348,7 @@
 				// A final class cannot be derived from
 				// Note: This requires tracking 'final' keyword on classes
 				// For now, check if any member function is marked final
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Check if any virtual function is marked final
 						for (const auto& func : struct_info->member_functions) {
@@ -2377,20 +2363,14 @@
 
 			case TypeTraitKind::IsAbstract:
 				// An abstract class has at least one pure virtual function
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					result = struct_info && struct_info->is_abstract;
 				}
 				break;
 
 			case TypeTraitKind::IsEmpty:
 				// An empty class has no non-static data members (excluding empty base classes)
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Check if there are no non-static data members
 						// and no virtual functions (vtable pointer would be a member)
@@ -2407,10 +2387,7 @@
 				//   - No private or protected non-static data members
 				//   - No virtual functions
 				//   - No virtual, private, or protected base classes
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Check aggregate conditions:
 						// 1. No user-declared constructors (check member_functions for non-implicit constructors)
@@ -2453,7 +2430,7 @@
 				// - All non-static data members have same access control
 				// - No base classes with non-static data members
 				// - No base classes of the same type as first non-static data member
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				if (type == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2473,7 +2450,7 @@
 					}
 				}
 				// Scalar types are standard layout
-				else if (isScalarType(type, is_reference, pointer_depth)) {
+				else if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				break;
@@ -2481,10 +2458,7 @@
 			case TypeTraitKind::HasUniqueObjectRepresentations:
 				// Types with no padding bits have unique object representations
 				// Integral types (except bool), and trivially copyable types without padding
-				if ((type == Type::Char || type == Type::Short || type == Type::Int ||
-				type == Type::Long || type == Type::LongLong || type == Type::UnsignedChar ||
-				type == Type::UnsignedShort || type == Type::UnsignedInt ||
-				type == Type::UnsignedLong || type == Type::UnsignedLongLong)
+				if (is_integer_type(type)
 				&& !is_reference && pointer_depth == 0) {
 					result = true;
 				}
@@ -2497,7 +2471,7 @@
 				// - Classes with no virtual, no user-defined copy/move ctors,
 				//   no user-defined copy/move assignment ops, no user-defined dtor,
 				//   and all base classes also trivially copyable
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (isIrStructType(toIrType(type)) &&
@@ -2511,7 +2485,7 @@
 			case TypeTraitKind::IsTrivial:
 				// A trivial type is trivially copyable and has a trivial default constructor,
 				// and all base classes are also trivial.
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				else if (isIrStructType(toIrType(type)) &&
@@ -2525,13 +2499,10 @@
 			case TypeTraitKind::IsPod:
 				// POD (Plain Old Data) = trivial + standard layout (C++03 compatible)
 				// In C++11+, this is deprecated but still useful
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// POD: no virtual functions, no user-defined ctors, all members same access
 						bool is_pod = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
@@ -2563,11 +2534,10 @@
 				//   - Trivial destructor
 				//   - Aggregate type OR has at least one constexpr constructor
 				//   - All non-static data members are literal types
-				if (isScalarType(type, is_reference, pointer_depth) || is_reference) {
+				if (isScalarType(type_category, is_reference, pointer_depth) || is_reference) {
 					result = true;
 				}
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				pointer_depth == 0) {
+				else if (type_category == TypeCategory::Struct && pointer_depth == 0 && type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
 					if (struct_info) {
@@ -2589,19 +2559,12 @@
 
 			case TypeTraitKind::IsSigned:
 				// __is_signed - checks if integral type is signed
-				result = ((type == Type::Char) |  // char is signed on most platforms
-			(type == Type::Short) | (type == Type::Int) |
-			(type == Type::Long) | (type == Type::LongLong))
-			& !is_reference & (pointer_depth == 0);
+				result = is_signed_integer_type(type) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsUnsigned:
 				// __is_unsigned - checks if integral type is unsigned
-				result = ((type == Type::Bool) |  // bool is considered unsigned
-			(type == Type::UnsignedChar) | (type == Type::UnsignedShort) |
-			(type == Type::UnsignedInt) | (type == Type::UnsignedLong) |
-			(type == Type::UnsignedLongLong))
-			& !is_reference & (pointer_depth == 0);
+				result = (type == TypeCategory::Bool || is_unsigned_integer_type(type)) & !is_reference & (pointer_depth == 0);
 				break;
 
 			case TypeTraitKind::IsBoundedArray:
@@ -2621,7 +2584,7 @@
 			case TypeTraitKind::IsConstructible:
 				// __is_constructible(T, Args...) - Check if T can be constructed with Args...
 				// For scalar types, default constructible (no args) or copy constructible (same type arg)
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					const auto& arg_types = traitNode.additional_type_nodes();
 					if (arg_types.empty()) {
 						// Default constructible - all scalars are default constructible
@@ -2630,16 +2593,13 @@
 						// Copy/conversion construction - check if types are compatible
 						const TypeSpecifierNode& arg_spec = arg_types[0].as<TypeSpecifierNode>();
 						// Same type or convertible arithmetic types
-						result = (arg_spec.type() == type) ||
-						(isScalarType(arg_spec.type(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
+						result = (arg_spec.category() == type_category) ||
+						(isScalarType(arg_spec.category(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
 						!arg_spec.is_reference() && arg_spec.pointer_depth() == 0);
 					}
 				}
 				// Class types: check for appropriate constructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						const auto& arg_types = traitNode.additional_type_nodes();
 						if (arg_types.empty()) {
@@ -2657,14 +2617,11 @@
 			case TypeTraitKind::IsTriviallyConstructible:
 				// __is_trivially_constructible(T, Args...) - Check if T can be trivially constructed
 				// Scalar types are trivially constructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined ctors
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						result = !struct_info->has_vtable && !struct_info->hasUserDefinedConstructor();
 					}
@@ -2674,15 +2631,12 @@
 			case TypeTraitKind::IsNothrowConstructible:
 				// __is_nothrow_constructible(T, Args...) - Check if T can be constructed without throwing
 				// Scalar types don't throw
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: implicitly-generated default ctors are noexcept;
 				// user-defined ctors are noexcept only if marked noexcept
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Per C++20 §20.15.4.4 [meta.unary.prop], is_nothrow_constructible
 						// only depends on whether the selected constructor is noexcept.
@@ -2715,7 +2669,7 @@
 										const auto& param_type = params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 										const auto& arg_type = arg_types[i].as<TypeSpecifierNode>();
 										if (param_type.type() != arg_type.type()) { match = false; break; }
-										if (param_type.type() == Type::Struct &&
+										if (param_type.category() == TypeCategory::Struct &&
 											param_type.type_index() != arg_type.type_index()) { match = false; break; }
 										if (param_type.reference_qualifier() != arg_type.reference_qualifier()) { match = false; break; }
 									}
@@ -2753,14 +2707,12 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// For scalar types, check type compatibility
-						if (isScalarType(type, is_reference, pointer_depth)) {
+						if (isScalarType(type_category, is_reference, pointer_depth)) {
 							// Scalars are assignable from compatible types
-							result = isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth());
+							result = isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth());
 						}
 						// Class types: check for assignment operator
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 							if (struct_info && !struct_info->is_union) {
 								// If has copy/move assignment or no user-defined, assume assignable
 								result = struct_info->hasCopyAssignmentOperator() ||
@@ -2780,15 +2732,12 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// Scalar types are trivially assignable
-						if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+						if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 							result = true;
 						}
 						// Class types: no virtual, no user-defined assignment
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-						!is_reference && pointer_depth == 0) {
-							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 							if (struct_info && !struct_info->is_union) {
 								result = !struct_info->has_vtable &&
 								!struct_info->hasCopyAssignmentOperator() &&
@@ -2807,16 +2756,16 @@
 						const TypeSpecifierNode& from_spec = from_node.as<TypeSpecifierNode>();
 
 						// Scalar types don't throw on assignment
-						if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(from_spec.type(), from_spec.is_reference(), from_spec.pointer_depth())) {
+						if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 							result = true;
 						}
 						// Class types: implicitly-generated assignment ops are noexcept;
 						// user-defined ops are noexcept only if marked noexcept
 						// Note: For assignability, the first type is typically T& (lvalue reference),
 						// so we check the underlying struct type regardless of reference qualifier
-						else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-						pointer_depth == 0) {
+						else if (type_category == TypeCategory::Struct && pointer_depth == 0 &&
+							type_spec.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && !struct_info->is_union) {
@@ -2838,7 +2787,7 @@
 										const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 									// Match: same base type, (for structs) same type_index, and same reference qualifier
 										if (param_type.type() != from_spec.type()) continue;
-										if (param_type.type() == Type::Struct &&
+										if (param_type.category() == TypeCategory::Struct &&
 											param_type.type_index() != from_spec.type_index()) continue;
 										if (param_type.reference_qualifier() != from_spec.reference_qualifier()) continue;
 										selected_op = &mf;
@@ -2865,14 +2814,11 @@
 			case TypeTraitKind::IsDestructible:
 				// __is_destructible(T) - Check if T can be destroyed
 				// All scalar types are destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: check for accessible destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						// Assume destructible unless we can prove otherwise
 						// (no deleted destructor check available yet)
@@ -2884,14 +2830,11 @@
 			case TypeTraitKind::IsTriviallyDestructible:
 				// __is_trivially_destructible(T) - Check if T can be trivially destroyed
 				// Scalar types are trivially destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Trivially destructible if no vtable and no user-defined destructor
 						result = !struct_info->has_vtable && !struct_info->hasUserDefinedDestructor();
@@ -2905,15 +2848,12 @@
 			case TypeTraitKind::IsNothrowDestructible:
 				// __is_nothrow_destructible(T) - Check if T can be destroyed without throwing
 				// Scalar types don't throw on destruction
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: check via recursive isStructNothrowDestructible to handle
 				// implicit destructors whose noexcept status depends on base/member dtors.
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info) {
 						result = isStructNothrowDestructible(struct_info);
 					}
@@ -2923,11 +2863,11 @@
 			case TypeTraitKind::HasTrivialDestructor:
 				// __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
 				// Scalar types are trivially destructible
-				if (isScalarType(type, is_reference, pointer_depth)) {
+				if (isScalarType(type_category, is_reference, pointer_depth)) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined destructor
-				else if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
+				else if (type == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
 				!is_reference && pointer_depth == 0) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const StructTypeInfo* struct_info = type_info.getStructInfo();
@@ -2944,10 +2884,7 @@
 			case TypeTraitKind::HasVirtualDestructor:
 				// __has_virtual_destructor(T) - Check if T has a virtual destructor
 				// Only class types can have virtual destructors
-				if (type == Type::Struct && type_spec.type_index().index() < getTypeInfoCount() &&
-				!is_reference && pointer_depth == 0) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						// Check if the destructor is explicitly marked as virtual
 						// A class has a virtual destructor if:
@@ -2985,18 +2922,18 @@
 						const TypeSpecifierNode& second_spec = second_node.as<TypeSpecifierNode>();
 
 						// Same type is always layout compatible with itself
-						if (type == second_spec.type() &&
+						if (type_category == second_spec.category() &&
 						pointer_depth == second_spec.pointer_depth() &&
 						is_reference == second_spec.is_reference()) {
-							if (type == Type::Struct) {
-								result = (type_spec.type_index() == second_spec.type_index());
-							} else {
-								result = true;
+						if (type_category == TypeCategory::Struct) {
+							result = (type_spec.type_index() == second_spec.type_index());
+						} else {
+							result = true;
 							}
 						}
 						// Different standard layout types with same size
-						else if (isScalarType(type, is_reference, pointer_depth) &&
-						isScalarType(second_spec.type(), second_spec.is_reference(), second_spec.pointer_depth())) {
+						else if (isScalarType(type_category, is_reference, pointer_depth) &&
+						isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.pointer_depth())) {
 							result = (type_spec.size_in_bits() == second_spec.size_in_bits());
 						}
 					}
@@ -3014,17 +2951,8 @@
 						const TypeSpecifierNode& derived_spec = derived_node.as<TypeSpecifierNode>();
 
 						// Both must be class types (not references, not pointers)
-						if (type == Type::Struct && derived_spec.type() == Type::Struct &&
-						!is_reference && pointer_depth == 0 &&
-						!derived_spec.is_reference() && derived_spec.pointer_depth() == 0 &&
-						type_spec.type_index().index() < getTypeInfoCount() &&
-						derived_spec.type_index().index() < getTypeInfoCount()) {
-
-							const TypeInfo& base_info = getTypeInfo(type_spec.type_index());
-							const TypeInfo& derived_info = getTypeInfo(derived_spec.type_index());
-							const StructTypeInfo* base_struct = base_info.getStructInfo();
-							const StructTypeInfo* derived_struct = derived_info.getStructInfo();
-
+						if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
+							base_struct && derived_struct) {
 							if (base_struct && derived_struct) {
 								// Same type is pointer interconvertible with itself
 								if (type_spec.type_index() == derived_spec.type_index()) {
@@ -3054,16 +2982,16 @@
 			case TypeTraitKind::UnderlyingType:
 				// __underlying_type(T) returns the underlying type of an enum
 				// This is a type query, not a bool result - handle specially
-				if (type == Type::Enum && !is_reference && pointer_depth == 0 &&
+				if (type == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
 				type_spec.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Return the enum's declared underlying type
-						return makeExprResult(enum_info->underlying_type, SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(enum_info->underlying_type), SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 					// Fallback to int if no enum info
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 				// For non-enums, this is an error - return false/0
 				result = false;
@@ -3072,7 +3000,7 @@
 			default:
 				// For all other unary type traits, use the shared evaluator from TypeTraitEvaluator.h
 				{
-					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_type_info, outer_struct_info);
+					TypeTraitResult eval_result = evaluateTypeTrait(traitNode.kind(), type_spec, outer_struct_info);
 					if (eval_result.success) {
 						result = eval_result.value;
 					} else {
@@ -3084,7 +3012,7 @@
 
 		// Return result as a bool constant
 		// Format: [type, size_bits, value]
-		return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 
@@ -3557,7 +3485,6 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 // Searches the struct and its base classes for "operator target_type()"
 const StructMemberFunction* AstToIr::findConversionOperator(
 	const StructTypeInfo* struct_info,
-	Type target_type,
 	TypeIndex target_type_index,
 	bool source_is_const) const {
 
@@ -3569,7 +3496,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 		target_type_name = StringTable::getStringView(getTypeInfo(target_type_index).name());
 	} else {
 		// For primitive types, use the helper function to get the type name
-		target_type_name = getTypeName(target_type);
+		target_type_name = getTypeName(target_type_index.category());
 		if (target_type_name.empty()) {
 			return nullptr;
 		}
@@ -3617,21 +3544,21 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 				const auto& return_type_node = decl_node.type_node();
 				if (return_type_node.is<TypeSpecifierNode>()) {
 					const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-					Type resolved_type = type_spec.type();
+					TypeCategory resolved_type = type_spec.type();
 
 					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
 					// This handles cases like `operator value_type()` where `using value_type = T;`
 					// Use recursive resolution to handle chains of type aliases
-					if (resolved_type == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+					if (resolved_type == TypeCategory::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
 						TypeIndex current_type_index = type_spec.type_index();
 						int max_depth = 10;  // Prevent infinite loops from circular aliases
-						while (resolved_type == Type::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
+						while (resolved_type == TypeCategory::UserDefined && current_type_index.index() < getTypeInfoCount() && max_depth-- > 0) {
 							const TypeInfo& alias_type_info = getTypeInfo(current_type_index);
-							if (alias_type_info.type_ != Type::Void && alias_type_info.type_ != Type::UserDefined) {
-								resolved_type = alias_type_info.type_;
+							if (!alias_type_info.isVoid() && alias_type_info.resolvedType() != TypeCategory::UserDefined) {
+								resolved_type = alias_type_info.resolvedType();
 								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
 								break;
-							} else if (alias_type_info.type_ == Type::UserDefined && alias_type_info.type_index_ != current_type_index) {
+							} else if (alias_type_info.resolvedType() == TypeCategory::UserDefined && alias_type_info.type_index_ != current_type_index) {
 								// Follow the chain of aliases
 								current_type_index = alias_type_info.type_index_;
 							} else {
@@ -3640,7 +3567,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						}
 					}
 
-					if (resolved_type == target_type) {
+					if (resolved_type == target_type_index.category()) {
 						// Prefer non-const match for non-const source; const for const source
 						if (source_is_const == member_func.is_const()) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
@@ -3654,15 +3581,15 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// but the size matches the target primitive type, accept it as a match.
 					// This handles template type aliases like `using value_type = T;` where T is substituted
 					// but the return type wasn't fully updated in the AST.
-					// Note: target_type can never be Struct, Enum, or UserDefined here — getTypeName()
+					// Note: target_type_index.category() can never be Struct, Enum, or UserDefined here — getTypeName()
 					// returns "" for those types, causing an early `return nullptr` above (line 3470-3472).
-					if (resolved_type == Type::UserDefined) {
-						int expected_size = get_type_size_bits(target_type);
+					if (resolved_type == TypeCategory::UserDefined) {
+						int expected_size = get_type_size_bits(target_type_index.category());
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
 							if (source_is_const == member_func.is_const()) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type_index.category()), " (size=", expected_size, ")");
 								return &member_func;
 							}
 							if (!fallback_user_defined) fallback_user_defined = &member_func;
@@ -3683,7 +3610,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			if (base_type_info.isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(
-					base_struct_info, target_type, target_type_index, source_is_const);
+					base_struct_info, target_type_index, source_is_const);
 				if (result) return result;
 			}
 		}
@@ -3699,7 +3626,6 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	const ExprResult& source,
 	const TypeInfo& source_type_info,
 	const StructMemberFunction& conv_op,
-	Type target_type,
 	TypeIndex target_type_index,
 	int target_size_bits,
 	const Token& token) {
@@ -3777,9 +3703,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type = target_type;
-	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.return_type_index = target_type_index;
+	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
 
@@ -3818,12 +3743,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
-		TempVar this_ptr = emitAddressOf(source.type, source.size_in_bits.value,
+		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
 			IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
-		this_arg.type = source.type;
-		this_arg.ir_type = toIrType(source.type);
+		this_arg.setType(source.category());
+		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = this_ptr;
 		this_arg.type_index = source.type_index;
@@ -3831,8 +3756,8 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	} else if (std::holds_alternative<TempVar>(source_value)) {
 		// Already a TempVar — for struct types this holds the object address
 		TypedValue this_arg;
-		this_arg.type = source.type;
-		this_arg.ir_type = toIrType(source.type);
+		this_arg.setType(source.category());
+		this_arg.ir_type = toIrType(source.typeEnum());
 		this_arg.size_in_bits = SizeInBits{64};  // pointer size
 		this_arg.value = std::get<TempVar>(source_value);
 		this_arg.type_index = source.type_index;
@@ -3843,5 +3768,5 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(target_type, SizeInBits{target_size_bits}, IrOperand{result_var}, target_type_index, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

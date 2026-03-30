@@ -479,11 +479,10 @@ public:
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_array_value(
-			Type element_type,
 			TypeIndex element_type_index,
 			const InitializerListNode& init_list,
 			EvaluationContext& context,
-			const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
+			const std::unordered_map<std::string_view, EvalResult>* bindings);
 		// Variant that accepts the full TypeSpecifierNode so that multi-dimensional arrays
 		// (e.g., int[2][3]) can be materialised with proper inner-dimension sizes even when
 		// the initializer list is shorter than the outer dimension (zero-padding) or contains
@@ -538,8 +537,8 @@ public:
 			const IdentifierNode& identifier,
 			size_t index,
 			EvaluationContext& context);
-		static bool isArithmeticType(Type type);
-		static bool isFundamentalType(Type type);
+		static bool isArithmeticType(TypeCategory type);
+		static bool isFundamentalType(TypeCategory type);
 
 	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {

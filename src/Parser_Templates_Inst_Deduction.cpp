@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -65,10 +65,9 @@ void registerTypeParamsInScope(
 		if (!template_param_nodes[i].is<TemplateParameterNode>()) continue;
 		if (template_args[i].is_value) continue;
 		if (template_args[i].is_template_template_arg) continue;
-		Type concrete_type = template_args[i].typeEnum();
 		auto& type_info = add_template_param_type(
 			template_param_nodes[i].as<TemplateParameterNode>().nameHandle(),
-			concrete_type,
+			template_args[i].typeEnum(),
 			getTypeSizeFromTemplateArgument(template_args[i]));
 		scope.addParameter(&type_info);
 		if (sfinae_map)
@@ -92,12 +91,11 @@ void registerOuterBindingInScope(
 ) {
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
-		Type concrete_type = arg.typeEnum();
 		uint32_t size = (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount())
 			? getTypeInfo(arg.type_index).type_size_
-			: get_type_size_bits(concrete_type);
+			: get_type_size_bits(arg.typeEnum());
 		auto& type_info = add_template_param_type(
-			outer_binding.param_names[i], concrete_type, size);
+			outer_binding.param_names[i], arg.typeEnum(), size);
 		scope.addParameter(&type_info);
 		if (sfinae_map)
 			(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -583,7 +581,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		auto resolve_dependent_member_alias_local = [&](ASTNode& type_node) {
 			if (!type_node.is<TypeSpecifierNode>()) return;
 			auto& ts = type_node.as<TypeSpecifierNode>();
-			if (ts.type() != Type::UserDefined) return;
+			if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template) return;
 			TypeIndex idx = ts.type_index();
 			if (idx.index() >= getTypeInfoCount()) return;
 
@@ -597,10 +595,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 						if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 							const TypeInfo* resolved_info = qualified_type_it->second;
-							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+							int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 							TypeSpecifierNode resolved_spec(
-								resolved_info->type_,
-								resolved_info->type_index_,
+								resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 								resolved_size_bits,
 								ts.token(),
 								ts.cv_qualifier(),
@@ -671,10 +668,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
 				TypeSpecifierNode resolved_spec(
-					resolved_info->type_,
+					resolved_info->typeEnum(),
 					TypeQualifier::None,
-					get_type_size_bits(resolved_info->type_),
-					Token());
+					get_type_size_bits(resolved_info->typeEnum()),
+					Token(), CVQualifier::None);
 				resolved_spec.set_type_index(resolved_info->type_index_);
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
@@ -682,16 +679,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Substitute template parameters in the return type
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-	auto [substituted_return_type, substituted_return_type_index] = substitute_template_parameter(
+	TypeIndex substituted_return_type_index = substitute_template_parameter(
 		orig_return_type, template_params, explicit_types);
 	
 	// Create return type with substituted type, preserving qualifiers
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		substituted_return_type,
 		substituted_return_type_index,
-		get_type_size_bits(substituted_return_type),
+		get_type_size_bits(substituted_return_type_index.category()),
 		orig_return_type.token(),
-		orig_return_type.cv_qualifier()
+		orig_return_type.cv_qualifier(),
+		ReferenceQualifier::None
 	);
 	
 	// Apply pointer levels and references from original type
@@ -714,16 +711,16 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 			
 			// Substitute template parameters in the type
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				orig_param_type, template_params, explicit_types);
 			
 			// Create new type specifier with substituted type
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				substituted_type,
 				substituted_type_index,
-				get_type_size_bits(substituted_type),
+				get_type_size_bits(substituted_type_index.category()),
 				orig_param_type.token(),
-				orig_param_type.cv_qualifier()
+				orig_param_type.cv_qualifier(),
+				ReferenceQualifier::None
 			);
 			resolve_dependent_member_alias_local(param_type);
 			
@@ -732,8 +729,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
 			if (resolved_param_size_bits > 0) {
 				param_type_ref = TypeSpecifierNode(
-						param_type_ref.type(),
-						param_type_ref.type_index(),
+						param_type_ref.type_index().withCategory(param_type_ref.type()),
 						resolved_param_size_bits,
 						param_type_ref.token(),
 						param_type_ref.cv_qualifier(),
@@ -995,7 +991,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Build template argument list
 	InlineVector<TemplateTypeArg, 4> template_args;
-	std::vector<Type> deduced_type_args;  // For types extracted from instantiated names
+	std::vector<TypeCategory> deduced_type_args;  // For types extracted from instantiated names
 	size_t function_pack_arg_start = SIZE_MAX;
 	if (has_function_parameter_pack) {
 		size_t params_before_pack = 0;
@@ -1058,9 +1054,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 							// entire pipeline (TemplateTypeArg →
 							// substitute_template_parameter / registerTypeParamsInScope).
 							TypeSpecifierNode synth_ts(
-								c.typeEnum(), c.type_index,
+								c.type_index.withCategory(c.typeEnum()),
 								get_type_size_bits(c.typeEnum()),
-								Token(), c.cv_qualifier);
+								Token(), c.cv_qualifier, ReferenceQualifier::None);
 							for (size_t pd = 0; pd < c.pointer_depth; ++pd) {
 								CVQualifier ptr_cv = (pd < c.pointer_cv_qualifiers.size())
 									? c.pointer_cv_qualifiers[pd] : CVQualifier::None;
@@ -1177,7 +1173,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				const TypeSpecifierNode& arg_type = arg_types[arg_index];
 				
 				// Template template parameters can only be deduced from struct types
-				if (arg_type.type() == Type::Struct) {
+				if (arg_type.category() == TypeCategory::Struct) {
 					// Get the struct name (e.g., "Vector_int")
 					TypeIndex type_index = arg_type.type_index();
 					if (type_index.index() < getTypeInfoCount()) {
@@ -1257,8 +1253,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				if (map_it != param_name_to_arg.end()) {
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
-					Type deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateTypeArg::makeType(deduced_type));
+					TypeCategory deduced_type = deduced_type_args[0];
+					template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(deduced_type)));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {
 					// Skip any arg slots fully consumed by the pre-deduction pass
@@ -1439,11 +1435,11 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	
 	// Only re-parse if the return type is a placeholder for template-dependent types
 	if (should_reparse) {
-		if (orig_return_type.type() == Type::Void) {
+		if (orig_return_type.category() == TypeCategory::Void) {
 			// Void return type - re-parse
 			FLASH_LOG(Templates, Debug, "Return type is void - will re-parse");
 			should_reparse = true;
-		} else if (orig_return_type.type() == Type::UserDefined) {
+		} else if (orig_return_type.category() == TypeCategory::UserDefined || orig_return_type.category() == TypeCategory::TypeAlias || orig_return_type.category() == TypeCategory::Template) {
 			if (!orig_return_type.type_index().is_valid()) {
 				// UserDefined with type_index=0 is a placeholder (points to void)
 				FLASH_LOG(Templates, Debug, "Return type is UserDefined placeholder (void) - will re-parse");
@@ -1560,7 +1556,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		if (return_type.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = return_type.as<TypeSpecifierNode>();
 			
-			if (type_spec.type() == Type::UserDefined && type_spec.type_index().index() < getTypeInfoCount()) {
+			if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 				
 				if (type_info.is_incomplete_instantiation_) {
@@ -1592,25 +1588,25 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 	} else {
 		// Fallback: Use simple substitution (old behavior)
-		auto [return_type_enum, return_type_index] = substitute_template_parameter(
+		TypeIndex return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args
 		);
 		
-		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		if (return_type_index.is_valid() && return_type_index.index() < getTypeInfoCount()) {
 			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(getTypeInfo(return_type_index).name()), "'");
 		}
 		
 		TypeSpecifierNode new_return_type(
-			return_type_enum,
+			return_type_index.category(),
 			TypeQualifier::None,
-			get_type_size_bits(return_type_enum),
+			get_type_size_bits(return_type_index.category()),
 			Token(),
 			orig_return_type.cv_qualifier()  // Preserve const/volatile qualifiers (CVQualifier)
 		);
 		new_return_type.set_type_index(return_type_index);
 		
-		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
@@ -1627,7 +1623,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
 		if (!type_node.is<TypeSpecifierNode>()) return;
 		auto& ts = type_node.as<TypeSpecifierNode>();
-		if (ts.type() != Type::UserDefined) return;
+		if (ts.category() != TypeCategory::UserDefined && ts.category() != TypeCategory::TypeAlias && ts.category() != TypeCategory::Template) return;
 		TypeIndex idx = ts.type_index();
 		if (idx.index() >= getTypeInfoCount()) return;
 		
@@ -1641,10 +1637,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
-						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->type_);
+						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
 						TypeSpecifierNode resolved_spec(
-							resolved_info->type_,
-							resolved_info->type_index_,
+							resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 							resolved_size_bits,
 							ts.token(),
 							ts.cv_qualifier(),
@@ -1739,14 +1734,14 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		} else {
 			const TypeInfo* resolved_info = type_it->second;
 			TypeSpecifierNode resolved_spec(
-				resolved_info->type_,
+				resolved_info->typeEnum(),
 				TypeQualifier::None,
-				get_type_size_bits(resolved_info->type_),
-				Token()
+				get_type_size_bits(resolved_info->typeEnum()),
+				Token(), CVQualifier::None
 			);
 			resolved_spec.set_type_index(resolved_info->type_index_);
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
-			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->type_),
+			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
 			          ", index=", resolved_info->type_index_);
 		}
 	};
@@ -1822,7 +1817,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						arg_type.qualifier(),
 						arg_type.size_in_bits(),
 						Token()
-					);
+					, CVQualifier::None);
 					param_type.as<TypeSpecifierNode>().set_type_index(arg_type.type_index());
 				
 					// If the original parameter was a forwarding reference (T&&), apply reference collapsing
@@ -1880,7 +1875,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				// Regular parameter - substitute template parameters in the parameter type
 				const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 				ASTNode param_type;
-				if (orig_param_type.type() == Type::Auto && arg_type_index < arg_types.size()) {
+				if (orig_param_type.category() == TypeCategory::Auto && arg_type_index < arg_types.size()) {
 					// Abbreviated function template parameter (concept auto / auto):
 					// use the deduced argument type as the concrete instantiated parameter type.
 					//
@@ -1917,7 +1912,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						}
 					}
 				} else {
-					auto [subst_type, subst_type_index] = substitute_template_parameter(
+					TypeIndex subst_type_index = substitute_template_parameter(
 						orig_param_type, template_params, template_args
 					);
 					// substitute_template_parameter only resolves UserDefined types by name
@@ -1939,22 +1934,22 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// arg_type_index here would be incorrect after a variadic pack
 					// expansion, since arg_type_index advances through multiple arg slots
 					// for a single function parameter, breaking the correspondence.
-					if (subst_type == Type::UserDefined &&
+					if (subst_type_index.category() == TypeCategory::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
 					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
 					    i < arg_types.size() &&
-					    arg_types[i].type() == Type::Struct) {
-						subst_type = Type::Struct;
+					    arg_types[i].category() == TypeCategory::Struct) {
+						subst_type_index.setCategory(TypeCategory::Struct);
 						subst_type_index = arg_types[i].type_index();
 						FLASH_LOG_FORMAT(Templates, Debug,
 							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
 							recursion_depth, subst_type_index);
 					}
 					param_type = emplace_node<TypeSpecifierNode>(
-						subst_type,
+						subst_type_index.category(),
 						TypeQualifier::None,
-						get_type_size_bits(subst_type),
+						get_type_size_bits(subst_type_index.category()),
 						Token(),
 						orig_param_type.cv_qualifier()
 					);

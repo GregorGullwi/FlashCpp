@@ -1,73 +1,81 @@
 #include "IrType.h"
 
-IrType toIrType(Type semantic_type) {
-	switch (semantic_type) {
+IrType toIrType(TypeCategory cat) {
+	switch (cat) {
 		// All integer-like types map to IrType::Integer
-		case Type::Bool:
-		case Type::Char:
-		case Type::UnsignedChar:
-		case Type::WChar:
-		case Type::Char8:
-		case Type::Char16:
-		case Type::Char32:
-		case Type::Short:
-		case Type::UnsignedShort:
-		case Type::Int:
-		case Type::UnsignedInt:
-		case Type::Long:
-		case Type::UnsignedLong:
-		case Type::LongLong:
-		case Type::UnsignedLongLong:
+		case TypeCategory::Bool:
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::WChar:
+		case TypeCategory::Char8:
+		case TypeCategory::Char16:
+		case TypeCategory::Char32:
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
 			return IrType::Integer;
 
 		// Enums lower to Integer — width/signedness stay in the existing metadata
 		// fields instead of multiplying IrType variants by size and signedness.
-		case Type::Enum:
+		case TypeCategory::Enum:
 			return IrType::Integer;
 
 		// Floating point types
-		case Type::Float:
+		case TypeCategory::Float:
 			return IrType::Float;
-		case Type::Double:
+		case TypeCategory::Double:
 			return IrType::Double;
-		case Type::LongDouble:
+		case TypeCategory::LongDouble:
 			return IrType::LongDouble;
 
 		// Aggregate / user-defined types
-		case Type::Struct:
-		case Type::UserDefined:
+		case TypeCategory::Struct:
+		case TypeCategory::UserDefined:
 			return IrType::Struct;
 
+		// TypeAlias must not reach this pure-category overload — the
+		// toIrType(TypeIndex) overload resolves aliases through getTypeInfo()
+		// first.  Hitting this case means a TypeAlias category leaked into a
+		// code path that only has a TypeCategory (no TypeIndex to resolve from),
+		// which is a compiler bug.
+		case TypeCategory::TypeAlias:
+			assert(false && "TypeCategory::TypeAlias must be resolved before reaching toIrType(TypeCategory)");
+			return IrType::Void;
+
 		// Pointer-like types
-		case Type::FunctionPointer:
+		case TypeCategory::FunctionPointer:
 			return IrType::FunctionPointer;
-		case Type::MemberFunctionPointer:
+		case TypeCategory::MemberFunctionPointer:
 			return IrType::MemberFunctionPointer;
-		case Type::MemberObjectPointer:
+		case TypeCategory::MemberObjectPointer:
 			return IrType::MemberObjectPointer;
 
 		// Special types
-		case Type::Nullptr:
+		case TypeCategory::Nullptr:
 			return IrType::Nullptr;
-		case Type::Void:
+		case TypeCategory::Void:
 			return IrType::Void;
 
 		// These must not reach IR — they must be resolved before codegen.
 		// During the transition period, we still tolerate some semantic-only
 		// forms to preserve existing runtime behavior until their lowering moves
 		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
-		case Type::Auto:
-		case Type::DeclTypeAuto:
+		case TypeCategory::Auto:
+		case TypeCategory::DeclTypeAuto:
 			return IrType::Integer;
-		case Type::Template:
+		case TypeCategory::Template:
 			return IrType::Void;
-		case Type::Function:
+		case TypeCategory::Function:
 			return IrType::FunctionPointer;
-		case Type::Invalid:
-		case Type::Count_:    // Sentinel — never a real type value
+		case TypeCategory::Invalid:
 			return IrType::Void;
 	}
-	assert(false && "Unknown Type value in toIrType");
+	assert(false && "Unknown TypeCategory value in toIrType");
 	return IrType::Void;
 }
 

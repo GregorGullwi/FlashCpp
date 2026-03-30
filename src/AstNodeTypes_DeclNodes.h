@@ -18,7 +18,7 @@ struct StructTypeInfo {
 	size_t active_bitfield_unit_size = 0;
 	size_t active_bitfield_unit_alignment = 0;
 	size_t active_bitfield_bits_used = 0;
-	Type active_bitfield_type = Type::Invalid;
+	TypeCategory active_bitfield_type = TypeCategory::Invalid;
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
 	bool is_union = false;      // True if this is a union (all members at offset 0)
 	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
@@ -64,8 +64,8 @@ struct StructTypeInfo {
 	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
 	std::optional<TypeIndex> own_type_index_;
 
-	StructTypeInfo(StringHandle n, AccessSpecifier default_acc = AccessSpecifier::Public, bool union_type = false,
-	              NamespaceHandle ns = NamespaceHandle{})
+	StructTypeInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
+	              NamespaceHandle ns)
 		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
 	
 	StringHandle getName() const {
@@ -76,7 +76,7 @@ struct StructTypeInfo {
 		return namespace_handle;
 	}
 
-	void addMember(StringHandle member_name, Type member_type, TypeIndex type_index,
+	void addMember(StringHandle member_name, TypeIndex type_index,
 	               size_t member_size, size_t member_alignment, AccessSpecifier access,
 	               std::optional<ASTNode> default_initializer,
 	               ReferenceQualifier reference_qualifier,
@@ -113,13 +113,13 @@ struct StructTypeInfo {
 				active_bitfield_unit_size = 0;
 				active_bitfield_bits_used = 0;
 				active_bitfield_unit_alignment = 0;
-				active_bitfield_type = Type::Invalid;
+				active_bitfield_type = TypeCategory::Invalid;
 				offset = total_size;
 			} else {
 				bool can_pack_into_active_unit =
 					active_bitfield_unit_size == member_size &&
 					active_bitfield_unit_alignment == effective_alignment &&
-					active_bitfield_type == member_type &&
+					active_bitfield_type == type_index.category() &&
 					(active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
@@ -128,7 +128,7 @@ struct StructTypeInfo {
 					active_bitfield_unit_size = member_size;
 					active_bitfield_unit_alignment = effective_alignment;
 					active_bitfield_bits_used = 0;
-					active_bitfield_type = member_type;
+					active_bitfield_type = type_index.category();
 					total_size += member_size;
 				}
 
@@ -150,7 +150,7 @@ struct StructTypeInfo {
 			active_bitfield_unit_size = 0;
 			active_bitfield_bits_used = 0;
 			active_bitfield_unit_alignment = 0;
-			active_bitfield_type = Type::Invalid;
+			active_bitfield_type = TypeCategory::Invalid;
 			if (!placed_in_active_bitfield_unit) {
 				offset = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
 			}
@@ -159,7 +159,7 @@ struct StructTypeInfo {
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
-		members.emplace_back(member_name, member_type, type_index, offset, member_size, effective_alignment,
+		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 			              access, std::move(default_initializer), reference_qualifier,
 			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
@@ -333,10 +333,10 @@ struct StructTypeInfo {
 	}
 
 	// Add static member
-	void addStaticMember(StringHandle member_name, Type type, TypeIndex type_index, size_t size, size_t member_alignment,
+	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
 	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                     ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
-		static_members.push_back(StructStaticMember(member_name, type, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
+		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
 	}
 
 	// Update an existing static member's initializer (used for lazy instantiation)
@@ -649,12 +649,16 @@ struct Enumerator {
 struct EnumTypeInfo {
 	StringHandle name;
 	bool is_scoped;                  // true for enum class, false for enum
-	Type underlying_type;            // Underlying type (default: int)
+	TypeCategory underlying_type;    // Underlying type category (default: Int)
 	unsigned char underlying_size;   // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
-	EnumTypeInfo(StringHandle n, bool scoped = false, Type underlying = Type::Int, unsigned char size = 32)
+	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+
+	// Convenience: default underlying type is Int/32-bit
+	explicit EnumTypeInfo(StringHandle n, bool scoped)
+		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
 	
 	StringHandle getName() const {
 		return name;
@@ -728,13 +732,13 @@ struct QualifiedIdentifier {
 
 struct TypeInfo
 {
-	TypeInfo() : type_(Type::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, Type type, TypeIndex idx, int type_size) : name_(name), type_(type), type_index_(idx), type_size_(type_size) {
+	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), category_(idx.category()), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
-	Type type_;
+	TypeCategory category_;
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -782,8 +786,8 @@ struct TypeInfo
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
-		// Legacy Type accessor for code that still needs it
-		Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
+		// TypeCategory accessor (replaces legacy Type accessor)
+		TypeCategory typeEnum() const noexcept { return type_index.category(); }
 		
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
@@ -811,8 +815,17 @@ struct TypeInfo
 		template_args_ = std::move(args);
 	}
 
+	// Returns the TypeCategory embedded in type_index_. For types registered via
+	// add_struct_type / add_enum_type / register_type_alias / etc. this is always
+	// correct. For legacy TypeInfo entries built before Milestone 7 (TypeCategory
+	// embedding), category() falls back to category_.
+	TypeCategory category() const {
+		TypeCategory cat = type_index_.category();
+		return (cat != TypeCategory::Invalid) ? cat : category_;
+	}
+
 	// Helper methods for struct types
-	bool isStruct() const { return type_ == Type::Struct; }
+	bool isStruct() const { return category() == TypeCategory::Struct; }
 	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
@@ -824,7 +837,7 @@ struct TypeInfo
 	}
 
 	// Helper methods for enum types
-	bool isEnum() const { return type_ == Type::Enum; }
+	bool isEnum() const { return category() == TypeCategory::Enum; }
 	const EnumTypeInfo* getEnumInfo() const { return enum_info_.get(); }
 	EnumTypeInfo* getEnumInfo() { return enum_info_.get(); }
 
@@ -835,17 +848,20 @@ struct TypeInfo
 		enum_info_ = std::move(info);
 	}
 
-	// Classification helpers that read from type_ — no gTypeInfo lookup needed.
-	// isStructLike: includes Type::UserDefined because UserDefined entries either
-	// (a) are opaque user types (e.g. __builtin_va_list), or
-	// (b) are type aliases for another UserDefined type — in both cases the
-	//     effective underlying type is struct-like.  Aliases to primitives are
-	//     stored with the primitive's Type (e.g. Type::UnsignedLongLong for
-	//     `using size_t = unsigned long long`), so they do NOT appear as UserDefined.
-	bool isStructLike()          const { return type_ == Type::Struct || type_ == Type::UserDefined; }
-	bool isPrimitive()           const { return is_primitive_type(type_); }
-	bool needsTypeIndex()        const { return needs_type_index(type_); }
-	bool isTemplatePlaceholder() const { return type_ == Type::Template; }
+	// Classification helpers.
+	// typeEnum() / resolvedType() delegate to category() which prefers the
+	// authoritative TypeCategory embedded in type_index_ over raw category_.
+	TypeCategory typeEnum()      const { return category(); }
+	TypeCategory resolvedType()  const { return category(); }
+	// isStructLike: true when this type (or the underlying type of an alias)
+	// is Struct or UserDefined.  register_type_alias stores the underlying
+	// TypeIndex (not the alias slot), so category() already returns the
+	// underlying category for aliases — no separate alias branch needed.
+	bool isStructLike()          const { return is_struct_type(category()); }
+	bool isVoid()                const { return category() == TypeCategory::Void; }
+	bool isPrimitive()           const { return is_primitive_type(category()); }
+	bool needsTypeIndex()        const { return needs_type_index(category()); }
+	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
 	bool isTypeAlias()           const { return is_type_alias_; }
 };
 
@@ -882,6 +898,7 @@ const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in r
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
 const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
+TypeIndex       nativeTypeIndex(TypeCategory cat);  // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
 size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals
@@ -889,18 +906,27 @@ std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesBy
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	Type type = Type::Invalid;
 	TypeIndex type_index {};
+
+	// Constructor: TypeIndex must already have the correct category embedded.
+	explicit CanonicalTypeAlias(TypeIndex idx)
+		: type_index(idx) {}
+
+	// Returns the TypeCategory for backward compat.
+	TypeCategory typeEnum() const { return type_index.category(); }
+
+	// Returns the TypeIndex (identity now since category is always embedded).
+	TypeIndex resolvedTypeIndex() const noexcept { return type_index; }
 };
 
-// Canonicalize chained typedef / using aliases represented as Type::UserDefined.
+// Canonicalize chained typedef / using aliases represented as TypeCategory::UserDefined.
 // Follows UserDefined -> UserDefined -> concrete type chains, but preserves the
 // original unresolved state when the chain does not bottom out in a concrete type
 // (placeholder / parse-time fallback cases).
-inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_index) {
+inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if (type != Type::UserDefined || !type_index.is_valid()) {
-		return {type, type_index};
+	if ((type_index.category() != TypeCategory::UserDefined && type_index.category() != TypeCategory::TypeAlias) || !type_index.is_valid()) {
+		return CanonicalTypeAlias{type_index};
 	}
 
 	const TypeIndex original_type_index = type_index;
@@ -909,10 +935,14 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 	while (current_type_index.is_valid() &&
 		depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
-		if (type_info.type_ != Type::Void && type_info.type_ != Type::UserDefined) {
-			return {type_info.type_, type_info.type_index_};
+		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
+			TypeIndex resolved = type_info.type_index_;
+			if (resolved.category() == TypeCategory::Invalid)
+				resolved = resolved.withCategory(type_info.category());
+			return CanonicalTypeAlias{resolved};
 		}
-		if (type_info.type_ != Type::UserDefined ||
+		if ((type_info.category() != TypeCategory::UserDefined &&
+			type_info.category() != TypeCategory::TypeAlias) ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;
@@ -920,16 +950,15 @@ inline CanonicalTypeAlias canonicalize_type_alias(Type type, TypeIndex type_inde
 		current_type_index = type_info.type_index_;
 	}
 
-	return {type, original_type_index};
+	return CanonicalTypeAlias{original_type_index};
 }
 
-inline Type resolve_type_alias(Type type, TypeIndex type_index) {
-	return canonicalize_type_alias(type, type_index).type;
+// Convenience — resolves type alias from a TypeIndex alone.
+inline TypeCategory resolve_type_alias(TypeIndex type_index) {
+	return canonicalize_type_alias(type_index).typeEnum();
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
-
-TypeCreationResult add_function_type(StringHandle name, Type /*return_type*/, NamespaceHandle ns = NamespaceHandle{});
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
 
@@ -941,13 +970,13 @@ void initialize_native_types();
 // (Step 4: replaces direct gTypeInfo.emplace_back() at external call sites)
 
 // For adding template parameter type placeholders (Type::Template or Type::UserDefined kind)
-TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits);
+TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
 
 // For adding a concrete instantiated type with known size (registers in gTypesByName too)
-TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits);
+TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t size_bits);
 
 // For adding an alias entry that copies type info from another TypeInfo
-TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits);
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();
@@ -962,31 +991,41 @@ inline void forEachTypeInfo(Fn&& fn) {
 
 // Get the natural alignment for a type (in bytes)
 // This follows the x64 Windows ABI alignment rules
-inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
-	switch (type) {
-		case Type::Void:
+inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
+	switch (cat) {
+		case TypeCategory::Void:
 			return 1;
-		case Type::Bool:
-		case Type::Char:
-		case Type::UnsignedChar:
+		case TypeCategory::Bool:
+		case TypeCategory::Char:
+		case TypeCategory::UnsignedChar:
+		case TypeCategory::Char8:
 			return 1;
-		case Type::Short:
-		case Type::UnsignedShort:
+		case TypeCategory::Short:
+		case TypeCategory::UnsignedShort:
+		case TypeCategory::Char16:
 			return 2;
-		case Type::Int:
-		case Type::UnsignedInt:
-		case Type::Long:
-		case Type::UnsignedLong:
-		case Type::Float:
+		case TypeCategory::WChar:
+			// wchar_t is 16-bit on LLP64 (Windows) → alignment 2
+			// wchar_t is 32-bit on LP64 (Linux) → alignment 4
+			return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 4;
+		case TypeCategory::Int:
+		case TypeCategory::UnsignedInt:
+		case TypeCategory::Float:
+		case TypeCategory::Char32:
 			return 4;
-		case Type::LongLong:
-		case Type::UnsignedLongLong:
-		case Type::Double:
+		case TypeCategory::Long:
+		case TypeCategory::UnsignedLong:
+			// long is 32-bit on LLP64 (Windows) → alignment 4
+			// long is 64-bit on LP64 (Linux) → alignment 8
+			return (g_target_data_model == TargetDataModel::LLP64) ? 4 : 8;
+		case TypeCategory::LongLong:
+		case TypeCategory::UnsignedLongLong:
+		case TypeCategory::Double:
 			return 8;
-		case Type::LongDouble:
+		case TypeCategory::LongDouble:
 			// On x64 Windows, long double is 8 bytes (same as double)
 			return 8;
-		case Type::Struct:
+		case TypeCategory::Struct:
 			// For structs, alignment is determined by the struct's alignment field
 			// This should be passed separately
 			return type_size_bytes;
@@ -996,20 +1035,9 @@ inline size_t get_type_alignment(Type type, size_t type_size_bytes) {
 	}
 }
 
-// Type utilities
-bool is_integer_type(Type type);
-bool is_signed_integer_type(Type type);
-bool is_unsigned_integer_type(Type type);
-bool is_bool_type(Type type);
-bool is_floating_point_type(Type type);
-bool is_struct_type(Type type);  // Check if type is Struct or UserDefined
-// Phase 15: standard arithmetic type = integer, floating-point, or bool.
-// Sema owns implicit conversion annotation for these types exclusively.
-inline bool is_standard_arithmetic_type(Type type) {
-	return is_integer_type(type) || is_floating_point_type(type) || is_bool_type(type);
-}
-int get_integer_rank(Type type);
-int get_floating_point_rank(Type type);
+// Type utilities — TypeCategory overloads are in AstNodeTypes_TypeSystem.h
+int get_integer_rank(TypeCategory type);
+int get_floating_point_rank(TypeCategory type);
 
 // Get the size of 'long' in bits based on the target data model
 inline int get_long_size_bits() {
@@ -1021,23 +1049,9 @@ inline int get_wchar_size_bits() {
 	return (g_target_data_model == TargetDataModel::LLP64) ? 16 : 32;
 }
 
-int get_type_size_bits(Type type);
-int get_type_size_bits(TypeCategory cat);  // delegates to get_type_size_bits(categoryToType(cat))
-Type promote_integer_type(Type type);
-Type promote_floating_point_type(Type type);
-Type get_common_type(Type left, Type right);
-bool requires_conversion(Type from, Type to);
-
-// Helper to calculate alignment from size in bytes
-// Standard alignment rules: min(size, 8) for most platforms, with special case for long double
-inline size_t calculate_alignment_from_size(size_t size_in_bytes, Type type) {
-	// Special case for long double on x86-64: often has 16-byte alignment
-	if (type == Type::LongDouble) {
-		return 16;
-	}
-	// Standard alignment: same as size, up to 8 bytes
-	return (size_in_bytes < 8) ? size_in_bytes : 8;
-}
+int get_type_size_bits(TypeCategory cat);  // primary implementation — full switch on TypeCategory
+TypeCategory promote_integer_type(TypeCategory type);
+TypeCategory get_common_type(TypeCategory left, TypeCategory right);
 
 // Pointer level information - stores CV-qualifiers for each pointer level
 // Example: const int* const* volatile
@@ -1054,31 +1068,27 @@ struct PointerLevel {
 class TypeSpecifierNode {
 public:
 	TypeSpecifierNode() = default;
-	TypeSpecifierNode(Type type, TypeQualifier qualifier, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(0) {}
 
-	// TypeCategory-first constructor — preferred for new code.
-	// Converts cat to the legacy Type via categoryToType() and stores it; the TypeIndex
-	// category_ field is also set so that category() returns cat without a lookup.
+	// TypeIndex-first constructor — preferred for new code.
+	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
+		const Token& token, CVQualifier cv_qualifier)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
+
+	// TypeCategory constructor — for primitive types without a gTypeInfo index.
 	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None)
-		: type_(categoryToType(cat)), size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+		const Token& token, CVQualifier cv_qualifier)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
-	// Constructor for struct types
-	TypeSpecifierNode(Type type, TypeIndex type_index, int sizeInBits,
-		const Token& token = {}, CVQualifier cv_qualifier = CVQualifier::None, ReferenceQualifier reference_qualifier = ReferenceQualifier::None)
-		: type_(type), size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
+	// Constructor for struct types with TypeIndex
+	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
+		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
+		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
-	auto type() const { return type_; }
+
 	// Returns the TypeCategory for this type specifier.
-	// Prefers category embedded in type_index_ (set correctly by add* functions);
-	// falls back to typeToCategory(type_) for legacy TypeSpecifierNode values built
-	// with the Type-only constructor.
-	TypeCategory category() const {
-		TypeCategory cat = type_index_.category();
-		return (cat != TypeCategory::Invalid) ? cat : typeToCategory(type_);
-	}
+	TypeCategory category() const { return type_index_.category(); }
+	// Legacy accessor — returns Type enum for backward compat during migration.
+	TypeCategory type() const { return type_index_.category(); }
 	auto size_in_bits() const { return size_; }
 	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
 	auto qualifier() const { return qualifier_; }
@@ -1113,9 +1123,9 @@ public:
 	}
 
 	// Function pointer support
-	bool is_function_pointer() const { return type_ == Type::FunctionPointer; }
-	bool is_member_function_pointer() const { return type_ == Type::MemberFunctionPointer; }
-	bool is_member_object_pointer() const { return type_ == Type::MemberObjectPointer; }
+	bool is_function_pointer() const { return type_index_.category() == TypeCategory::FunctionPointer; }
+	bool is_member_function_pointer() const { return type_index_.category() == TypeCategory::MemberFunctionPointer; }
+	bool is_member_object_pointer() const { return type_index_.category() == TypeCategory::MemberObjectPointer; }
 	void set_function_signature(const FunctionSignature& sig) { function_signature_ = sig; }
 	const FunctionSignature& function_signature() const { return *function_signature_; }
 	bool has_function_signature() const { return function_signature_.has_value(); }
@@ -1159,7 +1169,7 @@ public:
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
-	void set_type(Type t) { type_ = t; }
+	void set_category(TypeCategory cat) { type_index_ = type_index_.withCategory(cat); }
 	const Token& token() const { return token_; }
 	void copy_indirection_from(const TypeSpecifierNode& other) {
 		pointer_levels_ = other.pointer_levels_;
@@ -1177,18 +1187,18 @@ public:
 	// Returns true if they represent the same type signature
 	bool matches_signature(const TypeSpecifierNode& other) const {
 		// Check basic type
-		if (type_ != other.type_) {
+		if (type_index_.category() != other.type_index_.category()) {
 			// Be lenient for typedef/alias cases, but do not collapse distinct semantic
 			// types such as enum vs int just because they share a runtime size.
-			Type resolved_type = resolve_type_alias(type_, type_index_);
-			Type other_resolved_type = resolve_type_alias(other.type_, other.type_index_);
+			TypeCategory resolved_type = resolve_type_alias(type_index_);
+			TypeCategory other_resolved_type = resolve_type_alias(other.type_index_);
 			if (resolved_type != other_resolved_type) {
 				return false;
 			}
 		}
 		
 		// Check type index for user-defined types
-		if (is_struct_type(type_)) {
+		if (is_struct_type(type_index_.category())) {
 			if (type_index_ != other.type_index_) {
 				// Be lenient for dependent/alias types: treat as match when the identifier tokens are the same
 				if (token_.value() != other.token_.value()) {
@@ -1221,12 +1231,11 @@ public:
 	}
 
 private:
-	Type type_ = Type::Invalid;  // Default to Invalid (zero) so default-constructed nodes are detectable
 	int size_ = 0;  // Size in bits - changed from unsigned char to int to support large structs
 	TypeQualifier qualifier_ = TypeQualifier::None;
 	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
 	Token token_;
-	TypeIndex type_index_;      // Index into gTypeInfo for user-defined types (structs, etc.)
+	TypeIndex type_index_;      // Authoritative type identity (category + gTypeInfo index)
 	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier (None, LValue, or RValue)
 	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
@@ -1247,9 +1256,9 @@ public:
 // Plain `auto` follows template-argument-deduction-style stripping of top-level
 // references/cv for value returns, while `decltype(auto)` preserves the exact
 // type category and qualifiers of the deduced expression.
-inline TypeSpecifierNode finalizePlaceholderTypeDeduction(Type placeholder_type, TypeSpecifierNode deduced_type) {
-	assert(isPlaceholderAutoType(placeholder_type));
-	if (placeholder_type != Type::Auto) {
+inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placeholder_cat, TypeSpecifierNode deduced_type) {
+	assert(isPlaceholderAutoType(placeholder_cat));
+	if (placeholder_cat != TypeCategory::Auto) {
 		return deduced_type;
 	}
 
@@ -1272,7 +1281,7 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (type_spec.pointer_depth() > 0) {
 		return 64;
 	}
-	Type t = type_spec.type();
+	TypeCategory t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
 		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
@@ -1454,17 +1463,17 @@ using NumericLiteralValue = std::variant<unsigned long long, double>;
 
 class NumericLiteralNode {
 public:
-	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, Type type, TypeQualifier qualifier, unsigned char size) : value_(value), type_(type), size_(size), qualifier_(qualifier), identifier_(identifier) {}
+	explicit NumericLiteralNode(Token identifier, NumericLiteralValue value, TypeCategory cat, TypeQualifier qualifier, unsigned char size) : value_(value), type_cat_(cat), size_(size), qualifier_(qualifier), identifier_(identifier) {}
 
 	std::string_view token() const { return identifier_.value(); }
 	NumericLiteralValue value() const { return value_; }
-	Type type() const { return type_; }
+	TypeCategory type() const { return type_cat_; }
 	unsigned char sizeInBits() const { return size_; }
 	TypeQualifier qualifier() const { return qualifier_; }
 
 private:
 	NumericLiteralValue value_;
-	Type type_;
+	TypeCategory type_cat_;
 	unsigned char size_;	// Size in bits
 	TypeQualifier qualifier_;
 	Token identifier_;

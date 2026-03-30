@@ -11,24 +11,24 @@ ASTNode Parser::substituteTemplateParameters(
 	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
 	// Helper function to get type name as string
-	auto get_type_name = [](Type type) -> std::string_view {
+	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
-			case Type::Void: return "void";
-			case Type::Bool: return "bool";
-			case Type::Char: return "char";
-			case Type::UnsignedChar: return "unsigned char";
-			case Type::Short: return "short";
-			case Type::UnsignedShort: return "unsigned short";
-			case Type::Int: return "int";
-			case Type::UnsignedInt: return "unsigned int";
-			case Type::Long: return "long";
-			case Type::UnsignedLong: return "unsigned long";
-			case Type::LongLong: return "long long";
-			case Type::UnsignedLongLong: return "unsigned long long";
-			case Type::Float: return "float";
-			case Type::Double: return "double";
-			case Type::LongDouble: return "long double";
-			case Type::UserDefined: return "user_defined";  // This should be handled specially
+			case TypeCategory::Void: return "void";
+			case TypeCategory::Bool: return "bool";
+			case TypeCategory::Char: return "char";
+			case TypeCategory::UnsignedChar: return "unsigned char";
+			case TypeCategory::Short: return "short";
+			case TypeCategory::UnsignedShort: return "unsigned short";
+			case TypeCategory::Int: return "int";
+			case TypeCategory::UnsignedInt: return "unsigned int";
+			case TypeCategory::Long: return "long";
+			case TypeCategory::UnsignedLong: return "unsigned long";
+			case TypeCategory::LongLong: return "long long";
+			case TypeCategory::UnsignedLongLong: return "unsigned long long";
+			case TypeCategory::Float: return "float";
+			case TypeCategory::Double: return "double";
+			case TypeCategory::LongDouble: return "long double";
+			case TypeCategory::UserDefined: return "user_defined";  // This should be handled specially
 			default: return "unknown";
 		}
 	};
@@ -64,7 +64,7 @@ ASTNode Parser::substituteTemplateParameters(
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.typeEnum();
+						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
 						                 tparam_ref.token().line(), tparam_ref.token().column(),
@@ -103,7 +103,7 @@ ASTNode Parser::substituteTemplateParameters(
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
 						// Create a numeric literal node for the value with the correct type
-						Type value_type = arg.typeEnum();
+						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
@@ -274,7 +274,7 @@ ASTNode Parser::substituteTemplateParameters(
 						// not from this forward declaration's type node.
 						Token new_token(Token::Type::Identifier, new_func_name,
 							func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
-						auto type_node_ast = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
 						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
 							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));
@@ -358,7 +358,7 @@ ASTNode Parser::substituteTemplateParameters(
 					} else if (op == ",") {
 						Token void_token(Token::Type::Literal, "0"sv, 0, 0, 0);
 						return emplace_node<ExpressionNode>(NumericLiteralNode(
-							void_token, 0ULL, Type::Void, TypeQualifier::None, 0));
+							void_token, 0ULL, TypeCategory::Void, TypeQualifier::None, 0));
 					}
 					FLASH_LOG(Templates, Warning, "Complex fold expression with empty pack and operator '", op, "'");
 					return node;
@@ -443,8 +443,8 @@ ASTNode Parser::substituteTemplateParameters(
 									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
 								} else {
 									// Determine the result type from the variadic parameter's declared type
-									// e.g., template<unsigned... args> -> Type::UnsignedInt, 32 bits
-									Type result_type = Type::Int;
+									// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
+									TypeCategory result_type = TypeCategory::Int;
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
 										const auto& tparam = template_params[*pack_param_idx].as<TemplateParameterNode>();
@@ -738,7 +738,7 @@ ASTNode Parser::substituteTemplateParameters(
 			                   sizeof_pack.sizeof_token().file_index());
 			ASTNode result = emplace_node<ExpressionNode>(
 				NumericLiteralNode(literal_token, static_cast<unsigned long long>(num_pack_elements), 
-				                  Type::Int, TypeQualifier::None, 32));
+				                  TypeCategory::Int, TypeQualifier::None, 32));
 			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
 			return result;
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
@@ -775,7 +775,7 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((is_struct_type(type_spec.type())) && type_spec.type_index().index() < getTypeInfoCount()) {
+					if ((is_struct_type(type_spec.category())) && type_spec.type_index().index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 						std::string_view type_name = StringTable::getStringView(type_info.name());
 						
@@ -797,7 +797,7 @@ ASTNode Parser::substituteTemplateParameters(
 									                   sizeof_expr.sizeof_token().file_index());
 									return emplace_node<ExpressionNode>(
 										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size), 
-										                  Type::UnsignedLongLong, TypeQualifier::None, 64));
+										                  TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
 								}
 								break;
 							}
@@ -891,18 +891,18 @@ ASTNode Parser::substituteTemplateParameters(
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
 
 		// Check if this is a user-defined type that matches a template parameter
-		if (type_spec.type() == Type::UserDefined) {
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,
 				template_args);
-			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
-				int substituted_size_bits = get_type_size_bits(substituted_type);
+			if (substituted_type_index.category() != type_spec.type() || substituted_type_index != type_spec.type_index()) {
+				int substituted_size_bits = get_type_size_bits(substituted_type_index.category());
 				if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
-				if (substituted_type == Type::Struct || substituted_type == Type::UserDefined) {
+				if (substituted_type_index.category() == TypeCategory::Struct || substituted_type_index.category() == TypeCategory::UserDefined) {
 					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,
@@ -912,7 +912,7 @@ ASTNode Parser::substituteTemplateParameters(
 							type_spec.token().file_index());
 					}
 				} else {
-					std::string_view substituted_type_name = get_type_name(substituted_type);
+					std::string_view substituted_type_name = get_type_name(substituted_type_index.category());
 					if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
 						substituted_token = Token(
 							Token::Type::Keyword,
@@ -923,7 +923,6 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 				TypeSpecifierNode substituted_spec(
-					substituted_type,
 					substituted_type_index,
 					substituted_size_bits,
 					substituted_token,

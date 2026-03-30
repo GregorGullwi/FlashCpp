@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
@@ -85,15 +85,13 @@
 			}
 		}
 
-		info.return_type = Type::Void;
+		info.return_type_index = nativeTypeIndex(TypeCategory::Void);
 		info.return_size = 0;
-		info.return_type_index = TypeIndex{};
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
 			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-			info.return_type = ret_type_node.type();
-			info.return_size = ret_type_node.size_in_bits();
 			info.return_type_index = ret_type_node.type_index();
+			info.return_size = ret_type_node.size_in_bits();
 			info.returns_reference = ret_type_node.is_reference();
 			if (info.returns_reference) {
 				info.return_size = 64;
@@ -139,7 +137,7 @@
 		if (type_it == getTypesByNameMap().end()) {
 			// Error: closure type not found
 			TempVar dummy = var_counter.next();
-			return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{dummy}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{dummy}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		const TypeInfo* closure_type = type_it->second;
@@ -153,7 +151,7 @@
 
 			// Declare the closure variable with the target name
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
@@ -169,7 +167,7 @@
 
 			// Declare the closure variable
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type = Type::Struct;
+			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
@@ -197,7 +195,7 @@
 							// Store the enclosing 'this' pointer in the closure
 							// Use the 'this' variable name to properly resolve to the member function's this parameter
 							MemberStoreOp store_this;
-							store_this.value.type = Type::Void;
+							store_this.value.setType(TypeCategory::Void);
 							store_this.value.ir_type = IrType::Void;
 							store_this.value.size_in_bits = SizeInBits{64};
 							store_this.value.value = StringTable::getOrInternStringHandle("this");
@@ -235,8 +233,8 @@
 									TempVar loaded_value = var_counter.next();
 									MemberLoadOp load_op;
 									load_op.result.value = loaded_value;
-									load_op.result.type = enclosing_member.type;
-									load_op.result.ir_type = toIrType(enclosing_member.type);
+									load_op.result.setType(enclosing_member.type_index.category());
+									load_op.result.ir_type = toIrType(enclosing_member.memberType());
 									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									load_op.object = StringTable::getOrInternStringHandle("this");
 									load_op.member_name = enclosing_member.getName();
@@ -247,7 +245,7 @@
 
 									// Store into closure->__copy_this at the appropriate offset
 									MemberStoreOp store_copy_this;
-									store_copy_this.value.type = enclosing_member.type;
+									store_copy_this.value.setType(enclosing_member.type_index.category());
 									store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
 									store_copy_this.value.value = loaded_value;
 									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -282,14 +280,14 @@
 							// For init-capture by reference [&y = x], we need to store the address of x
 							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 								// Get the type info from the init result
-								Type init_type = init_result.type;
+								TypeCategory init_type = init_result.typeEnum();
 								int init_size = init_result.size_in_bits.value;
 
 								// Generate AddressOf for the initializer
 								TempVar addr_temp = var_counter.next();
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.type = init_type;
+								addr_op.operand.setType(init_type);
 								addr_op.operand.ir_type = toIrType(init_type);
 								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 								addr_op.operand.pointer_depth = PointerDepth{};
@@ -307,7 +305,7 @@
 
 								// Store the address in the closure member
 								MemberStoreOp member_store;
-								member_store.value.type = init_type;
+								member_store.value.setType(init_type);
 								member_store.value.size_in_bits = SizeInBits{64}; // pointer size
 								member_store.value.value = addr_temp;
 								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -319,7 +317,7 @@
 							} else {
 								// Init-capture by value [x = expr] - store the value directly
 								MemberStoreOp member_store;
-								member_store.value.type = member->type;
+								member_store.value.setType(member->type_index.category());
 								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 								// Convert IrOperand to IrValue
@@ -371,7 +369,7 @@
 									// Enclosing captured by reference - it already holds a pointer, just copy it
 									MemberLoadOp member_load;
 									member_load.result.value = addr_temp;
-									member_load.result.type = orig_type.type();
+									member_load.result.setType(orig_type.category());
 									member_load.result.size_in_bits = SizeInBits{64};
 									member_load.object = StringTable::getOrInternStringHandle("this");
 									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
@@ -395,7 +393,7 @@
 									// Enclosing captured by value - need to get address of this->x
 									AddressOfOp addr_op;
 									addr_op.result = addr_temp;
-									addr_op.operand.type = orig_type.type();
+									addr_op.operand.setType(orig_type.category());
 									addr_op.operand.ir_type = toIrType(orig_type.type());
 									addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 									addr_op.operand.pointer_depth = PointerDepth{};
@@ -406,7 +404,7 @@
 								// Regular variable - generate AddressOf directly
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
-								addr_op.operand.type = orig_type.type();
+								addr_op.operand.setType(orig_type.category());
 								addr_op.operand.ir_type = toIrType(orig_type.type());
 								addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
 								addr_op.operand.pointer_depth = PointerDepth{};
@@ -416,7 +414,7 @@
 
 							// Store the address in the closure member
 							MemberStoreOp member_store;
-							member_store.value.type = member->type;
+							member_store.value.setType(member->type_index.category());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 							member_store.value.value = addr_temp;
 							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
@@ -428,7 +426,7 @@
 						} else {
 							// By-value: copy the value
 							MemberStoreOp member_store;
-							member_store.value.type = member->type;
+							member_store.value.setType(member->type_index.category());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
 							if (is_captured_from_enclosing) {
@@ -436,7 +434,7 @@
 								TempVar loaded_value = var_counter.next();
 								MemberLoadOp member_load;
 								member_load.result.value = loaded_value;
-								member_load.result.type = member->type;
+								member_load.result.setType(member->type_index.category());
 								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 								member_load.object = StringTable::getOrInternStringHandle("this");
 								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
@@ -485,12 +483,7 @@
 		// - type_index: the type index for the closure struct
 		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
 		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
-		return makeExprResult(
-			Type::Struct,
-			SizeInBits{static_cast<int>(closure_size_bits)},
-			IrOperand{StringTable::getOrInternStringHandle(closure_var_name)},
-			closure_type_index
-		, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
@@ -521,8 +514,8 @@
 			if (struct_info) {
 				// Create a FunctionDeclarationNode for operator()
 				// We need this so member function calls can generate the correct mangled name
-				TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index,
-					lambda_info.return_size, lambda_info.lambda_token);
+				TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
+					lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
 
 				Token operator_token = lambda_info.lambda_token;  // Use lambda token as placeholder
@@ -570,7 +563,7 @@
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
 		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
-		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_type_index = lambda_info.return_type_index;
 		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
@@ -578,8 +571,8 @@
 
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Only non-pointer, non-reference struct returns need this
-		bool returns_struct_by_value = returnsStructByValue(lambda_info.return_type, 0, lambda_info.returns_reference);
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+		bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returns_reference);
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track hidden return parameter flag for current function context
@@ -598,7 +591,7 @@
 		}
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
+		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -654,7 +647,7 @@
 				if (isPlaceholderAutoType(param_type.type())) {
 					throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
 				}
-				func_param.type = param_type.type();
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();
@@ -675,7 +668,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_type_index_ = lambda_info.return_type_index;
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
@@ -709,7 +702,7 @@
 		}
 
 		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
@@ -728,7 +721,7 @@
 		FunctionDeclOp func_decl_op;
 		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
 		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
-		func_decl_op.return_type = lambda_info.return_type;
+		func_decl_op.return_type_index = lambda_info.return_type_index;
 		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
 		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
 		func_decl_op.linkage = Linkage::None;  // C++ linkage
@@ -736,14 +729,14 @@
 
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
 		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.return_type, 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
 		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
 
 		// Track hidden return parameter flag for current function context
 		current_function_has_hidden_return_param_ = needs_hidden_return_param;
 
 		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type, lambda_info.return_type_index, lambda_info.return_size, lambda_info.lambda_token);
+		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
 
 		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
 		std::vector<TypeSpecifierNode> param_types;
@@ -797,7 +790,7 @@
 				if (isPlaceholderAutoType(param_type.type())) {
 					throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");
 				}
-				func_param.type = param_type.type();
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				func_param.cv_qualifier = param_type.cv_qualifier();
@@ -815,7 +808,7 @@
 
 		// Set current function return type and size for type checking in return statements
 		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_ = lambda_info.return_type;
+		current_function_return_type_index_ = lambda_info.return_type_index;
 		current_function_return_size_ = lambda_info.return_size;
 		current_function_returns_reference_ = lambda_info.returns_reference;
 
@@ -850,7 +843,7 @@
 		}
 
 		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type == Type::Void) {
+		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
 			ReturnOp ret_op;  // No return value for void
 			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
 		}
@@ -916,14 +909,14 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 
 	// Compute the mangled name for the __invoke function
 	// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-	Type return_type = Type::Void;
+	TypeCategory return_type = TypeCategory::Void;
 	int return_size = 0;
 	if (lambda.return_type().has_value()) {
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 		return_type = ret_type_node.type();
 		return_size = ret_type_node.size_in_bits();
 	}
-	TypeSpecifierNode return_type_node(return_type, TypeIndex{}, return_size, lambda.lambda_token());
+	TypeSpecifierNode return_type_node(return_type, TypeQualifier::None, return_size, lambda.lambda_token(), CVQualifier::None);
 
 	// Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;
@@ -942,7 +935,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	// Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
-	op.result.type = Type::FunctionPointer;
+	op.result.setType(TypeCategory::FunctionPointer);
 	op.result.ir_type = IrType::FunctionPointer;
 	op.result.size_in_bits = SizeInBits{64};
 	op.result.value = func_addr_var;
@@ -1018,7 +1011,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	TempVar copy_this_temp = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = copy_this_temp;
-	load_op.result.type = Type::Struct;
+	load_op.result.setType(TypeCategory::Struct);
 	load_op.result.ir_type = IrType::Struct;
 	load_op.result.size_in_bits = SizeInBits{static_cast<int>(copy_this_member->size * 8)};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
@@ -1037,7 +1030,7 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	);
 	lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 	lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
-	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info));
+	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 	return copy_this_temp;
 }
@@ -1093,10 +1086,10 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
 						if (member) {
 							// Create a TypeSpecifierNode from the member type
-							TypeSpecifierNode member_type(member->type, TypeQualifier::None, static_cast<int>(member->size * 8));
+							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, static_cast<int>(member->size * 8), Token{}, CVQualifier::None);
 							if (member->type_index.isStruct()) {
 								// Need to set type_index for struct types
-								member_type = TypeSpecifierNode(member->type, member->type_index, static_cast<int>(member->size * 8), Token());
+								member_type = TypeSpecifierNode(member->type_index.withCategory(member->memberType()), static_cast<int>(member->size * 8), Token(), CVQualifier::None, ReferenceQualifier::None);
 							}
 							current_lambda_context_.capture_types[var_name] = member_type;
 						}
@@ -1147,7 +1140,7 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	TempVar this_ptr = var_counter.next();
 	MemberLoadOp load_op;
 	load_op.result.value = this_ptr;
-	load_op.result.type = Type::Void;
+	load_op.result.setType(TypeCategory::Void);
 	load_op.result.ir_type = IrType::Void;
 	load_op.result.size_in_bits = SizeInBits{64};
 	load_op.object = StringTable::getOrInternStringHandle("this");  // Lambda's this (the closure)
@@ -1212,9 +1205,10 @@ const Token& fallback_token) const {
 		? closure_type->getStructInfo()->total_size * 8
 		: 64;
 	return TypeSpecifierNode(
-		Type::Struct,
-		closure_type->type_index_,
+		closure_type->type_index_.withCategory(TypeCategory::Struct),
 		closure_size,
-		fallback_token
+		fallback_token,
+		CVQualifier::None,
+		ReferenceQualifier::None
 	);
 }

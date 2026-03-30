@@ -74,9 +74,11 @@ void Parser::setup_member_function_context(StructDeclarationNode* struct_node, S
 	// parameter of type StructName* (C++20 [class.this]).
 	if (struct_type_index.index() < getTypeInfoCount()) {
 		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
-			Type::Struct, struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			64,  // Pointer size in bits
-			Token()
+			Token(),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		this_type_ref.add_pointer_level();
 
@@ -555,7 +557,7 @@ ASTNode Parser::create_defaulted_member_function_body(const FunctionDeclarationN
 			decl_node.identifier_token().column(),
 			decl_node.identifier_token().file_index());
 		auto zero_expr = emplace_node<ExpressionNode>(
-			NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+			NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
 		auto return_stmt = emplace_node<ReturnStatementNode>(
 			std::optional<ASTNode>(zero_expr), zero_token);
 		block_ref.add_statement_node(return_stmt);

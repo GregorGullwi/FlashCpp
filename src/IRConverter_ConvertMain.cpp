@@ -2,6 +2,20 @@
 #include "IRConverter.h"
 #include "OverloadResolution.h"
 
+namespace {
+	uint32_t codeViewTypeIndex(TypeCategory type_cat) {
+		switch (type_cat) {
+			case TypeCategory::Int: return 0x74;      // T_INT4
+			case TypeCategory::Float: return 0x40;    // T_REAL32
+			case TypeCategory::Double: return 0x41;   // T_REAL64
+			case TypeCategory::Char: return 0x10;     // T_CHAR
+			case TypeCategory::Bool: return 0x30;     // T_BOOL08
+			case TypeCategory::Struct: return 0x603;  // T_64PVOID for struct pointers / aggregate references
+			default: return 0x74;                     // T_INT4 fallback
+		}
+	}
+}
+
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename , bool show_timing)  {
 
@@ -632,10 +646,10 @@ std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWri
 				if (!handler.is_catch_all) {
 					// Use IrType to detect struct-like types (both Type::Struct and Type::UserDefined
 					// map to IrType::Struct) and distinguish them from primitive built-in types.
-					IrType exc_ir_type = toIrType(handler.exception_type);
+					IrType exc_ir_type = toIrType(handler.type_index.category());
 					if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
-						// Built-in type - get name from Type enum
-						handler_info.type_name = getTypeName(handler.exception_type);
+						// Built-in type - get name from TypeCategory
+						handler_info.type_name = getTypeName(handler.type_index.category());
 					} else if (handler.type_index.index() < getTypeInfoCount()) {
 						// User-defined type - get name from gTypeInfo
 						handler_info.type_name = StringTable::getStringView(getTypeInfo(handler.type_index).name());
@@ -815,11 +829,11 @@ template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext& ctx, uint8_t setcc_opcode)  {
 		// Use SSE comiss/comisd for comparison
 		// Properly handles XMM8-XMM15 registers with REX prefix
-		if (ctx.operand_type == Type::Float) {
+		if (ctx.operand_type == TypeCategory::Float) {
 			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
 			auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
-		} else if (ctx.operand_type == Type::Double) {
+		} else if (ctx.operand_type == TypeCategory::Double) {
 			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
 			auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -836,7 +850,7 @@ void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrT
 		textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
 		// Update context for boolean result (1 byte)
-		ctx.result_value.type = Type::Bool;
+		ctx.result_value.setType(TypeCategory::Bool);
 		ctx.result_value.size_in_bits = SizeInBits{8};
 		ctx.result_physical_reg = bool_reg;
 
@@ -846,7 +860,7 @@ void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrT
 
 template<class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_handle, std::string_view var_name,
-	                                Type operand_type, int operand_size_in_bits,
+	                                TypeCategory operand_type, int operand_size_in_bits,
 	                                std::optional<X64Register> exclude_reg)  {
 		FLASH_LOG(Codegen, Debug, "StringHandle not found in local vars: '", var_name, "', checking global variables");
 
@@ -915,7 +929,7 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		if (is_floating_point_type(operand_type)) {
 			// For float/double, allocate an XMM register
 			result_reg = allocateXMMRegisterWithSpilling();
-			bool is_float = (operand_type == Type::Float);
+			bool is_float = (operand_type == TypeCategory::Float);
 			uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
 
 			// Add pending relocation for this global variable reference
@@ -947,7 +961,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		// Determine result type based on operation
 		// For comparisons, result is bool (8 bits for code generation)
 		// For arithmetic operations, result type matches operand type
-		Type result_type = bin_op.lhs.type;
+		TypeCategory result_type = bin_op.lhs.typeEnum();
 		int result_size = bin_op.lhs.size_in_bits.value;
 
 		auto opcode = instruction.getOpcode();
@@ -961,11 +975,11 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		                      opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
 
 		// Store the operand type and size for register allocation and loading decisions
-		Type operand_type = bin_op.lhs.type;
+		TypeCategory operand_type = bin_op.lhs.typeEnum();
 		int operand_size = bin_op.lhs.size_in_bits.value;
 
 		if (is_comparison) {
-			result_type = Type::Bool;
+			result_type = TypeCategory::Bool;
 			result_size = 8;  // We store bool as 8 bits for register operations
 		}
 
@@ -977,7 +991,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			.operand_type = operand_type,
 			.operand_size_in_bits = operand_size
 		};
-		// Propagate signedness so downstream consumers don't need to query via isSignedType(ctx.result_value.type).
+		// Propagate signedness so downstream consumers don't need to query via ctx.result_value.is_signed.
 		// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
 		ctx.result_value.is_signed = isSignedType(result_type);
 
@@ -995,9 +1009,9 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// This coercion will become unnecessary once ArithmeticOperationContext
 			// uses IrType instead of Type for operand_type (Phase 3).
 			if (!is_integer_type(operand_type)) {
-				Type int_type = (ctx.operand_size_in_bits <= 32) ? Type::Int : Type::UnsignedLongLong;
+				TypeCategory int_type = (ctx.operand_size_in_bits <= 32) ? TypeCategory::Int : TypeCategory::UnsignedLongLong;
 				if (!is_comparison) {
-					ctx.result_value.type = int_type;
+					ctx.result_value.setType(int_type);
 					ctx.result_value.size_in_bits = SizeInBits{ctx.operand_size_in_bits};
 				}
 				ctx.operand_type = int_type;
@@ -1007,15 +1021,15 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// Pointer-like and struct types: force 64-bit integer semantics
 			// for pointer offset calculations
 			if (!is_comparison) {
-				ctx.result_value.type = Type::UnsignedLongLong;
+				ctx.result_value.setType(TypeCategory::UnsignedLongLong);
 				ctx.result_value.size_in_bits = SizeInBits{64};
 			}
-			ctx.operand_type = Type::UnsignedLongLong;
+			ctx.operand_type = TypeCategory::UnsignedLongLong;
 			ctx.operand_size_in_bits = 64;
 		}
-		if (!is_integer_type(ctx.result_value.type) && !is_bool_type(ctx.result_value.type) && !is_floating_point_type(ctx.result_value.type)) {
-			auto type_name = getTypeName(ctx.result_value.type);
-			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.type)) : std::string(type_name);
+		if (!isIrIntegerType(ctx.result_value.effectiveIrType()) && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
+			auto type_name = getTypeName(ctx.result_value.typeEnum());
+			std::string type_desc = type_name.empty() ? std::string("type_id=") + std::to_string(static_cast<int>(ctx.result_value.typeEnum())) : std::string(type_name);
 			throw InternalError(std::string("Only integer/boolean/floating-point/pointer-like ") + operation_name + " is supported, got " + type_desc);
 		}
 
@@ -1033,7 +1047,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
-						bool is_float = (operand_type == Type::Float);
+						bool is_float = (operand_type == TypeCategory::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
@@ -1087,7 +1101,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				if (is_floating_point_type(operand_type)) {
 					// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (operand_type == Type::Float);
+					bool is_float = (operand_type == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
@@ -1245,7 +1259,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					if (is_floating_point_type(operand_type)) {
 						// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
-						bool is_float = (operand_type == Type::Float);
+						bool is_float = (operand_type == TypeCategory::Float);
 						auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 						textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 					} else {
@@ -1318,7 +1332,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				if (is_floating_point_type(operand_type)) {
 					// For float/double, allocate an XMM register
 						ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
-					bool is_float = (operand_type == Type::Float);
+					bool is_float = (operand_type == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
@@ -1450,7 +1464,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			// Allocate a temporary GPR for the bit pattern
 			X64Register temp_gpr = allocateRegisterWithSpilling();
 
-			if (operand_type == Type::Float) {
+			if (operand_type == TypeCategory::Float) {
 				// For float (single precision), convert double to float and get 32-bit representation
 				float float_value = static_cast<float>(rhs_value);
 				uint32_t bits;
@@ -1513,7 +1527,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 		if (ctx.result_physical_reg == X64Register::Count) {
-			if (is_floating_point_type(ctx.result_value.type)) {
+			if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 				ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 			} else {
 				ctx.result_physical_reg = allocateRegisterWithSpilling();
@@ -1548,7 +1562,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 		// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
 		// This can happen when all registers are in use and spilling picks the same register twice
-		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !is_floating_point_type(ctx.result_value.type)) {
+		if (ctx.result_physical_reg == ctx.rhs_physical_reg && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			// Get the LHS variable's stack location and reload it into a different register
 			auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 			if (reg_info.stackVariableOffset != INT_MIN) {
@@ -1612,7 +1626,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 				} else {
 					emitMovToFrameSized(
 						SizedRegister{actual_source_reg, 64, false},  // source: 64-bit register
-						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+						SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 					);
 				}
 			}
@@ -1668,7 +1682,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed}
 						);
 					}
 					// Can release source register since result is now tracked in the destination register
@@ -1692,7 +1706,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 					} else {
 						emitMovToFrameSized(
 							SizedRegister{actual_source_reg, 64, false},
-							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, isSignedType(ctx.result_value.type)}
+							SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed}
 						);
 					}
 					// Keep the value in the register for subsequent operations
@@ -1750,15 +1764,15 @@ void IrToObjConverter<TWriterClass>::groupInstructionsByFunction(const Ir& ir)  
 
 template<class TWriterClass>
 void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset,
-		Type value_type,
+		TypeIndex value_type_index,
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
 		TempVar temp_var)  {
 
 		IndirectStorageInfo info{
-			.value_type = value_type,
-			.ir_type = toIrType(value_type),
+			.value_type_index = value_type_index,
+			.ir_type = toIrType(value_type_index.category()),
 			.value_size_bits = SizeInBits{value_size_bits},
 			.is_rvalue_reference = is_rvalue_ref,
 			.holds_address_only = holds_address_only
@@ -1776,10 +1790,10 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 			reference_temp_var_numbers_.push_back(temp_var.var_number);
 			if (holds_address_only) {
 				ValueCategory cat = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::PRValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type, SizeInBits{value_size_bits}, cat));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeAddressOnly(value_type_index, SizeInBits{value_size_bits}, cat));
 			} else {
 				ValueCategory category = is_rvalue_ref ? ValueCategory::XValue : ValueCategory::LValue;
-				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type, SizeInBits{value_size_bits}, category));
+				setTempVarMetadata(temp_var, TempVarMetadata::makeReference(value_type_index, SizeInBits{value_size_bits}, category));
 			}
 		}
 	}
@@ -1796,24 +1810,24 @@ void IrToObjConverter<TWriterClass>::clearFunctionTempVarMetadata()  {
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var)  {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, is_rvalue_ref, false, temp_var);
+void IrToObjConverter<TWriterClass>::setReferenceInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, bool is_rvalue_ref, TempVar temp_var)  {
+		setIndirectStorageInfo(stack_offset, value_type_index, value_size_bits, is_rvalue_ref, false, temp_var);
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var)  {
-		setIndirectStorageInfo(stack_offset, value_type, value_size_bits, false, true, temp_var);
+void IrToObjConverter<TWriterClass>::setAddressOnlyInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, TempVar temp_var)  {
+		setIndirectStorageInfo(stack_offset, value_type_index, value_size_bits, false, true, temp_var);
 	}
 
 template<class TWriterClass>
-void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
-		if (!returns_reference || value_type == Type::Function) {
+void IrToObjConverter<TWriterClass>::registerObjectReferenceCallResult(int32_t stack_offset, TypeIndex value_type_index, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference)  {
+		if (!returns_reference || value_type_index.category() == TypeCategory::Function) {
 			return;
 		}
 
 		setReferenceInfo(
 			stack_offset,
-			value_type,
+			value_type_index,
 			referenced_value_size_in_bits.value,
 			returns_rvalue_reference,
 			TempVar{0});
@@ -1890,7 +1904,7 @@ std::string IrToObjConverter<TWriterClass>::buildDestructorMangledNameFromString
 			class_name_str = class_name_str.substr(0, colon_pos);
 		}
 		std::vector<TypeSpecifierNode> empty_params;
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name_str;
 		return std::string(writer.generateMangledName(func_name, sig));
@@ -1915,9 +1929,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 
 			// Check TempVar metadata next
 			if (isTempVarReference(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeCategory vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = TypeIndex{0, vt},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -1925,9 +1939,9 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 				};
 			}
 			if (isTempVarAddressOnly(temp_var)) {
-				Type vt = getTempVarValueType(temp_var);
+				TypeCategory vt = getTempVarValueType(temp_var);
 				return IndirectStorageInfo{
-					.value_type = vt,
+					.value_type_index = TypeIndex{0, vt},
 					.ir_type = toIrType(vt),
 					.value_size_bits = SizeInBits{getTempVarValueSizeBits(temp_var)},
 					.is_rvalue_reference = isTempVarRValueReference(temp_var),
@@ -2147,7 +2161,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 										if (catch_op->type_index.is_valid() && catch_op->type_index.index() < getTypeInfoCount()) {
 											catch_size_bits = getTypeInfo(catch_op->type_index).type_size_;
 										} else {
-											catch_size_bits = get_type_size_bits(catch_op->exception_type);
+											catch_size_bits = get_type_size_bits(catch_op->exceptionType());
 										}
 										if (catch_size_bits > 0) {
 											if (current_function_reserved_catch_obj_padding_size_ == 0) {
@@ -3994,7 +4008,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// Determine effective return size; fall back to type size if not provided
 			int return_size_bits = call_op.return_size_in_bits.value;
 			if (return_size_bits == 0) {
-				int computed_size = get_type_size_bits(call_op.return_type);
+				int computed_size = get_type_size_bits(call_op.returnType());
 				if (computed_size > 0) {
 					return_size_bits = computed_size;
 				} else {
@@ -4065,7 +4079,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4189,7 +4203,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4377,7 +4391,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Both sizes are explicit for clarity
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4404,7 +4418,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4419,7 +4433,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
-						if (is_floating_point_type(arg.type)) {
+						if (is_floating_point_type(arg.category())) {
 							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
 								va_temp_float_idx++;
@@ -4497,14 +4511,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 			// Store return value - RAX for integers, XMM0 for floats
 			// For struct returns using return slot, the struct is already in place - no copy needed
-			if (call_op.return_type != Type::Void && !call_op.usesReturnSlot()) {
-				if (is_floating_point_type(call_op.return_type)) {
+			if (call_op.return_type_index.category() != TypeCategory::Void && !call_op.usesReturnSlot()) {
+				if (isFloatingPointType(call_op.return_type_index.category())) {
 					// Float return value is in XMM0
-					bool is_float = (call_op.return_type == Type::Float);
+					bool is_float = (call_op.return_type_index.category() == TypeCategory::Float);
 					emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 				} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
-					if (call_op.return_type == Type::Struct && return_size_bits > 64 && return_size_bits <= 128) {
+					if (call_op.return_type_index.category() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
 						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 						emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);  // Store low 8 bytes
 						emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);  // Store high 8 bytes
@@ -4515,14 +4529,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Single-register return (≤64 bits) in RAX
 						emitMovToFrameSized(
 							SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-							SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
+							SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}  // dest
 						);
 					}
 				} else {
 					// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 					emitMovToFrameSized(
 						SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.return_type)}  // dest
+						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}  // dest
 					);
 				}
 			} else if (call_op.usesReturnSlot()) {
@@ -4537,10 +4551,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			// 64-bit value is a true object reference and what size object it refers to.
 			// Function references are different: they carry a callable address and must
 			// not be registered as implicitly-dereferenced object references.
-			if (call_op.returns_reference && call_op.return_type != Type::Function) {
+			if (call_op.returns_reference && call_op.return_type_index.category() != TypeCategory::Function) {
 				registerObjectReferenceCallResult(
-					result_offset,
-					call_op.return_type,
+				result_offset,
+				TypeIndex{0, call_op.returnType()},
 					call_op.referenced_value_size_in_bits,
 					call_op.returns_reference,
 					call_op.returns_rvalue_reference);
@@ -4647,7 +4661,7 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 			class_name = struct_name;
 		}
 
-		TypeSpecifierNode void_return(Type::Void, TypeIndex{}, 0);
+		TypeSpecifierNode void_return(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -4792,8 +4806,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// once TypeSpecifierNode supports construction from IrType + metadata.
 		auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 			TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
-				? TypeSpecifierNode(arg.type, arg.type_index, arg.size_in_bits.value)
-				: TypeSpecifierNode(arg.type, TypeQualifier::None, arg.size_in_bits.value);
+				? TypeSpecifierNode(arg.type_index.withCategory(arg.typeEnum()), arg.size_in_bits.value, Token{}, CVQualifier::None, ReferenceQualifier::None)
+				: TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg.size_in_bits.value, Token{}, CVQualifier::None);
 			if (arg.pointer_depth.is_pointer()) {
 				for (int i = 0; i < arg.pointer_depth.value; ++i) {
 					ts.add_pointer_level();
@@ -4886,7 +4900,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// Fallback to old logic: infer from argument types
 			for (size_t i = 0; i < num_params; ++i) {
 				const TypedValue& arg = ctor_op.arguments[i];
-				Type paramType = arg.type;
+				TypeCategory paramType = arg.typeEnum();
 				int paramSize = arg.size_in_bits.value;
 				TypeIndex arg_type_index = arg.type_index;
 				bool arg_is_reference = arg.is_reference();  // Check if marked as reference
@@ -4919,14 +4933,14 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				}
 
 				// For copy/move constructors: if parameter is the same struct type, it should be a reference
-				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Type::Struct and same as struct_name
+				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Struct and same as struct_name
 				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 				bool is_same_struct_type = false;
 				if (struct_type_it != getTypesByNameMap().end() && arg_type_index.is_valid()) {
 					is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 				}
 
-				if (num_params == 1 && paramType == Type::Struct && is_same_struct_type && !arg_is_reference) {
+				if (num_params == 1 && paramType == TypeCategory::Struct && is_same_struct_type && !arg_is_reference) {
 					// This is likely a copy constructor, but arg_is_reference wasn't set
 					// Determine the actual CV qualifier from the constructor signature
 					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
@@ -4955,12 +4969,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							}
 						}
 
-						param_type = TypeSpecifierNode(paramType, struct_type_index, static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv);
+						param_type = TypeSpecifierNode(struct_type_index.withCategory(paramType), static_cast<unsigned char>(actual_size), Token{}, copy_ctor_cv, ReferenceQualifier::None);
 						param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // set_reference(false) creates an lvalue reference (not rvalue)
 					}
-				} else if (paramType == Type::Struct && arg_type_index.is_valid()) {
+				} else if (paramType == TypeCategory::Struct && arg_type_index.is_valid()) {
 					// Not a copy constructor, but still a struct parameter - set the type_index
-					param_type = TypeSpecifierNode(paramType, arg_type_index, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
+					param_type = TypeSpecifierNode(arg_type_index.withCategory(paramType), static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier, ReferenceQualifier::None);
 					// Add pointer levels (rebuild after creating with type_index)
 					for (int p = 0; p < arg_pointer_depth; ++p) {
 						param_type.add_pointer_level(CVQualifier::None);
@@ -5077,7 +5091,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			const TypeSpecifierNode* param_type_spec = (i < parameter_types.size()) ? &parameter_types[i] : nullptr;
-			Type paramType = param_type_spec ? param_type_spec->type() : arg.type;
+			TypeCategory paramType = param_type_spec ? param_type_spec->type() : arg.typeEnum();
 			int paramSize = param_type_spec ? getTypeSpecSizeBits(*param_type_spec) : arg.size_in_bits.value;
 			const IrValue& paramValue = arg.value;
 			bool arg_is_reference = param_type_spec
@@ -5085,7 +5099,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				: arg.is_reference();
 			const int source_base_adjustment = (i == 0) ? ctor_op.source_base_class_offset : 0;
 
-			bool is_float_arg = (paramType == Type::Float || paramType == Type::Double)
+			bool is_float_arg = (paramType == TypeCategory::Float || paramType == TypeCategory::Double)
 				&& (!param_type_spec || param_type_spec->pointer_depth() == 0)
 				&& !arg_is_reference;
 			bool is_reference_param = arg_is_reference;
@@ -5101,7 +5115,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 					// Convert to appropriate bit pattern (float or double)
 					uint64_t bits;
-					if (paramType == Type::Float) {
+					if (paramType == TypeCategory::Float) {
 						float float_val = static_cast<float>(float_value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_val, sizeof(float_bits));
@@ -5122,7 +5136,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					// Load from temp variable
 					const TempVar temp_var = *temp_var_ptr;
 					int param_offset = getStackOffsetFromTempVar(temp_var);
-					bool is_float = (paramType == Type::Float);
+					bool is_float = (paramType == TypeCategory::Float);
 					emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 				} else if (std::holds_alternative<StringHandle>(paramValue)) {
 					// Load from variable
@@ -5130,7 +5144,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					auto it = variable_scopes.back().variables.find(var_name_handle);
 					if (it != variable_scopes.back().variables.end()) {
 						int param_offset = it->second.offset;
-						bool is_float = (paramType == Type::Float);
+						bool is_float = (paramType == TypeCategory::Float);
 						emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 					}
 				}
@@ -5242,7 +5256,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
 		// Build FunctionSignature for proper overload resolution
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 		sig.class_name = class_name;
 
@@ -5320,7 +5334,7 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 
 		// Build FunctionSignature for destructor (destructors take no parameters and return void)
 		std::vector<TypeSpecifierNode> empty_params;  // Destructors have no parameters
-		TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0, Token{});
+		TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 		ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 		sig.class_name = class_name;
 
@@ -5421,7 +5435,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			// First pass: handle stack arguments
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(arg.category());
 
 				bool use_register = false;
 				if (is_float_arg) {
@@ -5448,7 +5462,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(arg.category());
 
 				bool use_register = false;
 				X64Register target_reg;
@@ -5522,13 +5536,13 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		if (op.result.effectiveIrType() != IrType::Void) {
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},  // source: 64-bit register
-				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.type)}  // dest
+				SizedStackSlot{result_offset, op.result.size_in_bits.value, isSignedType(op.result.typeEnum())}  // dest
 			);
 		}
 
 		registerObjectReferenceCallResult(
-			result_offset,
-			op.result.type,
+				result_offset,
+				TypeIndex{0, op.result.typeEnum()},
 			op.referenced_value_size_in_bits,
 			op.returns_reference,
 			op.returns_rvalue_reference);
@@ -6090,7 +6104,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 		// Store global variable info for later use
 		GlobalVariableInfo global_info;
 		global_info.name = op.var_name;
-		global_info.type = op.type;
+		global_info.type_index = op.type_index;
 		global_info.is_initialized = op.is_initialized;
 		global_info.size_in_bytes = (op.size_in_bits.value / 8) * op.element_count;
 		global_info.reloc_target = op.reloc_target;
@@ -6132,9 +6146,9 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 		TempVar result_temp = std::get<TempVar>(op.result.value);
 		StringHandle global_name_handle = op.getGlobalName();
 		int size_in_bits = op.result.size_in_bits.value;
-		Type result_type = op.result.type;
-		bool is_floating_point = (result_type == Type::Float || result_type == Type::Double);
-		bool is_float = (result_type == Type::Float);
+		TypeCategory result_type = op.result.typeEnum();
+		bool is_floating_point = (result_type == TypeCategory::Float || result_type == TypeCategory::Double);
+		bool is_float = (result_type == TypeCategory::Float);
 
 		// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
 		// This prevents overwriting intermediate results in chained operations
@@ -6195,9 +6209,9 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 		}
 
 		int size_in_bits = static_cast<int>(global_info->size_in_bytes * 8);
-		Type var_type = global_info->type;
-		bool is_floating_point = (var_type == Type::Float || var_type == Type::Double);
-		bool is_float = (var_type == Type::Float);
+		TypeCategory var_type = global_info->varType();
+		bool is_floating_point = (var_type == TypeCategory::Float || var_type == TypeCategory::Double);
+		bool is_float = (var_type == TypeCategory::Float);
 
 		// Load the source value from stack into a register
 		int source_offset = getStackOffsetFromTempVar(source_temp);
@@ -6226,7 +6240,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		StringHandle var_name_handle = op.var_name;
 		std::string var_name_str = std::string(StringTable::getStringView(var_name_handle));
 
-		Type var_type = op.type;
+		TypeCategory var_type = op.opType();
 		StackVariableScope& current_scope = variable_scopes.back();
 		auto var_it = current_scope.variables.find(var_name_handle);
 		assert(var_it != current_scope.variables.end());
@@ -6271,7 +6285,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 			}
 
-			setReferenceInfo(var_it->second.offset, var_type, value_size_bits, is_rvalue_reference, TempVar{0});
+			setReferenceInfo(var_it->second.offset, TypeIndex{0, var_type}, value_size_bits, is_rvalue_reference, TempVar{0});
 			int32_t dst_offset = var_it->second.offset;
 			X64Register pointer_reg = allocateRegisterWithSpilling();
 			bool pointer_initialized = false;
@@ -6355,7 +6369,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (std::holds_alternative<double>(init.value)) {
 						double value = std::get<double>(init.value);
 						uint64_t bits;
-						if (var_type == Type::Float) {
+						if (var_type == TypeCategory::Float) {
 							float fv = static_cast<float>(value);
 							uint32_t fb; std::memcpy(&fb, &fv, sizeof(fb));
 							emitMovDwordPtrImmToRegOffset(X64Register::RBP, temp_offset, fb);
@@ -6405,7 +6419,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				X64Register ptr_reg = allocateRegisterWithSpilling(dest_reg);
 				emitMovFromFrame(ptr_reg, source_stack_offset);
 				if (is_float) {
-					emitFloatMovFromMemory(dest_reg, ptr_reg, 0, var_type == Type::Float);
+					emitFloatMovFromMemory(dest_reg, ptr_reg, 0, var_type == TypeCategory::Float);
 				} else {
 					emitMovFromMemory(dest_reg, ptr_reg, 0, (op.size_in_bits.value + 7) / 8);
 				}
@@ -6421,13 +6435,13 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					// Handle double/float literals
 					double value = std::get<double>(init.value);
 
-					FLASH_LOG(Codegen, Debug, "Initializing ", (var_type == Type::Float ? "float" : "double"), " literal: ", value);
+					FLASH_LOG(Codegen, Debug, "Initializing ", (var_type == TypeCategory::Float ? "float" : "double"), " literal: ", value);
 
 					// Convert double to bit pattern
 					uint64_t bits;
 
 					// If the variable type is Float (32-bit), convert the double to float first
-					if (var_type == Type::Float) {
+					if (var_type == TypeCategory::Float) {
 						float float_value = static_cast<float>(value);
 						uint32_t float_bits;
 						std::memcpy(&float_bits, &float_value, sizeof(float_bits));
@@ -6470,7 +6484,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					// Store the value from register to stack (size-aware)
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},  // source: 64-bit register
-						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}  // dest
+						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}  // dest
 					);
 
 					// Release the register since the value is now in the stack
@@ -6544,7 +6558,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 				}
 
-						if (op.use_copy_constructor && var_type == Type::Struct && init.type_index.is_valid()) {
+						if (op.use_copy_constructor && var_type == TypeCategory::Struct && init.type_index.is_valid()) {
 							if (emitSameTypeCopyOrMoveConstructorCall(init.type_index, dst_offset, false, init)) {
 							return;
 						}
@@ -6558,7 +6572,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					if (is_floating_point_type(var_type)) {
 						// For floating-point types, the value is in an XMM register
 						// Use float mov instructions instead of integer mov
-						bool is_float = (var_type == Type::Float);
+						bool is_float = (var_type == TypeCategory::Float);
 						if (should_deref_reference_source) {
 							loadReferenceSourceIntoRegister(src_reg.value(), src_offset, is_float);
 						}
@@ -6571,12 +6585,12 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						emitMovToFrameSized(
 							SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
-							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}
 						);
 					}
 				} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-					if (var_type == Type::Struct) {
+					if (var_type == TypeCategory::Struct) {
 						// For struct types, copy entire struct using 8-byte chunks
 						int struct_size_bytes = (op.size_in_bits.value + 7) / 8;
 
@@ -6698,7 +6712,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					} else if (is_floating_point_type(var_type)) {
 						// For floating-point types, use XMM register and float moves
 						allocated_reg_val = allocateXMMRegisterWithSpilling();
-						bool is_float = (var_type == Type::Float);
+						bool is_float = (var_type == TypeCategory::Float);
 						if (should_deref_reference_source) {
 							loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, is_float);
 						} else {
@@ -6716,7 +6730,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						emitMovToFrameSized(
 							SizedRegister{allocated_reg_val, 64, false},
-							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.type)}
+							SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}
 						);
 						regAlloc.release(allocated_reg_val);
 					}
@@ -6726,15 +6740,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 		// Add debug information for the local variable
 		if (current_function_name_.isValid()) {
-			uint32_t type_index;
-			switch (var_type) {
-				case Type::Int: type_index = 0x74; break;
-				case Type::Float: type_index = 0x40; break;
-				case Type::Double: type_index = 0x41; break;
-				case Type::Char: type_index = 0x10; break;
-				case Type::Bool: type_index = 0x30; break;
-				default: type_index = 0x74; break;
-			}
+			const uint32_t type_index = codeViewTypeIndex(var_type);
 
 			std::vector<CodeView::VariableLocation> locations;
 			uint32_t start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -6828,7 +6834,7 @@ void IrToObjConverter<TWriterClass>::resetFunctionState()  {
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
 		catch_has_pending_parent_return_ = false;
-		current_function_return_type_ = Type::Void;
+		current_function_return_type_index_ = nativeTypeIndex(TypeCategory::Void);
 		current_function_return_size_in_bits_ = 0;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
@@ -6887,7 +6893,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 
 		// Construct return type
-		TypeSpecifierNode return_type(func_decl.return_type, TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value));
+		TypeSpecifierNode return_type(func_decl.returnType(), TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value), Token{}, CVQualifier::None);
 		for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 			return_type.add_pointer_level();
 		}
@@ -6895,7 +6901,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		// Extract parameters
 		std::vector<TypeSpecifierNode> parameter_types;
 		for (const auto& param : func_decl.parameters) {
-			TypeSpecifierNode param_type(param.type, TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value));
+			TypeSpecifierNode param_type(param.paramType(), TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value), Token{}, CVQualifier::None);
 			for (int i = 0; i < param.pointer_depth.value; ++i) {
 				param_type.add_pointer_level();
 			}
@@ -7193,7 +7199,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		current_function_mangled_name_ = mangled_handle;
 		current_function_offset_ = func_offset;
 		current_function_is_variadic_ = is_variadic;
-		current_function_return_type_ = func_decl.return_type;
+		current_function_return_type_index_ = func_decl.return_type_index;
 		current_function_return_size_in_bits_ = func_decl.return_size_in_bits.value;
 		current_function_has_hidden_return_param_ = func_decl.has_hidden_return_param;  // Track for return statement handling
 		current_function_returns_reference_ = func_decl.returns_reference;  // Track if function returns a reference
@@ -7494,7 +7500,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Handle parameters
 			const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : 0;
 			struct ParameterInfo {
-				Type param_type;
+				TypeCategory param_type;
 				int param_size;
 				std::string_view param_name;
 				int paramNumber;
@@ -7520,7 +7526,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
 
 				X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);  // Always first register
-				parameters.push_back({Type::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
+				parameters.push_back({TypeCategory::Struct, 64, "__return_slot", 0, return_slot_offset, return_slot_reg, 1, false});
 				regAlloc.allocateSpecific(return_slot_reg, return_slot_offset);
 
 				param_offset_adjustment = 1;  // Shift other parameters (including 'this') by 1
@@ -7546,7 +7552,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			// Store 'this' parameter info (register depends on param_offset_adjustment)
 			X64Register this_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
-			parameters.push_back({Type::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
+			parameters.push_back({TypeCategory::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
 			regAlloc.allocateSpecific(this_reg, this_offset);
 
 			param_offset_adjustment++;  // Shift regular parameters by 1 more
@@ -7582,11 +7588,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 			}
 
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
-				auto param_type = instruction.getOperandAs<Type>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
+				auto param_type = instruction.getOperandAs<TypeCategory>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 				auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
 				auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
 				// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
@@ -7608,7 +7614,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = (param_type == Type::Float || param_type == Type::Double) && param_pointer_depth == 0 && !is_reference;
+				bool is_float_param = (param_type == TypeCategory::Float || param_type == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
 
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -7662,9 +7668,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
 				bool is_passed_by_reference = is_reference ||
-				                              (!is_two_reg_struct && param_type == Type::Struct && param_size > 64);
+				                              (!is_two_reg_struct && param_type == TypeCategory::Struct && param_size > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param_type, param_size,
+					setReferenceInfo(offset, TypeIndex{0, param_type}, param_size,
 						instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 				}
 
@@ -7673,15 +7679,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				if (param_pointer_depth > 0) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					switch (param_type) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
-					}
+					param_type_index = codeViewTypeIndex(param_type);
 				}
 				writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
@@ -7742,7 +7740,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, Type::Struct, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 			}
 
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
@@ -7761,14 +7759,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// For variadic callees, the register-save-area prologue handles all register args,
 				// so this path is gated on !is_variadic.
 				bool is_two_reg_struct = !is_variadic &&
-				                        isTwoRegisterStructRaw(toIrType(param.type), param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
+				                        isTwoRegisterStructRaw(toIrType(param.paramType()), param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
 
 				// Platform-specific and type-aware offset calculation
 				size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 				size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 				// Reference parameters (including rvalue references) are passed as pointers,
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_param = isIrFloatingPointType(toIrType(param.type)) && !param.pointer_depth.is_pointer() && !param.is_reference();
+				bool is_float_param = isIrFloatingPointType(toIrType(param.paramType())) && !param.pointer_depth.is_pointer() && !param.is_reference();
 
 				// Determine the register count threshold for this parameter type
 				size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
@@ -7817,9 +7815,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
 				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 				bool is_passed_by_reference = param.is_reference() ||
-				                              (!is_two_reg_struct && isIrStructType(toIrType(param.type)) && param.size_in_bits.value > 64);
+				                              (!is_two_reg_struct && isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 64);
 				if (is_passed_by_reference) {
-					setReferenceInfo(offset, param.type, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
+					setReferenceInfo(offset, TypeIndex{0, param.paramType()}, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 				}
 
 				// Add parameter to debug information
@@ -7827,15 +7825,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				if (param.pointer_depth.is_pointer()) {
 					param_type_index = 0x603;  // T_64PVOID for pointer types
 				} else {
-					switch (param.type) {
-						case Type::Int: param_type_index = 0x74; break;  // T_INT4
-						case Type::Float: param_type_index = 0x40; break; // T_REAL32
-						case Type::Double: param_type_index = 0x41; break; // T_REAL64
-						case Type::Char: param_type_index = 0x10; break;  // T_CHAR
-						case Type::Bool: param_type_index = 0x30; break;  // T_BOOL08
-						case Type::Struct: param_type_index = 0x603; break;  // T_64PVOID for struct pointers
-						default: param_type_index = 0x74; break;
-					}
+					param_type_index = codeViewTypeIndex(param.paramType());
 				}
 				// Phase 4: Use helper to get param name
 				std::string param_name_str(StringTable::getStringView(param.getName()));
@@ -7879,7 +7869,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						// it does not need to be registered in regAlloc.
 					}
 
-					parameters.push_back({param.type, param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
+					parameters.push_back({param.type_index.category(), param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
 				}
 			}
 		}
@@ -7902,11 +7892,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		} else {
 			for (const auto& param : parameters) {
 				// MSVC-STYLE: Store parameters using RBP-relative addressing
-				bool is_float_param = (param.param_type == Type::Float || param.param_type == Type::Double) && !param.pointer_depth && !param.is_reference;
+				bool is_float_param = (param.param_type == TypeCategory::Float || param.param_type == TypeCategory::Double) && !param.pointer_depth && !param.is_reference;
 
 				if (is_float_param) {
 					// For floating-point parameters, use movss/movsd to store from XMM register
-					bool is_float = (param.param_type == Type::Float);
+					bool is_float = (param.param_type == TypeCategory::Float);
 					emitFloatMovToFrame(param.src_reg, param.offset, is_float);
 				} else if (param.second_reg != X64Register::Count) {
 					// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
@@ -7920,7 +7910,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					// References are always passed as 64-bit pointers regardless of the type they refer to
 					// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
 					bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
-					                            (param.param_type == Type::Struct && param.param_size > 64);
+					                            (param.param_type == TypeCategory::Struct && param.param_size > 64);
 					int store_size = is_passed_by_pointer ? 64 : param.param_size;
 					emitMovToFrameSized(
 						SizedRegister{param.src_reg, 64, false},  // source: 64-bit register
@@ -8244,8 +8234,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						return_var.name(), (it != current_scope.variables.end()));
 
 					// Check if return type is float/double
-					bool is_float_return = ret_op.return_type.has_value() &&
-					                        is_floating_point_type(ret_op.return_type.value());
+					bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
 					bool handled_reference_return = false;
 					{
@@ -8539,7 +8528,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 							} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-								if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct &&
+								if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 									var_size > 64 && var_size <= 128) {
 									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8619,7 +8608,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
-							if (ret_op.return_type.has_value() && ret_op.return_type.value() == Type::Struct &&
+							if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 								var_size > 64 && var_size <= 128) {
 								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8680,8 +8669,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							int var_size = getActualVariableSize(var_name_handle, ret_op.return_size);
 
 							// Check if return type is float/double
-							bool is_float_return = ret_op.return_type.has_value() &&
-							                        is_floating_point_type(ret_op.return_type.value());
+							bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
 							// Check if function uses hidden return parameter (for struct returns)
 							if (current_function_has_hidden_return_param_) {
@@ -9298,14 +9286,14 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 			int final_result_offset = variable_scopes.back().variables[*string].offset;
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{final_result_offset, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 			);
 		} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 			auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 			auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RDX, 64, false},  // source: RDX register
-				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, isSignedType(ctx.result_value.type)}  // dest
+				SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits, ctx.result_value.is_signed}  // dest
 			);
 		}
 
@@ -9681,7 +9669,7 @@ X64Register IrToObjConverter<TWriterClass>::loadOperandIntoRegister(const IrInst
 template<class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const TypedValue& typed_value)  {
 		X64Register reg = X64Register::Count;
-		bool is_signed = isSignedType(typed_value.type);
+		bool is_signed = isSignedType(typed_value.typeEnum());
 
 		if (std::holds_alternative<TempVar>(typed_value.value)) {
 			auto temp = std::get<TempVar>(typed_value.value);
@@ -10587,7 +10575,7 @@ void IrToObjConverter<TWriterClass>::handleIntToFloat(const IrInstruction& instr
 		// cvtsi2ss (int to float) or cvtsi2sd (int to double)
 		// Opcode: F3 REX.W 0F 2A /r (cvtsi2ss xmm, r64) for float
 		// Opcode: F2 REX.W 0F 2A /r (cvtsi2sd xmm, r64) for double
-		bool is_float = (op.to_type == Type::Float);
+		bool is_float = (op.to_type_index.category() == TypeCategory::Float);
 		uint8_t prefix = is_float ? 0xF3 : 0xF2;
 
 		uint8_t rex = 0x48;  // REX.W for 64-bit source
@@ -10635,7 +10623,7 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 
 		// cvtss2sd (float to double) or cvtsd2ss (double to float)
 		// Now properly handles XMM8-XMM15 registers with REX prefix
-		if (op.from.effectiveIrType() == IrType::Float && op.to_type == Type::Double) {
+		if (op.from.effectiveIrType() == IrType::Float && op.to_type_index.category() == TypeCategory::Double) {
 			// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5A, result_xmm, source_xmm);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -10652,7 +10640,7 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 
 		// Store result XMM to stack
 		auto result_offset = getStackOffsetFromTempVar(op.result);
-		bool is_float_result = (op.to_type == Type::Float);
+		bool is_float_result = (op.to_type_index.category() == TypeCategory::Float);
 		emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
 		regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits.value);
 	}
@@ -10921,7 +10909,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// Use typed payload format
 		const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
 		FLASH_LOG(Codegen, Debug, "handleAssignment called");
-		Type lhs_type = op.lhs.type;
+		TypeCategory lhs_type = op.lhs.typeEnum();
 		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
 		// Special handling for pointer store (assignment through pointer)
@@ -10975,7 +10963,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 		// Special handling for function pointer assignment
-		if (lhs_type == Type::FunctionPointer) {
+		if (lhs_type == TypeCategory::FunctionPointer) {
 			// Get LHS destination
 			int32_t lhs_offset = -1;
 
@@ -11025,7 +11013,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 		// Special handling for struct assignment
-		if (lhs_type == Type::Struct) {
+		if (lhs_type == TypeCategory::Struct) {
 			// For struct assignment, we need to copy the entire struct value
 			// LHS is the destination (should be a variable name or TempVar)
 			// RHS is the source (should be a TempVar from function return, or another variable)
@@ -11229,14 +11217,14 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			X64Register value_reg = allocateRegisterWithSpilling();
 
 			// Get reference value type and size
-			Type value_type;
+			TypeCategory value_type;
 			int value_size_bits;
 			if (lhs_ref_info.has_value()) {
-				value_type = lhs_ref_info->value_type;
+				value_type = lhs_ref_info->valueType();
 				value_size_bits = lhs_ref_info->value_size_bits.value;
 			} else {
 				// Use TypedValue metadata
-				value_type = op.lhs.type;
+				value_type = op.lhs.typeEnum();
 				value_size_bits = op.lhs.size_in_bits.value;
 			}
 			int value_size_bytes = value_size_bits / 8;
@@ -11314,7 +11302,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 		// For non-reference LHS, proceed with normal assignment
 		// Get RHS source
-		Type rhs_type = op.rhs.type;
+		TypeCategory rhs_type = op.rhs.typeEnum();
 		X64Register source_reg = X64Register::RAX;
 
 		// Load RHS value into a register
@@ -11338,7 +11326,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 					source_reg = ptr_reg;
 				} else if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (rhs_type == Type::Float);
+					bool is_float = (rhs_type == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
@@ -11392,7 +11380,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			} else {
 				if (is_floating_point_type(rhs_type)) {
 					source_reg = allocateXMMRegisterWithSpilling();
-					bool is_float = (rhs_type == Type::Float);
+					bool is_float = (rhs_type == TypeCategory::Float);
 					emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 				} else {
 					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
@@ -11437,7 +11425,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 			if (is_floating_point_type(rhs_type)) {
 				// For floating-point, use SSE store instruction helper
-				bool is_float = (rhs_type == Type::Float);
+				bool is_float = (rhs_type == TypeCategory::Float);
 				auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
 				textSectionData.insert(textSectionData.end(), store_inst.op_codes.begin(),
 				                       store_inst.op_codes.begin() + store_inst.size_in_bytes);
@@ -11451,7 +11439,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		} else {
 			// Normal (non-reference) assignment - store directly to stack location
 			if (is_floating_point_type(rhs_type)) {
-				bool is_float = (rhs_type == Type::Float);
+				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovToFrame(source_reg, lhs_offset, is_float);
 			} else {
 				emitMovToFrameSized(
@@ -11645,9 +11633,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		TempVar result_var = op.result;
 		int element_size_bits = op.element_size_in_bits;
 		int element_size_bytes = element_size_bits / 8;
-		Type element_type = op.element_type;
-		bool is_floating_point = (element_type == Type::Float || element_type == Type::Double);
-		bool is_float = (element_type == Type::Float);
+		TypeCategory element_type = op.elementType();
+		bool is_floating_point = (element_type == TypeCategory::Float || element_type == TypeCategory::Double);
+		bool is_float = (element_type == TypeCategory::Float);
 		bool is_struct = is_struct_type(element_type);
 
 		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
@@ -11760,7 +11748,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 					} else {
 						emitMovFromFrameSized(
 							SizedRegister{base_reg, 64, false},
-							SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.element_type)}
+							SizedStackSlot{static_cast<int32_t>(element_offset), element_size_bits, isSignedType(op.elementType())}
 						);
 					}
 				}
@@ -11787,7 +11775,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				}
 
 				// Load index with proper sign extension based on index type
-				bool is_signed = isSignedType(op.index.type);
+				bool is_signed = isSignedType(op.index.typeEnum());
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11808,7 +11796,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			} else {
 				// Array is a regular variable
 				// Load index with proper sign extension based on index type
-				bool is_signed = isSignedType(op.index.type);
+				bool is_signed = isSignedType(op.index.typeEnum());
 				emitMovFromFrameSized(
 					SizedRegister{index_reg, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11859,7 +11847,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 
 			// Load index into index_reg with proper sign extension based on index type
-			bool is_signed = isSignedType(op.index.type);
+			bool is_signed = isSignedType(op.index.typeEnum());
 			emitMovFromFrameSized(
 				SizedRegister{index_reg, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_var_offset), op.index.size_in_bits.value, is_signed}
@@ -11896,7 +11884,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
 		// This allows subsequent operations to properly handle the address
 		if (optimize_lea) {
-			setReferenceInfo(result_offset, element_type, element_size_bits, false, result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, element_type}, element_size_bits, false, result_var);
 		}
 
 		// Release the base register
@@ -11972,7 +11960,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 				);
 
 				// Multiply index by element size
@@ -12003,7 +11991,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},  // dest: 64-bit register
-					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.type)}  // source: index from stack
+					SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 				);
 
 				// Multiply index by element size
@@ -12081,7 +12069,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 
 			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
-			bool is_float_store = is_floating_point_type(op.element_type);
+			bool is_float_store = is_floating_point_type(op.elementType());
 
 			if (std::holds_alternative<unsigned long long>(op.value.value)) {
 				// Constant value
@@ -12479,7 +12467,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		//      pointer (offset 0), so no load instruction is needed.
 		bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 			isIrStructType(op.result.effectiveIrType()) &&
-			(op.result.type != Type::Struct || !op.result.type_index.is_valid()));
+			(op.result.category() != TypeCategory::Struct || !op.result.type_index.is_valid()));
 
 		// Flush all dirty registers to ensure values are saved before allocating
 		flushAllDirtyRegisters();
@@ -12552,7 +12540,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			regAlloc.release(addr_reg);
 
 			// Mark this temp var as containing a pointer/address
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, false, result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
 			return;
 		}
 
@@ -12599,7 +12587,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 					}
 					FLASH_LOG_FORMAT(Codegen, Warning,
 						"MemberAccess: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
-						member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+						member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.typeEnum()),
 						op.result.pointer_depth, op.result.type_index);
 					regAlloc.release(temp_reg);
 					return;
@@ -12651,7 +12639,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				}
 				FLASH_LOG_FORMAT(Codegen, Warning,
 					"MemberAccess pointer path: Unsupported member size {} bytes for '{}' (type={}, ptr_depth={}, type_index={}), skipping",
-					member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.type),
+					member_size_bytes, StringTable::getStringView(op.member_name), static_cast<int>(op.result.typeEnum()),
 					op.result.pointer_depth, op.result.type_index);
 				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
@@ -12700,7 +12688,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		if (op.is_reference()) {
 			emitMovToFrame(temp_reg, result_offset, 64);
 			regAlloc.release(temp_reg);
-			setReferenceInfo(result_offset, op.result.type, op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
+			setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, op.is_rvalue_reference(), result_var);
 			return;
 		}
 
@@ -13272,7 +13260,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			// However, we mark it in indirect_stack_info_ so that subsequent operations
 			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
 			// This is needed for proper handling when passing AddressOf results to functions.
-			setAddressOnlyInfo(result_offset, op.operand.type, op.operand.size_in_bits.value, op.result);
+			setAddressOnlyInfo(result_offset, TypeIndex{0, op.operand.typeEnum()}, op.operand.size_in_bits.value, op.result);
 
 			// Release the register since the address has been stored to memory
 			regAlloc.release(target_reg);
@@ -13380,7 +13368,7 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 		// Record that the stack slot already holds an address so later consumers
 		// (notably by-address constructor-call lowering) load it with MOV instead
 		// of taking the address of the spill slot with LEA.
-		setAddressOnlyInfo(result_offset, op.member_type, op.member_size_in_bits, op.result);
+		setAddressOnlyInfo(result_offset, TypeIndex{0, op.memberType()}, op.member_size_in_bits, op.result);
 
 		// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
@@ -13461,7 +13449,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 				int64_t index_offset = getStackOffsetFromTempVar(index_var);
 
 				// Load index into RCX with proper size and sign extension
-				bool is_signed = isSignedType(arr_idx.index_type);
+				bool is_signed = isSignedType(arr_idx.indexType());
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
@@ -13484,7 +13472,7 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 				int64_t index_offset = it->second.offset;
 
 				// Load index into RCX with proper size and sign extension
-				bool is_signed = isSignedType(arr_idx.index_type);
+				bool is_signed = isSignedType(arr_idx.indexType());
 				emitMovFromFrameSized(
 					SizedRegister{X64Register::RCX, 64, false},
 					SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed}
@@ -13669,7 +13657,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 		// Legacy format: Operands: [result_var, type, size, operand]
 		assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
 
-		[[maybe_unused]] Type value_type = instruction.getOperandAs<Type>(1);
+		[[maybe_unused]] TypeCategory value_type = instruction.getOperandAs<TypeCategory>(1);
 		int value_size = instruction.getOperandAs<int>(2);
 
 		// Load the pointer operand into a register
@@ -13756,16 +13744,16 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 			TempVar value_temp = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_temp);
 			emitMovFromFrameSized(
-				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
-				SizedStackSlot{value_offset, value_size, isSignedType(op.value.type)}
+				SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
+				SizedStackSlot{value_offset, value_size, isSignedType(op.value.typeEnum())}
 			);
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
 			StringHandle var_name_handle = std::get<StringHandle>(op.value.value);
 			auto it = current_scope.variables.find(var_name_handle);
 			if (it != current_scope.variables.end()) {
 				emitMovFromFrameSized(
-					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.type)},
-					SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.type)}
+					SizedRegister{value_reg, static_cast<uint8_t>(value_size), isSignedType(op.value.typeEnum())},
+					SizedStackSlot{static_cast<int32_t>(it->second.offset), value_size, isSignedType(op.value.typeEnum())}
 				);
 			}
 		}
@@ -13968,7 +13956,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		// Process arguments (if any)
 		for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
 			const auto& arg = op.arguments[i];
-			Type argType = arg.type;
+			TypeCategory argType = arg.typeEnum();
 
 			// Determine if this is a floating-point argument
 			bool is_float_arg = is_floating_point_type(argType);
@@ -13981,7 +13969,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				const TempVar temp_var = std::get<TempVar>(arg.value);
 				int arg_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_float_arg) {
-					bool is_float = (argType == Type::Float);
+					bool is_float = (argType == TypeCategory::Float);
 					emitFloatMovFromFrame(target_reg, arg_offset, is_float);
 				} else {
 					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
@@ -13994,7 +13982,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
 				int arg_offset = variable_scopes.back().variables[arg_var_name_handle].offset;
 				if (is_float_arg) {
-					bool is_float = (argType == Type::Float);
+					bool is_float = (argType == TypeCategory::Float);
 					auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
 					textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 					                       load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
@@ -14093,7 +14081,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (reference type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exception_type,
+				setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()},
 				                 64,
 				                 catch_op.is_rvalue_reference(),
 				                 catch_op.exception_temp);
@@ -14101,35 +14089,10 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 			}
 
 			int type_size_bits = 0;
-			bool is_builtin = false;
-			switch (catch_op.exception_type) {
-				case Type::Bool:
-				case Type::Char:
-				case Type::UnsignedChar:
-				case Type::Short:
-				case Type::UnsignedShort:
-				case Type::Int:
-				case Type::UnsignedInt:
-				case Type::Long:
-				case Type::UnsignedLong:
-				case Type::LongLong:
-				case Type::UnsignedLongLong:
-				case Type::Float:
-				case Type::Double:
-				case Type::LongDouble:
-				case Type::FunctionPointer:
-				case Type::MemberFunctionPointer:
-				case Type::MemberObjectPointer:
-				case Type::Nullptr:
-					is_builtin = true;
-					break;
-				default:
-					is_builtin = false;
-					break;
-			}
+			bool is_builtin = is_builtin_type(catch_op.exceptionType());
 
 			if (is_builtin) {
-				type_size_bits = get_type_size_bits(catch_op.exception_type);
+				type_size_bits = get_type_size_bits(catch_op.exceptionType());
 			} else if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(catch_op.type_index);
 				type_size_bits = type_info.type_size_;
@@ -14137,7 +14100,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 			size_t type_size = type_size_bits / 8;
 
 			if (g_enable_debug_output) {
-				std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exception_type)
+				std::cerr << "[DEBUG][Codegen] CatchBegin: exception_type=" << static_cast<int>(catch_op.exceptionType())
 				          << " type_size_bits=" << type_size_bits
 				          << " type_size=" << type_size << std::endl;
 			}
@@ -14153,7 +14116,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 					std::cerr << "[DEBUG][Codegen] CatchBegin: storing pointer (struct/large type)" << std::endl;
 				}
 				emitMovToFrame(X64Register::RAX, stack_offset, 64);
-				setReferenceInfo(stack_offset, catch_op.exception_type,
+				setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()},
 				                 type_size_bits > 0 ? type_size_bits : 64,
 				                 false,
 				                 catch_op.exception_temp);
@@ -14162,15 +14125,16 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::currentFunctionReturnsFloatingPointInXmm0() const  {
-		return current_function_return_type_ != Type::Void &&
-			is_floating_point_type(current_function_return_type_) &&
+		const TypeCategory return_cat = current_function_return_type_index_.category();
+		return return_cat != TypeCategory::Void &&
+			isFloatingPointType(return_cat) &&
 			!current_function_has_hidden_return_param_ &&
 			!current_function_returns_reference_;
 	}
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::currentFunctionHasCatchParentReturnValue() const  {
-		return current_function_return_type_ != Type::Void;
+		return current_function_return_type_index_.category() != TypeCategory::Void;
 	}
 
 template<class TWriterClass>
@@ -14179,7 +14143,7 @@ int IrToObjConverter<TWriterClass>::getCatchParentReturnSpillSizeBits() const  {
 			return current_function_return_size_in_bits_;
 		}
 
-		if (current_function_return_type_ == Type::Void ||
+		if (current_function_return_type_index_.category() == TypeCategory::Void ||
 			current_function_has_hidden_return_param_ ||
 			current_function_returns_reference_) {
 			return 64;
@@ -14269,7 +14233,6 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 				try_block.cleanup_vars = catch_op.cleanup_vars;
 			}
 			handler.type_index = catch_op.type_index;
-			handler.exception_type = catch_op.exception_type;  // Copy the Type enum
 			handler.is_const = catch_op.is_const;
 			handler.ref_qualifier = catch_op.ref_qualifier;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
@@ -14285,7 +14248,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 					if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
 						catch_storage_bits = getTypeInfo(catch_op.type_index).type_size_;
 					} else {
-						int builtin_size = get_type_size_bits(catch_op.exception_type);
+						int builtin_size = get_type_size_bits(catch_op.exceptionType());
 						if (builtin_size > 0) {
 							catch_storage_bits = builtin_size;
 						}
@@ -14429,7 +14392,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			// the address of the slot itself.
 			if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 				int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
-				setReferenceInfo(stack_offset, catch_op.exception_type, 64, false, catch_op.exception_temp);
+				setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, 64, false, catch_op.exception_temp);
 			}
 
 			if (current_catch_handler_) {
@@ -14635,15 +14598,11 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			emitMovRegReg(X64Register::R15, X64Register::RAX);
 
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
+				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
-					TypedValue source_value;
-					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
-					source_value.type_index = throw_op.type_index;
-					source_value.value = throw_op.exception_value;
+					TypedValue source_value = makeTypedValue(throw_op.type_index, SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 				}
 
@@ -14727,13 +14686,13 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 
 			// RSI = type_info* - generate type_info for the thrown type
 			std::string typeinfo_symbol;
-			Type exception_type = throw_op.exception_type;
+			TypeCategory exception_type = throw_op.exceptionType();
 
 				// Check if it's a built-in type or user-defined type
 				if (thrown_exception_struct_info) {
 					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
 					typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
-			} else if (exception_type != Type::Void) {
+			} else if (exception_type != TypeCategory::Void) {
 				// Built-in type (int, float, etc.) - use the Type enum directly
 				typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
 			}
@@ -14786,12 +14745,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			}
 
 				bool exception_constructed = false;
-				if (throw_op.exception_type == Type::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
-					TypedValue source_value;
-					source_value.type = throw_op.exception_type;
-					source_value.size_in_bits = SizeInBits{static_cast<int>(exception_size * 8)};
-					source_value.type_index = throw_op.type_index;
-					source_value.value = throw_op.exception_value;
+				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
+					TypedValue source_value = makeTypedValue(throw_op.type_index, SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 
@@ -14869,7 +14824,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 				} else {
-					throw_type_name = std::string(getTypeName(throw_op.exception_type));
+					throw_type_name = std::string(getTypeName(throw_op.exceptionType()));
 				}
 
 				std::string throw_info_symbol;

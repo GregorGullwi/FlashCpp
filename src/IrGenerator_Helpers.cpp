@@ -254,13 +254,13 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 // These can be used by both the unified handler and special-case code
 
 // Emit ArrayStore instruction
-void AstToIr::emitArrayStore(Type element_type, int element_size_bits,
+void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
 std::variant<StringHandle, TempVar> array,
 const TypedValue& index, const TypedValue& value,
 int64_t member_offset, bool is_pointer_to_array,
 const Token& token) {
 	ArrayStoreOp payload;
-	payload.element_type = element_type;
+	payload.element_type_index = TypeIndex{0, element_type};
 	payload.element_size_in_bits = element_size_bits;
 	payload.array = array;
 	payload.index = index;
@@ -300,14 +300,15 @@ size_t bitfield_bit_offset) {
 
 
 // Emit DereferenceStore instruction
-void AstToIr::emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
+void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
 std::variant<StringHandle, TempVar> pointer,
 const Token& token) {
 	DereferenceStoreOp store_op;
 	store_op.value = value;
 
 	// Populate pointer TypedValue
-	store_op.pointer.type = pointee_type;
+	store_op.pointer.setType(pointee_type);
+	store_op.pointer.type_index = TypeIndex{0, pointee_type};
 	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
@@ -335,23 +336,12 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 
 
 
-namespace {
-Type resolveRuntimeBaseType(Type semantic_type, TypeIndex type_index) {
-	Type canonical_type = semantic_type;
-	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		// Prefer the canonical type stored in gTypeInfo when available. This keeps
-		// typedef / alias lowering consistent with the resolved type table entry.
-		canonical_type = getTypeInfo(type_index).type_;
-	}
-	return resolve_type_alias(canonical_type, type_index);
-}
-}
-
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const {
-	// Use IrType to catch both Type::Struct and Type::UserDefined (which maps
+size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
+	const TypeCategory type = type_index.category();
+	// Use IrType to catch both TypeCategory::Struct and TypeCategory::UserDefined (which maps
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
 	if (isIrStructType(toIrType(type))) {
@@ -361,47 +351,49 @@ size_t AstToIr::getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits
 				return struct_info->total_size;
 			}
 		}
-		// Type::Struct must always have a valid StructInfo; reaching here for
-		// a genuine Struct is a compiler bug.  Type::UserDefined may be a
+		// TypeCategory::Struct must always have a valid StructInfo; reaching here for
+		// a genuine Struct is a compiler bug.  TypeCategory::UserDefined may be a
 		// typedef to a primitive, so fall through to the generic path.
-		assert(type != Type::Struct && "Type::Struct without valid StructInfo is a compiler bug");
+		assert(type != TypeCategory::Struct && "TypeCategory::Struct without valid StructInfo is a compiler bug");
 	}
 	// Non-struct path: size the runtime value representation for a non-pointer.
-	return static_cast<size_t>(getRuntimeValueSizeBits(type, type_index, size_in_bits, PointerDepth{}) / 8);
+	return static_cast<size_t>(getRuntimeValueSizeBits(type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
-int AstToIr::getPointerElementSize(Type type, TypeIndex type_index, int pointer_depth) const {
+int AstToIr::getPointerElementSize(TypeIndex type_index, int pointer_depth) const {
 	if (pointer_depth > 1) {
 		return 8;
 	}
-	int size = static_cast<int>(getSizeInBytes(type, type_index, get_type_size_bits(type)));
+	int size = static_cast<int>(getSizeInBytes(type_index, get_type_size_bits(type_index.category())));
 	return size != 0 ? size : 1;
 }
 
-Type AstToIr::getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const {
+TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, PointerDepth pointer_depth) const {
+	const TypeCategory semantic_type = semantic_type_index.category();
 	if (pointer_depth.is_pointer()) {
 		return semantic_type;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+	TypeCategory lowered_cat = resolve_type_alias(semantic_type_index);
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* enum_info = getTypeInfo(type_index).getEnumInfo()) {
+	if (lowered_cat == TypeCategory::Enum && semantic_type_index.is_valid() && semantic_type_index.index() < getTypeInfoCount()) {
+		if (const EnumTypeInfo* enum_info = getTypeInfo(semantic_type_index).getEnumInfo()) {
 			return enum_info->underlying_type;
 		}
 	}
 
-	return lowered_type;
+	return lowered_cat;
 }
 
-int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {
+int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const {
 	if (pointer_depth.is_pointer()) {
 		return semantic_size_bits;
 	}
 
-	Type lowered_type = resolveRuntimeBaseType(semantic_type, type_index);
+	TypeCategory lowered_cat = resolve_type_alias(type_index);
+	const TypeCategory semantic_cat = type_index.category();
 
-	if (lowered_type == Type::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type_index);
 		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
 			return static_cast<int>(enum_info->underlying_size);
@@ -412,7 +404,7 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 		}
 	}
 
-	if (semantic_type == Type::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (semantic_cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
 		if (getTypeInfo(type_index).type_size_ > 0) {
 			return getTypeInfo(type_index).type_size_;
 		}
@@ -422,7 +414,7 @@ int AstToIr::getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, i
 }
 
 std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const {
-	if (type_node.type() != Type::Enum || type_node.is_reference() || type_node.pointer_depth() > 0) {
+	if (type_node.category() != TypeCategory::Enum || type_node.is_reference() || type_node.pointer_depth() > 0) {
 		return std::nullopt;
 	}
 
@@ -444,10 +436,7 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 		return std::nullopt;
 	}
 
-	return makeExprResult(
-		enum_info.underlying_type,
-		SizeInBits{static_cast<int>(enum_info.underlying_size)},
-		static_cast<unsigned long long>(enumerator->value), TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(nativeTypeIndex(enum_info.underlying_type), SizeInBits{static_cast<int>(enum_info.underlying_size)}, static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -475,11 +464,11 @@ std::optional<ASTNode> AstToIr::lookupSymbol(std::string_view name) const {
 
 
 /// Emit an AddressOf IR instruction and return the result TempVar holding the address.
-TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Token token) {
+TempVar AstToIr::emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token) {
 	TempVar addr_var = var_counter.next();
 	AddressOfOp addr_op;
 	addr_op.result = addr_var;
-	addr_op.operand.type = type;
+	addr_op.operand.setType(type);
 	addr_op.operand.size_in_bits = SizeInBits{size_in_bits};
 	addr_op.operand.pointer_depth = PointerDepth{};
 	addr_op.operand.value = source;
@@ -489,11 +478,12 @@ TempVar AstToIr::emitAddressOf(Type type, int size_in_bits, IrValue source, Toke
 
 
 /// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
-TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
+TempVar AstToIr::emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
 	TempVar result_var = var_counter.next();
 	DereferenceOp deref_op;
 	deref_op.result = result_var;
-	deref_op.pointer.type = pointee_type;
+	deref_op.pointer.setType(pointee_type);
+	deref_op.pointer.type_index = TypeIndex{0, pointee_type};
 	deref_op.pointer.size_in_bits = SizeInBits{static_cast<int>(pointer_size_bits)};
 	deref_op.pointer.pointer_depth = PointerDepth{pointer_depth};
 	deref_op.pointer.value = pointer_value;
@@ -506,10 +496,10 @@ TempVar AstToIr::emitDereference(Type pointee_type, int pointer_size_bits, int p
 // ============================================================================
 // Return IR helper
 // ============================================================================
-void AstToIr::emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token) {
+void AstToIr::emitReturn(IrValue return_value, TypeCategory return_type, int return_size, const Token& token) {
 	ReturnOp ret_op;
 	ret_op.return_value = return_value;
-	ret_op.return_type = return_type;
+	ret_op.return_type_index = TypeIndex{0, return_type};
 	ret_op.return_size = return_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), token));
 }

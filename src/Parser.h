@@ -451,7 +451,7 @@ private:
             StringHandle param_name;
             bool is_value_param = false;  // true for non-type parameters
             int64_t value = 0;            // For non-type parameters
-            Type value_type = Type::Void; // Type of the value
+            TypeCategory value_type = TypeCategory::Void; // Type of the value
             // For type parameters - the concrete type to substitute
             bool is_type_param = false;
             TemplateTypeArg substituted_type;  // The concrete type for type parameters
@@ -721,7 +721,7 @@ private:
         std::optional<StructMember> try_parse_function_pointer_member(TypeSpecifierNode return_type_spec);
         
         // Helper function to get Type and size for built-in type keywords
-        std::optional<std::pair<Type, unsigned char>> get_builtin_type_info(std::string_view type_name);
+        std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
         
         // Helper function to parse functional-style cast: Type(expression)
         // Returns ParseResult with StaticCastNode on success
@@ -794,7 +794,7 @@ private:
         // Public members are intentional for this lightweight data structure
         struct ConstantValue {
                 int64_t value;
-                Type type;
+                TypeCategory type;
         };
         
         ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
@@ -894,7 +894,7 @@ private:
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
     private:
         bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);  // Phase 2: Instantiate lazy class to specified phase
-        std::optional<std::pair<Type, TypeIndex>> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
+        std::optional<TypeIndex> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
         std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
@@ -930,7 +930,7 @@ public:  // Public methods for template instantiation
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
 		const InlineVector<std::string_view, 4>& template_param_names,
-		const std::vector<Type>& concrete_types,
+		const std::vector<TypeCategory>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
 		TypeIndex struct_type_index = TypeIndex{}     // Optional: for member functions
 	);
@@ -994,7 +994,7 @@ public:  // Public methods for template instantiation
         ParseResult parse_seh_leave_statement();  // Parse __leave statement
 
         // Helper functions for auto type deduction
-        Type deduce_type_from_expression(const ASTNode& expr);
+        TypeCategory deduce_type_from_expression(const ASTNode& expr);
         void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
         std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
         std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);
@@ -1247,7 +1247,7 @@ public:  // Public methods for template instantiation
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-        std::pair<Type, TypeIndex> substitute_template_parameter(
+        TypeIndex substitute_template_parameter(
             const TypeSpecifierNode& original_type,
             const InlineVector<ASTNode, 4>& template_params,
             const InlineVector<TemplateTypeArg, 4>& template_args
@@ -1455,7 +1455,7 @@ public:  // Public methods for template instantiation
                 // so we must verify via EnumTypeInfo::findEnumerator before classifying.
                 if (decl.type_node().is<TypeSpecifierNode>()) {
                     const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-                    if (ts.type() == Type::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+                    if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
                         size_t enum_idx = ts.type_index().index();
                         if (enum_idx < getTypeInfoCount()) {
                             const EnumTypeInfo* enum_info = getTypeInfo(TypeIndex{enum_idx}).getEnumInfo();
@@ -1535,7 +1535,7 @@ public:  // Public methods for template instantiation
         // Parses types separated by commas, handling pack expansion (...), C-style varargs,
         // and pointer/reference modifiers. Used for bare function types and function pointer types.
         // Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
-        bool parse_function_type_parameter_list(std::vector<Type>& out_param_types);
+        bool parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types);
         
         // Helper to update angle bracket depth for template parsing
         // Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates
@@ -1562,7 +1562,7 @@ public:  // Public methods for template instantiation
 };
 
 struct TypedNumeric {
-        Type type = Type::Int;
+        TypeCategory type = TypeCategory::Int;
         TypeQualifier typeQualifier = TypeQualifier::None;
         unsigned char sizeInBits = 0;
         NumericLiteralValue value = 0ULL;

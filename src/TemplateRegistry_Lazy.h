@@ -126,8 +126,7 @@ struct LazyStaticMemberInfo {
 	StringHandle class_template_name;          // Original template name (e.g., "integral_constant")
 	StringHandle instantiated_class_name;      // Instantiated class name (e.g., "integral_constant_bool_true")
 	StringHandle member_name;                  // Static member name (e.g., "value")
-	Type type;                                 // Member type
-	TypeIndex type_index;                      // Type index for complex types
+	TypeIndex type_index;                      // Type index; category encodes Type
 	size_t size;                               // Size in bytes
 	size_t alignment;                          // Alignment requirement
 	AccessSpecifier access;                    // Access specifier
@@ -138,6 +137,8 @@ struct LazyStaticMemberInfo {
 	std::vector<ASTNode> template_params;      // Template parameters from class template
 	std::vector<TemplateTypeArg> template_args; // Concrete template arguments
 	bool needs_substitution;                   // True if initializer contains template parameters
+
+	TypeCategory memberType() const { return type_index.category(); }
 };
 
 // Registry for tracking uninstantiated template static members
@@ -355,8 +356,7 @@ struct LazyTypeAliasInfo {
 	std::vector<TemplateTypeArg> template_args;    // Concrete template arguments
 	bool needs_substitution = true;                // True if target contains template parameters
 	bool is_evaluated = false;                     // True once evaluation has been performed
-	// Cached evaluation result (to avoid re-computation)
-	Type evaluated_type = Type::Invalid;
+	// Cached evaluation result (category embedded in evaluated_type_index)
 	TypeIndex evaluated_type_index {};
 };
 
@@ -410,12 +410,11 @@ public:
 	// Mark a type alias as evaluated and cache the result
 	// Returns true if the alias was found and marked, false if not registered
 	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name, 
-	                   Type result_type, TypeIndex result_type_index) {
+	                   TypeIndex result_type_index) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end()) {
 			it->second.is_evaluated = true;
-			it->second.evaluated_type = result_type;
 			it->second.evaluated_type_index = result_type_index;
 			FLASH_LOG(Templates, Debug, "Marked lazy type alias as evaluated: ", key);
 			return true;
@@ -425,12 +424,12 @@ public:
 	}
 	
 	// Get cached evaluation result (only valid if is_evaluated is true)
-	std::optional<std::pair<Type, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
-	                                                           StringHandle member_name) const {
+	std::optional<TypeIndex> getCachedResult(StringHandle instantiated_class_name, 
+	                                         StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
-			return std::pair<Type, TypeIndex>{it->second.evaluated_type, it->second.evaluated_type_index};
+			return it->second.evaluated_type_index;
 		}
 		return std::nullopt;
 	}
@@ -786,7 +785,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 		return false;  // Type traits need at least one argument
 	}
 	
-	Type arg_type = type_args[0].typeEnum();
+	TypeCategory arg_type = type_args[0].category();
 	
 	// Handle common type traits
 	if (trait_name == "is_integral_v" || trait_name == "is_integral") {
@@ -801,14 +800,14 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	else if (trait_name == "is_signed_v" || trait_name == "is_signed") {
 		// Check if type is signed
 		switch (arg_type) {
-			case Type::Char:  // char signedness is implementation-defined, but typically signed
-			case Type::Short:
-			case Type::Int:
-			case Type::Long:
-			case Type::LongLong:
-			case Type::Float:
-			case Type::Double:
-			case Type::LongDouble:
+			case TypeCategory::Char:  // char signedness is implementation-defined, but typically signed
+			case TypeCategory::Short:
+			case TypeCategory::Int:
+			case TypeCategory::Long:
+			case TypeCategory::LongLong:
+			case TypeCategory::Float:
+			case TypeCategory::Double:
+			case TypeCategory::LongDouble:
 				return true;
 			default:
 				return false;
@@ -816,12 +815,12 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	}
 	else if (trait_name == "is_unsigned_v" || trait_name == "is_unsigned") {
 		switch (arg_type) {
-			case Type::Bool:
-			case Type::UnsignedChar:
-			case Type::UnsignedShort:
-			case Type::UnsignedInt:
-			case Type::UnsignedLong:
-			case Type::UnsignedLongLong:
+			case TypeCategory::Bool:
+			case TypeCategory::UnsignedChar:
+			case TypeCategory::UnsignedShort:
+			case TypeCategory::UnsignedInt:
+			case TypeCategory::UnsignedLong:
+			case TypeCategory::UnsignedLongLong:
 				return true;
 			default:
 				return false;
@@ -868,8 +867,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 			const auto& type_spec = type_or_expr.as<TypeSpecifierNode>();
 			
 			// Check if it's a template parameter that needs substitution
-			if (type_spec.type() == Type::UserDefined) {
-				// Get the type name from the token
+			if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
 				std::string_view type_name = type_spec.token().value();
 				
 				// Also check the actual type name from gTypeInfo using the type_index
@@ -1197,7 +1195,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-								type_arg.type_index = TypeIndex::fromTypeAndIndex(type_it->second->type_, type_it->second->type_index_);
+		type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->category_);
 								concept_args.push_back(type_arg);
 							}
 						}
@@ -1216,7 +1214,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				} else if (arg_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
 					TemplateTypeArg type_arg;
-					type_arg.type_index = TypeIndex::fromTypeAndIndex(type_spec.type(), type_spec.type_index());
+					type_arg.type_index = type_spec.type_index();
 					type_arg.ref_qualifier = type_spec.reference_qualifier();
 					type_arg.pointer_depth = type_spec.pointer_depth();
 					type_arg.cv_qualifier = type_spec.cv_qualifier();
@@ -1443,19 +1441,19 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		
 		// Holds fully resolved type info including indirection and qualifiers
 		struct ResolvedTypeInfo {
-			Type base_type = Type::Invalid;
+			TypeCategory base_type_cat = TypeCategory::Invalid;
 			TypeIndex type_index {};
 			uint8_t pointer_depth = 0;
 			ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 			CVQualifier cv_qualifier = CVQualifier::None;
-			TypeCategory category() const noexcept { return typeToCategory(base_type); }
+			TypeCategory category() const noexcept { return base_type_cat; }
 		};
 		
 		// Helper to resolve a type specifier, substituting template parameters
 		auto resolve_type = [&](const ASTNode& type_node) -> ResolvedTypeInfo {
 			if (!type_node.is<TypeSpecifierNode>()) return {};
 			const TypeSpecifierNode& ts = type_node.as<TypeSpecifierNode>();
-			if (ts.type() == Type::UserDefined) {
+			if (ts.category() == TypeCategory::UserDefined || ts.category() == TypeCategory::TypeAlias || ts.category() == TypeCategory::Template) {
 				std::string_view name = ts.token().value();
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == name) {
@@ -1476,10 +1474,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			case TypeTraitKind::IsSame: {
 				if (trait_expr.has_second_type()) {
 					auto second = resolve_type(trait_expr.second_type_node());
-					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type), 
+					FLASH_LOG(Templates, Debug, "IsSame comparison: first={type=", static_cast<int>(first.base_type_cat), 
 						", idx=", first.type_index, ", ptr=", static_cast<int>(first.pointer_depth),
 						", ref_qual=", static_cast<int>(first.ref_qualifier),
-						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type),
+						", cv=", static_cast<int>(first.cv_qualifier), "} second={type=", static_cast<int>(second.base_type_cat),
 						", idx=", second.type_index, ", ptr=", static_cast<int>(second.pointer_depth),
 						", ref_qual=", static_cast<int>(second.ref_qualifier),
 						", cv=", static_cast<int>(second.cv_qualifier), "}");

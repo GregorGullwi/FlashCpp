@@ -204,7 +204,7 @@ ParseResult Parser::parse_template_declaration() {
 			if (tparam.kind() == TemplateParameterKind::Type || tparam.kind() == TemplateParameterKind::Template) {
 				// Register the template parameter as a user-defined type temporarily
 				// Create a TypeInfo entry for the template parameter
-				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? Type::Template : Type::UserDefined, 0); // Do we need a correct size here?
+				auto& type_info = add_template_param_type(tparam.nameHandle(), tparam.kind() == TemplateParameterKind::Template ? TypeCategory::Template : TypeCategory::UserDefined, 0); // Do we need a correct size here?
 				template_scope.addParameter(&type_info);  // RAII cleanup on all return paths
 			}
 		}
@@ -382,7 +382,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			if (found_nested_def && peek() == "("_tok) {
 				// Create a stub function declaration for registration
-				auto void_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0, nested_func_name_token);
+				auto void_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, nested_func_name_token, CVQualifier::None);
 				auto [func_decl_node, func_decl_ref] = emplace_node_ref<DeclarationNode>(void_type, nested_func_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref, nested_func_name_token.value());
 
@@ -752,7 +752,7 @@ ParseResult Parser::parse_template_declaration() {
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
 
-		if ((is_struct_type(type_spec.type())) &&
+		if ((is_struct_type(type_spec.category())) &&
 		    type_spec.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(type_spec.type_index());
 			std::string_view type_name = StringTable::getStringView(ti.name());
@@ -797,7 +797,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Also check if the type is a dependent placeholder (UserDefined type with
 			// a name containing our template parameter names)
 			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
-			if (!has_unresolved_params && type_spec.type() == Type::UserDefined) {
+			if (!has_unresolved_params && (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template)) {
 				for (const auto& param_name : template_param_names) {
 					std::string_view param_sv = param_name.view();
 					// Check if the type name contains the parameter as a suffix (after underscore)
@@ -967,7 +967,7 @@ ParseResult Parser::parse_template_declaration() {
 					TemplateTypeArg arg;
 					arg.is_value = true;
 					arg.value = std::stoll(std::string(value_token.value()));
-					arg.setType(Type::Int);
+					arg.setCategory(TypeCategory::Int);
 					specialization_pattern.push_back(arg);
 				} else {
 					// Parse the pattern type
@@ -1010,7 +1010,7 @@ ParseResult Parser::parse_template_declaration() {
 					
 					// Create template type argument
 					TemplateTypeArg arg;
-					arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.type(), type_spec.type_index());
+					arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()));
 					arg.is_value = false;
 					arg.cv_qualifier = type_spec.cv_qualifier();
 					arg.pointer_depth = type_spec.pointer_depth();
@@ -2368,7 +2368,7 @@ ParseResult Parser::parse_template_declaration() {
 				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 				size_t referenced_size_bits = type_spec.size_in_bits();
 
-				if (type_spec.type() == Type::Struct) {
+				if (type_spec.category() == TypeCategory::Struct) {
 					const TypeInfo* member_type_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -2393,7 +2393,6 @@ ParseResult Parser::parse_template_declaration() {
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMember(
 					member_name_handle,
-					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -3799,7 +3798,6 @@ ParseResult Parser::parse_template_declaration() {
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
-					type_spec.type(),
 					type_spec.type_index(),
 					member_size,
 					member_alignment,
@@ -4937,7 +4935,6 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
 							static_member_name_handle,
-							type_spec.type(),
 							type_spec.type_index(),
 							static_member_size,
 							static_member_alignment,

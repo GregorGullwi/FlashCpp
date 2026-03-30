@@ -88,7 +88,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return std::nullopt;
 			}
 
-			TypeSpecifierNode member_type(member->type, TypeQualifier::None, member->size * 8);
+			TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8, Token{}, CVQualifier::None);
 			member_type.set_type_index(member->type_index);
 			if (member->pointer_depth > 0) {
 				member_type.add_pointer_levels(member->pointer_depth);
@@ -151,7 +151,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
-	if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
 
@@ -165,7 +165,7 @@ std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& ini
 	const bool is_xvalue_source = init_type.is_rvalue_reference();
 	init_type.set_reference_qualifier(ReferenceQualifier::None);
 
-	if (init_type.type() != Type::Struct || init_type.type_index() != target_type.type_index()) {
+	if (init_type.category() != TypeCategory::Struct || init_type.type_index() != target_type.type_index()) {
 		return std::nullopt;
 	}
 
@@ -184,7 +184,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		return *same_type_ctor_preference;
 	}
 
-	return init_operands.type == Type::Struct
+	return init_operands.category() == TypeCategory::Struct
+		&& target_type.category() == TypeCategory::Struct
 		&& init_operands.type_index.is_valid()
 		&& init_operands.type_index == target_type.type_index()
 		&& isExprResultXValue(init_operands);
@@ -306,7 +307,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 			// Create GlobalVariableDeclOp
 			GlobalVariableDeclOp op;
-			op.type = type_node.type();
+			op.type_index = type_node.type_index();
 			// For pointers and references, size is sizeof(void*) regardless of base type
 			if (type_node.is_pointer() || type_node.is_reference() || type_node.is_function_pointer()) {
 				op.size_in_bits = SizeInBits{static_cast<int>(sizeof(void*)) * 8};
@@ -322,14 +323,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 				}
 			};
-			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, Type member_type) -> unsigned long long {
-				if (member_type == Type::Float) {
+			auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, TypeCategory member_type) -> unsigned long long {
+				if (member_type == TypeCategory::Float) {
 					float fval = static_cast<float>(r.as_double());
 					uint32_t fbits = 0;
 					std::memcpy(&fbits, &fval, sizeof(float));
 					return static_cast<unsigned long long>(fbits);
 				}
-				if (member_type == Type::Double || member_type == Type::LongDouble) {
+				if (member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
 					double dval = r.as_double();
 					unsigned long long dbits = 0;
 					std::memcpy(&dbits, &dval, sizeof(double));
@@ -388,7 +389,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									init_data,
 									abs_offset + elem_i * element_size,
 									element_size,
-									evalResultMemberToRaw(member_result.array_elements[elem_i], member.type));
+									evalResultMemberToRaw(member_result.array_elements[elem_i], member.memberType()));
 							}
 						} else {
 							for (size_t elem_i = 0; elem_i < member_result.array_values.size() && elem_i < total_elements; ++elem_i) {
@@ -410,7 +411,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						}
 					}
 
-					unsigned long long value = evalResultMemberToRaw(member_result, member.type);
+					unsigned long long value = evalResultMemberToRaw(member_result, member.memberType());
 					if (member.bitfield_width.has_value()) {
 						size_t width = *member.bitfield_width;
 						size_t bit_offset = member.bitfield_bit_offset;
@@ -445,7 +446,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			};
 
 			// Helper to evaluate a constexpr and get the raw value
-			auto evalToValue = [&](const ASTNode& expr, Type target_type) -> unsigned long long {
+			auto evalToValue = [&](const ASTNode& expr, TypeCategory target_type) -> unsigned long long {
 				auto ctx = makeStaticStorageEvalContext();
 				auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 
@@ -461,12 +462,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					return 0;
 				}
 
-				if (target_type == Type::Float) {
+				if (target_type == TypeCategory::Float) {
 					float f = static_cast<float>(eval_result.as_double());
 					uint32_t f_bits;
 					std::memcpy(&f_bits, &f, sizeof(float));
 					return f_bits;
-				} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+				} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
 					double d = eval_result.as_double();
 					unsigned long long bits;
 					std::memcpy(&bits, &d, sizeof(double));
@@ -510,7 +511,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					auto closure_type = deduceLambdaClosureType(ast_node, decl.identifier_token());
 					if (closure_type.has_value() && lambda_ptr->captures().empty()) {
 						collectLambdaForDeferredGeneration(*lambda_ptr);
-						op.type = closure_type->type();
+						op.type_index = closure_type->type_index();
 						op.size_in_bits = SizeInBits{closure_type->size_in_bits()};
 						element_size = op.size_in_bits.value / 8;
 						op.is_initialized = true;
@@ -528,7 +529,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-					if ((is_struct_type(type_node.type())) && !decl.is_array() && !type_node.is_array()
+					if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()
 						&& type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
 						const StructTypeInfo* struct_info_ptr = getTypeInfo(type_node.type_index()).getStructInfo();
 						if (struct_info_ptr) {
@@ -548,7 +549,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if ((is_struct_type(type_node.type())) && type_node.type_index().is_valid() &&
+						if ((is_struct_type(type_node.category())) && type_node.type_index().is_valid() &&
 							type_node.type_index().index() < getTypeInfoCount()) {
 							const StructTypeInfo* elem_struct = getTypeInfo(type_node.type_index()).getStructInfo();
 							if (elem_struct) {
@@ -661,7 +662,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									for (const auto& mem_init : matching_ctor->member_initializers()) {
 										if (mem_init.member_name == StringTable::getStringView(member.getName())) {
 											auto eval_r = ConstExpr::Evaluator::evaluate(mem_init.initializer_expr, eval_ctx);
-											if (eval_r.success()) member_val = evalResultMemberToRaw(eval_r, member.type);
+											if (eval_r.success()) member_val = evalResultMemberToRaw(eval_r, member.memberType());
 											break;
 										}
 									}
@@ -794,7 +795,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						str_name_builder.append(static_cast<uint64_t>(string_literal_counter_++));
 						StringHandle str_sym = StringTable::getOrInternStringHandle(str_name_builder.commit());
 						GlobalVariableDeclOp str_op;
-						str_op.type = Type::Char;
+						str_op.type_index = nativeTypeIndex(TypeCategory::Char);
 						str_op.size_in_bits = SizeInBits{8};
 						str_op.var_name = str_sym;
 						str_op.element_count = str_bytes.size();
@@ -812,7 +813,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.is_initialized = true;
 						auto ctx = makeStaticStorageEvalContext();
 						auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
-						if ((is_struct_type(type_node.type())) &&
+						if ((is_struct_type(type_node.category())) &&
 							eval_result.success() &&
 							type_node.type_index().is_valid()) {
 							const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
@@ -867,7 +868,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							for (const auto& member : struct_info->members) {
 								if (member.default_initializer.has_value()) {
 									// Evaluate the default initializer
-									unsigned long long value = evalToValue(*member.default_initializer, member.type);
+									unsigned long long value = evalToValue(*member.default_initializer, member.memberType());
 
 									if (member.bitfield_width.has_value()) {
 										// Bitfield: use bit-level OR to pack value into the storage unit
@@ -916,9 +917,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			if (is_static_local) {
 				StaticLocalInfo info;
 				info.mangled_name = var_name;  // Phase 4: Using StringHandle directly
-				info.type = type_node.type();
 				info.size_in_bits = SizeInBits{type_node.size_in_bits()};
-				Type semantic_type = resolve_type_alias(type_node.type(), type_node.type_index());
+				TypeCategory semantic_type = resolve_type_alias(type_node.type_index());
 				info.type_index = carriesSemanticTypeIndex(semantic_type) ? type_node.type_index() : TypeIndex{};
 				// Phase 4: Using StringHandle for key
 				StringHandle key = decl.identifier_token().handle();
@@ -973,7 +973,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Generate variable declaration with compile-time value
 					VariableDeclOp decl_op;
-					decl_op.type = type_node.type();
+					decl_op.type_index = type_node.type_index();
 					decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
@@ -989,15 +989,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						decl_op.initializer = makeTypedValue(type_node.type(), decl_op.size_in_bits, *ull_val);
 					} else if (std::holds_alternative<double>(eval_result.value)) {
 						double d = std::get<double>(eval_result.value);
-						if (type_node.type() == Type::Float) {
+						if (type_node.category() == TypeCategory::Float) {
 							float f = static_cast<float>(d);
 							uint32_t bits;
 							std::memcpy(&bits, &f, sizeof(float));
-							decl_op.initializer = makeTypedValue(Type::Float, SizeInBits{32}, static_cast<unsigned long long>(bits));
+							decl_op.initializer = makeTypedValue(TypeCategory::Float, SizeInBits{32}, static_cast<unsigned long long>(bits));
 						} else {
 							unsigned long long bits;
 							std::memcpy(&bits, &d, sizeof(double));
-							decl_op.initializer = makeTypedValue(Type::Double, SizeInBits{64}, bits);
+							decl_op.initializer = makeTypedValue(TypeCategory::Double, SizeInBits{64}, bits);
 						}
 					}
 
@@ -1015,7 +1015,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		std::vector<IrOperand> operands;
 		auto appendExprResultToOperands = [&](const ExprResult& result) {
 			operands.reserve(operands.size() + 4);
-			operands.emplace_back(result.type);
+			operands.emplace_back(result.typeEnum());
 			operands.emplace_back(result.size_in_bits.value);
 			operands.emplace_back(result.value);
 			operands.emplace_back(static_cast<int>(result.storage));
@@ -1083,7 +1083,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For scalar types with direct initialization like int v(10),
 				// the InitializerListNode will have a single element. Handle this case.
-				if (type_node.type() != Type::Struct && init_list.initializers().size() == 1) {
+				if (type_node.category() != TypeCategory::Struct && init_list.initializers().size() == 1) {
 					// Direct initialization of scalar type: int v(10) or int v{10}
 					// Extract the single initializer and treat it as a regular expression initializer
 					const ASTNode& single_init = init_list.initializers()[0];
@@ -1098,7 +1098,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Generate VariableDecl with initializer
 					VariableDeclOp decl_op;
-					decl_op.type = type_node.type();
+					decl_op.type_index = type_node.type_index();
 					decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
@@ -1117,7 +1117,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Add the variable declaration without initializer
 					VariableDeclOp decl_op;
-					decl_op.type = type_node.type();
+					decl_op.type_index = type_node.type_index();
 					decl_op.size_in_bits = SizeInBits{type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits())};
 					decl_op.var_name = decl.identifier_token().handle();
 					decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
@@ -1126,7 +1126,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
 					// Check if this struct has a constructor
-					if (type_node.type() == Type::Struct) {
+					if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index = type_node.type_index();
 						if (type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1183,7 +1183,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 													if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
 														const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
 														// Check if initializer is of the same struct type
-														if (init_type.type() == Type::Struct &&
+														if (init_type.category() == TypeCategory::Struct &&
 															init_type.type_index() == type_index) {
 															init_is_same_struct_type = true;
 														}
@@ -1428,7 +1428,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									}
 
 									MemberStoreOp member_store;
-									member_store.value.type = member.type;
+									member_store.value.setType(member.type_index.category());
 									member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_store.value.value = member_value;
 									member_store.object = decl.identifier_token().handle();
@@ -1452,7 +1452,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 						}
 					}
-					}  // end if (type_node.type() == Type::Struct)
+					}  // end if (type_node.category() == TypeCategory::Struct)
 				}  // end else (struct initialization)
 				return; // Early return - we've already added the variable declaration
 			} else if (init_node.is<LambdaExpressionNode>()) {
@@ -1465,7 +1465,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
-					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(TypeCategory::FunctionPointer);
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
@@ -1483,7 +1483,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Check if target type is a function pointer - if so, store __invoke address
 				if (type_node.is_function_pointer() && lambda.captures().empty()) {
 					TempVar func_addr_var = generateLambdaInvokeFunctionAddress(lambda);
-					operands.emplace_back(Type::FunctionPointer);
+					operands.emplace_back(TypeCategory::FunctionPointer);
 					operands.emplace_back(64);
 					operands.emplace_back(func_addr_var);
 				}
@@ -1497,7 +1497,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
+				if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
@@ -1505,7 +1505,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 
 				// References don't use copy constructors - they bind to the address of the initializer
-				bool is_copy_init_for_struct = (type_node.type() == Type::Struct &&
+				bool is_copy_init_for_struct = (type_node.category() == TypeCategory::Struct &&
 				type_node.pointer_depth() == 0 &&
 				!type_node.is_reference() &&
 				!type_node.is_rvalue_reference() &&
@@ -1527,16 +1527,17 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if we need implicit conversion via conversion operator
 					// This handles cases like: int i = myStruct; where myStruct has operator int()
 					{
-						Type init_type = init_operands.type;
+						TypeCategory init_type = init_operands.typeEnum();
 						TypeIndex init_type_index = init_operands.type_index;
+						const TypeCategory init_cat = init_operands.category();
 						const int target_size = type_node.pointer_depth() > 0 ? 64 : static_cast<int>(type_node.size_in_bits());
 
 						// Check if source and target types differ and source is a struct
 						bool need_conversion = (init_type != type_node.type()) ||
-						(init_type == Type::Struct && init_type_index != type_node.type_index());
+						(init_cat == TypeCategory::Struct && init_type_index != type_node.type_index());
 
 						bool conv_op_applied = false;
-						if (need_conversion && init_type == Type::Struct) {
+						if (need_conversion && init_cat == TypeCategory::Struct) {
 							// First check for a sema-annotated user-defined conversion
 							if (sema_ && init_node.is<ExpressionNode>()) {
 								const void* key = &init_node.as<ExpressionNode>();
@@ -1549,13 +1550,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
 											const TypeInfo& src_info = getTypeInfo(source_type_index);
 											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info.getStructInfo(), type_node.type(), type_node.type_index(),
+												src_info.getStructInfo(), type_node.type_index(),
 												isExprConstQualified(init_node));
 											if (conv_op) {
 												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
 													StringTable::getStringView(src_info.name()), " to target type");
 												if (auto result = emitConversionOperatorCall(init_operands, src_info, *conv_op,
-														type_node.type(), type_node.type_index(), target_size, decl.identifier_token())) {
+														type_node.type_index(), target_size, decl.identifier_token())) {
 													init_operands = *result;
 													conv_op_applied = true;
 												}
@@ -1569,14 +1570,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.index() < getTypeInfoCount()) {
 								const TypeInfo& source_type_info = getTypeInfo(init_type_index);
 								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info.getStructInfo(), type_node.type(), type_node.type_index(),
+									source_type_info.getStructInfo(), type_node.type_index(),
 									isExprConstQualified(init_node));
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
 										StringTable::getStringView(source_type_info.name()),
 										" to target type");
 									if (auto result = emitConversionOperatorCall(init_operands, source_type_info, *conv_op,
-											type_node.type(), type_node.type_index(), target_size, decl.identifier_token()))
+											type_node.type_index(), target_size, decl.identifier_token()))
 										init_operands = *result;
 								}
 							}
@@ -1588,26 +1589,27 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// info); then fall back to can_convert_type for types the sema pass couldn't
 					// infer (e.g., complex sub-expressions or function-call result values).
 					{
-						Type init_type  = init_operands.type;
-						const Type decl_type  = type_node.type();
+						TypeCategory init_type  = init_operands.typeEnum();
+						const TypeCategory decl_type  = type_node.type();
+						TypeCategory init_cat = init_operands.category();
+						const TypeCategory decl_cat = type_node.category();
 						// Resolve enum to underlying type for conversion purposes.
 						// Enum values share the same bit representation as their underlying
 						// integer type, so we can treat them as their underlying type for
 						// standard conversions (e.g., enum→double needs IntToFloat).
 						// Also update init_operands.type so generateTypeConversion sees a
 						// consistent fromType (avoiding Enum vs Int mismatch in the operands).
-						if (init_type == Type::Enum && init_operands.type_index.is_valid()
-							&& init_operands.type_index.index() < getTypeInfoCount()) {
-							if (const EnumTypeInfo* enum_info = getTypeInfo(init_operands.type_index).getEnumInfo()) {
-								init_type = enum_info->underlying_type;
-								init_operands.type = init_type;
-							}
+						if (init_cat == TypeCategory::Enum) {
+							init_cat = resolveEnumUnderlyingTypeCategory(init_operands.type_index);
+							init_type = init_cat;
+							// Embed the resolved category into type_index (preserves gTypeInfo slot).
+							init_operands.type_index = init_operands.type_index.withCategory(init_cat);
 						}
 						if (init_type != decl_type
-							&& init_type  != Type::Struct && decl_type  != Type::Struct
-							&& init_type  != Type::Enum   && decl_type  != Type::Enum
-							&& init_type  != Type::Invalid && decl_type != Type::Invalid
-							&& !isPlaceholderAutoType(init_type) && !isPlaceholderAutoType(decl_type)
+							&& init_cat  != TypeCategory::Struct && decl_cat  != TypeCategory::Struct
+							&& init_cat  != TypeCategory::Enum   && decl_cat  != TypeCategory::Enum
+							&& init_cat  != TypeCategory::Invalid && decl_cat != TypeCategory::Invalid
+							&& !isPlaceholderAutoType(init_cat) && !isPlaceholderAutoType(decl_cat)
 							&& type_node.pointer_depth() == 0) {
 							bool sema_applied = false;
 							if (sema_ && init_node.is<ExpressionNode>()) {
@@ -1616,13 +1618,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								if (slot.has_value() && slot->has_cast()) {
 									const ImplicitCastInfo& cast_info =
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
-									Type from_t = sema_->typeContext().get(cast_info.source_type_id).base_type;
-									const Type to_t   = sema_->typeContext().get(cast_info.target_type_id).base_type;
-									if (from_t != Type::Struct && to_t != Type::Struct) {
+									TypeCategory from_t = sema_->typeContext().get(cast_info.source_type_id).category();
+									const TypeCategory to_t = sema_->typeContext().get(cast_info.target_type_id).category();
+									if (from_t != TypeCategory::Struct && to_t != TypeCategory::Struct) {
 										// Sema may annotate as Type::Enum while codegen resolves enum
 										// constants to their underlying type; use actual runtime type.
-										if (from_t == Type::Enum && from_t != init_operands.type)
-											from_t = init_operands.type;
+										if (from_t == TypeCategory::Enum && from_t != init_operands.typeEnum())
+											from_t = init_operands.typeEnum();
 										init_operands = generateTypeConversion(init_operands, from_t, to_t, decl.identifier_token());
 										sema_applied = true;
 									}
@@ -1682,7 +1684,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		ensure_symbol_registered();
 
 		VariableDeclOp decl_op;
-		decl_op.type = type_node.type();
+		decl_op.type_index = type_node.type_index();
 		// References and pointers are both 64-bit (pointer size on x64)
 		decl_op.size_in_bits = SizeInBits{(type_node.pointer_depth() > 0 || type_node.is_reference()) ? 64 : static_cast<int>(type_node.size_in_bits())};
 		decl_op.var_name = decl.identifier_token().handle();
@@ -1690,7 +1692,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
-			decl_op.array_element_type = std::get<Type>(operands[7]);
+			decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
 			decl_op.array_element_size = std::get<int>(operands[8]);
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 				decl_op.array_count = *ull_val;
@@ -1714,22 +1716,19 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 
 					// Extract element type/size once for both addr_op and metadata
-					const Type elem_type = std::get<Type>(operands[7]);
+					const TypeCategory elem_type = std::get<TypeCategory>(operands[7]);
 					const int  elem_size = std::get<int>(operands[8]);
 
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.element_type = elem_type;
+					addr_op.element_type_index = nativeTypeIndex(elem_type);
 					addr_op.element_size_in_bits = elem_size;
 					addr_op.array = lv_info.base;
 
 					// Build TypedValue for index from metadata
 					IrValue index_value = lv_info.array_index.value();
-					addr_op.index.value = index_value;
-					addr_op.index.type = Type::Int;  // Index type (typically int)
-					addr_op.index.ir_type = IrType::Integer;
-					addr_op.index.size_in_bits = SizeInBits{32};  // Standard index size
+					addr_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, index_value);
 
 					addr_op.is_pointer_to_array = lv_info.is_pointer_to_array;
 
@@ -1738,11 +1737,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark addr_temp as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(addr_temp,
-						TempVarMetadata::makeAddressOnly(elem_type, SizeInBits{elem_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, elem_type}, SizeInBits{elem_size}, ValueCategory::LValue));
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
-					tv.type = elem_type;
+					tv.setType(elem_type);
 					tv.ir_type = toIrType(elem_type);
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
@@ -1775,7 +1774,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+				if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 					struct_info_ptr = getTypeInfo(type_node.type_index()).struct_info_.get();
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
@@ -1800,10 +1799,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Generate array element store: arr[i] = value
 					ArrayStoreOp store_op;
-					store_op.element_type = type_node.type();
+					store_op.element_type_index = type_node.type_index();
 					store_op.element_size_in_bits = size_in_bits;
 					store_op.array = decl.identifier_token().handle();
-					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					store_op.value = toTypedValue(init_operands);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;  // Local arrays are actual arrays, not pointers
@@ -1817,7 +1816,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// If this is a struct type with a constructor, generate a constructor call
 		// IMPORTANT: Only for non-pointer struct types. Pointers are just addresses, no constructor needed.
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
-		if (type_node.type() == Type::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
+		if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
 			if (type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(type_index);
@@ -1899,7 +1898,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
 														const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
 														// Check if argument is of the same struct type
-														if (arg_type.type() == Type::Struct &&
+														if (arg_type.category() == TypeCategory::Struct &&
 															arg_type.type_index() == type_node.type_index()) {
 															arg_is_same_struct_type = true;
 														}
@@ -2067,14 +2066,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// Check if this is a converting constructor case (initializer type != target type)
 							bool is_converting_ctor = false;
 							{
-								Type init_type = init_operands.type;
+								TypeCategory init_type = init_operands.typeEnum();
 								TypeIndex init_type_index {};
+								const TypeCategory init_cat = init_operands.category();
 								if (init_operands.type_index.is_valid()) {
 									init_type_index = init_operands.type_index;
 								}
 
 								// Check if types differ
-								is_converting_ctor = (init_type != Type::Struct) || (init_type_index != type_node.type_index());
+								is_converting_ctor = (init_cat != TypeCategory::Struct) || (init_type_index != type_node.type_index());
 
 								if (is_converting_ctor && sema_ && init_node.is<ExpressionNode>()) {
 									const void* key = &init_node.as<ExpressionNode>();
@@ -2086,11 +2086,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											cast_info.selected_constructor) {
 											const CanonicalTypeDesc& target_desc =
 												sema_->typeContext().get(cast_info.target_type_id);
-											if (target_desc.base_type == Type::Struct &&
+											if (target_desc.category() == TypeCategory::Struct &&
 												target_desc.type_index == type_node.type_index()) {
 												const CanonicalTypeDesc& source_desc =
 													sema_->typeContext().get(cast_info.source_type_id);
-												if (source_desc.base_type != Type::Invalid) {
+												if (source_desc.category() != TypeCategory::Invalid) {
 													sema_selected_converting_ctor = cast_info.selected_constructor;
 													const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
 													if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
@@ -2224,7 +2224,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											TempVar addr_var = var_counter.next();
 											AddressOfOp addr_op;
 											addr_op.result = addr_var;
-											addr_op.operand.type = init_type.type();
+											addr_op.operand.setType(init_type.category());
 											addr_op.operand.ir_type = toIrType(init_type.type());
 											addr_op.operand.size_in_bits = SizeInBits{init_type.size_in_bits()};
 											addr_op.operand.pointer_depth = PointerDepth{};
@@ -2232,7 +2232,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 											// Create TypedValue with the address
-											init_arg.type = init_type.type();
+											init_arg.setType(init_type.type());
 											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
@@ -2259,9 +2259,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									if (param_type->is_reference() || param_type->is_rvalue_reference()) {
 										init_arg.cv_qualifier = param_type->cv_qualifier();
 									}
-									if (param_type->type() == Type::Struct && param_type->type_index().is_valid()) {
-										init_arg.type_index = param_type->type_index();
-									}
+								if (param_type->category() == TypeCategory::Struct && param_type->type_index().is_valid()) {
+									init_arg.type_index = param_type->type_index();
+								}
 								}
 
 								ctor_op.arguments.push_back(std::move(init_arg));
@@ -2440,7 +2440,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		ExprResult init_operands = visitExpressionNode(initializer.as<ExpressionNode>());
 
 		// Extract initializer type information
-		Type init_type = init_operands.type;
+		TypeCategory init_type = init_operands.typeEnum();
 		int init_size = init_operands.size_in_bits.value;
 		TypeIndex init_type_index {};
 
@@ -2461,7 +2461,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 2: Determine if initializer is an array by checking the symbol table
 		bool is_array = false;
 		size_t array_size = 0;
-		Type array_element_type = init_type;
+		TypeCategory array_element_type = init_type;
 		int array_element_size = init_size;
 
 		// Check if initializer is an identifier (which could be an array variable)
@@ -2529,17 +2529,17 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 		// For arrays, we need to set up the array info properly
 		if (is_array) {
-			hidden_decl_op.type = array_element_type;
+			hidden_decl_op.type_index = nativeTypeIndex(array_element_type);
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 			hidden_decl_op.is_array = true;
-			hidden_decl_op.array_element_type = array_element_type;
+			hidden_decl_op.array_element_type_index = nativeTypeIndex(array_element_type);
 			hidden_decl_op.array_element_size = array_element_size;
 			hidden_decl_op.array_count = array_size;
 			// Don't set initializer here for arrays - we'll copy element by element
 		} else if (is_reference_binding) {
 			// For reference bindings (auto& [a,b] = x), the hidden variable is a reference
 			// to the original object, not a copy
-			hidden_decl_op.type = init_type;
+			hidden_decl_op.type_index = nativeTypeIndex(init_type);
 			hidden_decl_op.size_in_bits = SizeInBits{64};  // Reference is always 64-bit pointer
 			hidden_decl_op.ref_qualifier = node.is_rvalue_reference()
 				? CVReferenceQualifier::RValueReference
@@ -2555,7 +2555,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					TempVar addr_temp = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.operand.type = init_type;
+					addr_op.operand.setType(init_type);
 					addr_op.operand.ir_type = toIrType(init_type);
 					addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 					addr_op.operand.pointer_depth = PointerDepth{};
@@ -2571,7 +2571,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				hidden_decl_op.initializer = toTypedValue(init_operands);
 			}
 		} else {
-			hidden_decl_op.type = init_type;
+			hidden_decl_op.type_index = nativeTypeIndex(init_type);
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 			hidden_decl_op.initializer = toTypedValue(init_operands);
 		}
@@ -2594,8 +2594,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					ArrayAccessOp access_op;
 					access_op.result = element_temp;
 					access_op.array = source_array;
-					access_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					access_op.element_type = array_element_type;
+					access_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					access_op.element_type_index = nativeTypeIndex(array_element_type);
 					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
 					access_op.member_offset = 0;
@@ -2604,10 +2604,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Store element to hidden array
 					ArrayStoreOp store_op;
-					store_op.element_type = array_element_type;
+					store_op.element_type_index = nativeTypeIndex(array_element_type);
 					store_op.element_size_in_bits = array_element_size;
 					store_op.array = hidden_var_handle;
-					store_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
 					store_op.value = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_temp);
 					store_op.member_offset = 0;
 					store_op.is_pointer_to_array = false;
@@ -2639,7 +2639,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// Create a TypeSpecifierNode for this binding's type
 				TypeSpecifierNode binding_type(array_element_type, TypeQualifier::None,
-				static_cast<unsigned char>(array_element_size), Token());
+				static_cast<unsigned char>(array_element_size), Token(), CVQualifier::None);
 
 				// If this is a reference binding (auto& or auto&&), mark the type as a reference
 				if (is_reference_binding) {
@@ -2669,8 +2669,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					ArrayElementAddressOp addr_op;
 					addr_op.result = element_addr;
 					addr_op.array = hidden_var_handle;
-					addr_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					addr_op.element_type = array_element_type;
+					addr_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					addr_op.element_type_index = nativeTypeIndex(array_element_type);
 					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
 
@@ -2678,12 +2678,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Mark element_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 					setTempVarMetadata(element_addr,
-						TempVarMetadata::makeAddressOnly(array_element_type, SizeInBits{array_element_size}, ValueCategory::LValue));
+						TempVarMetadata::makeAddressOnly(TypeIndex{0, array_element_type}, SizeInBits{array_element_size}, ValueCategory::LValue));
 
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
-					binding_var_decl.type = array_element_type;
+					binding_var_decl.type_index = nativeTypeIndex(array_element_type);
 					binding_var_decl.size_in_bits = SizeInBits{64};  // References are pointers (64-bit addresses)
 					binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 						? CVReferenceQualifier::RValueReference
@@ -2697,8 +2697,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					ArrayAccessOp load_op;
 					load_op.result = element_val;
 					load_op.array = hidden_var_handle;
-					load_op.index = makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					load_op.element_type = array_element_type;
+					load_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
+					load_op.element_type_index = nativeTypeIndex(array_element_type);
 					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
 					load_op.member_offset = 0;
@@ -2708,7 +2708,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Now, declare the binding variable with the element value as initializer
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
-					binding_var_decl.type = array_element_type;
+					binding_var_decl.type_index = nativeTypeIndex(array_element_type);
 					binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_val);
 
@@ -2721,7 +2721,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			FLASH_LOG(Codegen, Debug, "visitStructuredBindingNode: Successfully created ", array_size, " array bindings");
 			return;  // Early return for array case
 
-		} else if (init_type != Type::Struct) {
+		} else if (init_type != TypeCategory::Struct) {
 			FLASH_LOG(Codegen, Error, "Structured bindings currently only support struct and array types, got type=", (int)init_type);
 			return;
 		}
@@ -2812,7 +2812,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// Try to find get<N>() functions for tuple-like decomposition
 				bool all_get_found = true;
-				std::vector<std::pair<StringHandle, Type>> binding_info;  // (mangled_name, return_type) for each get<N>
+				std::vector<std::pair<StringHandle, TypeCategory>> binding_info;  // (mangled_name, return_type) for each get<N>
 
 				// First, look up std::tuple_element<N, E>::type and get<N>() for each binding
 				for (size_t i = 0; i < tuple_size_value && all_get_found; ++i) {
@@ -2837,13 +2837,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						type_alias_it = getTypesByNameMap().find(std_type_alias_handle);
 					}
 
-					Type element_type = Type::Int;  // Default
+					TypeCategory element_type = TypeCategory::Int;  // Default
 					int element_size = 32;
 					TypeIndex element_type_index {};
 
 					if (type_alias_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_alias_info = type_alias_it->second;
-						element_type = type_alias_info->type_;
+						element_type = type_alias_info->category();
 						element_type_index = type_alias_info->type_index_;
 						element_size = type_alias_info->type_size_;
 						if (element_size == 0) {
@@ -2855,7 +2855,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Now look for the get<N>() function
 					// First, try template registry with exact index
 					TemplateTypeArg index_arg;
-					index_arg.setType(Type::UnsignedLong);
+					index_arg.setType(TypeCategory::UnsignedLong);
 					index_arg.is_value = true;
 					index_arg.value = static_cast<int64_t>(i);
 					std::vector<TemplateTypeArg> get_template_args = { index_arg };
@@ -2900,8 +2900,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 							// Check if this overload's return type matches our element type
 							// or if it's the i-th function declaration (by order)
-							bool type_matches = (return_type.type() == element_type);
-							if (element_type == Type::Struct) {
+							bool type_matches = (return_type.category() == element_type);
+							if (element_type == TypeCategory::Struct) {
 								type_matches = type_matches && (return_type.type_index() == element_type_index);
 							}
 
@@ -2954,15 +2954,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						CallOp call_op;
 						call_op.result = result_temp;
-						call_op.return_type = element_type;
+						call_op.return_type_index = nativeTypeIndex(element_type);
 						call_op.return_size_in_bits = SizeInBits{element_size};
-						call_op.return_type_index = TypeIndex{element_type_index};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
 
 						// Pass the hidden variable as argument
 						TypedValue arg;
-						arg.type = init_type;
+						arg.setType(init_type);
 						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
@@ -2976,20 +2975,20 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Create the binding variable
 						VariableDeclOp binding_var_decl;
 						binding_var_decl.var_name = binding_id;
-						binding_var_decl.type = element_type;
+						binding_var_decl.type_index = nativeTypeIndex(element_type);
 						binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						TypedValue init_val3;
-						init_val3.type = element_type;
+						init_val3.setType(element_type);
 						init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						init_val3.value = result_temp;
-						init_val3.type_index = TypeIndex{element_type_index};
+						init_val3.type_index = element_type_index;
 						binding_var_decl.initializer = init_val3;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
 
 						// Create synthetic declaration for symbol table
 						TypeSpecifierNode binding_type(element_type, TypeQualifier::None,
-						static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token());
+						static_cast<unsigned char>(element_size > 255 ? 255 : element_size), Token(), CVQualifier::None);
 						binding_type.set_type_index(element_type_index);
 
 						ASTNode binding_decl_node = ASTNode::emplace_node<DeclarationNode>(
@@ -3056,7 +3055,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 			// For struct types, type_index is what matters, not size_in_bits
 			size_t member_size_bits_full = member.size * 8;
 			unsigned char member_size_bits = (member_size_bits_full > 255) ? 255 : static_cast<unsigned char>(member_size_bits_full);
-			TypeSpecifierNode binding_type(member.type, TypeQualifier::None, member_size_bits, Token());
+			TypeSpecifierNode binding_type(member.memberType(), TypeQualifier::None, member_size_bits, Token(), CVQualifier::None);
 			binding_type.set_type_index(member.type_index);
 
 			// If this is a reference binding (auto& or auto&&), mark the type as a reference
@@ -3093,25 +3092,25 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				addr_op.result = member_addr;
 				addr_op.base = hidden_var_handle;
 				addr_op.total_member_offset = static_cast<int>(member.offset);
-				addr_op.result_type = member.type;
+				addr_op.result_type_index = member.type_index;
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
 
 				// Mark member_addr as holding a 64-bit address so IRConverter uses MOV (not LEA).
 				setTempVarMetadata(member_addr,
-					TempVarMetadata::makeAddressOnly(member.type, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
+					TempVarMetadata::makeAddressOnly(TypeIndex{0, member.type_index.category()}, SizeInBits{static_cast<int>(member.size * 8)}, ValueCategory::LValue));
 
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type = member.type;
+				binding_var_decl.type_index = member.type_index;
 				binding_var_decl.size_in_bits = SizeInBits{64};  // References are pointers (64-bit addresses)
 				binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = member.type;
+				init_val.setType(member.memberType());
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3124,8 +3123,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// First, generate a member access to load the value
 				TempVar member_val = var_counter.next();
 				MemberLoadOp load_op;
-				load_op.result.type = member.type;
-				load_op.result.ir_type = toIrType(member.type);
+				load_op.result.setType(member.type_index.category());
+				load_op.result.ir_type = toIrType(member.memberType());
 				load_op.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				load_op.result.value = member_val;
 				load_op.result.type_index = member.type_index;
@@ -3141,10 +3140,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Now, declare the binding variable with the member value as initializer
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type = member.type;
+				binding_var_decl.type_index = member.type_index;
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = member.type;
+				init_val2.setType(member.memberType());
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

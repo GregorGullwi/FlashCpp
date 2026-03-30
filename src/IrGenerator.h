@@ -90,11 +90,12 @@ struct LambdaInfo {
 	std::string_view operator_call_name;     // e.g., "__lambda_0_operator_call" (persistent via StringBuilder)
 	std::string_view invoke_name;            // e.g., "__lambda_0_invoke" (persistent via StringBuilder)
 	std::string_view conversion_op_name;     // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
-	Type return_type;
+	TypeIndex return_type_index {};    // TypeCategory embedded; replaces Type return_type
 	int return_size;
-	TypeIndex return_type_index {};    // Type index for struct/enum return types
+
+	TypeCategory returnType() const { return return_type_index.category(); }
 	bool returns_reference = false;     // True if lambda returns a reference type (T& or T&&)
-	std::vector<std::tuple<Type, int, int, std::string>> parameters;  // type, size, pointer_depth, name
+	std::vector<std::tuple<TypeCategory, int, int, std::string>> parameters;  // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;                // Copy of the lambda body
 	std::vector<LambdaCaptureNode> captures;  // Copy of captures
@@ -168,11 +169,11 @@ inline int getStructReturnThreshold(bool is_llp64) {
 /// Check if a struct return type requires a hidden return parameter (for RVO)
 /// Windows x64 ABI: structs of 1, 2, 4, or 8 bytes return in RAX, larger use hidden param
 /// SystemV AMD64 ABI: structs up to 16 bytes can return in RAX/RDX, larger use hidden param
-inline bool returnsStructByValue(Type type, int pointer_depth, bool is_reference) {
+inline bool returnsStructByValue(TypeCategory type, int pointer_depth, bool is_reference) {
 	return is_struct_type(type) && pointer_depth == 0 && !is_reference;
 }
 
-inline bool needsHiddenReturnParam(Type type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
+inline bool needsHiddenReturnParam(TypeCategory type, int pointer_depth, bool is_reference, int size_in_bits, bool is_llp64) {
 	return returnsStructByValue(type, pointer_depth, is_reference) &&
 	(size_in_bits > getStructReturnThreshold(is_llp64));
 }

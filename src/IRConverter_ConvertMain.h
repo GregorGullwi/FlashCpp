@@ -24,7 +24,7 @@ private:
 		TypedValue result_value;
 		X64Register result_physical_reg;
 		X64Register rhs_physical_reg;
-		Type operand_type;  // Type of the operands (for comparisons, different from result_value.type)
+		TypeCategory operand_type;  // TypeCategory of the operands (for comparisons, different from result_value.type)
 		int operand_size_in_bits;  // Size of the operands (for comparisons, different from result_value.size_in_bits)
 	};
 
@@ -87,7 +87,7 @@ private:
 	// Handles both integer/pointer and floating-point types
 	// Returns the allocated register, or X64Register::Count on error
 	X64Register loadGlobalVariable(StringHandle var_handle, std::string_view var_name,
-	                                Type operand_type, int operand_size_in_bits,
+	                                TypeCategory operand_type, int operand_size_in_bits,
 	                                std::optional<X64Register> exclude_reg = std::nullopt);
 
 	ArithmeticOperationContext setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name);
@@ -118,18 +118,22 @@ private:
 	};
 
 	struct IndirectStorageInfo {
-		Type value_type = Type::Invalid;
+		TypeIndex value_type_index {};
 		IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field, will replace value_type
 		SizeInBits value_size_bits;
 		bool is_rvalue_reference = false;
 		// When true (e.g., AddressOf results), this TempVar holds a raw address/pointer value,
 		// not a reference that should be implicitly dereferenced.
 		bool holds_address_only = false;
+
+		// Accessor helpers
+		TypeCategory valueType() const { return value_type_index.category(); }
+		TypeCategory category() const { return value_type_index.category(); }
 	};
 
 	void setIndirectStorageInfo(
 		int32_t stack_offset,
-		Type value_type,
+		TypeIndex value_type_index,
 		int value_size_bits,
 		bool is_rvalue_ref,
 		bool holds_address_only,
@@ -143,11 +147,11 @@ private:
 
 	// Helper function to set reference information in both storage systems
 	// This ensures metadata stays synchronized between stack offset tracking and TempVar metadata
-	void setReferenceInfo(int32_t stack_offset, Type value_type, int value_size_bits, bool is_rvalue_ref, TempVar temp_var);
+	void setReferenceInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, bool is_rvalue_ref, TempVar temp_var);
 
-	void setAddressOnlyInfo(int32_t stack_offset, Type value_type, int value_size_bits, TempVar temp_var);
+	void setAddressOnlyInfo(int32_t stack_offset, TypeIndex value_type_index, int value_size_bits, TempVar temp_var);
 
-	void registerObjectReferenceCallResult(int32_t stack_offset, Type value_type, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference);
+	void registerObjectReferenceCallResult(int32_t stack_offset, TypeIndex value_type_index, SizeInBits referenced_value_size_in_bits, bool returns_reference, bool returns_rvalue_reference);
 
 	std::optional<IndirectStorageInfo> getIndirectStackInfo(int32_t stack_offset) const;
 
@@ -966,7 +970,7 @@ private:
 	StringHandle current_function_mangled_name_;  // Changed from string_view to prevent dangling pointer
 	uint32_t current_function_offset_ = 0;
 	bool current_function_is_variadic_ = false;
-	Type current_function_return_type_ = Type::Void;
+	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // TypeCategory embedded; replaces Type current_function_return_type_
 	int current_function_return_size_in_bits_ = 0;
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter (RVO)
 	bool current_function_returns_reference_ = false;  // True if function returns a reference (lvalue or rvalue)
@@ -1004,12 +1008,13 @@ private:
 	// Global variable tracking
 	struct GlobalVariableInfo {
 		StringHandle name;
-		Type type;
+		TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
 		size_t size_in_bytes;
 		bool is_initialized;
 		std::vector<char> init_data;  // Raw bytes for initialized data
 		StringHandle reloc_target;    // If valid, data relocation (R_X86_64_64) for this symbol
 		bool is_rodata = false;       // If true, emit init_data to .rodata instead of .data
+		TypeCategory varType() const { return type_index.category(); }
 	};
 	std::vector<GlobalVariableInfo> global_variables_;
 
@@ -1074,8 +1079,7 @@ private:
 
 	// Exception handling tracking
 	struct CatchHandler {
-		TypeIndex type_index;  // Type index for user-defined types
-		Type exception_type;   // Type enum for built-in types (Int, Double, etc.)
+		TypeIndex type_index;  // Type index (category embedded); valid for both primitives and user-defined types
 		uint32_t handler_offset;  // Code offset of catch handler
 		uint32_t handler_end_offset;  // Code offset where catch handler ends
 		uint32_t funclet_entry_offset;  // Code offset of catch funclet entry

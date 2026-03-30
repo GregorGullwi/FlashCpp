@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -310,7 +310,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto type_spec_opt = get_expression_type(*expr_result.node());
 			
 			if (type_spec_opt.has_value() && 
-			    type_spec_opt->type() == Type::Struct && 
+			    type_spec_opt->category() == TypeCategory::Struct && 
 			    type_spec_opt->type_index().is_valid() &&
 			    type_spec_opt->type_index().index() < getTypeInfoCount()) {
 				// Successfully evaluated - add as regular base class
@@ -414,11 +414,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								info.node = emplace_node<ExpressionNode>(tparam_ref);
 							} else {
 								TypeSpecifierNode type_node(
-									targ.typeEnum(),
-									targ.type_index,
+									targ.type_index.withCategory(targ.typeEnum()),
 									64,
 									Token{},
-									targ.cv_qualifier
+									targ.cv_qualifier,
+									ReferenceQualifier::None
 								);
 								
 								for (size_t i = 0; i < targ.pointer_depth; ++i) {
@@ -664,11 +664,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}", 
 					                 StringTable::getStringView(resolved_type->name()), 
 					                 resolved_type->type_index_, 
-					                 static_cast<int>(underlying.type_));
+					                 static_cast<int>(underlying.category()));
 					
 					resolved_type = &underlying;
 					// If we've reached a concrete struct type, we're done
-					if (underlying.type_ == Type::Struct) break;
+					if (underlying.isStruct()) break;
 				}
 				
 				// Use the resolved underlying type name as the base class
@@ -940,7 +940,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							StringHandle member_name_handle = member_name_token.handle();
 							anon_struct_info->members.push_back(StructMember{
 								member_name_handle,
-								member_type_spec.type(),
 								member_type_spec.type_index(),
 								0,  // offset will be calculated below
 								member_size,
@@ -1021,10 +1020,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							
 							// Create a TypeSpecifierNode for the anonymous type
 							TypeSpecifierNode anon_type_spec(
-								Type::Struct,
-								anon_type_info.type_index_,
+								anon_type_info.type_index_.withCategory(TypeCategory::Struct),
 								static_cast<unsigned char>(anon_struct_info->total_size),
-								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0)
+								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0),
+								CVQualifier::None,
+								ReferenceQualifier::None
 							);
 							
 							// Create a member with the anonymous type
@@ -1228,7 +1228,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 						
 						// For struct types, get size and alignment from the struct type info
-						if (anon_member_type_spec.type() == Type::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
+						if (anon_member_type_spec.category() == TypeCategory::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
 							const TypeInfo* member_type_info = nullptr;
 							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -1270,8 +1270,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
 							member_name_handle,
-							anon_member_type_spec.type(),
-							anon_member_type_spec.type_index(),
+							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
 							member_size,
 							member_alignment,
 							bitfield_width,
@@ -1520,7 +1519,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
 			struct_info->addStaticMember(
 				static_member_name_handle,
-				type_spec.type(),
 				type_spec.type_index(),
 				static_member_size,
 				static_member_alignment,
@@ -2525,10 +2523,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		do {
 			// Handle pointer declarators
 			TypeSpecifierNode var_type_spec(
-				Type::Struct,
-				struct_type_info.type_index_,
+				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
 				static_cast<unsigned char>(0),  // Size will be set later
-				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0)
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0),
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			
 			// Parse any pointer levels
@@ -2633,7 +2632,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Manually add member to struct_info at the aligned offset
 				struct_info->members.emplace_back(
 					union_member.member_name,
-					union_member.member_type,
 					union_member.type_index,
 					aligned_union_start,  // Same offset for all union members
 					union_member.member_size,
@@ -2657,7 +2655,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;
-			struct_info->active_bitfield_type = Type::Invalid;
+			struct_info->active_bitfield_type = TypeCategory::Invalid;
 			
 			next_union_idx++;
 		}
@@ -2678,7 +2676,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		size_t referenced_size_bits = type_spec.size_in_bits();
 
 		// For struct types, get size and alignment from the struct type info
-		if (type_spec.type() == Type::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
+		if (type_spec.category() == TypeCategory::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
 			// Look up the struct type by type_index
 			const TypeInfo* member_type_info = nullptr;
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
@@ -2726,7 +2724,6 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,
@@ -2775,10 +2772,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					const auto& param_decl = params[0].as<DeclarationNode>();
 					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 
-					if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct
+					if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct
 						&& param_type.type_index() == struct_type_info.type_index_) {
 						has_user_defined_copy_constructor = true;
-					} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct
+					} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct
 						&& param_type.type_index() == struct_type_info.type_index_) {
 						has_user_defined_move_constructor = true;
 					}
@@ -2803,9 +2800,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						computeMinRequiredArgs(params) <= 1 &&
 						params[0].is<DeclarationNode>()) {
 						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-						if (param_type.is_lvalue_reference() && param_type.type() == Type::Struct) {
+						if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
-						} else if (param_type.is_rvalue_reference() && param_type.type() == Type::Struct) {
+						} else if (param_type.is_rvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::MoveAssign;
 						}
 					}
@@ -2925,7 +2922,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						const auto& param_decl = base_params[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						if ((param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
-							param_type.type() == Type::Struct &&
+							param_type.category() == TypeCategory::Struct &&
 							base_struct_info->isOwnTypeIndex(param_type.type_index())) {
 							// This is a copy or move constructor of the base class - skip it
 							continue;
@@ -2946,11 +2943,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					
 					// Create a copy of the parameter for the derived constructor
 					auto param_type_node = emplace_node<TypeSpecifierNode>(
-						base_param_type.type(),
-						base_param_type.type_index(),
+						base_param_type.type_index().withCategory(base_param_type.type()),
 						base_param_type.size_in_bits(),
 						base_param_decl.identifier_token(),
-						base_param_type.cv_qualifier()
+						base_param_type.cv_qualifier(),
+						ReferenceQualifier::None
 					);
 					
 					// Copy reference qualifiers
@@ -3050,11 +3047,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: const Type& other
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::Const  // const qualifier
+			CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 		);
 
 		// Make it a reference type
@@ -3095,11 +3092,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3117,11 +3114,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::Const  // const qualifier
+			CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 		);
 		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3167,11 +3164,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: Type&& other (rvalue reference)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 
 		// Make it an rvalue reference type
@@ -3209,11 +3206,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 
@@ -3231,11 +3228,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_info->total_size * 8),  // size in bits
 			name_token,
-			CVQualifier::None
+			CVQualifier::None,
+		ReferenceQualifier::None
 		);
 		move_param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);  // true = rvalue reference
 
@@ -3285,11 +3282,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		for (const auto& [op_kind, op_name] : comparison_ops) {
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Bool,
-				TypeIndex{},  // type_index for bool
+				TypeIndex{}.withCategory(TypeCategory::Bool),
 				8,  // size in bits
 				name_token,
-				CVQualifier::None
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			
 			// Create declaration node for the operator
@@ -3306,11 +3303,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Struct,
-				struct_type_index,
+				struct_type_index.withCategory(TypeCategory::Struct),
 				static_cast<int>(struct_info->total_size * 8),  // size in bits
 				name_token,
-				CVQualifier::Const  // const qualifier
+				CVQualifier::Const,  // const qualifier
+			ReferenceQualifier::None
 			);
 			param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 			
@@ -3368,7 +3365,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			                name_token.line(), name_token.column(),
 			                name_token.file_index());
 			auto zero_node = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, Type::Int, TypeQualifier::None, 32));
+				NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
 			
 			// Create comparison operator token for comparing result with 0
 			Token comparison_token(Token::Type::Operator, overloadableOperatorToString(op_kind),
@@ -3644,7 +3641,7 @@ ParseResult Parser::parse_enum_declaration()
 	auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
 
 	// Determine underlying type (default is int)
-	Type underlying_type = Type::Int;
+	TypeCategory underlying_type = TypeCategory::Int;
 	int underlying_size = 32;
 	if (enum_ref.has_underlying_type()) {
 		const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
@@ -3730,7 +3727,7 @@ ParseResult Parser::parse_enum_declaration()
 		// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
-				Type::Enum, enum_type_info.type_index_, underlying_size, enumerator_name_token);
+				enum_type_info.type_index_.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 			gSymbolTable.insert(enumerator_name, enumerator_decl);
 		}
@@ -3796,7 +3793,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 		return std::nullopt;
 	}
 	
-	// parse_declarator produces a DeclarationNode whose TypeSpecifierNode has Type::FunctionPointer
+	// parse_declarator produces a DeclarationNode whose TypeSpecifierNode has TypeCategory::FunctionPointer
 	if (!result.node()->is<DeclarationNode>()) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
@@ -3805,7 +3802,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	const DeclarationNode& decl = result.node()->as<DeclarationNode>();
 	const TypeSpecifierNode& fp_type = decl.type_node().as<TypeSpecifierNode>();
 	
-	if (fp_type.type() != Type::FunctionPointer) {
+	if (fp_type.category() != TypeCategory::FunctionPointer) {
 		restore_token_position(funcptr_saved_pos);
 		return std::nullopt;
 	}
@@ -3827,8 +3824,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	
 	StructMember member{
 		funcptr_name_handle,
-		Type::FunctionPointer,
-		TypeIndex{},  // type_index for function pointers
+		nativeTypeIndex(TypeCategory::FunctionPointer),  // type_index for function pointers
 		0,  // offset will be calculated later
 		pointer_size,
 		pointer_alignment,
@@ -3951,7 +3947,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				StringHandle outer_member_name_handle = outer_member_name_token.handle();
 				out_struct_info->members.push_back(StructMember{
 					outer_member_name_handle,
-					Type::Struct,
 					nested_anon_type_info.type_index_,
 					0,  // offset will be calculated later
 					nested_type_size,
@@ -4050,7 +4045,6 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		StringHandle member_name_handle = member_name_token.handle();
 		out_struct_info->members.push_back(StructMember{
 			member_name_handle,
-			member_type_spec.type(),
 			member_type_spec.type_index(),
 			0,  // offset will be calculated later
 			member_size,
@@ -4263,7 +4257,7 @@ ParseResult Parser::parse_friend_declaration()
 			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
 				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
 			} else {
-				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, TypeIndex{}, 0, Token());
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token(), CVQualifier::None, ReferenceQualifier::None);
 			}
 
 			// Build the declaration and function declaration nodes

@@ -61,8 +61,8 @@ struct Scope {
 };
 
 // Helper function to extract parameter types from a FunctionDeclarationNode
-inline std::vector<Type> extractParameterTypes(const ASTNode& node) {
-	std::vector<Type> param_types;
+inline std::vector<TypeIndex> extractParameterTypes(const ASTNode& node) {
+	std::vector<TypeIndex> param_types;
 
 	if (!node.is<DeclarationNode>()) {
 		return param_types;
@@ -75,13 +75,13 @@ inline std::vector<Type> extractParameterTypes(const ASTNode& node) {
 }
 
 // Helper function to check if two function signatures match
-inline bool signaturesMatch(const std::vector<Type>& sig1, const std::vector<Type>& sig2) {
+inline bool signaturesMatch(const std::vector<TypeIndex>& sig1, const std::vector<TypeIndex>& sig2) {
 	if (sig1.size() != sig2.size()) {
 		return false;
 	}
 
 	for (size_t i = 0; i < sig1.size(); ++i) {
-		if (sig1[i] != sig2[i]) {
+		if (sig1[i] != sig2[i] || sig1[i].category() != sig2[i].category()) {
 			return false;
 		}
 	}
@@ -662,7 +662,7 @@ public:
 		// Base type must match
 		if (actual.type() != expected.type()) return false;
 		// For struct types, type_index must also match
-		if (actual.type() == Type::Struct && actual.type_index() != expected.type_index()) return false;
+		if (actual.category() == TypeCategory::Struct && actual.type_index() != expected.type_index()) return false;
 		// Pointer depth must match (e.g. int vs int* vs int**)
 		if (actual.pointer_depth() != expected.pointer_depth()) return false;
 		// Reference qualifier must match (e.g. int& vs int&& vs int)
