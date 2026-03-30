@@ -529,9 +529,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					op.is_initialized = true;
 
 					// Check if this is struct aggregate initialization (vs. array element initialization)
-					if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()
-						&& type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount()) {
-						const StructTypeInfo* struct_info_ptr = getTypeInfo(type_node.type_index()).getStructInfo();
+					if ((is_struct_type(type_node.category())) && !decl.is_array() && !type_node.is_array()) {
+						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+						const StructTypeInfo* struct_info_ptr = type_info ? type_info->getStructInfo() : nullptr;
 						if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
 							op.init_data.resize(struct_info_ptr->total_size, 0);
@@ -549,9 +549,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						op.element_count = initializers.size();
 						// Check if this is an array of structs (elements may be InitializerListNodes)
 						bool handled_as_struct_array = false;
-						if ((is_struct_type(type_node.category())) && type_node.type_index().is_valid() &&
-							type_node.type_index().index() < getTypeInfoCount()) {
-							const StructTypeInfo* elem_struct = getTypeInfo(type_node.type_index()).getStructInfo();
+						if ((is_struct_type(type_node.category()))) {
+							const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+							const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
 							if (elem_struct) {
 								op.init_data.resize(op.element_count * elem_struct->total_size, 0);
 								for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
@@ -1128,14 +1128,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Check if this struct has a constructor
 					if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index = type_node.type_index();
-						if (type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_index);
-							if (type_info.struct_info_) {
-								const StructTypeInfo& struct_info = *type_info.struct_info_;
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+							if (type_info->struct_info_) {
+								const StructTypeInfo& struct_info = *type_info->struct_info_;
 
 								// Check if this is an abstract class (only for non-pointer types)
 								if (struct_info.is_abstract && type_node.pointer_levels().empty()) {
-									FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
+									FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info->name(), "'");
 									throw CompileError("Cannot instantiate abstract class");
 								}
 
@@ -1269,11 +1268,11 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							if (has_matching_constructor) {
-								prepare_nested_template_ctor(type_info, matching_ctor);
+								prepare_nested_template_ctor(*type_info, matching_ctor);
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = type_info.name();
+								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
 
 								// Get constructor parameter types for reference handling
@@ -1366,13 +1365,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 											// Get the type info for the nested member
 											TypeIndex nested_member_type_index = member.type_index;
-											if (nested_member_type_index.index() < getTypeInfoCount()) {
-												const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
+											if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
 												// If this is a struct type, use the recursive helper
-												if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
+												if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
 													generateNestedMemberStores(
-													*nested_member_type_info.struct_info_,
+													*nested_member_type_info->struct_info_,
 													nested_init_list,
 													decl.identifier_token().handle(),
 													static_cast<int>(member.offset),
@@ -1447,7 +1445,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							if (struct_info.hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
-									std::string(StringTable::getStringView(type_info.name()))
+									std::string(StringTable::getStringView(type_info->name()))
 								);
 							}
 						}
@@ -1497,9 +1495,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// However, if the struct doesn't have a constructor, we need to evaluate the expression
 				// IMPORTANT: Pointer types (Base* pb = &b) should process initializer normally
 				bool is_struct_with_constructor = false;
-				if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && type_node.type_index().index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-					if (type_info.struct_info_ && type_info.struct_info_->hasAnyConstructor()) {
+				if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0) {
+					const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+					if (type_info && type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
 						is_struct_with_constructor = true;
 					}
 				}
@@ -1547,15 +1545,14 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										sema_->castInfoTable()[slot->cast_info_index.value - 1];
 									if (cast_info.cast_kind == StandardConversionKind::UserDefined) {
 										TypeIndex source_type_index = sema_->typeContext().get(cast_info.source_type_id).type_index;
-										if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
-											const TypeInfo& src_info = getTypeInfo(source_type_index);
+										if (const TypeInfo* src_info = tryGetTypeInfo(source_type_index)) {
 											const StructMemberFunction* conv_op = findConversionOperator(
-												src_info.getStructInfo(), type_node.type_index(),
+												src_info->getStructInfo(), type_node.type_index(),
 												isExprConstQualified(init_node));
 											if (conv_op) {
 												FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in var init from ",
-													StringTable::getStringView(src_info.name()), " to target type");
-												if (auto result = emitConversionOperatorCall(init_operands, src_info, *conv_op,
+													StringTable::getStringView(src_info->name()), " to target type");
+												if (auto result = emitConversionOperatorCall(init_operands, *src_info, *conv_op,
 														type_node.type_index(), target_size, decl.identifier_token())) {
 													init_operands = *result;
 													conv_op_applied = true;
@@ -1567,18 +1564,19 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							// Fallback: no sema annotation — search for a conversion operator directly
-							if (!conv_op_applied && init_type_index.is_valid() && init_type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& source_type_info = getTypeInfo(init_type_index);
-								const StructMemberFunction* conv_op = findConversionOperator(
-									source_type_info.getStructInfo(), type_node.type_index(),
-									isExprConstQualified(init_node));
-								if (conv_op) {
-									FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
-										StringTable::getStringView(source_type_info.name()),
-										" to target type");
-									if (auto result = emitConversionOperatorCall(init_operands, source_type_info, *conv_op,
-											type_node.type_index(), target_size, decl.identifier_token()))
-										init_operands = *result;
+							if (!conv_op_applied) {
+								if (const TypeInfo* source_type_info = tryGetTypeInfo(init_type_index)) {
+									const StructMemberFunction* conv_op = findConversionOperator(
+										source_type_info->getStructInfo(), type_node.type_index(),
+										isExprConstQualified(init_node));
+									if (conv_op) {
+										FLASH_LOG(Codegen, Debug, "Found conversion operator from ",
+											StringTable::getStringView(source_type_info->name()),
+											" to target type");
+										if (auto result = emitConversionOperatorCall(init_operands, *source_type_info, *conv_op,
+												type_node.type_index(), target_size, decl.identifier_token()))
+											init_operands = *result;
+									}
 								}
 							}
 						}
@@ -1661,10 +1659,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Check if this is an rvalue (TempVar) - function return value
 						bool is_rvalue = std::holds_alternative<TempVar>(init_operands.value);
 						if (is_rvalue) {
-							const StructTypeInfo* target_struct_info =
-								(type_node.type_index().is_valid() && type_node.type_index().index() < getTypeInfoCount())
-									? getTypeInfo(type_node.type_index()).getStructInfo()
-									: nullptr;
+							const TypeInfo* target_type_info = tryGetTypeInfo(type_node.type_index());
+							const StructTypeInfo* target_struct_info = target_type_info ? target_type_info->getStructInfo() : nullptr;
 							const bool is_same_type_xvalue_init =
 								isSameTypeXValueSource(init_node, init_operands, type_node);
 							if (target_struct_info
@@ -1774,8 +1770,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 				// For struct element types, look up the struct info once
 				const StructTypeInfo* struct_info_ptr = nullptr;
-				if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
-					struct_info_ptr = getTypeInfo(type_node.type_index()).struct_info_.get();
+				if (type_node.category() == TypeCategory::Struct) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
+						struct_info_ptr = type_info->struct_info_.get();
+					}
 				}
 				int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
 
@@ -1818,27 +1816,26 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// IMPORTANT: References also don't need constructor calls - they just bind to existing objects
 		if (type_node.category() == TypeCategory::Struct && type_node.pointer_depth() == 0 && !type_node.is_reference() && !type_node.is_rvalue_reference()) {
 			TypeIndex type_index = type_node.type_index();
-			if (type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_index);
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 
 				// Skip incomplete template instantiations
-				if (type_info.is_incomplete_instantiation_) {
-					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", StringTable::getStringView(type_info.name()), "' (incomplete instantiation)");
+				if (type_info->is_incomplete_instantiation_) {
+					FLASH_LOG(Codegen, Debug, "Skipping constructor call for '", StringTable::getStringView(type_info->name()), "' (incomplete instantiation)");
 					// Don't generate constructor calls for incomplete template instantiations
 					// Just treat them as plain data (no initialization)
 					// The variable declaration was already emitted above
 					return;
 				}
 
-				if (type_info.struct_info_) {
+				if (type_info->struct_info_) {
 					// Check if this is an abstract class (only for non-pointer types)
-					if (type_info.struct_info_->is_abstract && type_node.pointer_levels().empty()) {
-						FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info.name(), "'");
+					if (type_info->struct_info_->is_abstract && type_node.pointer_levels().empty()) {
+						FLASH_LOG(General, Error, "Cannot instantiate abstract class '", type_info->name(), "'");
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
-					if (type_info.struct_info_->hasAnyConstructor() || type_info.struct_info_->needs_default_constructor) {
-						FLASH_LOG(Codegen, Debug, "Struct ", type_info.name(), " has constructor or needs default constructor");
+					if (type_info->struct_info_->hasAnyConstructor() || type_info->struct_info_->needs_default_constructor) {
+						FLASH_LOG(Codegen, Debug, "Struct ", type_info->name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"
 						// Skip if the variable was already initialized with an rvalue (function return)
 						bool has_copy_init = false;
@@ -1866,13 +1863,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						if (has_direct_ctor_call && direct_ctor) {
 							// Direct constructor call like S s(x) - process its arguments directly
-							FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info.name());
+							FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
 							// Find the matching constructor to get parameter types for reference handling
 							const ConstructorDeclarationNode* matching_ctor = nullptr;
 							size_t num_args = 0;
 							direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
-							if (type_info.struct_info_) {
+							if (type_info->struct_info_) {
 								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
 								// This ensures copy constructors are preferred over converting constructors
 								// But only when the argument is actually of the same struct type
@@ -1910,12 +1907,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 									// Only select same-type special members if argument is of the same struct type
 									if (arg_is_same_struct_type) {
-										diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);
+										diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
 										const StructMemberFunction* same_type_ctor_func =
-											type_info.struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+											type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 										if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
 											matching_ctor = &same_type_ctor_func->function_decl.as<ConstructorDeclarationNode>();
-											FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info.name());
+											FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info->name());
 										}
 									}
 								}
@@ -1937,7 +1934,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											});
 
 											if (arg_types.size() == num_args) {
-												auto resolution = resolve_constructor_overload(*type_info.struct_info_, arg_types, false);
+												auto resolution = resolve_constructor_overload(*type_info->struct_info_, arg_types, false);
 												if (resolution.is_ambiguous) {
 													throw CompileError("Ambiguous constructor call");
 												}
@@ -1946,7 +1943,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 										}
 
 										if (!matching_ctor) {
-											auto arity_resolution = resolve_constructor_overload_arity(*type_info.struct_info_, num_args, true);
+											auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
 											matching_ctor = arity_resolution.selected_overload;
 										}
 								}
@@ -1956,9 +1953,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// If no matching constructor was found and the struct is an aggregate
 							// (no user-defined constructors), generate direct member stores.
 							bool used_aggregate_paren_init = false;
-							if (!matching_ctor && type_info.struct_info_ && num_args > 0 && !type_info.struct_info_->members.empty()) {
+							if (!matching_ctor && type_info->struct_info_ && num_args > 0 && !type_info->struct_info_->members.empty()) {
 								bool is_aggregate = true;
-								for (const auto& func : type_info.struct_info_->member_functions) {
+								for (const auto& func : type_info->struct_info_->member_functions) {
 									if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 										if (!func.function_decl.as<ConstructorDeclarationNode>().is_implicit()) {
 											is_aggregate = false;
@@ -1967,24 +1964,24 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									}
 								}
 
-								if (is_aggregate && num_args <= type_info.struct_info_->members.size()) {
-									FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info.name());
+								if (is_aggregate && num_args <= type_info->struct_info_->members.size()) {
+									FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info->name());
 									used_aggregate_paren_init = true;
 									// Emit default constructor call first (zero-initializes the object)
 									ConstructorCallOp default_ctor_op;
-									default_ctor_op.struct_name = type_info.name();
+									default_ctor_op.struct_name = type_info->name();
 									default_ctor_op.object = decl.identifier_token().handle();
-									fillInDefaultConstructorArguments(default_ctor_op, *type_info.struct_info_);
+									fillInDefaultConstructorArguments(default_ctor_op, *type_info->struct_info_);
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 
 									// Then emit member stores for each argument
 									size_t member_idx = 0;
 									direct_ctor->arguments().visit([&](ASTNode argument) {
-										if (member_idx >= type_info.struct_info_->members.size()) {
+										if (member_idx >= type_info->struct_info_->members.size()) {
 											member_idx++;
 											return;
 										}
-										const StructMember& member = type_info.struct_info_->members[member_idx];
+										const StructMember& member = type_info->struct_info_->members[member_idx];
 										ExprResult arg_operands = visitExpressionNode(argument.as<ExpressionNode>());
 											MemberStoreOp store_op;
 											store_op.object = decl.identifier_token().handle();
@@ -1999,21 +1996,21 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									});
 
 									// Register for destructor if needed
-									if (type_info.struct_info_->hasDestructor()) {
+									if (type_info->struct_info_->hasDestructor()) {
 										registerVariableWithDestructor(
 											std::string(decl.identifier_token().value()),
-											std::string(StringTable::getStringView(type_info.name()))
+											std::string(StringTable::getStringView(type_info->name()))
 										);
 									}
 								}
 							}
 
 							if (!used_aggregate_paren_init) {
-								prepare_nested_template_ctor(type_info, matching_ctor);
+								prepare_nested_template_ctor(*type_info, matching_ctor);
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name();
+							ctor_op.struct_name = type_info->name();
 							ctor_op.object = decl.identifier_token().handle();
 
 							// Get constructor parameter types for reference handling
@@ -2049,10 +2046,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-							if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+							if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
-									std::string(StringTable::getStringView(type_info.name()))
+									std::string(StringTable::getStringView(type_info->name()))
 								);
 							}
 							} // end of non-aggregate constructor call block
@@ -2108,12 +2105,12 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								}
 
 								// For converting constructors in copy initialization, check if constructor is explicit
-								if (is_converting_ctor && !sema_selected_converting_ctor && type_info.struct_info_) {
+								if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
 									// Find converting constructors that take the initializer type as single parameter.
 									// Scan all candidates: only error when every match is explicit.
 									bool found_matching_ctor = false;
 									bool found_non_explicit_ctor = false;
-									for (const auto& func : type_info.struct_info_->member_functions) {
+									for (const auto& func : type_info->struct_info_->member_functions) {
 										if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
 											const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 											const auto& params = ctor_node.parameter_nodes();
@@ -2164,7 +2161,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									// Emit error only when every matching converting constructor is explicit.
 									if (found_matching_ctor && !found_non_explicit_ctor) {
 										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
-											StringTable::getStringView(type_info.name()), "'");
+											StringTable::getStringView(type_info->name()), "'");
 										FLASH_LOG(General, Error, "  Use direct initialization: ",
 											decl.identifier_token().value(), "(value) instead of = value");
 										throw CompileError("Cannot use copy initialization with explicit constructor");
@@ -2173,7 +2170,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info.name();
+							ctor_op.struct_name = type_info->name();
 							ctor_op.object = decl.identifier_token().handle();
 
 							// Add initializer as constructor parameter
@@ -2274,15 +2271,15 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									fillInConstructorDefaultArguments(
 										ctor_op, *sema_selected_converting_ctor, ctor_op.arguments.size());
 								}
-							} else if (type_info.struct_info_ && !is_converting_ctor) {
+							} else if (type_info->struct_info_ && !is_converting_ctor) {
 								const bool prefer_move_ctor =
 									isSameTypeXValueSource(init_node, init_operands, type_node);
 								const bool is_prvalue_same_type_source = isExprResultPRValue(init_operands);
 								if (!is_prvalue_same_type_source) {
-									diagnoseDeletedSameTypeConstructorUsage(*type_info.struct_info_, prefer_move_ctor);
+									diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
 								}
 								const StructMemberFunction* same_type_ctor =
-									type_info.struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+									type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 								if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 									if (matched_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
@@ -2294,10 +2291,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
 							// Register for destructor if needed
-			if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+			if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
 								registerVariableWithDestructor(
 									std::string(decl.identifier_token().value()),
-									std::string(StringTable::getStringView(type_info.name()))
+									std::string(StringTable::getStringView(type_info->name()))
 								);
 							}
 						} else if (!has_rvalue_initializer) {
@@ -2307,7 +2304,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							// 2. The struct has default member initializers (implicit ctor needs to init them), OR
 							// 3. The struct has a vtable (implicit ctor needs to init the vptr), OR
 							// 4. The struct has base classes with constructors (implicit ctor needs to call base ctors)
-							const StructMemberFunction* default_ctor = type_info.struct_info_->findDefaultConstructor();
+							const StructMemberFunction* default_ctor = type_info->struct_info_->findDefaultConstructor();
 							bool is_implicit_default_ctor = false;
 							if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -2316,10 +2313,9 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 							// Check if any base class has constructors that need to be called
 							bool has_base_with_constructors = false;
-							for (const auto& base : type_info.struct_info_->base_classes) {
-								if (base.type_index.index() < getTypeInfoCount()) {
-									const TypeInfo& base_type_info = getTypeInfo(base.type_index);
-									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							for (const auto& base : type_info->struct_info_->base_classes) {
+								if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
+									const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 									if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 										has_base_with_constructors = true;
 										break;
@@ -2328,8 +2324,8 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 							}
 
 							bool needs_default_ctor_call = !is_implicit_default_ctor ||
-							type_info.struct_info_->hasDefaultMemberInitializers() ||
-							type_info.struct_info_->has_vtable ||
+							type_info->struct_info_->hasDefaultMemberInitializers() ||
+							type_info->struct_info_->has_vtable ||
 							has_base_with_constructors;
 
 							if (needs_default_ctor_call) {
@@ -2351,7 +2347,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 									// Generate constructor call for each array element
 									for (size_t i = 0; i < ctor_array_count; i++) {
 										ConstructorCallOp ctor_op;
-										ctor_op.struct_name = type_info.name();
+										ctor_op.struct_name = type_info->name();
 										// For arrays, we need to specify the element to construct
 										ctor_op.object = decl.identifier_token().handle();
 										ctor_op.array_index = i;  // Mark this as an array element constructor call
@@ -2382,7 +2378,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 								} else {
 									// Single object (non-array) - generate single constructor call
 									ConstructorCallOp ctor_op;
-									ctor_op.struct_name = type_info.name();
+									ctor_op.struct_name = type_info->name();
 									ctor_op.object = decl.identifier_token().handle();
 
 									// If the constructor has parameters with default values, generate the default arguments
@@ -2414,10 +2410,10 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				}
 
 				// If this struct has a destructor, register it for automatic cleanup
-				if (type_info.struct_info_ && type_info.struct_info_->hasDestructor()) {
+				if (type_info->struct_info_ && type_info->struct_info_->hasDestructor()) {
 					registerVariableWithDestructor(
 						std::string(decl.identifier_token().value()),
-						std::string(StringTable::getStringView(type_info.name()))
+						std::string(StringTable::getStringView(type_info->name()))
 					);
 				}
 			}
@@ -2729,13 +2725,13 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 5: Check for tuple-like decomposition (C++17 protocol)
 		// If std::tuple_size<E> is specialized for the type, use tuple-like decomposition
 		// Otherwise, fall back to aggregate (struct) decomposition
-		if (init_type_index.index() >= getTypeInfoCount()) {
+		const TypeInfo* type_info = tryGetTypeInfo(init_type_index);
+		if (!type_info) {
 			FLASH_LOG(Codegen, Error, "Invalid type index for structured binding: ", init_type_index.index());
 			return;
 		}
 
-		const TypeInfo& type_info = getTypeInfo(init_type_index);
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 		if (!struct_info) {
 			FLASH_LOG(Codegen, Error, "Type is not a struct for structured binding");
@@ -2745,7 +2741,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		// Step 5a: Check for tuple-like decomposition protocol (C++17)
 		// If std::tuple_size<E> is specialized for the type E, use tuple-like decomposition
 		// The protocol requires: std::tuple_size<E>, std::tuple_element<N, E>, and get<N>(e)
-		std::string_view type_name_view = StringTable::getStringView(type_info.name());
+		std::string_view type_name_view = StringTable::getStringView(type_info->name());
 
 		// Build the expected tuple_size specialization name: "tuple_size_TypeName" or "std::tuple_size_TypeName"
 		StringBuilder tuple_size_name_builder;
@@ -3131,7 +3127,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				load_op.object = hidden_var_handle;
 				load_op.member_name = member.name;
 				load_op.offset = static_cast<int>(member.offset);
-				load_op.struct_type_info = &type_info;
+				load_op.struct_type_info = type_info;
 				load_op.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 				load_op.is_pointer_to_member = false;
 
