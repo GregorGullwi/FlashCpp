@@ -326,8 +326,35 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		return type_index.withCategory(type);
 	};
 
+	// Helper: find the matching TemplateTypeArg for a resolved template parameter.
+	// Returns the TemplateTypeArg if the original type was a template parameter that got resolved.
+	auto find_template_arg = [&](TypeCategory type, TypeIndex type_index) -> const TemplateTypeArg* {
+		if (type == TypeCategory::Auto && auto_param_index > 0 && (auto_param_index - 1) < template_args.size()) {
+			return &template_args[auto_param_index - 1];
+		}
+		if (type == TypeCategory::UserDefined && type_index.index() < getTypeInfoCount()) {
+			const TypeInfo& ti = getTypeInfo(type_index);
+			std::string_view tn = StringTable::getStringView(ti.name());
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == tn && i < template_args.size()) {
+					return &template_args[i];
+				}
+			}
+			if (outer_binding) {
+				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
+					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
+						return &outer_binding->param_args[i];
+					}
+				}
+			}
+		}
+		return nullptr;
+	};
+
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
+	const TemplateTypeArg* return_resolved_arg = find_template_arg(return_type_spec.type(), return_type_spec.type_index());
 	TypeIndex return_type_index = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
 
 	// Create mangled token
@@ -349,6 +376,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	substituted_return_type_spec.set_type_index(return_type_index);
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+	}
+	if (return_type_spec.has_function_signature()) {
+		substituted_return_type_spec.set_function_signature(return_type_spec.function_signature());
+	} else if (return_resolved_arg && return_resolved_arg->function_signature.has_value()) {
+		substituted_return_type_spec.set_function_signature(*return_resolved_arg->function_signature);
 	}
 
 	// Create the new function declaration
@@ -391,6 +423,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
+			// Look up the template arg before resolving (to get function_signature if available)
+			const TemplateTypeArg* resolved_arg = find_template_arg(param_type_spec.type(), param_type_spec.type_index());
 			TypeIndex param_type_index = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
 
 			// Create the substituted parameter type specifier
@@ -409,6 +443,8 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			if (param_type_spec.has_function_signature()) {
 				substituted_param_type_spec.set_function_signature(param_type_spec.function_signature());
+			} else if (resolved_arg && resolved_arg->function_signature.has_value()) {
+				substituted_param_type_spec.set_function_signature(*resolved_arg->function_signature);
 			}
 
 			// Create the new parameter declaration

@@ -2167,7 +2167,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											StringTable::getStringView(type_info.name()), "'");
 										FLASH_LOG(General, Error, "  Use direct initialization: ",
 											decl.identifier_token().value(), "(value) instead of = value");
-										throw CompileError("Cannot use copy initialization with explicit constructor [IrGen for type '" + std::string(StringTable::getStringView(type_info.name())) + "']");
+										throw CompileError("Cannot use copy initialization with explicit constructor");
 									}
 								}
 							}

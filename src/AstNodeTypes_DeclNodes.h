@@ -1176,6 +1176,7 @@ public:
 		reference_qualifier_ = other.reference_qualifier_;
 		is_array_ = other.is_array_;
 		array_dimensions_ = other.array_dimensions_;
+		function_signature_ = other.function_signature_;
 		// Note: is_pack_expansion_ is NOT copied - it's context-specific during parsing
 		// and shouldn't be propagated during type substitution in template instantiation
 	}

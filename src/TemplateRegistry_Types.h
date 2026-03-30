@@ -183,6 +183,9 @@ struct TemplateTypeArg {
 	bool is_template_template_arg;  // true if this is a template template argument
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
 
+	// For function pointer types: stores the full function signature
+	std::optional<FunctionSignature> function_signature;
+
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.
 	TypeCategory category() const noexcept { return type_index.category(); }
@@ -233,7 +236,8 @@ struct TemplateTypeArg {
 		, is_pack(false)
 		, is_dependent(false)
 		, is_template_template_arg(false)
-		, template_name_handle() {
+		, template_name_handle()
+		, function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
