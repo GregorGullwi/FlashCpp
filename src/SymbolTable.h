@@ -584,16 +584,16 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (!ti.is_valid() || ti.index() >= getTypeInfoCount()) continue;
-			const auto& type_info = getTypeInfo(ti);
-			if (const StructTypeInfo* si = type_info.getStructInfo()) {
+			const TypeInfo* type_info = tryGetTypeInfo(ti);
+			if (!type_info) continue;
+			if (const StructTypeInfo* si = type_info->getStructInfo()) {
 				visited_types.insert(ti.index());
 				collect_struct_associated_namespaces(si, collect_from_ns, visited_types);
-			} else if (type_info.getEnumInfo()) {
+			} else if (type_info->getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: the associated namespace of an
 				// enumeration type is its innermost enclosing namespace.
 				// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
-				collect_from_ns(type_info.namespaceHandle());
+				collect_from_ns(type_info->namespaceHandle());
 			}
 		}
 		return result;
@@ -630,16 +630,15 @@ public:
 		std::unordered_set<size_t> visited_types;
 		for (const auto& arg_type : arg_types) {
 			TypeIndex ti = arg_type.type_index();
-			if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
-				const auto& type_info = getTypeInfo(ti);
-				if (const StructTypeInfo* si = type_info.getStructInfo()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(ti)) {
+				if (const StructTypeInfo* si = type_info->getStructInfo()) {
 					visited_types.insert(ti.index());
 					collect_struct_associated_namespaces(si, search_ns, visited_types);
-				} else if (type_info.getEnumInfo()) {
+				} else if (type_info->getEnumInfo()) {
 					// C++20 [basic.lookup.argdep]/2: the associated namespace of an
 					// enumeration type is its innermost enclosing namespace.
 					// Use TypeInfo::namespace_handle_ which is set by add_enum_type().
-					search_ns(type_info.namespaceHandle());
+					search_ns(type_info->namespaceHandle());
 				}
 			}
 		}
@@ -1118,9 +1117,10 @@ private:
 		if (!si) return;
 		ns_callback(si->namespace_handle);
 		for (const auto& base : si->base_classes) {
-			if (!base.type_index.is_valid() || base.type_index.index() >= getTypeInfoCount()) continue;
+			const TypeInfo* base_ti = tryGetTypeInfo(base.type_index);
+			if (!base_ti) continue;
 			if (!visited_types.insert(base.type_index.index()).second) continue;
-			const StructTypeInfo* bsi = getTypeInfo(base.type_index).getStructInfo();
+			const StructTypeInfo* bsi = base_ti->getStructInfo();
 			collect_struct_associated_namespaces(bsi, ns_callback, visited_types);
 		}
 	}

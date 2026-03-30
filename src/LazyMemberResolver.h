@@ -127,12 +127,12 @@ private:
 	// Internal resolution logic
 	MemberResolutionResult resolveInternal(TypeIndex type_index, StringHandle member_name) {
 		// Validate type index
-		if (type_index.index() >= getTypeInfoCount()) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		if (!type_info) {
 			return MemberResolutionResult();
 		}
 		
-		const TypeInfo& type_info = getTypeInfo(type_index);
-		const StructTypeInfo* struct_info = type_info.getStructInfo();
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		
 		if (!struct_info) {
 			return MemberResolutionResult();
@@ -169,9 +169,8 @@ private:
 			
 			// Add base classes to the queue
 			for (const auto& base : current_struct->base_classes) {
-				if (base.type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& base_type = getTypeInfo(base.type_index);
-					const StructTypeInfo* base_info = base_type.getStructInfo();
+				if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index)) {
+					const StructTypeInfo* base_info = base_type->getStructInfo();
 					
 					if (base_info) {
 						to_visit.push({base_info, current_offset + base.offset});

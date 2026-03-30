@@ -312,8 +312,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// still points to the uninstantiated template base (e.g., W with size=0). We need to
 	// resolve it to the instantiated class (e.g., W<int> with correct size).
 	auto resolve_self_type = [&lazy_info](TypeIndex& type_index) {
-		if (type_index.category() == TypeCategory::Struct && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-			if (getTypeInfo(type_index).name() == lazy_info.identity.template_owner_name) {
+		if (type_index.category() == TypeCategory::Struct) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_index);
+				type_info && type_info->name() == lazy_info.identity.template_owner_name) {
 				// This type refers to the template base class — resolve to the instantiated class
 				auto it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
 				if (it != getTypesByNameMap().end()) {
@@ -1107,10 +1108,9 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get size for the member
 		size_t member_size = 0;
-		if (substituted_type_index.index() < getTypeInfoCount()) {
-			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
-			if (member_type_info.getStructInfo()) {
-				member_size = member_type_info.getStructInfo()->total_size;
+		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
+			if (member_type_info->getStructInfo()) {
+				member_size = member_type_info->getStructInfo()->total_size;
 			} else {
 				member_size = get_type_size_bits(substituted_type_index.category()) / 8;
 			}
@@ -1120,10 +1120,9 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		
 		// Get alignment for the member
 		size_t member_alignment = member_size > 0 ? member_size : 1;
-		if (substituted_type_index.index() < getTypeInfoCount()) {
-			const TypeInfo& member_type_info = getTypeInfo(substituted_type_index);
-			if (member_type_info.getStructInfo()) {
-				member_alignment = member_type_info.getStructInfo()->alignment;
+		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
+			if (member_type_info->getStructInfo()) {
+				member_alignment = member_type_info->getStructInfo()->alignment;
 			}
 		}
 		

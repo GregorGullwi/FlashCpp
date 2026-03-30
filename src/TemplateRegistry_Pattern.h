@@ -184,24 +184,23 @@ struct TemplatePattern {
 		}
 		// Check if p is a UserDefined/Struct type (or legacy Invalid category) — could be a param name or a nested template instantiation
 		if (!p.is_value && (is_struct_type(p.category()) || p.category() == TypeCategory::Invalid)) {
-			if (p.type_index.is_valid() && p.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& p_ti = getTypeInfo(p.type_index);
-				if (p_ti.isTemplateInstantiation()) {
+			if (const TypeInfo* p_ti = tryGetTypeInfo(p.type_index)) {
+				if (p_ti->isTemplateInstantiation()) {
 					// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
 					if (!is_struct_type(c.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested pattern is template instantiation but concrete is not UserDefined/Struct");
 						return false;
 					}
-					if (c.type_index.index() >= getTypeInfoCount()) return false;
-					const TypeInfo& c_ti = getTypeInfo(c.type_index);
-					StringHandle p_base = p_ti.baseTemplateName();
-					StringHandle c_base = c_ti.isTemplateInstantiation() ? c_ti.baseTemplateName() : c_ti.name();
+					const TypeInfo* c_ti = tryGetTypeInfo(c.type_index);
+					if (!c_ti) return false;
+					StringHandle p_base = p_ti->baseTemplateName();
+					StringHandle c_base = c_ti->isTemplateInstantiation() ? c_ti->baseTemplateName() : c_ti->name();
 					if (p_base != c_base) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested template base mismatch");
 						return false;
 					}
-					const auto& np = p_ti.templateArgs();
-					const auto& nc = c_ti.templateArgs();
+					const auto& np = p_ti->templateArgs();
+					const auto& nc = c_ti->templateArgs();
 					if (np.size() != nc.size()) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested inner arg count mismatch: pattern=",
 						          np.size(), " concrete=", nc.size());
@@ -214,7 +213,7 @@ struct TemplatePattern {
 					return true;
 				}
 				// Simple template parameter name (e.g., T, U)
-				StringHandle inner_name = p_ti.name();
+				StringHandle inner_name = p_ti->name();
 				if (inner_name.isValid() && template_param_names.count(inner_name)) {
 					return recordDeduction(inner_name, createDeducedArgFromConcrete(c), param_substitutions);
 				}
@@ -470,16 +469,17 @@ struct TemplatePattern {
 			// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct
 			// template) must reach the template instantiation handler below, not the concrete
 			// type check. Detect that case up front.
-			bool has_valid_type_index = pattern_arg.type_index.is_valid() && pattern_arg.type_index.index() < getTypeInfoCount();
+			const TypeInfo* p_arg_ti = tryGetTypeInfo(pattern_arg.type_index);
+			bool has_valid_type_index = p_arg_ti != nullptr;
 			bool is_struct_template_inst = (is_struct_type(pattern_arg.category()) || pattern_arg.category() == TypeCategory::Invalid) &&
-				has_valid_type_index &&
-				getTypeInfo(pattern_arg.type_index).isTemplateInstantiation();
+				p_arg_ti &&
+				p_arg_ti->isTemplateInstantiation();
 
 			// pattern_arg is a template parameter placeholder if it is UserDefined, or if category is
 			// Invalid (legacy TypeIndex) and the type_index points to a non-instantiation struct entry.
 			bool is_userdefined_param = (pattern_arg.category() == TypeCategory::UserDefined) ||
-				(pattern_arg.category() == TypeCategory::Invalid && has_valid_type_index &&
-				 !getTypeInfo(pattern_arg.type_index).isTemplateInstantiation());
+				(pattern_arg.category() == TypeCategory::Invalid && p_arg_ti &&
+				 !p_arg_ti->isTemplateInstantiation());
 
 			if (!is_userdefined_param && !is_struct_template_inst) {
 				// This is a concrete type or value in the pattern
@@ -522,24 +522,23 @@ struct TemplatePattern {
 			// Check if this UserDefined/Struct pattern arg is a dependent template instantiation
 			// (e.g., ratio<_Num, _Den> stored as UserDefined, or Pair<A,B> stored as Struct)
 			// If so, the concrete arg must be a template instantiation of the same base template
-			if (pattern_arg.type_index.is_valid() && pattern_arg.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& pattern_type_info = getTypeInfo(pattern_arg.type_index);
-				if (pattern_type_info.isTemplateInstantiation()) {
+			if (const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_arg.type_index)) {
+				if (pattern_type_info->isTemplateInstantiation()) {
 					// Pattern is a template instantiation — concrete must match base template
-					StringHandle pattern_base = pattern_type_info.baseTemplateName();
+					StringHandle pattern_base = pattern_type_info->baseTemplateName();
 					if (!is_struct_type(concrete_arg.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: pattern is template instantiation '",
 						          StringTable::getStringView(pattern_base), 
 						          "' but concrete is fundamental type");
 						return false;
 					}
-					if (concrete_arg.type_index.index() >= getTypeInfoCount()) {
+					const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
+					if (!concrete_type_info) {
 						return false;
 					}
-					const TypeInfo& concrete_type_info = getTypeInfo(concrete_arg.type_index);
-					StringHandle concrete_base = concrete_type_info.isTemplateInstantiation() 
-						? concrete_type_info.baseTemplateName() 
-						: concrete_type_info.name();
+					StringHandle concrete_base = concrete_type_info->isTemplateInstantiation() 
+						? concrete_type_info->baseTemplateName() 
+						: concrete_type_info->name();
 					if (pattern_base != concrete_base) {
 						FLASH_LOG(Templates, Trace, "  FAILED: template base mismatch: pattern='",
 						          StringTable::getStringView(pattern_base), "' concrete='",
@@ -553,8 +552,8 @@ struct TemplatePattern {
 					// e.g., Pair<Pair<A,B>, Pair<C,D>> against pair<pair<int,float>, pair<double,bool>>.
 					const size_t subs_before_inner = param_substitutions.size();
 					{
-						const auto& pattern_inner_args = pattern_type_info.templateArgs();
-						const auto& concrete_inner_args = concrete_type_info.templateArgs();
+						const auto& pattern_inner_args = pattern_type_info->templateArgs();
+						const auto& concrete_inner_args = concrete_type_info->templateArgs();
 						
 						if (pattern_inner_args.size() != concrete_inner_args.size()) {
 							FLASH_LOG(Templates, Trace, "  FAILED: inner arg count mismatch: pattern=",
@@ -589,9 +588,8 @@ struct TemplatePattern {
 			StringHandle param_name;
 			bool found_param = false;
 			
-			if (pattern_arg.type_index.is_valid() && pattern_arg.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& param_type_info = getTypeInfo(pattern_arg.type_index);
-				param_name = param_type_info.name();
+			if (const TypeInfo* param_type_info = tryGetTypeInfo(pattern_arg.type_index)) {
+				param_name = param_type_info->name();
 				found_param = true;
 				FLASH_LOG(Templates, Trace, "  Found parameter name '", StringTable::getStringView(param_name), "' from pattern_arg.type_index=", pattern_arg.type_index);
 			}
@@ -649,12 +647,11 @@ struct TemplatePattern {
 				const TemplateTypeArg& concrete_arg = concrete_args[cond.template_param_index];
 				
 				// Check if the concrete type has the required member type
-				if (concrete_arg.type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(concrete_arg.type_index);
+				if (const TypeInfo* type_info = tryGetTypeInfo(concrete_arg.type_index)) {
 					
 					// Build the qualified member name (e.g., "WithType::type")
 					StringBuilder qualified_name;
-					qualified_name.append(type_info.name());
+					qualified_name.append(type_info->name());
 					qualified_name.append("::");
 					qualified_name.append(cond.member_name);
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name.commit());
@@ -694,19 +691,18 @@ struct TemplatePattern {
 			}
 			if (!inner_arg.is_value &&
 			    (is_struct_type(inner_arg.category()))) {
-				if (inner_arg.type_index.is_valid() && inner_arg.type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& inner_ti = getTypeInfo(inner_arg.type_index);
-					if (inner_ti.isTemplateInstantiation()) {
+				if (const TypeInfo* inner_ti = tryGetTypeInfo(inner_arg.type_index)) {
+					if (inner_ti->isTemplateInstantiation()) {
 						// Nested template instantiation: structural constraint adds specificity.
 						// e.g., Pair<A,B> is more specific than a bare T.
-						int nested = 2 + static_cast<int>(inner_ti.templateArgs().size());
-						for (const auto& nested_arg : inner_ti.templateArgs()) {
+						int nested = 2 + static_cast<int>(inner_ti->templateArgs().size());
+						for (const auto& nested_arg : inner_ti->templateArgs()) {
 							nested += self(nested_arg, self, depth + 1);
 						}
 						return nested;
 					}
 					// Simple template parameter name → dependent, no extra specificity
-					StringHandle iname = inner_ti.name();
+					StringHandle iname = inner_ti->name();
 					if (iname.isValid() && template_param_names.count(iname)) {
 						return 0;
 					}
@@ -731,14 +727,14 @@ struct TemplatePattern {
 			// Base score: any pattern parameter = 0
 		
 			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
-			if ((is_struct_type(arg.category())) &&
-			    arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& ti = getTypeInfo(arg.type_index);
-				if (ti.isTemplateInstantiation()) {
-					score += 2 + static_cast<int>(ti.templateArgs().size());
-					// Each inner arg contributes to specificity, including nested instantiations
-					for (const auto& inner_arg : ti.templateArgs()) {
-						score += innerArgScore(inner_arg, innerArgScore);
+			if (is_struct_type(arg.category())) {
+				if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
+					if (ti->isTemplateInstantiation()) {
+						score += 2 + static_cast<int>(ti->templateArgs().size());
+						// Each inner arg contributes to specificity, including nested instantiations
+						for (const auto& inner_arg : ti->templateArgs()) {
+							score += innerArgScore(inner_arg, innerArgScore);
+						}
 					}
 				}
 			}

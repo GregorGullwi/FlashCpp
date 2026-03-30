@@ -342,8 +342,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!is_struct_type(type_spec.category())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
-						if (type_idx.index() < getTypeInfoCount()) {
-							StringHandle type_name_handle = getTypeInfo(type_idx).name();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+							StringHandle type_name_handle = type_info->name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
 								type_idx = subst_it->second;
@@ -356,8 +356,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto resolve_sfinae_type_index = [&](TypeIndex type_idx) -> TypeIndex {
-						if (type_idx.is_valid() && type_idx.index() < getTypeInfoCount()) {
-							StringHandle type_name_handle = getTypeInfo(type_idx).name();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+							StringHandle type_name_handle = type_info->name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
 								return subst_it->second;
@@ -367,7 +367,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					};
 
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
-						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
+						if (!type_spec.has_value() || !tryGetTypeInfo(type_idx)) return;
 						type_spec->set_type_index(type_idx);
 						TypeCategory resolved_type = type_idx.category();
 						if (resolved_type == TypeCategory::Invalid || resolved_type == TypeCategory::Void) {
@@ -1681,10 +1681,9 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 				// For struct types, look up alignment from struct info
 				if (is_struct_type(parsed_type)) {
 					TypeIndex type_index = type_spec.type_index();
-					if (type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(type_index);
-						if (type_info.isStruct()) {
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+						if (type_info->isStruct()) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info) {
 								alignment = struct_info->alignment;
 								discard_saved_token(pre_type_pos);

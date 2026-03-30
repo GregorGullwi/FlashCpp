@@ -310,23 +310,24 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto type_spec_opt = get_expression_type(*expr_result.node());
 			
 			if (type_spec_opt.has_value() && 
-			    type_spec_opt->category() == TypeCategory::Struct && 
-			    type_spec_opt->type_index().is_valid() &&
-			    type_spec_opt->type_index().index() < getTypeInfoCount()) {
+			    type_spec_opt->category() == TypeCategory::Struct) {
 				// Successfully evaluated - add as regular base class
-				const TypeInfo& base_type_info = getTypeInfo(type_spec_opt->type_index());
-				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info.name());
+				const TypeInfo* base_type_info = tryGetTypeInfo(type_spec_opt->type_index());
+				if (!base_type_info) {
+					return ParseResult::error("Failed to resolve decltype base class", current_token_);
+				}
+				std::string_view resolved_base_class_name = StringTable::getStringView(base_type_info->name());
 				
 				FLASH_LOG(Templates, Debug, "Resolved decltype base class immediately: ", resolved_base_class_name);
 				
 				// Check if base class is final
-				if (base_type_info.struct_info_ && base_type_info.struct_info_->is_final) {
+				if (base_type_info->struct_info_ && base_type_info->struct_info_->is_final) {
 					return ParseResult::error("Cannot inherit from final class '" + std::string(resolved_base_class_name) + "'", base_name_token);
 				}
 				
 				// Add base class to struct node and type info
-				struct_ref.add_base_class(resolved_base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
-				struct_info->addBaseClass(resolved_base_class_name, base_type_info.type_index_, base_access, is_virtual_base);
+				struct_ref.add_base_class(resolved_base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
+				struct_info->addBaseClass(resolved_base_class_name, base_type_info->type_index_, base_access, is_virtual_base);
 				
 				// Continue to next base class - skip the rest of the loop body
 				continue;
@@ -402,8 +403,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							info.is_dependent = targ.is_dependent;
 							
 							StringHandle dep_name = targ.dependent_name;
-							if (!dep_name.isValid() && targ.type_index.index() < getTypeInfoCount()) {
-								dep_name = getTypeInfo(targ.type_index).name_;
+							if (!dep_name.isValid()) {
+								if (const TypeInfo* type_info = tryGetTypeInfo(targ.type_index))
+									dep_name = type_info->name_;
 							}
 							if (!dep_name.isValid() && arg_idx < current_template_param_names_.size()) {
 								dep_name = current_template_param_names_[arg_idx];
@@ -534,8 +536,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// This catches cases like is_integral<T> where is_dependent might not be set
 				// but the type name contains "T"
 				if (is_struct_type(arg.category())) {
-					if (arg.type_index.index() < getTypeInfoCount()) {
-						StringHandle type_name_handle = getTypeInfo(arg.type_index).name();
+					if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+						StringHandle type_name_handle = type_info->name();
 						FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'", 
 						                 static_cast<int>(arg.category()), arg.type_index, StringTable::getStringView(type_name_handle));
 						if (contains_template_param(type_name_handle)) {
@@ -565,8 +567,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 											break;
 										}
 										// Also check if the type_index name matches any template param
-										if (!t_arg.is_value && t_arg.type_index.index() < getTypeInfoCount()) {
-											if (contains_template_param(getTypeInfo(t_arg.type_index).name())) {
+										if (!t_arg.is_value) {
+											if (const TypeInfo* type_info = tryGetTypeInfo(t_arg.type_index);
+												type_info && contains_template_param(type_info->name())) {
 												confirmed_dependent = true;
 												break;
 											}
@@ -592,8 +595,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					if (arg_node.is<TypeSpecifierNode>()) {
 						const auto& type_spec = arg_node.as<TypeSpecifierNode>();
 						// Check if the type name contains template parameters
-						if (type_spec.type_index().index() < getTypeInfoCount()) {
-							StringHandle type_name_handle = getTypeInfo(type_spec.type_index()).name();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+							StringHandle type_name_handle = type_info->name();
 							// Check if this type is a template (has nested template args)
 							// If it's a template class and we're inside a template body, 
 							// and it was registered with the same name as the primary template,
@@ -656,19 +659,20 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				// Type aliases have a type_index that points to the actual struct/class
 				const TypeInfo* resolved_type = alias_type_info;
 				size_t max_alias_depth = 10;  // Prevent infinite loops
-				while (resolved_type->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
-					const TypeInfo& underlying = getTypeInfo(resolved_type->type_index_);
+				while (max_alias_depth-- > 0) {
+					const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
+					if (!underlying) break;
 					// Stop if we're pointing to ourselves (not a valid alias)
-					if (&underlying == resolved_type) break;
+					if (underlying == resolved_type) break;
 					
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}", 
 					                 StringTable::getStringView(resolved_type->name()), 
 					                 resolved_type->type_index_, 
-					                 static_cast<int>(underlying.category()));
+					                 static_cast<int>(underlying->category()));
 					
-					resolved_type = &underlying;
+					resolved_type = underlying;
 					// If we've reached a concrete struct type, we're done
-					if (underlying.isStruct()) break;
+					if (underlying->isStruct()) break;
 				}
 				
 				// Use the resolved underlying type name as the base class
@@ -2890,12 +2894,12 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	    !parsing_template_class_) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
-			if (base_class.type_index.index() >= getTypeInfoCount()) {
+			const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
+			if (!base_type_info) {
 				continue;
 			}
 			
-			const TypeInfo& base_type_info = getTypeInfo(base_class.type_index);
-			const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+			const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 			
 			if (!base_struct_info) {
 				continue;
@@ -4140,9 +4144,9 @@ ParseResult Parser::parse_friend_declaration()
 		const auto& type_spec = type_result.node()->as<TypeSpecifierNode>();
 		// Use the type_index to look up the full qualified name from gTypeInfo,
 		// since token() only holds a single identifier segment (e.g., 'std' not 'std::numeric_limits')
-		StringHandle friend_name = (type_spec.type_index().index() < getTypeInfoCount())
-			? getTypeInfo(type_spec.type_index()).name()
-			: type_spec.token().handle();
+		StringHandle friend_name = type_spec.token().handle();
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index()))
+			friend_name = type_info->name();
 		auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Class, friend_name);
 		return saved_position.success(friend_node);
 	}

@@ -187,15 +187,16 @@ ASTNode Parser::substitute_template_params_in_expression(
 			// If not found by type_index, try to find by matching type name with any substitution value
 			// This handles the case where template parameter type_indices don't match due to
 			// multiple template parameters with the same name in different templates
-			if ((type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) && type_node.type_index().index() < getTypeInfoCount()) {
-				std::string_view type_name = StringTable::getStringView(getTypeInfo(type_node.type_index()).name());
-				FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
-				
-				// Search substitution map for any entry where the key type_index has the same name
-				for (const auto& [key_type_index, arg] : type_substitution_map) {
-					if (key_type_index.index() < getTypeInfoCount()) {
-						std::string_view param_name = StringTable::getStringView(getTypeInfo(key_type_index).name());
-						if (param_name == type_name) {
+			if ((type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template)) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
+					std::string_view type_name = StringTable::getStringView(type_info->name());
+					FLASH_LOG(Templates, Debug, "sizeof substitution: checking by name: ", type_name);
+					
+					// Search substitution map for any entry where the key type_index has the same name
+					for (const auto& [key_type_index, arg] : type_substitution_map) {
+						if (const TypeInfo* key_type_info = tryGetTypeInfo(key_type_index)) {
+							std::string_view param_name = StringTable::getStringView(key_type_info->name());
+							if (param_name == type_name) {
 							FLASH_LOG(Templates, Debug, "sizeof substitution: FOUND match by name, substituting with ", arg.toString());
 							
 							// Create a new type node with the substituted type
@@ -217,6 +218,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 							auto new_type_node = emplace_node<TypeSpecifierNode>(new_type);
 							SizeofExprNode new_sizeof(new_type_node, sizeof_node.sizeof_token());
 							return emplace_node<ExpressionNode>(new_sizeof);
+							}
 						}
 					}
 				}
@@ -418,15 +420,16 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 			}
 		}
-		if (!arg.is_dependent && is_struct_type(arg.category()) &&
-		    arg.type_index.index() < getTypeInfoCount()) {
-			StringHandle type_name = getTypeInfo(arg.type_index).name();
-			for (const auto& subst : template_param_substitutions_) {
-				if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
-					FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
-					          "' with concrete type ", subst.substituted_type.toString());
-					arg = subst.substituted_type;
-					break;
+		if (!arg.is_dependent && is_struct_type(arg.category())) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+				StringHandle type_name = type_info->name();
+				for (const auto& subst : template_param_substitutions_) {
+					if (subst.is_type_param && subst.param_name == type_name && !subst.substituted_type.is_dependent) {
+						FLASH_LOG(Templates, Debug, "Substituting template parameter '", type_name, 
+						          "' with concrete type ", subst.substituted_type.toString());
+						arg = subst.substituted_type;
+						break;
+					}
 				}
 			}
 		}
@@ -595,8 +598,8 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 			// when multiple templates use the same parameter name (e.g., 'T').
 			if (orig_type.category() == TypeCategory::UserDefined || orig_type.category() == TypeCategory::TypeAlias || orig_type.category() == TypeCategory::Template) {
 				// Check if orig_type's type name matches this template parameter
-				if (orig_type.type_index().index() < getTypeInfoCount()) {
-					std::string_view orig_type_name = StringTable::getStringView(getTypeInfo(orig_type.type_index()).name());
+				if (const TypeInfo* orig_type_info = tryGetTypeInfo(orig_type.type_index())) {
+					std::string_view orig_type_name = StringTable::getStringView(orig_type_info->name());
 					if (orig_type_name == param_name) {
 						// Use the type_index from orig_type directly
 						param_type_index = orig_type.type_index();
@@ -820,8 +823,10 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits()
 			);
-			if (alias_type_spec.category() == TypeCategory::Enum && alias_type_spec.type_index().index() < getTypeInfoCount()) {
-				if (const EnumTypeInfo* enum_info = getTypeInfo(alias_type_spec.type_index()).getEnumInfo()) {
+			if (alias_type_spec.category() == TypeCategory::Enum) {
+				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_type_spec.type_index());
+					source_alias_type_info && source_alias_type_info->getEnumInfo()) {
+					const EnumTypeInfo* enum_info = source_alias_type_info->getEnumInfo();
 					alias_type_info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
 				}
 			}

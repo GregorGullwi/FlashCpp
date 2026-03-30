@@ -68,11 +68,12 @@ ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var
 }
 
 const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const TypeSpecifierNode& iterator_type, bool prefer_const) {
-	if (!iterator_type.type_index().is_valid() || iterator_type.type_index().index() >= getTypeInfoCount()) {
+	const TypeInfo* iterator_type_info = tryGetTypeInfo(iterator_type.type_index());
+	if (!iterator_type_info) {
 		return nullptr;
 	}
 
-	const StructTypeInfo* struct_info = getTypeInfo(iterator_type.type_index()).getStructInfo();
+	const StructTypeInfo* struct_info = iterator_type_info->getStructInfo();
 	if (!struct_info) {
 		return nullptr;
 	}
@@ -1181,13 +1182,12 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
 	}
 
-	if (range_type->category() != TypeCategory::Struct ||
-		!range_type->type_index().is_valid() ||
-		range_type->type_index().index() >= getTypeInfoCount()) {
+	if (range_type->category() != TypeCategory::Struct) {
 		return original_var_decl.declaration_node();
 	}
 
-	const StructTypeInfo* struct_info = getTypeInfo(range_type->type_index()).getStructInfo();
+	const TypeInfo* range_type_info = tryGetTypeInfo(range_type->type_index());
+	const StructTypeInfo* struct_info = range_type_info ? range_type_info->getStructInfo() : nullptr;
 	if (!struct_info) {
 		return original_var_decl.declaration_node();
 	}
@@ -1763,9 +1763,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// matching constructor parameter type.
 			if (init->is<InitializerListNode>() && vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& ts = vtype.as<TypeSpecifierNode>();
-				if (ts.category() == TypeCategory::Struct && ts.type_index().is_valid() &&
-					ts.type_index().index() < getTypeInfoCount()) {
-					const StructTypeInfo* si = getTypeInfo(ts.type_index()).getStructInfo();
+				if (ts.category() == TypeCategory::Struct) {
+					const TypeInfo* type_info = tryGetTypeInfo(ts.type_index());
+					const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
 					if (si && si->hasAnyConstructor()) {
 						const InitializerListNode& il = init->as<InitializerListNode>();
 						tryAnnotateInitListConstructorArgs(il, *si);
@@ -2364,9 +2364,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (e.binding() == IdentifierBinding::NonStaticMember &&
 					!member_context_stack_.empty()) {
 					const TypeIndex current_struct_type = member_context_stack_.back();
-					if (current_struct_type.is_valid() &&
-						current_struct_type.index() < getTypeInfoCount()) {
-						const StructTypeInfo* struct_info = getTypeInfo(current_struct_type).getStructInfo();
+					if (const TypeInfo* type_info = tryGetTypeInfo(current_struct_type)) {
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {
 							if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, e.nameHandle())) {
 								return type_context_.intern(canonicalTypeDescFromStructMember(
@@ -2414,12 +2413,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				}
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-				if (object_desc.category() != TypeCategory::Struct ||
-					!object_desc.type_index.is_valid() ||
-					object_desc.type_index.index() >= getTypeInfoCount()) {
+				if (object_desc.category() != TypeCategory::Struct) {
 					return {};
 				}
-				const StructTypeInfo* struct_info = getTypeInfo(object_desc.type_index).getStructInfo();
+				const TypeInfo* object_type_info = tryGetTypeInfo(object_desc.type_index);
+				const StructTypeInfo* struct_info = object_type_info ? object_type_info->getStructInfo() : nullptr;
 				if (!struct_info) {
 					return {};
 				}
@@ -2581,10 +2579,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!callee_type_id) return {};
 
 				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-				if (callee_desc.category() == TypeCategory::Struct &&
-					callee_desc.type_index.is_valid() &&
-					callee_desc.type_index.index() < getTypeInfoCount()) {
-					const StructTypeInfo* struct_info = getTypeInfo(callee_desc.type_index).getStructInfo();
+				if (callee_desc.category() == TypeCategory::Struct) {
+					const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
+					const StructTypeInfo* struct_info = callee_type_info ? callee_type_info->getStructInfo() : nullptr;
 					if (!struct_info) {
 						return {};
 					}
@@ -2798,23 +2795,24 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 	if (from_desc.category() != TypeCategory::Enum) return;
 	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
 	if (to_desc.category() == TypeCategory::Enum && from_desc.type_index == to_desc.type_index) return;
-	if (!from_desc.type_index.is_valid() || from_desc.type_index.index() >= getTypeInfoCount()) return;
-
-	if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
-		if (ei->is_scoped) {
-			// Build target type name: use enum name if target is an enum, otherwise use primitive name.
-			std::string target_name;
-			if (to_desc.category() == TypeCategory::Enum && to_desc.type_index.is_valid() &&
-				to_desc.type_index.index() < getTypeInfoCount()) {
-				if (const EnumTypeInfo* target_ei = getTypeInfo(to_desc.type_index).getEnumInfo())
-					target_name = StringTable::getStringView(target_ei->name);
+	if (const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index)) {
+		if (const EnumTypeInfo* ei = from_type_info->getEnumInfo()) {
+			if (ei->is_scoped) {
+				// Build target type name: use enum name if target is an enum, otherwise use primitive name.
+				std::string target_name;
+				if (to_desc.category() == TypeCategory::Enum) {
+					if (const TypeInfo* target_type_info = tryGetTypeInfo(to_desc.type_index)) {
+						if (const EnumTypeInfo* target_ei = target_type_info->getEnumInfo())
+							target_name = StringTable::getStringView(target_ei->name);
+					}
+				}
+				if (target_name.empty())
+					target_name = getTypeName(to_desc.category());
+				throw CompileError("cannot implicitly convert from scoped enum '" +
+					std::string(StringTable::getStringView(ei->name)) +
+					"' to '" + target_name +
+					"'" + std::string(context_description) + "; use static_cast");
 			}
-			if (target_name.empty())
-				target_name = getTypeName(to_desc.category());
-			throw CompileError("cannot implicitly convert from scoped enum '" +
-				std::string(StringTable::getStringView(ei->name)) +
-				"' to '" + target_name +
-				"'" + std::string(context_description) + "; use static_cast");
 		}
 	}
 }
@@ -2825,15 +2823,16 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 
 static bool isScopedEnum(const CanonicalTypeDesc& desc) {
 	if (desc.category() != TypeCategory::Enum) return false;
-	if (!desc.type_index.is_valid() || desc.type_index.index() >= getTypeInfoCount()) return false;
-	if (const EnumTypeInfo* ei = getTypeInfo(desc.type_index).getEnumInfo())
-		return ei->is_scoped;
+	if (const TypeInfo* type_info = tryGetTypeInfo(desc.type_index)) {
+		if (const EnumTypeInfo* ei = type_info->getEnumInfo())
+			return ei->is_scoped;
+	}
 	return false;
 }
 
 static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
-	if (desc.type_index.is_valid() && desc.type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* ei = getTypeInfo(desc.type_index).getEnumInfo())
+	if (const TypeInfo* type_info = tryGetTypeInfo(desc.type_index)) {
+		if (const EnumTypeInfo* ei = type_info->getEnumInfo())
 			return std::string(StringTable::getStringView(ei->name));
 	}
 	return "scoped enum";
@@ -2887,17 +2886,19 @@ static bool structHasConversionOperatorTo(
 	// Guard against infinite recursion in pathological inheritance graphs.
 	static constexpr int kMaxInheritanceDepth = 8;
 	if (depth > kMaxInheritanceDepth) return false;
-	if (!from_desc.type_index.is_valid() || from_desc.type_index.index() >= getTypeInfoCount())
+	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
+	if (!from_type_info)
 		return false;
-	const StructTypeInfo* struct_info = getTypeInfo(from_desc.type_index).getStructInfo();
+	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
 	if (!struct_info) return false;
 
 	// Determine the expected "operator X" suffix.
 	std::string_view target_name;
 	if (to_desc.type_index.is_valid()) {
-		if (to_desc.type_index.index() >= getTypeInfoCount())
+		const TypeInfo* to_type_info = tryGetTypeInfo(to_desc.type_index);
+		if (!to_type_info)
 			return false;
-		target_name = StringTable::getStringView(getTypeInfo(to_desc.type_index).name());
+		target_name = StringTable::getStringView(to_type_info->name());
 	} else {
 		target_name = getTypeName(to_desc.category());
 		if (target_name.empty()) return false;
@@ -2992,11 +2993,12 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
-	if (from_desc.category() == TypeCategory::Enum && from_desc.type_index.is_valid() &&
-		from_desc.type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* ei = getTypeInfo(from_desc.type_index).getEnumInfo()) {
+	if (from_desc.category() == TypeCategory::Enum) {
+		if (const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index)) {
+			if (const EnumTypeInfo* ei = from_type_info->getEnumInfo()) {
 			if (ei->is_scoped)
 				return false;
+			}
 		}
 	}
 	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
@@ -3068,9 +3070,10 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		from_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(from_desc.category())) {
 		return false;
 	}
-	if (to_desc.type_index.index() >= getTypeInfoCount()) return false;
+	const TypeInfo* to_type_info = tryGetTypeInfo(to_desc.type_index);
+	if (!to_type_info) return false;
 
-	const StructTypeInfo* struct_info = getTypeInfo(to_desc.type_index).getStructInfo();
+	const StructTypeInfo* struct_info = to_type_info->getStructInfo();
 	if (!struct_info || !struct_info->hasAnyConstructor()) return false;
 
 	auto arg_type_opt = buildOverloadResolutionArgType(expr_node, nullptr);
@@ -3437,10 +3440,10 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
 	if (callee_desc.category() != TypeCategory::Struct) return;
-	if (!callee_desc.type_index.is_valid()) return;
-	if (callee_desc.type_index.index() >= getTypeInfoCount()) return;
+	const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
+	if (!callee_type_info) return;
 
-	const StructTypeInfo* struct_info = getTypeInfo(callee_desc.type_index).getStructInfo();
+	const StructTypeInfo* struct_info = callee_type_info->getStructInfo();
 	if (!struct_info) return;
 
 	const size_t arg_count = call_node.arguments().size();
@@ -3845,10 +3848,11 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	const ASTNode& type_node = call_node.type_node();
 	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) return;
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.category() != TypeCategory::Struct || !type_spec.type_index().is_valid()) return;
-	if (type_spec.type_index().index() >= getTypeInfoCount()) return;
+	if (type_spec.category() != TypeCategory::Struct) return;
+	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+	if (!type_info) return;
 
-	const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo();
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info || !struct_info->hasAnyConstructor()) return;
 
 	// Resolve the matching constructor via overload resolution.
@@ -3947,8 +3951,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			if (!arg_type_id) continue;
 			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
 			if (arg_desc.category() != TypeCategory::Enum) continue;
-			if (!arg_desc.type_index.is_valid() || arg_desc.type_index.index() >= getTypeInfoCount()) continue;
-			const EnumTypeInfo* ei = getTypeInfo(arg_desc.type_index).getEnumInfo();
+			const TypeInfo* arg_type_info = tryGetTypeInfo(arg_desc.type_index);
+			if (!arg_type_info) continue;
+			const EnumTypeInfo* ei = arg_type_info->getEnumInfo();
 			if (!ei || !ei->is_scoped) continue;
 			// Found a scoped enum arg that caused the no-match.
 			// Use the parameter type from the closest arity match for a precise error message.

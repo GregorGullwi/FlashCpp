@@ -752,63 +752,63 @@ ParseResult Parser::parse_template_declaration() {
 		StringHandle target_template_name;
 		std::vector<ASTNode> target_template_arg_nodes;
 
-		if ((is_struct_type(type_spec.category())) &&
-		    type_spec.type_index().index() < getTypeInfoCount()) {
-			const TypeInfo& ti = getTypeInfo(type_spec.type_index());
-			std::string_view type_name = StringTable::getStringView(ti.name());
+		if ((is_struct_type(type_spec.category()))) {
+			if (const TypeInfo* ti = tryGetTypeInfo(type_spec.type_index())) {
+				std::string_view type_name = StringTable::getStringView(ti->name());
 
-			// Check for incomplete instantiation indicating unresolved template parameters
-			// But NOT if the name already contains :: (which means ::type was already resolved)
-			if (ti.is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
-				has_unresolved_params = true;
-				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
-			}
-			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
-			// Check if this is a template instantiation (hash-based naming)
-			// But NOT if the name already contains :: (which means ::type was already resolved)
-			else if (ti.isTemplateInstantiation()) {
-				// Only treat as deferred if there's NO :: in the name
-				// If there's ::type or similar, the type has already been resolved to a member type
-				if (type_name.find("::") == std::string_view::npos) {
-					// Use the stored base template name instead of parsing the $
-					std::string_view template_name_part = StringTable::getStringView(ti.baseTemplateName());
-					auto template_opt = gTemplateRegistry.lookupTemplate(template_name_part);
-					if (template_opt.has_value()) {
-						has_unresolved_params = true;
-						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is template instantiation - using deferred instantiation");
-					}
-				} else {
-					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a resolved member type (not a dependent placeholder)");
-				}
-			}
-			// FALLBACK: Check if the resolved type name is a registered primary template
-			// This happens when template arguments are dependent and instantiation was skipped,
-			// so the type falls back to the primary template name without any instantiation suffix.
-			else {
-				// Check if this is a registered template - if so, the parsing of template args
-				// with dependent parameters resulted in fallback to the primary template
-				auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
-				if (template_opt.has_value()) {
-					FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a primary template (instantiation was skipped due to dependent args) - using deferred instantiation");
+				// Check for incomplete instantiation indicating unresolved template parameters
+				// But NOT if the name already contains :: (which means ::type was already resolved)
+				if (ti->is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
 					has_unresolved_params = true;
+					FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti->name()), "' has unresolved parameters - using deferred instantiation");
 				}
-			}
-
-			// Also check if the type is a dependent placeholder (UserDefined type with
-			// a name containing our template parameter names)
-			// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
-			if (!has_unresolved_params && (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template)) {
-				for (const auto& param_name : template_param_names) {
-					std::string_view param_sv = param_name.view();
-					// Check if the type name contains the parameter as a suffix (after underscore)
-					// Pattern: "..._<param>" like "integral_constant_bool_B"
-					size_t pos = type_name.rfind(param_sv);
-					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
-					    pos + param_sv.size() == type_name.size()) {
+				// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
+				// Check if this is a template instantiation (hash-based naming)
+				// But NOT if the name already contains :: (which means ::type was already resolved)
+				else if (ti->isTemplateInstantiation()) {
+					// Only treat as deferred if there's NO :: in the name
+					// If there's ::type or similar, the type has already been resolved to a member type
+					if (type_name.find("::") == std::string_view::npos) {
+						// Use the stored base template name instead of parsing the $
+						std::string_view template_name_part = StringTable::getStringView(ti->baseTemplateName());
+						auto template_opt = gTemplateRegistry.lookupTemplate(template_name_part);
+						if (template_opt.has_value()) {
+							has_unresolved_params = true;
+							FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is template instantiation - using deferred instantiation");
+						}
+					} else {
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a resolved member type (not a dependent placeholder)");
+					}
+				}
+				// FALLBACK: Check if the resolved type name is a registered primary template
+				// This happens when template arguments are dependent and instantiation was skipped,
+				// so the type falls back to the primary template name without any instantiation suffix.
+				else {
+					// Check if this is a registered template - if so, the parsing of template args
+					// with dependent parameters resulted in fallback to the primary template
+					auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
+					if (template_opt.has_value()) {
+						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a primary template (instantiation was skipped due to dependent args) - using deferred instantiation");
 						has_unresolved_params = true;
-						FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a dependent placeholder containing template param '",
-						          param_sv, "' - using deferred instantiation");
-						break;
+					}
+				}
+
+				// Also check if the type is a dependent placeholder (UserDefined type with
+				// a name containing our template parameter names)
+				// This catches cases like "integral_constant_bool_B" created by dependent template instantiation
+				if (!has_unresolved_params && (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template)) {
+					for (const auto& param_name : template_param_names) {
+						std::string_view param_sv = param_name.view();
+						// Check if the type name contains the parameter as a suffix (after underscore)
+						// Pattern: "..._<param>" like "integral_constant_bool_B"
+						size_t pos = type_name.rfind(param_sv);
+						if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
+						    pos + param_sv.size() == type_name.size()) {
+							has_unresolved_params = true;
+							FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a dependent placeholder containing template param '",
+							          param_sv, "' - using deferred instantiation");
+							break;
+						}
 					}
 				}
 			}
@@ -847,8 +847,8 @@ ParseResult Parser::parse_template_declaration() {
 							const ASTNode& node = target_template_arg_nodes[i];
 							if (node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& ts = node.as<TypeSpecifierNode>();
-								if (ts.type_index().index() < getTypeInfoCount()) {
-									std::string_view node_type_name = StringTable::getStringView(getTypeInfo(ts.type_index()).name());
+								if (const TypeInfo* type_info = tryGetTypeInfo(ts.type_index())) {
+									std::string_view node_type_name = StringTable::getStringView(type_info->name());
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()), 
 									          ", type_name='", node_type_name, "'");
 								}

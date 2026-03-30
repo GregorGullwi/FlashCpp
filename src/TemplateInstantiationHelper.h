@@ -335,11 +335,10 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
 		// Check if this template type has template arguments
 		// (indicating it's something like Container<T> rather than just T)
 		TypeIndex idx = type_spec.type_index();
-		if (idx.index() < getTypeInfoCount()) {
-			const TypeInfo& info = getTypeInfo(idx);
+		if (const TypeInfo* info = tryGetTypeInfo(idx)) {
 			// Template template parameters typically have nested template args
 			// indicated by the type name containing '<'
-			std::string_view name = StringTable::getStringView(info.name());
+			std::string_view name = StringTable::getStringView(info->name());
 			if (name.find('<') != std::string_view::npos) {
 				FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::isTemplateTemplateParameter: ",
 				          "detected template template parameter: ", name);

@@ -65,10 +65,9 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 		return static_cast<size_t>(get_type_size_bits(arg.category()));
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
-	if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(arg.type_index);
-		if (type_info.type_size_ > 0) {
-			return type_info.type_size_;
+	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+		if (type_info->type_size_ > 0) {
+			return type_info->type_size_;
 		}
 	}
 	return 0;  // Will be resolved during member access
@@ -434,10 +433,9 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
-	if (type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(type_index);
-		if (type_info.struct_info_) {
-			return static_cast<int>(type_info.struct_info_->total_size * 8);
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+		if (type_info->struct_info_) {
+			return static_cast<int>(type_info->struct_info_->total_size * 8);
 		}
 	}
 

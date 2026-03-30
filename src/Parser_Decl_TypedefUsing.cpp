@@ -882,10 +882,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
 
 				// Look up the original enum TypeInfo by its type_index
-				TypeInfo* original_enum_type_info = nullptr;
-				if (enum_type_index.index() < getTypeInfoCount()) {
-					original_enum_type_info = &getTypeInfoMut(enum_type_index);
-				}
+				TypeInfo* original_enum_type_info = tryGetTypeInfoMut(enum_type_index);
 
 				StringBuilder chain_builder;
 				for (const auto& ctx : struct_parsing_context_stack_) {
@@ -2137,4 +2134,3 @@ ParseResult Parser::parse_typedef_declaration()
 	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, *alias_token);
 	return saved_position.success(typedef_node);
 }
-
