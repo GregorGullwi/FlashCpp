@@ -443,9 +443,8 @@
 				// We resolved the member access - now check if it's a struct type
 				if (resolved_member && isIrStructType(toIrType(resolved_member->memberType()))) {
 					// Get the struct info for the member's type
-					if (resolved_member->type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
-						const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+					if (const TypeInfo* member_type_info = tryGetTypeInfo(resolved_member->type_index)) {
+						const StructTypeInfo* member_struct_info = member_type_info->getStructInfo();
 						if (member_struct_info) {
 							// Look for the called function name in this struct's members
 							StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
@@ -473,7 +472,7 @@
 									member_load.member_name = func_name_handle;
 									member_load.offset = static_cast<int>(member.offset);
 									member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-									member_load.struct_type_info = &member_type_info;  // MemberLoadOp expects TypeInfo*
+									member_load.struct_type_info = member_type_info;  // MemberLoadOp expects TypeInfo*
 									member_load.is_pointer_to_member = member_access.is_arrow();
 
 									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
@@ -684,9 +683,8 @@
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 
-		if (struct_type_index < getTypeInfoCount()) {
-			const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
-			struct_info = type_info.getStructInfo();
+		if (const TypeInfo* type_info = tryGetTypeInfo(object_type.type_index())) {
+			struct_info = type_info->getStructInfo();
 
 			if (struct_info) {
 				// Find the member function in the struct
@@ -724,10 +722,9 @@
 				if (!called_member_func && !struct_info->base_classes.empty()) {
 					auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
 						for (const auto& base_spec : current_struct->base_classes) {
-							if (base_spec.type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
-								if (base_type_info.isStruct()) {
-									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+								if (base_type_info->isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 									if (base_struct_info) {
 										// Check member functions in base class
 										for (const auto& member_func : base_struct_info->member_functions) {
