@@ -326,13 +326,7 @@ struct TemplateTypeArg {
 			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		if (function_signature.has_value()) {
-			const auto& sig = *function_signature;
-			h ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			for (const auto& pt : sig.parameter_types) {
-				h ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
-				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			}
+			h ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;
 	}
@@ -381,18 +375,8 @@ struct TemplateTypeArg {
 		if (function_signature.has_value() != other.function_signature.has_value())
 			return false;
 		if (function_signature.has_value()) {
-			const auto& a = *function_signature;
-			const auto& b = *other.function_signature;
-			if (a.return_type.type_index() != b.return_type.type_index() ||
-			    a.return_type.type_index().category() != b.return_type.type_index().category())
+			if (!FlashCpp::equalFunctionSignatureIdentity(*function_signature, *other.function_signature))
 				return false;
-			if (a.parameter_types.size() != b.parameter_types.size())
-				return false;
-			for (size_t i = 0; i < a.parameter_types.size(); ++i) {
-				if (a.parameter_types[i].type_index() != b.parameter_types[i].type_index() ||
-				    a.parameter_types[i].type_index().category() != b.parameter_types[i].type_index().category())
-					return false;
-			}
 		}
 		return true;
 	}
@@ -521,13 +505,7 @@ struct TemplateTypeArg {
 			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		if (function_signature.has_value()) {
-			const auto& sig = *function_signature;
-			hash ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			for (const auto& pt : sig.parameter_types) {
-				hash ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-				hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			}
+			hash ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		
 		// Convert to hex string
@@ -565,13 +543,7 @@ struct TemplateTypeArgHash {
 			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		if (arg.function_signature.has_value()) {
-			const auto& sig = *arg.function_signature;
-			hash ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			for (const auto& pt : sig.parameter_types) {
-				hash ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-				hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			}
+			hash ^= FlashCpp::hashFunctionSignatureIdentity(*arg.function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
@@ -636,6 +608,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;
+	result.function_signature = arg.function_signature;
 	return result;
 }
 

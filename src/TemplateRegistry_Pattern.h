@@ -257,6 +257,71 @@ struct TemplatePattern {
 		return true;
 	}
 
+	static bool matchFunctionSignatureType(
+		TypeIndex pattern_type,
+		TypeIndex concrete_type,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions)
+	{
+		bool has_valid_type_index = pattern_type.is_valid() && pattern_type.index() < getTypeInfoCount();
+		bool is_template_param_candidate = (pattern_type.category() == TypeCategory::UserDefined) ||
+			(pattern_type.category() == TypeCategory::Invalid && has_valid_type_index &&
+			 !getTypeInfo(pattern_type).isTemplateInstantiation());
+		if (is_template_param_candidate && has_valid_type_index) {
+			StringHandle param_name = getTypeInfo(pattern_type).name();
+			if (param_name.isValid() && template_param_names.count(param_name)) {
+				TemplateTypeArg deduced;
+				deduced.type_index = concrete_type;
+				return recordDeduction(param_name, deduced, param_substitutions);
+			}
+		}
+
+		if (pattern_type.category() != concrete_type.category()) {
+			return false;
+		}
+		if (needs_type_index(pattern_type.category()) && pattern_type != concrete_type) {
+			return false;
+		}
+		return true;
+	}
+
+	static bool matchFunctionSignature(
+		const TemplateTypeArg& pattern_arg,
+		const TemplateTypeArg& concrete_arg,
+		const std::unordered_set<StringHandle, StringHandleHash>& template_param_names,
+		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions)
+	{
+		if (pattern_arg.function_signature.has_value() != concrete_arg.function_signature.has_value()) {
+			return false;
+		}
+		if (!pattern_arg.function_signature.has_value()) {
+			return true;
+		}
+
+		const auto& pattern_sig = *pattern_arg.function_signature;
+		const auto& concrete_sig = *concrete_arg.function_signature;
+		if (pattern_sig.parameter_type_indices.size() != concrete_sig.parameter_type_indices.size() ||
+		    pattern_sig.linkage != concrete_sig.linkage ||
+		    pattern_sig.class_name != concrete_sig.class_name ||
+		    pattern_sig.is_const != concrete_sig.is_const ||
+		    pattern_sig.is_volatile != concrete_sig.is_volatile) {
+			return false;
+		}
+		if (!matchFunctionSignatureType(
+				pattern_sig.return_type_index, concrete_sig.return_type_index,
+				template_param_names, param_substitutions)) {
+			return false;
+		}
+		for (size_t i = 0; i < pattern_sig.parameter_type_indices.size(); ++i) {
+			if (!matchFunctionSignatureType(
+					pattern_sig.parameter_type_indices[i], concrete_sig.parameter_type_indices[i],
+					template_param_names, param_substitutions)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// Check if this pattern matches the given concrete arguments
 	// For example, pattern T& matches int&, float&, etc.
 	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
@@ -380,6 +445,13 @@ struct TemplatePattern {
 			}
 			if (pattern_arg.member_pointer_kind != concrete_arg.member_pointer_kind) {
 				FLASH_LOG(Templates, Trace, "  FAILED: member pointer kind mismatch");
+				return false;
+			}
+
+			if ((pattern_arg.category() == TypeCategory::FunctionPointer ||
+			     pattern_arg.category() == TypeCategory::MemberFunctionPointer) &&
+			    !matchFunctionSignature(pattern_arg, concrete_arg, template_param_names, param_substitutions)) {
+				FLASH_LOG(Templates, Trace, "  FAILED: function signature mismatch");
 				return false;
 			}
 		

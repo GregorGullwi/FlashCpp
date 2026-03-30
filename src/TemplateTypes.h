@@ -43,6 +43,52 @@
 
 namespace FlashCpp {
 
+inline bool equalTypeIndexIdentity(TypeIndex lhs, TypeIndex rhs) {
+	// TypeIndex::operator== compares only the index slot; category must be checked separately
+	// so primitive/default TypeIndex values don't collapse incorrectly.
+	return lhs == rhs && lhs.category() == rhs.category();
+}
+
+inline size_t hashTypeIndexIdentity(TypeIndex idx) {
+	size_t h = std::hash<TypeIndex>{}(idx);
+	h ^= std::hash<int>{}(static_cast<int>(idx.category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	return h;
+}
+
+inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const FunctionSignature& rhs) {
+	// Compare every field that contributes to function type identity in the AST signature model:
+	// return type, parameter types, linkage, member class name, and cv-qualification.
+	if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
+	    lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
+	    lhs.linkage != rhs.linkage ||
+	    lhs.class_name != rhs.class_name ||
+	    lhs.is_const != rhs.is_const ||
+	    lhs.is_volatile != rhs.is_volatile) {
+		return false;
+	}
+	for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
+		if (!equalTypeIndexIdentity(lhs.parameter_type_indices[i], rhs.parameter_type_indices[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
+	size_t h = hashTypeIndexIdentity(sig.return_type_index);
+	for (const auto& pt : sig.parameter_type_indices) {
+		h ^= hashTypeIndexIdentity(pt) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.linkage)) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	h ^= std::hash<bool>{}(sig.class_name.has_value()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	if (sig.class_name.has_value()) {
+		h ^= std::hash<std::string>{}(*sig.class_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	}
+	h ^= std::hash<bool>{}(sig.is_const) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	h ^= std::hash<bool>{}(sig.is_volatile) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	return h;
+}
+
 // ============================================================================
 // TypeIndexArg - A template type argument represented by TypeIndex
 // ============================================================================
@@ -67,6 +113,7 @@ struct TypeIndexArg {
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
 	std::optional<size_t> array_size;  // nullopt for T[], value for T[N]
+	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
 	
 	TypeIndexArg() = default;
 	
@@ -79,7 +126,10 @@ struct TypeIndexArg {
 		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth &&
 		       is_array == other.is_array &&
-		       array_size == other.array_size;
+		       array_size == other.array_size &&
+		       function_signature.has_value() == other.function_signature.has_value() &&
+		       (!function_signature.has_value() ||
+		        equalFunctionSignatureIdentity(*function_signature, *other.function_signature));
 	}
 	
 	bool operator!=(const TypeIndexArg& other) const {
@@ -87,9 +137,7 @@ struct TypeIndexArg {
 	}
 	
 	size_t hash() const {
-		size_t h = std::hash<TypeIndex>{}(type_index);
-		// Include category in hash to differentiate primitive types with type_index=0
-		h ^= std::hash<int>{}(static_cast<int>(type_index.category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		size_t h = hashTypeIndexIdentity(type_index);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(ref_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<uint8_t>{}(pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -97,6 +145,9 @@ struct TypeIndexArg {
 		h ^= std::hash<bool>{}(is_array) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (array_size.has_value()) {
 			h ^= std::hash<size_t>{}(*array_size) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		if (function_signature.has_value()) {
+			h ^= hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;
 	}
