@@ -2365,22 +2365,14 @@ ParseResult Parser::parse_template_declaration() {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 				// Calculate member size and alignment
-				auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+				auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
 				size_t referenced_size_bits = type_spec.size_in_bits();
 
-				if (type_spec.category() == TypeCategory::Struct) {
-					const TypeInfo* member_type_info = nullptr;
-					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-						if (ti.type_index_ == type_spec.type_index()) {
-							member_type_info = &ti;
-							break;
-						}
-					}
-					if (member_type_info && member_type_info->getStructInfo()) {
-						member_size = member_type_info->getStructInfo()->total_size;
-						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
-						member_alignment = member_type_info->getStructInfo()->alignment;
+				if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
+					if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
+						member_size = member_struct_info->total_size;
+						referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+						member_alignment = member_struct_info->alignment;
 					}
 				}
 

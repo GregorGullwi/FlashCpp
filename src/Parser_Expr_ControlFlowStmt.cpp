@@ -1312,16 +1312,8 @@ ParseResult Parser::parse_lambda_expression() {
 			if (is_ref_capture) {
 				referenced_size_bits = var_type.size_in_bits();
 				if (referenced_size_bits == 0 && var_type.category() == TypeCategory::Struct) {
-					const TypeInfo* member_type_info = nullptr;
-					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-						if (ti.type_index_ == var_type.type_index()) {
-							member_type_info = &ti;
-							break;
-						}
-					}
-					if (member_type_info && member_type_info->getStructInfo()) {
-						referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
+					if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(var_type.type_index())) {
+						referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
 					}
 				}
 			}

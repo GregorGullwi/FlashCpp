@@ -1222,7 +1222,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 
 						// Calculate member size and alignment
-						auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(anon_member_type_spec);
+						auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
+							anon_member_type_spec, anon_member_type_spec.type_index());
 						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
 						if (bitfield_width.has_value() && *bitfield_width == 0) {
 							// Zero-width bitfields in anonymous unions are layout directives:
@@ -1232,19 +1233,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 						
 						// For struct types, get size and alignment from the struct type info
-						if (anon_member_type_spec.category() == TypeCategory::Struct && !anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference()) {
-							const TypeInfo* member_type_info = nullptr;
-							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-								if (ti.type_index_ == anon_member_type_spec.type_index()) {
-									member_type_info = &ti;
-									break;
-								}
-							}
-							if (member_type_info && member_type_info->getStructInfo()) {
-								member_size = member_type_info->getStructInfo()->total_size;
-								referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
-								member_alignment = member_type_info->getStructInfo()->alignment;
+						if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
+							if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
+								member_size = member_struct_info->total_size;
+								referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+								member_alignment = member_struct_info->alignment;
 							}
 						}
 						
@@ -2676,25 +2669,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Get member size and alignment
 		// Calculate member size and alignment
-		auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+		auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
 		size_t referenced_size_bits = type_spec.size_in_bits();
 
 		// For struct types, get size and alignment from the struct type info
-		if (type_spec.category() == TypeCategory::Struct && !type_spec.is_pointer() && !type_spec.is_reference()) {
-			// Look up the struct type by type_index
-			const TypeInfo* member_type_info = nullptr;
-			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (ti.type_index_ == type_spec.type_index()) {
-					member_type_info = &ti;
-					break;
-				}
-			}
-
-			if (member_type_info && member_type_info->getStructInfo()) {
-				member_size = member_type_info->getStructInfo()->total_size;
-				referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
-				member_alignment = member_type_info->getStructInfo()->alignment;
+		if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
+			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
+				member_size = member_struct_info->total_size;
+				referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+				member_alignment = member_struct_info->alignment;
 			}
 		}
 

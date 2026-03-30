@@ -58,6 +58,48 @@ MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& 
 	return result;
 }
 
+const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+		return type_info->getStructInfo();
+	}
+	return nullptr;
+}
+
+size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
+	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_index)) {
+		return struct_info->total_size;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(resolved_type_index)) {
+		if (type_info->type_size_ > 0) {
+			return static_cast<size_t>(type_info->type_size_) / 8;
+		}
+	}
+	TypeCategory resolved_category = resolved_type_index.category();
+	if (resolved_category == TypeCategory::Invalid) {
+		resolved_category = type_spec.type();
+	}
+	return get_type_size_bits(resolved_category) / 8;
+}
+
+MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
+	if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference() || type_spec.is_function_pointer()) {
+		return MemberSizeAndAlignment{sizeof(void*), sizeof(void*)};
+	}
+
+	size_t size = getResolvedTypeSizeBytes(type_spec, resolved_type_index);
+	TypeCategory resolved_category = resolved_type_index.category();
+	if (resolved_category == TypeCategory::Invalid) {
+		resolved_category = type_spec.type();
+	}
+
+	size_t alignment = get_type_alignment(resolved_category, size);
+	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_index)) {
+		alignment = struct_info->alignment;
+	}
+
+	return MemberSizeAndAlignment{size, alignment};
+}
+
 // Helper function to safely get type size from TemplateTypeArg
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	// Check if this is a builtin type that get_type_size_bits can handle

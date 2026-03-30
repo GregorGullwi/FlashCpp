@@ -405,18 +405,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto get_substituted_type_size_bytes = [&](TypeIndex substituted_type_index) -> size_t {
 		if (substituted_type_index.is_valid()) {
-			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-				const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (ti.type_index_ == substituted_type_index) {
-					if (substituted_type_index.category() == TypeCategory::Struct) {
-						if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
-							return struct_info->total_size;
-						}
-					}
-					if (ti.type_size_ > 0) {
-						return static_cast<size_t>(ti.type_size_) / 8;
-					}
-					break;
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+				return struct_info->total_size;
+			}
+			if (const TypeInfo* type_info = tryGetTypeInfo(substituted_type_index)) {
+				if (type_info->type_size_ > 0) {
+					return static_cast<size_t>(type_info->type_size_) / 8;
 				}
 			}
 		}
@@ -1436,53 +1430,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool is_array_member = !resolved_array_dimensions.empty();
 			
 			// Calculate member size accounting for pointer depth
-			size_t member_size;
+			size_t member_size = get_substituted_type_size_bytes(member_type_index);
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				// Pointers and references are always 8 bytes (64-bit)
 				member_size = 8;
-			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-				// For struct types, look up the actual size in gTypeInfo
-				const TypeInfo* member_struct_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_index) {
-						member_struct_info = &ti;
-						break;
-					}
-				}
-				if (member_struct_info && member_struct_info->getStructInfo()) {
-					member_size = member_struct_info->getStructInfo()->total_size;
-				} else {
-					member_size = get_substituted_type_size_bytes(member_type_index);
-				}
-			} else {
-				member_size = get_substituted_type_size_bytes(member_type_index);
 			}
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 			}
 			// Calculate member alignment
 			// For pointers and references, use 8-byte alignment (pointer alignment on x64)
-			size_t member_alignment;
+			size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
 			if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 				member_alignment = 8;  // Pointer/reference alignment on x64
-			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-				// For struct types, look up the actual alignment from gTypeInfo
-				const TypeInfo* member_struct_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_index) {
-						member_struct_info = &ti;
-						break;
-					}
-				}
-				if (member_struct_info && member_struct_info->getStructInfo()) {
-					member_alignment = member_struct_info->getStructInfo()->alignment;
-				} else {
-					member_alignment = get_type_alignment(member_type_index.category(), member_size);
-				}
-			} else {
-				member_alignment = get_type_alignment(member_type_index.category(), member_size);
+			} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_index)) {
+				member_alignment = member_struct_info->alignment;
 			}
 			
 			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
@@ -3848,25 +3810,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		size_t member_size;
 		if (is_array_member) {
 			// Compute per-element size, looking up struct sizes from gTypeInfo
-			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-				const TypeInfo* member_struct_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_index) {
-						member_struct_info = &ti;
-						break;
-					}
-				}
-				if (member_struct_info && member_struct_info->getStructInfo()) {
-					member_size = member_struct_info->getStructInfo()->total_size;
-				} else {
-					member_size = get_type_size_bits(member_type_index.category()) / 8;
-				}
-			} else {
-				member_size = get_type_size_bits(member_type_index.category()) / 8;
-			}
+			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 			}
@@ -3929,78 +3873,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_array_member = true;
 			}
 			// Compute per-element size, looking up struct sizes from gTypeInfo
-			size_t element_size;
-			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-				element_size = 8;
-			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-				const TypeInfo* member_struct_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_index) {
-						member_struct_info = &ti;
-						break;
-					}
-				}
-				if (member_struct_info && member_struct_info->getStructInfo()) {
-					element_size = member_struct_info->getStructInfo()->total_size;
-				} else {
-					element_size = get_type_size_bits(member_type_index.category()) / 8;
-				}
-			} else {
-				element_size = get_type_size_bits(member_type_index.category()) / 8;
-			}
+			size_t element_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
 			member_size = element_size * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
-			if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-				member_size = 8;  // Pointers and references are 64-bit on x64
-			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-				// For struct types, look up the actual size in gTypeInfo
-				const TypeInfo* member_struct_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_index) {
-						member_struct_info = &ti;
-						break;
-					}
-				}
-				if (member_struct_info && member_struct_info->getStructInfo()) {
-					member_size = member_struct_info->getStructInfo()->total_size;
+			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
+			if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()
+				&& member_type_index.category() == TypeCategory::Struct) {
+				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
+					member_type_info && member_type_info->getStructInfo()) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Found struct member '{}' with type_index={}, total_size={} bytes, struct name={}", 
 					                 decl.identifier_token().value(), member_type_index, member_size,
-					                 StringTable::getStringView(member_struct_info->name()));
+					                 StringTable::getStringView(member_type_info->name()));
 				} else {
-					member_size = get_type_size_bits(member_type_index.category()) / 8;
 					FLASH_LOG_FORMAT(Templates, Debug, "Primary template: Struct member '{}' type_index={} not found in gTypeInfo, using default size={} bytes", 
 					                 decl.identifier_token().value(), member_type_index, member_size);
 				}
-			} else {
-				member_size = get_type_size_bits(member_type_index.category()) / 8;
 			}
 		}
 
 		// Calculate member alignment
 		// For pointers and references, use 8-byte alignment (pointer alignment on x64)
-		size_t member_alignment;
+		size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
 		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_alignment = 8;  // Pointer/reference alignment on x64
-		} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
-			// For struct types, look up the actual alignment from gTypeInfo
-			const TypeInfo* member_struct_info = nullptr;
-			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-				const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-				if (ti.type_index_ == member_type_index) {
-					member_struct_info = &ti;
-					break;
-				}
-			}
-			if (member_struct_info && member_struct_info->getStructInfo()) {
-				member_alignment = member_struct_info->getStructInfo()->alignment;
-			} else {
-				member_alignment = get_type_alignment(member_type_index.category(), member_size);
-			}
-		} else {
-			member_alignment = get_type_alignment(member_type_index.category(), member_size);
+		} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_index)) {
+			member_alignment = member_struct_info->alignment;
 		}
 		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 
@@ -4621,65 +4519,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						total_elements *= dim_size;
 					}
 
-					size_t element_size;
-					if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-						element_size = 8;
-					} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
-						const TypeInfo* member_struct_info = nullptr;
-						for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-							const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-							if (ti.type_index_ == substituted_type_index) {
-								member_struct_info = &ti;
-								break;
-							}
-						}
-						if (member_struct_info && member_struct_info->getStructInfo()) {
-							element_size = member_struct_info->getStructInfo()->total_size;
-						} else {
-							element_size = get_type_size_bits(substituted_type_index.category()) / 8;
-						}
-					} else {
-						element_size = get_type_size_bits(substituted_type_index.category()) / 8;
-					}
+					size_t element_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
 					member_size = element_size * total_elements;
 				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_size = 8;
-				} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
-					const TypeInfo* member_struct_info = nullptr;
-					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-						const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-						if (ti.type_index_ == substituted_type_index) {
-							member_struct_info = &ti;
-							break;
-						}
-					}
-					if (member_struct_info && member_struct_info->getStructInfo()) {
-						member_size = member_struct_info->getStructInfo()->total_size;
-					} else {
-						member_size = get_type_size_bits(substituted_type_index.category()) / 8;
-					}
 				} else {
-					member_size = substituted_type_spec.size_in_bits() / 8;
+					member_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
 				}
-				size_t member_alignment;
+				size_t member_alignment = get_type_alignment(substituted_type_index.category(), member_size);
 				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_alignment = 8;
-				} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
-					const TypeInfo* member_struct_info = nullptr;
-					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-						const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-						if (ti.type_index_ == substituted_type_index) {
-							member_struct_info = &ti;
-							break;
-						}
-					}
-					if (member_struct_info && member_struct_info->getStructInfo()) {
-						member_alignment = member_struct_info->getStructInfo()->alignment;
-					} else {
-						member_alignment = get_type_alignment(substituted_type_index.category(), member_size);
-					}
-				} else {
-					member_alignment = get_type_alignment(substituted_type_index.category(), member_size);
+				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+					member_alignment = member_struct_info->alignment;
 				}
 
 				ReferenceQualifier ref_qual = substituted_type_spec.reference_qualifier();
