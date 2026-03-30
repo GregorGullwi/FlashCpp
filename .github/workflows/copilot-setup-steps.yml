@@ -5,9 +5,13 @@ on:
   push:
     paths:
       - .github/workflows/copilot-setup-steps.yml
+      - .github/copilot-instructions.md
+      - .clang-format
   pull_request:
     paths:
       - .github/workflows/copilot-setup-steps.yml
+      - .github/copilot-instructions.md
+      - .clang-format
 
 jobs:
   # The job MUST be called `copilot-setup-steps` for Copilot to pick it up.
@@ -18,14 +22,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Install debugging tools (gdb, lldb, strace)
+      - name: Install debugging and formatting tools (clang-format, gdb, lldb, strace)
         run: |
           set -euo pipefail
           sudo apt-get update
           # non-interactive install
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            gdb lldb strace
+            clang-format gdb lldb strace
           # show versions for logs
+          clang-format --version || true
           gdb --version || true
           lldb --version || true
           strace --version || true
