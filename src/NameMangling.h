@@ -567,7 +567,7 @@ inline void appendItaniumTypeTemplateArgs(
 		if (arg.is_value) {
 			// Non-type template argument (value)
 			output += 'L';
-			// Use type code based on arg.base_type
+			// Use type code based on arg.category()
 			switch (arg.category()) {
 				case TypeCategory::Int: output += 'i'; break;
 				case TypeCategory::UnsignedInt: output += 'j'; break;
