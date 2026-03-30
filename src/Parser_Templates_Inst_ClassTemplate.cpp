@@ -1487,11 +1487,32 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			
 			ReferenceQualifier ref_qual = type_spec.reference_qualifier();
-			
+
 			// Substitute template parameters in default member initializers
 			std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 				member_decl.default_initializer, template_args, template_params);
-			
+
+			// For function pointer members instantiated from a template parameter (e.g., F func
+			// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
+			// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+			auto resolve_member_function_signature = [&]() -> std::optional<FunctionSignature> {
+				if (member_type_index.category() != TypeCategory::FunctionPointer && member_type_index.category() != TypeCategory::MemberFunctionPointer) return std::nullopt;
+				if (type_spec.has_function_signature()) return type_spec.function_signature();
+				// type_spec is a template-parameter placeholder: look up by name
+				std::string_view type_name;
+				if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount())
+					type_name = StringTable::getStringView(getTypeInfo(type_spec.type_index()).name());
+				if (type_name.empty())
+					type_name = type_spec.token().value();
+				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+					if (!template_params[i].is<TemplateParameterNode>()) continue;
+					const auto& tparam = template_params[i].as<TemplateParameterNode>();
+					if (tparam.name() == type_name && template_args[i].function_signature.has_value())
+						return template_args[i].function_signature;
+				}
+				return std::nullopt;
+			};
+
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
@@ -1507,7 +1528,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::move(resolved_array_dimensions),
 				static_cast<int>(ptr_depth),
 				resolve_bitfield_width(member_decl, template_params, template_args),
-				type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
+				resolve_member_function_signature()
 			);
 		}
 		
@@ -3983,17 +4004,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			member_alignment = get_type_alignment(member_type_index.category(), member_size);
 		}
 		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
-	
+
 		// For reference members, we need to pass the size of the referenced type, not the pointer size
 		size_t referenced_size_bits = 0;
 		if (ref_qual != ReferenceQualifier::None) {
 			referenced_size_bits = get_type_size_bits(member_type_index.category());
 		}
-	
+
 		// Substitute template parameters in default member initializers
 		std::optional<ASTNode> substituted_default_initializer = substitute_default_initializer(
 			member_decl.default_initializer, template_args_to_use, template_params);
-	
+
+		// For function pointer members instantiated from a template parameter (e.g., F func
+		// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
+		// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
+		auto resolve_member_function_signature = [&]() -> std::optional<FunctionSignature> {
+			if (member_type_index.category() != TypeCategory::FunctionPointer && member_type_index.category() != TypeCategory::MemberFunctionPointer) return std::nullopt;
+			if (type_spec.has_function_signature()) return type_spec.function_signature();
+			// type_spec is a template-parameter placeholder: look up by name
+			std::string_view type_name;
+			if (type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount())
+				type_name = StringTable::getStringView(getTypeInfo(type_spec.type_index()).name());
+			if (type_name.empty())
+				type_name = type_spec.token().value();
+			for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) continue;
+				const auto& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == type_name && template_args_to_use[i].function_signature.has_value())
+					return template_args_to_use[i].function_signature;
+			}
+			return std::nullopt;
+		};
+
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
@@ -4009,7 +4051,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			std::move(resolved_array_dimensions),
 			static_cast<int>(type_spec.pointer_depth()),
 			resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt
+			resolve_member_function_signature()
 		);
 	}
 

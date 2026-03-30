@@ -1316,30 +1316,42 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						}
 						
 						// Successfully parsed function reference/pointer type!
+						// Capture the return type BEFORE rewriting type_node (mirrors
+						// Parser_Decl_DeclaratorCore.cpp which creates a fresh FunctionPointer node).
 						FunctionSignature func_sig;
 						func_sig.return_type_index = type_node.type_index();
 						func_sig.parameter_type_indices = std::move(param_types);
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
-						
-						if (is_ptr) {
-							type_node.add_pointer_level(CVQualifier::None);
+
+						if (is_member_ptr) {
+							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+							type_node.set_size_in_bits(64);
+							type_node.limit_pointer_depth(0);
+						} else if (is_ptr) {
+							// Rewrite type_node to canonical FunctionPointer form.
+							// A function pointer type is TypeCategory::FunctionPointer, 64-bit, with no
+							// extra pointer level — the "pointer-ness" is intrinsic to FunctionPointer.
+							// (Compare with Parser_Decl_DeclaratorCore.cpp which does the same.)
+							type_node.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
+							type_node.set_size_in_bits(64);
+							type_node.limit_pointer_depth(0);
 						}
 						type_node.set_function_signature(func_sig);
-						
+
 						if (is_member_ptr) {
 							// Member function pointer - mark as member pointer
 							type_node.set_member_class_name(StringHandle{});
 						}
-						
+
 						if (is_lvalue_ref) {
 							type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
 						} else if (is_rvalue_ref) {
 							type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
 						}
-						
+
 						discard_saved_token(paren_saved_pos);
-						FLASH_LOG(Parser, Debug, "Parsed function ", 
+						FLASH_LOG(Parser, Debug, "Parsed function ",
 						          is_member_ptr ? "member pointer" : (is_ptr ? "pointer" : (is_rvalue_ref ? "rvalue ref" : "lvalue ref")),
 						          " type in template argument");
 					} else {

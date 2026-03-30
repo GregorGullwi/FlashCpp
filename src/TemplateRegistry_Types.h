@@ -183,6 +183,9 @@ struct TemplateTypeArg {
 	bool is_template_template_arg;  // true if this is a template template argument
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
 
+	// For function pointer types: stores the full function signature
+	std::optional<FunctionSignature> function_signature;
+
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.
 	TypeCategory category() const noexcept { return type_index.category(); }
@@ -233,7 +236,8 @@ struct TemplateTypeArg {
 		, is_pack(false)
 		, is_dependent(false)
 		, is_template_template_arg(false)
-		, template_name_handle() {
+		, template_name_handle()
+		, function_signature(type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt) {
 		for (const auto& level : type_spec.pointer_levels()) {
 			pointer_cv_qualifiers.push_back(level.cv_qualifier);
 		}
@@ -321,6 +325,9 @@ struct TemplateTypeArg {
 		if (is_template_template_arg) {
 			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		if (function_signature.has_value()) {
+			h ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
 		return h;
 	}
 	
@@ -349,7 +356,7 @@ struct TemplateTypeArg {
 			}
 		}
 		
-		return category_match &&
+		if (!(category_match &&
 		       type_index_match &&
 		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth &&
@@ -359,9 +366,19 @@ struct TemplateTypeArg {
 		       array_size == other.array_size &&
 		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value) &&  // Only compare value if it's a value
+		       (!is_value || value == other.value) &&
 		       is_template_template_arg == other.is_template_template_arg &&
-		       (!is_template_template_arg || template_name_handle == other.template_name_handle);
+		       (!is_template_template_arg || template_name_handle == other.template_name_handle)))
+			return false;
+
+		// Compare function_signature to distinguish e.g. int(*)(int) from int(*)(double)
+		if (function_signature.has_value() != other.function_signature.has_value())
+			return false;
+		if (function_signature.has_value()) {
+			if (!FlashCpp::equalFunctionSignatureIdentity(*function_signature, *other.function_signature))
+				return false;
+		}
+		return true;
 	}
 
 	// Helper method to check if this is a parameter pack
@@ -426,6 +443,26 @@ struct TemplateTypeArg {
 						result += "?";
 					}
 					break;
+				case TypeCategory::FunctionPointer:
+				case TypeCategory::MemberFunctionPointer: {
+					// Encode function pointer types using their signature to avoid
+					// collisions between e.g. int(*)(int) and int(*)(double).
+					result += (category() == TypeCategory::MemberFunctionPointer) ? "MFP(" : "FP(";
+					if (function_signature.has_value()) {
+						const auto& sig = *function_signature;
+						auto ret_name = getTypeName(sig.return_type_index.category());
+						result += ret_name.empty() ? "?" : ret_name;
+						result += "(";
+						for (size_t pi = 0; pi < sig.parameter_type_indices.size(); ++pi) {
+							if (pi > 0) result += ",";
+							auto pname = getTypeName(sig.parameter_type_indices[pi].category());
+							result += pname.empty() ? "?" : pname;
+						}
+						result += ")";
+					}
+					result += ")";
+					break;
+				}
 				default: result += "?"; break;
 			}
 		}
@@ -487,6 +524,9 @@ struct TemplateTypeArg {
 		if (is_template_template_arg) {
 			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		if (function_signature.has_value()) {
+			hash ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
 		
 		// Convert to hex string
 		char buf[17];
@@ -521,6 +561,9 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_template_template_arg) {
 			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		if (arg.function_signature.has_value()) {
+			hash ^= FlashCpp::hashFunctionSignatureIdentity(*arg.function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
@@ -585,6 +628,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;
+	result.function_signature = arg.function_signature;
 	return result;
 }
 
