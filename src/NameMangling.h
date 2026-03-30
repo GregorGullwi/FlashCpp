@@ -106,6 +106,20 @@ inline void appendCVQualifier(auto& output, CVQualifier cv) {
 	}
 }
 
+// Resolve a TypeIndex through any TypeAlias chain to get the underlying concrete TypeIndex.
+// Needed so that typedef'd types in FunctionSignature produce correct mangled names.
+inline TypeIndex resolveTypeAliasIndex(TypeIndex idx) {
+	constexpr size_t MAX_TYPEDEF_CHAIN_DEPTH = 16;
+	for (size_t depth = 0; depth < MAX_TYPEDEF_CHAIN_DEPTH; ++depth) {
+		if (idx.category() != TypeCategory::TypeAlias) break;
+		if (idx.index() >= getTypeInfoCount()) break;
+		TypeIndex underlying = getTypeInfo(idx).type_index_;
+		if (!underlying.is_valid() || underlying == idx) break;
+		idx = underlying;
+	}
+	return idx;
+}
+
 // Generate MSVC type code for mangling
 // Works with both std::string and StringBuilder
 template<typename OutputType>
@@ -200,13 +214,14 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
+				TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				appendTypeCode(output, ret_spec);
 				if (sig.parameter_type_indices.empty()) {
 					output += 'X';  // void parameter list
 				} else {
 					for (const TypeIndex& pt : sig.parameter_type_indices) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
+						TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
 						appendTypeCode(output, param_spec);
 					}
 				}
@@ -370,14 +385,15 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				const auto& sig = type_node.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-				TypeSpecifierNode ret_spec(sig.return_type_index, TypeQualifier::None, 0, Token{}, CVQualifier::None);
+				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
+				TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				appendItaniumTypeCode(output, ret_spec);
 				// Encode parameter types
 				if (sig.parameter_type_indices.empty()) {
 					output += 'v';  // void parameter list
 				} else {
 					for (const TypeIndex& pt : sig.parameter_type_indices) {
-						TypeSpecifierNode param_spec(pt, TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
+						TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);  // explicit ctor: see above
 						appendItaniumTypeCode(output, param_spec);
 					}
 				}

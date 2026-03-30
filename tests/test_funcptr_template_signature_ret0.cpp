@@ -3,15 +3,16 @@
 // Regression test for copy_indirection_from() and TemplateTypeArg
 // not carrying function_signature through template instantiation.
 
-typedef int (*FuncPtr)(int);
-
-template<typename T>
-struct Holder {
-	T value;
+template<typename F>
+struct Wrapper {
+	F func;
 };
 
+int handler(int x) { return x; }
+
 int main() {
-	Holder<FuncPtr> h;
-	(void)h;
-	return 0;
+	Wrapper<int(*)(int)> w;
+	w.func = handler;
+	int result = w.func(0);
+	return result;
 }
