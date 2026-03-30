@@ -34,12 +34,18 @@ IrType toIrType(TypeCategory cat) {
 			return IrType::LongDouble;
 
 		// Aggregate / user-defined types
-		// TypeAlias is included here because unresolved aliases that reach IR
-		// are treated as struct-like for codegen purposes.
 		case TypeCategory::Struct:
 		case TypeCategory::UserDefined:
-		case TypeCategory::TypeAlias:
 			return IrType::Struct;
+
+		// TypeAlias must not reach this pure-category overload — the
+		// toIrType(TypeIndex) overload resolves aliases through getTypeInfo()
+		// first.  Hitting this case means a TypeAlias category leaked into a
+		// code path that only has a TypeCategory (no TypeIndex to resolve from),
+		// which is a compiler bug.
+		case TypeCategory::TypeAlias:
+			assert(false && "TypeCategory::TypeAlias must be resolved before reaching toIrType(TypeCategory)");
+			return IrType::Void;
 
 		// Pointer-like types
 		case TypeCategory::FunctionPointer:

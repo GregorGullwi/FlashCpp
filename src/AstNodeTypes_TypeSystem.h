@@ -362,13 +362,14 @@ constexpr bool is_primitive_type(TypeCategory cat) {
 	}
 }
 
-// True for Struct, UserDefined (opaque), or TypeAlias — any user-defined type
-// that may carry struct-like metadata (StructTypeInfo) or be resolved via alias
-// lookup.  Intentionally excludes Enum and Template placeholders.
+// True for Struct or UserDefined (opaque) — types that may carry struct-like
+// metadata (StructTypeInfo).  TypeAlias is intentionally excluded: an alias
+// to a primitive (e.g., `using MyInt = int`) is NOT struct-like.  Callers
+// that need to handle aliases should resolve through getTypeInfo() first.
+// Intentionally excludes Enum and Template placeholders.
 constexpr bool is_struct_type(TypeCategory cat) {
 	return cat == TypeCategory::Struct
-		|| cat == TypeCategory::UserDefined
-		|| cat == TypeCategory::TypeAlias;
+		|| cat == TypeCategory::UserDefined;
 }
 
 // True for any type that requires a gTypeInfo entry for identity

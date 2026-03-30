@@ -51,7 +51,16 @@ enum class IrType : int_fast16_t {
 IrType toIrType(TypeCategory cat);
 
 // TypeIndex overload — uses the cached category carried by the TypeIndex.
-inline IrType toIrType(TypeIndex type_index) { return toIrType(type_index.category()); }
+// For TypeAlias, resolves through getTypeInfo() to the concrete type so that
+// aliases to primitives (e.g., `using MyInt = int`) map to IrType::Integer
+// rather than the defensive IrType::Struct fallback in toIrType(TypeCategory).
+inline IrType toIrType(TypeIndex type_index) {
+	TypeCategory cat = type_index.category();
+	if (cat == TypeCategory::TypeAlias && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+		cat = getTypeInfo(type_index).category();
+	}
+	return toIrType(cat);
+}
 
 // TypeInfo overload — delegates to category() which prefers the authoritative
 // TypeCategory embedded in type_index_ over the raw category_ field.
