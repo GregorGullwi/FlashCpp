@@ -316,14 +316,12 @@ private:
 		const char* cast_name = "cast");
 	ExprResult handleRValueReferenceCast(
 		const ExprResult& expr_operands,
-		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name);
 	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
-		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,

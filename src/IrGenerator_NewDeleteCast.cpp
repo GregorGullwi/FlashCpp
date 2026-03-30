@@ -667,7 +667,6 @@
 
 	ExprResult AstToIr::handleRValueReferenceCast(
 		const ExprResult& expr_operands,
-		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
@@ -680,10 +679,10 @@
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to rvalue reference: marking as xvalue", cast_name);
-		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type, target_size));
+		setTempVarMetadata(result_var, TempVarMetadata::makeXValue(lvalue_info, target_type_index.category(), target_size));
 
 		// Generate AddressOf operation if needed
-		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
+		generateAddressOfForReference(base, result_var, target_type_index.category(), target_size, token, cast_name);
 
 		// Return the xvalue with reference semantics (64-bit pointer size).
 		// Use the target type's TypeIndex for struct/enum-to-struct/enum casts
@@ -692,12 +691,11 @@
 		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
 		// source TypeIndex in that case.
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(result_type_index.withCategory(target_type), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.withCategory(target_type_index.category()), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
 		const ExprResult& expr_operands,
-		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
@@ -710,17 +708,17 @@
 		auto base = extractBaseOperand(expr_operands, result_var, cast_name);
 		LValueInfo lvalue_info(LValueInfo::Kind::Direct, base, 0);
 		FLASH_LOG_FORMAT(Codegen, Debug, "{} to lvalue reference", cast_name);
-		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type, target_size));
+		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, target_type_index.category(), target_size));
 
 		// Generate AddressOf operation if needed
-		generateAddressOfForReference(base, result_var, target_type, target_size, token, cast_name);
+		generateAddressOfForReference(base, result_var, target_type_index.category(), target_size, token, cast_name);
 
 		// Return the lvalue with reference semantics (64-bit pointer size).
 		// Use the target type's TypeIndex for struct-to-struct casts (e.g., static_cast<Base&>(derived))
 		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
 		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(result_type_index.withCategory(target_type), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(result_type_index.withCategory(target_type_index.category()), SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -759,13 +757,13 @@
 		// This produces an xvalue - has identity but can be moved from
 		// Equivalent to std::move
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
+			return handleRValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for lvalue reference casts: static_cast<T&>(expr)
 		// This produces an lvalue
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
+			return handleLValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), staticCastNode.cast_token(), "static_cast");
 		}
 
 		// Special handling for pointer casts (e.g., char* to double*, int* to void*, etc.)
@@ -1062,12 +1060,12 @@
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
+			return handleRValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 		}
 
 		// Special handling for lvalue reference casts: const_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
+			return handleLValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 		}
 
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
@@ -1091,12 +1089,12 @@
 
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 		if (target_type_node.is_rvalue_reference()) {
-			return handleRValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleRValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 
 		// Special handling for lvalue reference casts: reinterpret_cast<T&>(expr)
 		if (target_type_node.is_lvalue_reference()) {
-			return handleLValueReferenceCast(expr_operands, target_type, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
+			return handleLValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 		}
 
 		// reinterpret_cast reinterprets the bits without conversion
