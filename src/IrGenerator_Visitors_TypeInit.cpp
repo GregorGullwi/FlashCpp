@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
@@ -1143,7 +1143,7 @@
 				FunctionDeclOp ctor_decl_op;
 				ctor_decl_op.function_name = type_info->name();
 				ctor_decl_op.struct_name = type_info->name();
-				ctor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};
+				ctor_decl_op.return_type_index = nativeTypeIndex(TypeCategory::Void);
 				ctor_decl_op.return_size_in_bits = SizeInBits{0};
 				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;

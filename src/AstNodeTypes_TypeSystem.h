@@ -416,12 +416,6 @@ struct TypeIndex {
 		return TypeIndex{idx.index(), cat};
 	}
 
-	// Factory: build a category-only TypeIndex for APIs that only need semantic
-	// classification and do not carry a real gTypeInfo identity.
-	static constexpr TypeIndex fromCategory(TypeCategory cat) noexcept {
-		return TypeIndex{0, cat};
-	}
-
 	// Increment operators for loop variables (index only).
 	TypeIndex& operator++() noexcept { ++index_; return *this; }
 	TypeIndex operator++(int) noexcept { TypeIndex tmp = *this; ++index_; return tmp; }

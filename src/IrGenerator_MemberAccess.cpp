@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
@@ -859,7 +859,7 @@
 			(cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount() && getTypeInfo(type_index).getStructInfo() != nullptr)) {
 			result.type_index = TypeIndex{type_index};
 		} else {
-			result.type_index = TypeIndex::fromCategory(cat);
+			result.type_index = nativeTypeIndex(cat);
 		}
 		return result;
 	}

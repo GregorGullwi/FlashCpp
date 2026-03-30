@@ -806,7 +806,7 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
 	// repeated interning on every call.
 	CanonicalTypeDesc bool_desc;
-	bool_desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+	bool_desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 	bool_type_id_ = type_context_.intern(bool_desc);
 }
 
@@ -1965,10 +1965,10 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							const TypeCategory promoted_cat = promote_integer_type(lhs_cat);
 							if (promoted_cat != lhs_cat) {
 								CanonicalTypeDesc promoted_desc;
-								promoted_desc.type_index = TypeIndex::fromCategory(promoted_cat);
+								promoted_desc.type_index = nativeTypeIndex(promoted_cat);
 								const CanonicalTypeId promoted_id = type_context_.intern(promoted_desc);
 								CanonicalTypeDesc lhs_base_desc;
-								lhs_base_desc.type_index = TypeIndex::fromCategory(lhs_cat);
+								lhs_base_desc.type_index = nativeTypeIndex(lhs_cat);
 								const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 								storeCompoundAssignBackConvSlot(e, promoted_id, lhs_base_id);
 							}
@@ -2013,7 +2013,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					tryAnnotateContextualBool(e.get_operand());
 				}
 				// C++20 [expr.unary.op]: the operand of unary +, -, ~ undergoes
-				// integral promotion (bool/char/short → int).
+				// integral promotion (bool/char/short -> int).
 				else if (e.op() == "+" || e.op() == "-" || e.op() == "~") {
 					tryAnnotateUnaryOperandPromotion(e);
 				}
@@ -2301,12 +2301,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(e.type());
+				desc.type_index = nativeTypeIndex(e.type());
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -2481,17 +2481,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						&& get_integer_rank(operand_cat) < 3;  // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
-						promoted.type_index = TypeIndex::fromCategory(TypeCategory::Int);
+						promoted.type_index = nativeTypeIndex(TypeCategory::Int);
 						return type_context_.intern(promoted);
 					}
 					CanonicalTypeDesc result_desc;
-					result_desc.type_index = TypeIndex::fromCategory(operand_cat);
+					result_desc.type_index = nativeTypeIndex(operand_cat);
 					return type_context_.intern(result_desc);
 				}
 				// Logical NOT always returns bool
 				if (op == "!") {
 					CanonicalTypeDesc desc;
-					desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+					desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 					return type_context_.intern(desc);
 				}
 				// Prefix/postfix ++ and -- return the operand type
@@ -2507,7 +2507,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					op == "<=" || op == ">=" || op == "&&" || op == "||")
 				{
 					CanonicalTypeDesc desc;
-					desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+					desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 					return type_context_.intern(desc);
 				}
 				// Comma: result is the RHS type
@@ -2530,7 +2530,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					const TypeCategory common_cat = get_common_type(l.category(), r.category());
 					if (common_cat == TypeCategory::Invalid) return {};
 					CanonicalTypeDesc desc;
-					desc.type_index = TypeIndex::fromCategory(common_cat);
+					desc.type_index = nativeTypeIndex(common_cat);
 					return type_context_.intern(desc);
 				}
 			}
@@ -2547,7 +2547,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const TypeCategory common_cat = get_common_type(t_desc.category(), f_desc.category());
 				if (common_cat == TypeCategory::Invalid) return {};
 				CanonicalTypeDesc ternary_desc;
-				ternary_desc.type_index = TypeIndex::fromCategory(common_cat);
+				ternary_desc.type_index = nativeTypeIndex(common_cat);
 				return type_context_.intern(ternary_desc);
 			}
 			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
@@ -2617,13 +2617,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			                   std::is_same_v<T, AlignofExprNode>) {
 				// sizeof, sizeof... and alignof always return size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::UnsignedLongLong);
+				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, TypeidNode>) {
 				// The current backend models typeid as producing a const void* handle.
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
+				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
@@ -2644,7 +2644,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 				// String literal has type "const char*" (array of const char).
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Char);
+				desc.type_index = nativeTypeIndex(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
@@ -2673,7 +2673,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 							}
 						} else if (owner_it->second->isEnum()) {
 							CanonicalTypeDesc desc;
-							desc.type_index = TypeIndex::fromCategory(TypeCategory::Enum);
+							desc.type_index = nativeTypeIndex(TypeCategory::Enum);
 							desc.type_index = owner_it->second->type_index_;
 							return type_context_.intern(desc);
 						}
@@ -2690,19 +2690,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
 				// offsetof returns size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::UnsignedLongLong);
+				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				// noexcept(expr) returns bool.
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
 				// Type trait intrinsics return bool (e.g., __is_integral(T)).
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
@@ -2721,12 +2721,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				// C++20 [expr.delete]: delete-expression is a void expression.
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
+				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
+				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
@@ -2736,7 +2736,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				auto it = getTypesByNameMap().find(lambda_name);
 				if (it != getTypesByNameMap().end() && it->second) {
 					CanonicalTypeDesc desc;
-					desc.type_index = TypeIndex::fromCategory(TypeCategory::Struct);
+					desc.type_index = nativeTypeIndex(TypeCategory::Struct);
 					desc.type_index = it->second->type_index_;
 					return type_context_.intern(desc);
 				}
@@ -2745,7 +2745,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				// C++20 [expr.throw]: a throw-expression is of type void.
 				CanonicalTypeDesc desc;
-				desc.type_index = TypeIndex::fromCategory(TypeCategory::Void);
+				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			return {};
@@ -2755,12 +2755,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	// Handle old-style nodes stored directly (not wrapped in ExpressionNode)
 	if (node.is<NumericLiteralNode>()) {
 		CanonicalTypeDesc desc;
-		desc.type_index = TypeIndex::fromCategory(node.as<NumericLiteralNode>().type());
+		desc.type_index = nativeTypeIndex(node.as<NumericLiteralNode>().type());
 		return type_context_.intern(desc);
 	}
 	if (node.is<BoolLiteralNode>()) {
 		CanonicalTypeDesc desc;
-		desc.type_index = TypeIndex::fromCategory(TypeCategory::Bool);
+		desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 		return type_context_.intern(desc);
 	}
 
@@ -2941,7 +2941,7 @@ static bool structHasConversionOperatorTo(
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred) continue;
 		CanonicalTypeDesc base_from_desc;
-		base_from_desc.type_index = TypeIndex::fromCategory(TypeCategory::Struct);
+		base_from_desc.type_index = nativeTypeIndex(TypeCategory::Struct);
 		base_from_desc.type_index = base.type_index;
 		if (structHasConversionOperatorTo(base_from_desc, to_desc, depth + 1))
 			return true;
@@ -2969,7 +2969,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (from_desc.category() == to_desc.category()) return false;
 
 	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
-	// Enum source types are allowed: C++20 permits implicit enum→primitive conversions
+	// Enum source types are allowed: C++20 permits implicit enum->primitive conversions
 	// (integral promotion, integral/floating conversion, boolean conversion).
 	// Enum as *target* is rejected: C++11+ forbids implicit conversion TO enum.
 	// Struct source is allowed when target is primitive: user-defined conversion operator.
@@ -2983,8 +2983,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	};
 	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
 	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
-	// Allow Struct source for user-defined conversion operators (Struct→primitive).
-	// Reject Struct→Struct (handled elsewhere) and primitive→Struct (converting constructors).
+	// Allow Struct source for user-defined conversion operators (Struct->primitive).
+	// Reject Struct->Struct (handled elsewhere) and primitive->Struct (converting constructors).
 	if (from_desc.category() == TypeCategory::Struct && to_desc.category() == TypeCategory::Struct) return false;
 	if (from_desc.category() != TypeCategory::Struct && is_unresolved_type(from_desc.category())) return false;
 	if (is_non_primitive_target(to_desc.category())) return false;
@@ -3009,9 +3009,9 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
 	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct) return false;
 
-	// Phase 5: for UserDefined (struct→primitive) annotations, verify that a conversion
+	// Phase 5: for UserDefined (struct->primitive) annotations, verify that a conversion
 	// operator actually exists before annotating. Without this check, sema optimistically
-	// annotates UserDefined for any Struct→primitive pair (Phase 21 item 2), which inflates
+	// annotates UserDefined for any Struct->primitive pair (Phase 21 item 2), which inflates
 	// slots_filled stats and misrepresents the actual operator availability.
 	// Codegen already handles null conv_op safely, so this is a stats/accuracy fix only.
 	if (plan.rank == ConversionRank::UserDefined) {
@@ -3041,7 +3041,7 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated conversion ",
-		static_cast<int>(from_desc.category()), " → ",
+		static_cast<int>(from_desc.category()), " -> ",
 		static_cast<int>(to_desc.category()),
 		" (kind=", static_cast<int>(plan.kind), ")");
 	return true;
@@ -3215,7 +3215,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 
 	// Intern the common type
 	CanonicalTypeDesc common_desc;
-	common_desc.type_index = TypeIndex::fromCategory(common_cat);
+	common_desc.type_index = nativeTypeIndex(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	tryAnnotateConversion(bin_op.get_lhs(), common_type_id, lhs_type_id);
@@ -3228,7 +3228,7 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 // converted back from common type to LHS type.  Annotate this on the
 // BinaryOperatorNode so that codegen hard enforcement can verify sema ownership.
 
-// Shared helper: build an ImplicitCastInfo for source_type → target_type and
+// Shared helper: build an ImplicitCastInfo for source_type -> target_type and
 // store the resulting SemanticSlot in compound_assign_back_conv_ keyed on &bin_op.
 // Both shift and non-shift compound assignments use this same slot structure.
 void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
@@ -3257,7 +3257,7 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
-		static_cast<int>(src_desc.category()), " → ", static_cast<int>(tgt_desc.category()),
+		static_cast<int>(src_desc.category()), " -> ", static_cast<int>(tgt_desc.category()),
 		" (kind=", static_cast<int>(plan.kind), ")");
 }
 
@@ -3284,13 +3284,13 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 	if (common_cat == TypeCategory::Invalid) return;
 	if (lhs_cat == common_cat) return;  // No back-conversion needed
 
-	// Build the back-conversion: common → lhs_base
+	// Build the back-conversion: common -> lhs_base
 	CanonicalTypeDesc common_desc;
-	common_desc.type_index = TypeIndex::fromCategory(common_cat);
+	common_desc.type_index = nativeTypeIndex(common_cat);
 	const CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	CanonicalTypeDesc lhs_base_desc;
-	lhs_base_desc.type_index = TypeIndex::fromCategory(lhs_cat);
+	lhs_base_desc.type_index = nativeTypeIndex(lhs_cat);
 	const CanonicalTypeId lhs_base_id = type_context_.intern(lhs_base_desc);
 
 	storeCompoundAssignBackConvSlot(bin_op, common_type_id, lhs_base_id);
@@ -3332,12 +3332,12 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 	if (promoted_lhs != lhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.type_index = TypeIndex::fromCategory(promoted_lhs);
+		promoted_desc.type_index = nativeTypeIndex(promoted_lhs);
 		tryAnnotateConversion(bin_op.get_lhs(), type_context_.intern(promoted_desc), lhs_type_id);
 	}
 	if (promoted_rhs != rhs_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.type_index = TypeIndex::fromCategory(promoted_rhs);
+		promoted_desc.type_index = nativeTypeIndex(promoted_rhs);
 		tryAnnotateConversion(bin_op.get_rhs(), type_context_.intern(promoted_desc), rhs_type_id);
 	}
 }
@@ -3345,7 +3345,7 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 // --- Unary operand integral promotion annotation ---
 // C++20 [expr.unary.op]: The operand of unary +, -, and ~ shall have arithmetic or
 // unscoped enumeration type and the result is the value of its operand promoted.
-// Integral promotions are performed (bool/char/short → int).
+// Integral promotions are performed (bool/char/short -> int).
 
 void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode& unary_op) {
 	const CanonicalTypeId operand_type_id = inferExpressionType(unary_op.get_operand());
@@ -3372,7 +3372,7 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	const TypeCategory promoted_cat = promote_integer_type(operand_cat);
 	if (promoted_cat != operand_cat) {
 		CanonicalTypeDesc promoted_desc;
-		promoted_desc.type_index = TypeIndex::fromCategory(promoted_cat);
+		promoted_desc.type_index = nativeTypeIndex(promoted_cat);
 		tryAnnotateConversion(unary_op.get_operand(), type_context_.intern(promoted_desc));
 	}
 }
@@ -3383,12 +3383,12 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 // Used for: if/while/for/do-while conditions, ternary condition, && / || operands.
 
 void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
-	// First try the standard primitive conversion path (handles int/float/char → bool).
+	// First try the standard primitive conversion path (handles int/float/char -> bool).
 	if (tryAnnotateConversion(expr_node, bool_type_id_))
 		return;
 
-	// Handle enum/pointer → bool (C++20 [conv.bool]/1): contextual conversion
-	// to bool applies to enums and pointers. Zero/null → false, non-zero → true.
+	// Handle enum/pointer -> bool (C++20 [conv.bool]/1): contextual conversion
+	// to bool applies to enums and pointers. Zero/null -> false, non-zero -> true.
 	// The backend TEST instruction already handles this correctly; the annotation
 	// records the semantic intent for future codegen migration.
 	if (!expr_node.is<ExpressionNode>()) return;
@@ -3518,7 +3518,7 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	stats_.op_calls_resolved++;
 
 	FLASH_LOG_FORMAT(General, Debug,
-		"SemanticAnalysis: resolved operator() for '{}' → {} params",
+		"SemanticAnalysis: resolved operator() for '{}' -> {} params",
 		callee_decl.identifier_token().value(),
 		best_match->parameter_nodes().size());
 }
@@ -4011,7 +4011,7 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 
 	TypeCategory common = get_common_type(true_desc.category(), false_desc.category());
 	CanonicalTypeDesc common_desc;
-	common_desc.type_index = TypeIndex::fromCategory(common);
+	common_desc.type_index = nativeTypeIndex(common);
 	CanonicalTypeId common_type_id = type_context_.intern(common_desc);
 
 	// Annotate each branch if it needs conversion to the common type.

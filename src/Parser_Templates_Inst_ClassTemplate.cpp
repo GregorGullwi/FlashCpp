@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
@@ -785,7 +785,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Simple case: default is void
 					if (default_type.category() == TypeCategory::Void) {
 						TemplateTypeArg void_arg;
-						void_arg.type_index = TypeIndex{0, TypeCategory::Void};
+						void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
 						filled_args_for_pattern_match.push_back(void_arg);
 						FLASH_LOG(Templates, Debug, "Filled in default argument for param ", i, ": void");
 						continue;
@@ -808,7 +808,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (alias_type_spec.category() == TypeCategory::Void) {
 								// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
-								void_arg.type_index = TypeIndex{0, TypeCategory::Void};
+								void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
 								filled_args_for_pattern_match.push_back(void_arg);
 								FLASH_LOG(Templates, Debug, "Filled in void_t alias default for param ", i, ": void");
 								continue;

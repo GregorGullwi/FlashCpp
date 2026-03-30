@@ -152,7 +152,7 @@ inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrV
 	tv.is_signed = isSignedType(type);
 	tv.size_in_bits = size_in_bits;
 	tv.value = std::move(value);
-	tv.type_index = TypeIndex::fromTypeAndIndex(type, {});
+	tv.type_index = nativeTypeIndex(type);
 	return tv;
 }
 

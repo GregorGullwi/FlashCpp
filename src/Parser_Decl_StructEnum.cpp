@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -3824,7 +3824,7 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	
 	StructMember member{
 		funcptr_name_handle,
-		TypeIndex{0, TypeCategory::FunctionPointer},  // type_index for function pointers
+		nativeTypeIndex(TypeCategory::FunctionPointer),  // type_index for function pointers
 		0,  // offset will be calculated later
 		pointer_size,
 		pointer_alignment,

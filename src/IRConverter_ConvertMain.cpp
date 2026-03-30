@@ -1,4 +1,4 @@
-#include "Log.h"
+﻿#include "Log.h"
 #include "IRConverter.h"
 #include "OverloadResolution.h"
 
@@ -6834,7 +6834,7 @@ void IrToObjConverter<TWriterClass>::resetFunctionState()  {
 		catch_funclet_return_flag_slot_offset_ = 0;
 		catch_funclet_return_label_counter_ = 0;
 		catch_has_pending_parent_return_ = false;
-		current_function_return_type_index_ = TypeIndex{0, TypeCategory::Void};
+		current_function_return_type_index_ = nativeTypeIndex(TypeCategory::Void);
 		current_function_return_size_in_bits_ = 0;
 		current_catch_continuation_label_ = StringHandle();
 		catch_return_bridges_.clear();
@@ -7588,7 +7588,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, TypeIndex{0, TypeCategory::Struct}, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 			}
 
 			while (paramIndex + FunctionDeclLayout::OPERANDS_PER_PARAM <= instruction.getOperandCount()) {
@@ -7740,7 +7740,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			// Set holds_address_only = true because 'this' is a pointer, not a reference -
 			// when we return 'this', we should return the pointer value itself, not dereference it
 			if (!struct_name.empty() && !func_decl.is_static_member) {
-				setAddressOnlyInfo(this_offset_saved, TypeIndex{0, TypeCategory::Struct}, 64, TempVar{0});
+				setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 			}
 
 			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)

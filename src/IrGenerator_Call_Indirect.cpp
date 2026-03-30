@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -77,7 +77,7 @@
 					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-					call_op.return_type_index = TypeIndex{0, TypeCategory::Void};
+					call_op.return_type_index = nativeTypeIndex(TypeCategory::Void);
 					call_op.return_size_in_bits = SizeInBits{0};
 				}
 
@@ -1133,17 +1133,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(TypeCategory::Bool)));
+							template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Bool)));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(lit.type())));
+							template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(lit.type())));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(type.type())));
+								template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(type.type())));
 							}
 						}
 					});

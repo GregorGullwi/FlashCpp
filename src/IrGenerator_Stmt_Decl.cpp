@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -795,7 +795,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						str_name_builder.append(static_cast<uint64_t>(string_literal_counter_++));
 						StringHandle str_sym = StringTable::getOrInternStringHandle(str_name_builder.commit());
 						GlobalVariableDeclOp str_op;
-						str_op.type_index = TypeIndex{0, TypeCategory::Char};
+						str_op.type_index = nativeTypeIndex(TypeCategory::Char);
 						str_op.size_in_bits = SizeInBits{8};
 						str_op.var_name = str_sym;
 						str_op.element_count = str_bytes.size();
@@ -2953,7 +2953,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						CallOp call_op;
 						call_op.result = result_temp;
-						call_op.return_type_index = TypeIndex::fromCategory(element_type);
+						call_op.return_type_index = nativeTypeIndex(element_type);
 						call_op.return_size_in_bits = SizeInBits{element_size};
 						call_op.function_name = get_mangled_name;
 						call_op.is_member_function = false;
@@ -2974,7 +2974,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						// Create the binding variable
 						VariableDeclOp binding_var_decl;
 						binding_var_decl.var_name = binding_id;
-						binding_var_decl.type_index = TypeIndex::fromCategory(element_type);
+						binding_var_decl.type_index = nativeTypeIndex(element_type);
 						binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						TypedValue init_val3;
 						init_val3.type = element_type;

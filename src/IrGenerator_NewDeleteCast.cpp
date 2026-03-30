@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
@@ -501,7 +501,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, raw_ptr, TypeIndex{0, TypeCategory::UnsignedLongLong}, PointerDepth{1}),
+							.pointer = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, raw_ptr, nativeTypeIndex(TypeCategory::UnsignedLongLong), PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0

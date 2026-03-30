@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -772,7 +772,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;
-						dependent_arg.type_index = TypeIndex{0, TypeCategory::Bool};  // noexcept, sizeof, alignof return bool/size_t
+						dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);  // noexcept, sizeof, alignof return bool/size_t
 						dependent_arg.is_value = true;  // This is a non-type (value) template argument
 						dependent_arg.is_dependent = true;
 						
@@ -1049,7 +1049,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// this should be a TYPE argument, not a VALUE argument!
 						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
 						TemplateTypeArg dependent_arg;
-						dependent_arg.type_index = TypeIndex{0, TypeCategory::UserDefined};  // Template parameter is a user-defined type placeholder; will try to look up
+						dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
 						dependent_arg.is_dependent = true;
 						

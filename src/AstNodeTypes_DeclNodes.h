@@ -898,6 +898,7 @@ const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in r
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
 const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
+TypeIndex       nativeTypeIndex(TypeCategory cat);  // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
 size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals

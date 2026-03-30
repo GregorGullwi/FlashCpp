@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -468,7 +468,7 @@
 								CallOp call_op;
 								call_op.function_name = member_spaceship_mangled;
 								call_op.is_member_function = true;
-								call_op.return_type_index = TypeIndex{0, TypeCategory::Int};
+								call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);
 								call_op.return_size_in_bits = SizeInBits{32};
 								call_op.result = call_result;
 
@@ -667,7 +667,7 @@
 				CallOp call_op;
 				call_op.function_name = spaceship_mangled;
 				call_op.is_member_function = true;
-				call_op.return_type_index = TypeIndex{0, TypeCategory::Int};
+				call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);
 				call_op.return_size_in_bits = SizeInBits{32};
 				call_op.result = call_result;
 
@@ -843,7 +843,7 @@
 						DereferenceOp deref_op;
 						deref_op.result = this_deref;
 						deref_op.pointer.setType(TypeCategory::Struct);
-						deref_op.pointer.type_index = TypeIndex{0, TypeCategory::Struct};
+						deref_op.pointer.type_index = nativeTypeIndex(TypeCategory::Struct);
 						deref_op.pointer.ir_type = IrType::Struct;
 						deref_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 						deref_op.pointer.value = StringTable::getOrInternStringHandle("this");
@@ -1297,7 +1297,7 @@
 
 		ctor_decl_op.function_name = StringTable::getOrInternStringHandle(ctor_function_name);  // Constructor name (last component)
 		ctor_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);  // Struct name for member function (fully qualified)
-		ctor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};  // Constructors don't have a return type
+		ctor_decl_op.return_type_index = nativeTypeIndex(TypeCategory::Void);  // Constructors don't have a return type
 		ctor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 		ctor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 		ctor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for constructors
@@ -2270,7 +2270,7 @@
 	FunctionDeclOp dtor_decl_op;
 	dtor_decl_op.function_name = StringTable::getOrInternStringHandle(StringBuilder().append("~"sv).append(node.struct_name()));  // Destructor name
 	dtor_decl_op.struct_name = node.struct_name();
-	dtor_decl_op.return_type_index = TypeIndex{0, TypeCategory::Void};  // Destructors don't have a return type
+	dtor_decl_op.return_type_index = nativeTypeIndex(TypeCategory::Void);  // Destructors don't have a return type
 	dtor_decl_op.return_size_in_bits = SizeInBits{0};  // Size is 0 for void
 	dtor_decl_op.return_pointer_depth = PointerDepth{};  // Pointer depth is 0 for void
 	dtor_decl_op.linkage = Linkage::CPlusPlus;  // C++ linkage for destructors
@@ -2426,10 +2426,10 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp array_decl;
 	array_decl.var_name = array_name;
-	array_decl.type_index = TypeIndex::fromCategory(element_type);
+	array_decl.type_index = nativeTypeIndex(element_type);
 	array_decl.size_in_bits = SizeInBits{static_cast<int>(total_size_bits)};
 	array_decl.is_array = true;
-	array_decl.array_element_type_index = TypeIndex::fromCategory(element_type);
+	array_decl.array_element_type_index = nativeTypeIndex(element_type);
 	array_decl.array_element_size = element_size_bits;
 	array_decl.array_count = array_size;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(array_decl), init_list.called_from()));
@@ -2437,7 +2437,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 	// Step 2: Store each element into the backing array using ArrayStore
 	for (size_t i = 0; i < element_operands.size(); ++i) {
 		ArrayStoreOp store_op;
-		store_op.element_type_index = TypeIndex::fromCategory(element_type);
+		store_op.element_type_index = nativeTypeIndex(element_type);
 		store_op.element_size_in_bits = element_size_bits;
 		store_op.array = array_name;
 		store_op.index = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i));
@@ -2471,7 +2471,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	VariableDeclOp init_list_decl;
 	init_list_decl.var_name = init_list_name;
-	init_list_decl.type_index = TypeIndex{0, TypeCategory::Struct};
+	init_list_decl.type_index = nativeTypeIndex(TypeCategory::Struct);
 	init_list_decl.size_in_bits = SizeInBits{static_cast<int>(init_list_size_bits)};
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(init_list_decl), init_list.called_from()));
 

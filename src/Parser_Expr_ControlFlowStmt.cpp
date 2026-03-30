@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -1185,7 +1185,7 @@ ParseResult Parser::parse_lambda_expression() {
                 StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
-                    TypeIndex{0, TypeCategory::Void},  // Void pointer type
+                    nativeTypeIndex(TypeCategory::Void),  // Void pointer type
                     8,                  // Pointer size on x64
                     8,                  // Alignment
                     AccessSpecifier::Public,

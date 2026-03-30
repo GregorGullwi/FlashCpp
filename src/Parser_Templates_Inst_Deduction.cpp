@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -1254,7 +1254,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					template_args.push_back(map_it->second);
 				} else if (!deduced_type_args.empty()) {
 					TypeCategory deduced_type = deduced_type_args[0];
-					template_args.push_back(TemplateTypeArg::makeType(TypeIndex::fromCategory(deduced_type)));
+					template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(deduced_type)));
 					deduced_type_args.erase(deduced_type_args.begin());
 				} else {
 					// Skip any arg slots fully consumed by the pre-deduction pass

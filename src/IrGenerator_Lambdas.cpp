@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
@@ -85,7 +85,7 @@
 			}
 		}
 
-		info.return_type_index = TypeIndex{0, TypeCategory::Void};
+		info.return_type_index = nativeTypeIndex(TypeCategory::Void);
 		info.return_size = 0;
 		info.returns_reference = false;
 		if (lambda.return_type().has_value()) {
@@ -151,7 +151,7 @@
 
 			// Declare the closure variable with the target name
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type_index = TypeIndex{0, TypeCategory::Struct};
+			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;
@@ -167,7 +167,7 @@
 
 			// Declare the closure variable
 			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type_index = TypeIndex{0, TypeCategory::Struct};
+			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
 			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
 			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 			lambda_decl_op.custom_alignment = 0;

@@ -1074,7 +1074,7 @@ TypeIndex Parser::substitute_template_parameter(
 									result_type = inst_it->second->typeEnum();
 									result_type_index = inst_it->second->type_index_;
 									found_match = true;
-									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",
+									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 									                 base_tpl_name, inst_name, concrete_tpl_name);
 								}
 							}
@@ -1209,7 +1209,7 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 		sig.return_type_index = deduced_return->type_index();
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
-		sig.return_type_index = TypeIndex::fromCategory(TypeCategory::Void);
+		sig.return_type_index = nativeTypeIndex(TypeCategory::Void);
 	}
 
 	for (const auto& param : lambda.parameters()) {

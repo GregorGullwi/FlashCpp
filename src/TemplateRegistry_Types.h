@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 
 #include "AstNodeTypes.h"
@@ -203,7 +203,7 @@ struct TemplateTypeArg {
 	}
 
 	TemplateTypeArg()
-		: type_index(TypeIndex{0, TypeCategory::Invalid})
+		: type_index(TypeIndex{})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -241,7 +241,7 @@ struct TemplateTypeArg {
 
 	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: type_index(TypeIndex{0, TypeCategory::Int})
+		: type_index(nativeTypeIndex(TypeCategory::Int))
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()

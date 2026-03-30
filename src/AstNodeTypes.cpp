@@ -150,6 +150,14 @@ const TypeInfo* findNativeType(TypeCategory cat) {
     return it != gNativeTypes.end() ? it->second : nullptr;
 }
 
+TypeIndex nativeTypeIndex(TypeCategory cat) {
+	const TypeInfo* ti = findNativeType(cat);
+	// For native types, return the real gTypeInfo slot (index >= 1, so is_valid() == true).
+	// For non-native categories (Struct, Enum, UserDefined, …), fall back to TypeIndex{0, cat}
+	// to preserve category information for callers that use .category() on placeholders.
+	return ti ? ti->type_index_ : TypeIndex{0, cat};
+}
+
 size_t getTypeInfoCount() {
     return gTypeInfo.size();
 }
@@ -192,6 +200,10 @@ void initialize_native_types() {
     if (!gNativeTypes.empty()) {
         return;
     }
+
+	// Index 0 is reserved as the null/invalid sentinel — TypeIndex::is_valid() returns
+	// (index_ > 0), so gTypeInfo[0] must not be a real type. All real types start at 1.
+	gTypeInfo.emplace_back(StringTable::createStringHandle(""sv), TypeIndex{0, TypeCategory::Invalid}, 0);
 
     // Add basic native types
     auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Void}, 0);
