@@ -1496,7 +1496,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// where F=int(*)(int)), the pattern TypeSpecifierNode won't have a function_signature
 			// — it only carries the placeholder.  Retrieve it from the matching TemplateTypeArg.
 			auto resolve_member_function_signature = [&]() -> std::optional<FunctionSignature> {
-				if (member_type_index.category() != TypeCategory::FunctionPointer) return std::nullopt;
+				if (member_type_index.category() != TypeCategory::FunctionPointer && member_type_index.category() != TypeCategory::MemberFunctionPointer) return std::nullopt;
 				if (type_spec.has_function_signature()) return type_spec.function_signature();
 				// type_spec is a template-parameter placeholder: look up by name
 				std::string_view type_name;
