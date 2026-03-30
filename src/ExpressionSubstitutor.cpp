@@ -182,7 +182,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					substituted_template_args.push_back(it->second);
 				}
 				// Check if this is a template parameter type (Type::Template)
-				else if (type_spec.type() == Type::Template) {
+				else if (type_spec.category() == TypeCategory::Template) {
 					// This is a template parameter - we need to substitute it
 					// The type_index should point to a template parameter
 					FLASH_LOG(Templates, Debug, "    Type is Template, looking up in substitution map");
@@ -264,7 +264,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						substituted_template_args.emplace_back(value, lit.type());
 					} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&substituted_expr)) {
 						const BoolLiteralNode& lit = *bool_literal;
-						substituted_template_args.emplace_back(lit.value() ? 1 : 0, Type::Bool);
+						substituted_template_args.emplace_back(lit.value() ? 1 : 0, TypeCategory::Bool);
 					} else {
 						FLASH_LOG(Templates, Debug, "    Substituted template argument expression type not handled for value extraction");
 						failed_value_extraction = true;
@@ -356,7 +356,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					
 					// Create a TypeSpecifierNode for the instantiated type
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-						Type::Struct, new_type_index, 64, Token{}, CVQualifier::None
+						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None
 					);
 					
 					// Create a ConstructorCallNode instead of FunctionCallNode
@@ -425,7 +425,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		FLASH_LOG(Templates, Debug, "  TypeSpecifierNode: type=", (int)type_spec.type(), " type_index=", type_spec.type_index());
 		
 		// If this is a struct type, it might be a template instantiation
-		if (type_spec.type() == Type::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
+		if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
 			std::string_view type_name = StringTable::getStringView(type_info.name());
 			FLASH_LOG(Templates, Debug, "  Type name: ", type_name);
@@ -554,7 +554,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 			
 			// Create new forward declaration with corrected name
-			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+			auto& fwd_type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 			ASTNode fwd_type_ast(&fwd_type_node);
 			auto& new_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(fwd_type_ast, new_func_token);
 			
@@ -657,14 +657,14 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			FLASH_LOG(Templates, Debug, "  Non-type template parameter, creating literal with value: ", arg.value);
 			
 			// Determine the type based on the template argument's base_type
-			Type literal_type = arg.typeEnum();
-			if (literal_type == Type::Template || literal_type == Type::UserDefined) {
+			TypeCategory literal_cat = arg.category();
+			if (literal_cat == TypeCategory::Template || literal_cat == TypeCategory::UserDefined) {
 				// For template parameters, default to int
-				literal_type = Type::Int;
+				literal_cat = TypeCategory::Int;
 			}
 			
 			// Handle bool types specially with BoolLiteralNode
-			if (literal_type == Type::Bool) {
+			if (literal_cat == TypeCategory::Bool) {
 				std::string_view bool_str = (arg.value != 0) ? "true" : "false";
 				Token bool_token(Token::Type::Keyword, bool_str, 0, 0, 0);
 				BoolLiteralNode& bool_literal = gChunkedAnyStorage.emplace_back<BoolLiteralNode>(
@@ -682,7 +682,7 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 			NumericLiteralNode& literal = gChunkedAnyStorage.emplace_back<NumericLiteralNode>(
 				num_token, 
 				static_cast<unsigned long long>(arg.value), 
-				literal_type, 
+				literal_cat, 
 				TypeQualifier::None, 
 				64
 			);
@@ -694,11 +694,11 @@ ASTNode ExpressionSubstitutor::substituteIdentifier(const IdentifierNode& id) {
 		// Handle type template parameters
 		// Create a TypeSpecifierNode from the template argument
 		TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
-			arg.typeEnum(),
-			arg.type_index,
+			arg.type_index.withCategory(arg.typeEnum()),
 			64,  // Default size, will be adjusted by type system
 			Token{},
-			arg.cv_qualifier
+			arg.cv_qualifier,
+			ReferenceQualifier::None
 		);
 		
 		// Add pointer levels if needed
@@ -978,7 +978,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
-	if (type.type() == Type::Template || isPlaceholderAutoType(type.type()) || type.type() == Type::UserDefined) {
+	if (type.category() == TypeCategory::Template || isPlaceholderAutoType(type.category()) || type.category() == TypeCategory::UserDefined || type.category() == TypeCategory::TypeAlias) {
 		std::string_view type_name = type.token().value();
 		if (type_name.empty() && type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(type.type_index());
@@ -999,9 +999,10 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			int size_in_bits = get_type_size_bits(subst.category());
 			if (size_in_bits == 0)
 			{
-				switch (subst.typeEnum()) {
-					case Type::Struct:
-					case Type::UserDefined:
+				switch (subst.category()) {
+					case TypeCategory::Struct:
+					case TypeCategory::UserDefined:
+					case TypeCategory::TypeAlias:
 						// For struct types, we need to look up the size from TypeInfo
 						if (subst.type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& ti = getTypeInfo(subst.type_index);
@@ -1020,8 +1021,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			}
 			
 			TypeSpecifierNode substituted_type(
-				subst.typeEnum(),
-				subst.type_index,
+				subst.type_index.withCategory(subst.typeEnum()),
 				size_in_bits,
 				Token{},
 				subst.cv_qualifier,
@@ -1039,7 +1039,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	}
 	
 	// Check if this is a struct/class type that might have template arguments
-	if (type.type() == Type::Struct && type.type_index().index() < getTypeInfoCount()) {
+	if (type.category() == TypeCategory::Struct && type.type_index().index() < getTypeInfoCount()) {
 		const TypeInfo& type_info = getTypeInfo(type.type_index());
 		std::string_view type_name = StringTable::getStringView(type_info.name());
 		FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());
@@ -1089,7 +1089,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 					if (type_it != getTypesByNameMap().end()) {
 						TypeIndex new_type_index = type_it->second->type_index_;
 						FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
-						return TypeSpecifierNode(Type::Struct, new_type_index, 64, Token{}, type.cv_qualifier());
+						return TypeSpecifierNode(new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
 					}
 					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
 				} else {

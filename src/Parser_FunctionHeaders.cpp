@@ -113,7 +113,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				auto& last_param = out_params.parameters.back();
 				if (last_param.is<DeclarationNode>()) {
 					const auto& param_type = last_param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-					if (is_struct_type(param_type.type())) {
+					if (is_struct_type(param_type.category())) {
 						SaveHandle brace_pos = save_token_position();
 						default_value = parse_brace_initializer(param_type);
 						if (!default_value.is_error()) {
@@ -238,7 +238,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 					if (param_decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
-						if (is_struct_type(param_type.type())) {
+						if (is_struct_type(param_type.category())) {
 							// Save position before parse_brace_initializer since it consumes '{'
 							SaveHandle brace_pos = save_token_position();
 							auto init_result = parse_brace_initializer(param_type);
@@ -339,7 +339,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								if (elem_type.has_value()) {
 									arg_types.push_back(*elem_type);
 								} else {
-									arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+									arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
 								}
 							}
 						}
@@ -360,7 +360,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						if (arg_type.has_value()) {
 							arg_types.push_back(*arg_type);
 						} else {
-							arg_types.emplace_back(Type::Int, TypeQualifier::None, 32, ellipsis_token);
+							arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
 						}
 					}
 				}
@@ -377,23 +377,24 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 					} else {
 						// Fallback: try to deduce from the expression
 						// Use current_token_ for error location since we've just parsed the expression
-						Type deduced_type = Type::Int;
+						TypeCategory deduced_type = TypeCategory::Int;
 						if (arg->is<ExpressionNode>()) {
 							const ExpressionNode& expr = arg->as<ExpressionNode>();
 							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&expr)) {
+								// TODO: add NumericLiteralNode::category() to avoid this bridge call
 								deduced_type = numeric_literal->type();
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
 								if (symbol.has_value()) {
 									if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-										deduced_type = decl->type_node().as<TypeSpecifierNode>().type();
+										deduced_type = decl->type_node().as<TypeSpecifierNode>().category();
 									}
 								}
 							}
 						}
 						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
-							current_token_);
+							current_token_, CVQualifier::None);
 					}
 				}
 			}
@@ -906,7 +907,7 @@ ParseResult Parser::create_function_from_header(
 		type_node = ASTNode::emplace_node<TypeSpecifierNode>(*header.return_type);
 	} else {
 		// For constructors/destructors, create a void return type
-		type_node = ASTNode::emplace_node<TypeSpecifierNode>(Type::Void, TypeIndex{}, 0, Token());
+		type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	// Create the declaration node with type and name

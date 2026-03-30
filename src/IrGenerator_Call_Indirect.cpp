@@ -69,15 +69,15 @@
 
 				// Build TypeSpecifierNode for return type (needed for mangling)
 				// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-				TypeSpecifierNode return_type_node(Type::Void, TypeIndex{}, 0, memberFunctionCallNode.called_from());
+				TypeSpecifierNode return_type_node(TypeIndex{}.withCategory(TypeCategory::Void), 0, memberFunctionCallNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
 				if (lambda.return_type().has_value()) {
 					const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 					return_type_node = ret_type;
-					call_op.return_type = ret_type.type();
+					call_op.return_type_index = ret_type.type_index();
 					call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_type.size_in_bits())};
 				} else {
 					// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-					call_op.return_type = Type::Void;
+					call_op.return_type_index = nativeTypeIndex(TypeCategory::Void);
 					call_op.return_size_in_bits = SizeInBits{0};
 				}
 
@@ -107,23 +107,24 @@
 									arg_types.push_back(type_node);
 								} else {
 									// Default to int
-									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 								}
 							} else {
-								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 							}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-								static_cast<unsigned char>(literal->sizeInBits())));
+								static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 						} else {
 							// For complex expressions, evaluate and get type
 							ExprResult operand_result = visitExpressionNode(arg_expr);
 							arg_types.push_back(TypeSpecifierNode(
-								operand_result.type,
+								operand_result.typeEnum(),
 								TypeQualifier::None,
-								static_cast<unsigned char>(operand_result.size_in_bits.value)
+								static_cast<unsigned char>(operand_result.size_in_bits.value),
+								Token{}, CVQualifier::None
 							));
 						}
 					});
@@ -222,7 +223,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						// Convert to TypedValue
 						TypedValue arg;
-						arg.type = type_node.type();
+						arg.setType(type_node.type());
 						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -235,7 +236,7 @@
 				});
 
 				// Capture return type info before moving call_op (use-after-move is UB)
-				Type lambda_return_type = call_op.return_type;
+				TypeCategory lambda_return_type = call_op.returnType();
 				int lambda_return_size = call_op.return_size_in_bits.value;
 
 				// Add the function call instruction with typed payload
@@ -251,10 +252,11 @@
 
 			immediate_lambda_object_name = std::get<StringHandle>(lambda_result.value);
 			immediate_lambda_object_type = TypeSpecifierNode(
-				Type::Struct,
-				lambda_result.type_index,
+				lambda_result.type_index.withCategory(TypeCategory::Struct),
 				static_cast<int>(lambda_result.size_in_bits.value),
-				memberFunctionCallNode.called_from()
+				memberFunctionCallNode.called_from(),
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 
 			// For capturing lambdas, continue into the regular member function call path
@@ -311,10 +313,11 @@
 									? closure_type->getStructInfo()->total_size * 8
 									: 64;
 								object_type = TypeSpecifierNode(
-									Type::Struct,
-									closure_type->type_index_,
+									closure_type->type_index_.withCategory(TypeCategory::Struct),
 									closure_size,
-									object_decl->identifier_token()
+									object_decl->identifier_token(),
+									CVQualifier::None,
+									ReferenceQualifier::None
 								);
 								// Preserve rvalue reference flag
 								object_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
@@ -404,7 +407,7 @@
 			const StructTypeInfo* resolved_struct_info = nullptr;
 			const StructMember* resolved_member = nullptr;
 			if (resolveMemberAccessType(member_access, resolved_struct_info, resolved_member)) {
-				if (resolved_member && resolved_member->type == Type::FunctionPointer) {
+				if (resolved_member && resolved_member->memberType() == TypeCategory::FunctionPointer) {
 					ExprResult func_ptr_result = visitExpressionNode(*object_expr);
 					std::variant<StringHandle, TempVar> function_pointer;
 					if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
@@ -419,7 +422,7 @@
 					std::vector<TypedValue> arguments;
 					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 					});
 
 					IndirectCallOp op{
@@ -432,13 +435,13 @@
 					if (!resolved_member->function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					Type ret_type = resolved_member->function_signature->return_type;
-					int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+					TypeCategory ret_type = resolved_member->function_signature->returnType();
+					int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 					return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// We resolved the member access - now check if it's a struct type
-				if (resolved_member && isIrStructType(toIrType(resolved_member->type))) {
+				if (resolved_member && isIrStructType(toIrType(resolved_member->memberType()))) {
 					// Get the struct info for the member's type
 					if (resolved_member->type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& member_type_info = getTypeInfo(resolved_member->type_index);
@@ -447,7 +450,7 @@
 							// Look for the called function name in this struct's members
 							StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 							for (const auto& member : member_struct_info->members) {
-								if (member.getName() == func_name_handle && member.type == Type::FunctionPointer) {
+								if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
 									// Found a function pointer member! Generate indirect call
 									TempVar ret_var = var_counter.next();
 
@@ -463,7 +466,7 @@
 									TempVar func_ptr_temp = var_counter.next();
 									MemberLoadOp member_load;
 									member_load.result.value = func_ptr_temp;
-									member_load.result.type = Type::FunctionPointer;
+									member_load.result.setType(TypeCategory::FunctionPointer);
 									member_load.result.ir_type = IrType::FunctionPointer;
 									member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 									member_load.object = base_temp;
@@ -479,7 +482,7 @@
 									std::vector<TypedValue> arguments;
 									memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 										ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-										arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+										arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 									});
 
 									IndirectCallOp op{
@@ -493,15 +496,15 @@
 									if (!member.function_signature) {
 										throw InternalError("Function pointer member missing function_signature for indirect call return type");
 									}
-									Type ret_type = member.function_signature->return_type;
-									int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+									TypeCategory ret_type = member.function_signature->returnType();
+									int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 									return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
 
 							// Not a function pointer member - set object_type for regular member function lookup
-							object_type = TypeSpecifierNode(Type::Struct, resolved_member->type_index,
-							resolved_member->size * 8, Token());  // size in bits
+							object_type = TypeSpecifierNode(resolved_member->type_index.withCategory(TypeCategory::Struct),
+							resolved_member->size * 8, Token(), CVQualifier::None, ReferenceQualifier::None);  // size in bits
 							resolved_member_object_type = true;
 						}
 					}
@@ -579,16 +582,16 @@
 			// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
 			const TypeSpecifierNode& ret_spec =
 				func_decl_node.type_node().as<TypeSpecifierNode>();
-			const Type ret_type = ret_spec.type();
+			const TypeCategory ret_type = ret_spec.type();
 			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
-			if (ret_type == Type::Float) {
+			if (ret_type == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
 				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+			if (ret_type == TypeCategory::Double || ret_type == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
 				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -597,7 +600,7 @@
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size,
 					memberFunctionCallNode.called_from());
-				if (agg.type != Type::Void) return agg;
+				if (agg.category() != TypeCategory::Void) return agg;
 			}
 			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
@@ -773,7 +776,7 @@
 				// Use findMemberRecursive to also search base classes for inherited function pointer members
 				if (!called_member_func) {
 					auto fp_member = struct_info->findMemberRecursive(func_name_handle);
-					if (fp_member.has_value() && fp_member->type == Type::FunctionPointer) {
+					if (fp_member.has_value() && fp_member->memberType() == TypeCategory::FunctionPointer) {
 						const auto& member = *fp_member;
 						// This is a call through a function pointer member!
 						// Generate an indirect call instead of a member function call
@@ -786,7 +789,7 @@
 						// Generate member access IR to load the function pointer
 						MemberLoadOp member_load;
 						member_load.result.value = func_ptr_temp;
-						member_load.result.type = member.type;
+						member_load.result.setType(member.type_index.category());
 						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};  // Convert bytes to bits
 
 						// Add object operand
@@ -819,7 +822,7 @@
 						std::vector<TypedValue> arguments;
 						memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 							ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-							arguments.push_back(makeTypedValue(argument_result.type, argument_result.size_in_bits, toIrValue(argument_result.value)));
+							arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 						});
 
 						IndirectCallOp op{
@@ -833,8 +836,8 @@
 						if (!member.function_signature) {
 							throw InternalError("Function pointer member missing function_signature for indirect call return type");
 						}
-						Type ret_type = member.function_signature->return_type;
-						int ret_size = (ret_type == Type::Void) ? 0 : get_type_size_bits(ret_type);
+						TypeCategory ret_type = member.function_signature->returnType();
+						int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
 						return makeExprResult(ret_type, SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
@@ -858,7 +861,7 @@
 				// This is a member function template - we need to instantiate it
 
 				// Deduce template argument types from call arguments
-				std::vector<std::pair<Type, TypeIndex>> arg_types;
+				std::vector<TypeIndex> arg_types;
 				// DEBUG removed
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
@@ -874,11 +877,11 @@
 
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back({Type::Bool, TypeIndex{}});
+						arg_types.push_back(TypeIndex{}.withCategory(TypeCategory::Bool));
 					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 						const NumericLiteralNode& lit = *numeric_literal;
 						// DEBUG removed
-						arg_types.push_back({lit.type(), TypeIndex{}});
+						arg_types.push_back(TypeIndex{}.withCategory(lit.type()));
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -888,7 +891,7 @@
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
 							// DEBUG removed
-							arg_types.push_back({type.type(), type.type_index()});
+							arg_types.push_back(type.type_index().withCategory(type.type()));
 						}
 					} else {
 						// DEBUG removed
@@ -903,8 +906,8 @@
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
 
 					InlineVector<TemplateTypeArg, 4> template_args;
-					for (const auto& [arg_type, arg_type_index] : arg_types) {
-						template_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+					for (const auto& arg_type_index : arg_types) {
+						template_args.push_back(TemplateTypeArg::makeType(arg_type_index));
 					}
 
 					// Check if we already have this instantiation
@@ -928,8 +931,8 @@
 
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
-							for (const auto& [arg_type, arg_type_index] : arg_types) {
-								type_args.push_back(TemplateTypeArg::makeType(arg_type, arg_type_index));
+							for (const auto& arg_type_index : arg_types) {
+								type_args.push_back(TemplateTypeArg::makeType(arg_type_index));
 							}
 
 							// Evaluate the constraint with the template arguments
@@ -942,7 +945,7 @@
 								std::string args_str;
 								for (size_t i = 0; i < arg_types.size(); ++i) {
 									if (i > 0) args_str += ", ";
-									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].first));
+									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].category()));
 								}
 
 								FLASH_LOG(Codegen, Error, "constraint not satisfied for template function '", func_name, "'");
@@ -1033,7 +1036,7 @@
 			const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 				? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 				: func_decl_node.type_node().as<TypeSpecifierNode>();
-			vcall_op.result.type = return_type.type();
+			vcall_op.result.setType(return_type.category());
 			vcall_op.result.ir_type = toIrType(return_type.type());
 			// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 			// Also handle reference return types as pointers (64 bits)
@@ -1050,7 +1053,7 @@
 			populateReferenceReturnInfo(vcall_op, return_type);
 			FLASH_LOG(Codegen, Debug, "VirtualCall result.size_in_bits=", vcall_op.result.size_in_bits);
 			vcall_op.result.value = ret_var;
-			vcall_op.object_type = object_type.type();
+			vcall_op.object_type_index = object_type.type_index();
 			vcall_op.object_size = static_cast<int>(object_type.size_in_bits());
 			if (object_name.empty()) {
 				// Object is a temporary expression result - evaluate it to get a TempVar
@@ -1080,7 +1083,7 @@
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 					TypedValue tv;
-					tv.type = type_node.type();
+					tv.setType(type_node.type());
 					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1130,17 +1133,17 @@
 
 						// Get type of argument
 						if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-							template_args.push_back(TemplateTypeArg::makeType(Type::Bool));
+							template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Bool)));
 						} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							const NumericLiteralNode& lit = *numeric_literal;
-							template_args.push_back(TemplateTypeArg::makeType(lit.type()));
+							template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(lit.type())));
 						} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
 							auto symbol_opt = symbol_table.lookup(ident.name());
 							if (symbol_opt.has_value() && symbol_opt->is<DeclarationNode>()) {
 								const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 								const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
-								template_args.push_back(TemplateTypeArg::makeType(type.type()));
+								template_args.push_back(TemplateTypeArg::makeType(nativeTypeIndex(type.type())));
 							}
 						}
 					});
@@ -1198,10 +1201,11 @@
 														? closure_type->getStructInfo()->total_size * 8
 														: 64;
 													type_node = TypeSpecifierNode(
-														Type::Struct,
-														closure_type->type_index_,
+														closure_type->type_index_.withCategory(TypeCategory::Struct),
 														closure_size,
-														decl->identifier_token()
+														decl->identifier_token(),
+														CVQualifier::None,
+														ReferenceQualifier::None
 													);
 													// Preserve rvalue reference flag
 													type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
@@ -1210,19 +1214,19 @@
 										}
 										arg_types.push_back(type_node);
 									} else {
-										arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+										arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 									}
 								} else {
-									arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+									arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 								}
 					} else if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back(TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8));
+						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 							} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 								arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-									static_cast<unsigned char>(literal->sizeInBits())));
+									static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 							} else {
 								// Default to int for complex expressions
-								arg_types.push_back(TypeSpecifierNode(Type::Int, TypeQualifier::None, 32));
+								arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
 							}
 						});
 
@@ -1258,12 +1262,13 @@
 
 						if (matched_lambda_info && sema_) {
 							sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
-							if (!isPlaceholderAutoType(matched_lambda_info->return_type)) {
+							if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
 								resolved_generic_return_type.emplace(
-									matched_lambda_info->return_type,
-									matched_lambda_info->return_type_index,
+									matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
 									matched_lambda_info->return_size,
-									matched_lambda_info->lambda_token);
+									matched_lambda_info->lambda_token,
+									CVQualifier::None,
+									ReferenceQualifier::None);
 								if (matched_lambda_info->returns_reference) {
 									resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
 									resolved_generic_return_type->set_size_in_bits(64);
@@ -1326,7 +1331,7 @@
 				return_type_ptr = &func_decl_node.type_node().as<TypeSpecifierNode>();
 			}
 			const auto& return_type = *return_type_ptr;
-			call_op.return_type = return_type.type();
+			call_op.return_type_index = return_type.type_index();
 			// For reference return types, use 64-bit size (pointer size) since references are returned as pointers
 			call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference()) ? 64 : static_cast<int>(return_type.size_in_bits())};
 			populateReferenceReturnInfo(call_op, return_type);
@@ -1350,14 +1355,12 @@
 
 			if (needs_hidden_return_param) {
 				call_op.return_slot = ret_var;  // The result temp var serves as the return slot
-				call_op.return_type_index = return_type.type_index();
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
 					StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
 			} else if (returns_struct_by_value) {
 				// Small struct return - no return slot needed
-				call_op.return_type_index = return_type.type_index();
 				FLASH_LOG_FORMAT(Codegen, Debug,
 					"Member function call {} returns small struct by value (size={} bits) - will return in RAX",
 					StringTable::getStringView(function_name), return_type.size_in_bits());
@@ -1385,7 +1388,7 @@
 					TempVar this_addr = var_counter.next();
 					AddressOfOp addr_op;
 					addr_op.result = this_addr;
-					addr_op.operand.type = object_type.type();
+					addr_op.operand.setType(object_type.category());
 					addr_op.operand.ir_type = toIrType(object_type.type());
 					addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 					addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1401,7 +1404,7 @@
 				TempVar this_addr = var_counter.next();
 				AddressOfOp addr_op;
 				addr_op.result = this_addr;
-				addr_op.operand.type = object_type.type();
+				addr_op.operand.setType(object_type.category());
 				addr_op.operand.ir_type = toIrType(object_type.type());
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
@@ -1486,7 +1489,7 @@
 					// Check if this is a function being passed as a function pointer argument
 					if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
 						// Function being passed as function pointer - just pass its name
-						call_op.args.push_back(makeTypedValue(Type::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
+						call_op.args.push_back(makeTypedValue(TypeCategory::FunctionPointer, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(identifier.name()))));
 					} else if (symbol.has_value() && symbol->is<DeclarationNode>()) {
 						const auto& decl_node = symbol->as<DeclarationNode>();
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
@@ -1502,7 +1505,7 @@
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1540,7 +1543,7 @@
 									IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 							} else {
 								// Argument is a value - take its address
-								TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+								TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 								// Pass the address with pointer size
 								call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
@@ -1597,7 +1600,7 @@
 
 						if (is_literal) {
 							// Materialize the literal into a temporary variable
-							Type literal_type = argument_result.type;
+							TypeCategory literal_type = argument_result.typeEnum();
 							int literal_size = argument_result.size_in_bits.value;
 
 							// Create a temporary variable to hold the literal value
@@ -1630,7 +1633,7 @@
 						} else {
 							// Not a literal (expression result in a TempVar) - take its address
 							if (std::holds_alternative<TempVar>(argument_result.value)) {
-								Type expr_type = argument_result.type;
+								TypeCategory expr_type = argument_result.typeEnum();
 								int expr_size = argument_result.size_in_bits.value;
 								TempVar expr_var = std::get<TempVar>(argument_result.value);
 
@@ -1679,9 +1682,9 @@
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);
 			if (return_type.is_rvalue_reference()) {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
 			} else {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
 			}
 		}
 

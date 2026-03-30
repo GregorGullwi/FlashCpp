@@ -175,3 +175,46 @@ evaluator features.
 they represent true C++ violations (not evaluator gaps), then the existing enforcement
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
+
+## `wchar_t{}` / `char16_t{}` / `char32_t{}` constructor-call syntax in non-template context
+
+Using `wchar_t{}`, `char16_t{}`, or `char32_t{}` as direct constructor-call expressions
+(e.g., `constexpr wchar_t v = wchar_t{};`) fails with a parser error:
+"Failed to parse initializer expression".  The keyword-typed wide character types are not
+yet handled in the expression parser's constructor-call path.
+
+**Workaround:** Use cast syntax (`static_cast<char16_t>(0)`) or a template helper
+(`template<typename T> constexpr T zero_init() { return T{}; }`).
+
+The template path works correctly since `T{}` is parsed as a dependent expression, and
+the constexpr evaluator (ConstExprEvaluator_Core.cpp `evaluate_constructor_call`) now
+handles `WChar`, `Char8`, `Char16`, and `Char32` in its zero-initialization switch.
+
+## Function pointer stored in a template struct — indirect call IR error
+
+Instantiating a template struct whose member is a typedef'd or `using`-alias function
+pointer, then calling through that member, triggers an IR conversion error:
+
+> IR conversion failed for node 'call': Function pointer member missing
+> function_signature for indirect call return type
+
+The struct's `StructMember::function_signature` is not populated for function-pointer
+members that arrive via template instantiation, so `IrGenerator_Call_Indirect.cpp` throws
+an `InternalError` and skips the function body.  The resulting object file has no code for
+the function, causing a runtime crash (signal 11) if the caller is linked.
+
+**Workaround:** Use a non-template struct holding the function pointer.
+
+## Implicit function-name → function-pointer conversion for overload resolution
+
+Passing a bare function name to a parameter whose declared type is a typedef'd or
+`using`-alias function pointer fails overload resolution:
+
+```cpp
+typedef int (*IntFn)(int);
+void call(IntFn f);
+int foo(int x) { return x; }
+call(foo);  // ERROR: No matching function for call to 'call'
+```
+
+**Workaround:** Assign the function to a typed local variable first and pass the variable.

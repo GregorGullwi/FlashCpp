@@ -122,7 +122,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name, 
 	                identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(Type::Struct, type_index, type_size, type_token);
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
 	
 	// Create ConstructorCallNode
 	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));
@@ -371,7 +371,7 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 
 		// Fall back to forward declaration only if we still couldn't resolve.
 		if (!decl_ptr) {
-			auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, func_token);
+			auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, func_token, CVQualifier::None);
 			auto forward_decl = emplace_node<DeclarationNode>(type_node, func_token);
 			decl_ptr = &forward_decl.as<DeclarationNode>();
 		}
@@ -727,22 +727,22 @@ ParseResult Parser::validate_and_add_base_class(
 	const TypeInfo* base_type_info = base_type_it->second;
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: initial base_type_info for '{}': type={}, type_index={}", 
-	                 base_class_name, static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 base_class_name, static_cast<int>(base_type_info->typeEnum()), base_type_info->type_index_);
 	
 	// Resolve type aliases: if base_type_info points to another type (type alias),
 	// follow the chain to find the actual struct type
 	size_t max_alias_depth = 10;  // Prevent infinite loops
-	while (base_type_info->type_ != Type::Struct && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
+	while (!base_type_info->isStruct() && base_type_info->type_index_.index() < getTypeInfoCount() && max_alias_depth-- > 0) {
 		const TypeInfo& underlying = getTypeInfo(base_type_info->type_index_);
 		// Stop if we're pointing to ourselves (not a valid alias)
 		if (&underlying == base_type_info) break;
 		FLASH_LOG_FORMAT(Parser, Debug, "Resolving type alias '{}' -> type_index {}, underlying type={}", 
-		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.type_));
+		                 base_class_name, base_type_info->type_index_, static_cast<int>(underlying.typeEnum()));
 		base_type_info = &underlying;
 	}
 	
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: final base_type_info: type={}, type_index={}", 
-	                 static_cast<int>(base_type_info->type_), base_type_info->type_index_);
+	                 static_cast<int>(base_type_info->typeEnum()), base_type_info->type_index_);
 	
 	// Check if base class is a template parameter
 	bool is_template_param = is_base_class_template_parameter(base_class_name);
@@ -753,13 +753,13 @@ ParseResult Parser::validate_and_add_base_class(
 	// In template bodies, a UserDefined type alias (e.g., _Tp_alloc_type) may resolve to a struct
 	// at instantiation time. Treat it as a deferred base class.
 	bool is_dependent_type_alias = false;
-	if (!is_template_param && !is_dependent_placeholder && base_type_info->type_ == Type::UserDefined &&
+	if (!is_template_param && !is_dependent_placeholder && base_type_info->resolvedType() == TypeCategory::UserDefined &&
 		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_dependent_type_alias = true;
 	}
 	
 	// Allow Type::Struct for concrete types OR template parameters OR dependent placeholders OR dependent type aliases
-	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && base_type_info->type_ != Type::Struct) {
+	if (!is_template_param && !is_dependent_placeholder && !is_dependent_type_alias && !base_type_info->isStruct()) {
 		return ParseResult::error("Base class '" + std::string(base_class_name) + "' is not a struct/class", error_token);
 	}
 
@@ -781,16 +781,16 @@ ParseResult Parser::validate_and_add_base_class(
 
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
+TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args
 ) {
-	Type result_type = original_type.type();
+	TypeCategory result_type = original_type.type();
 	TypeIndex result_type_index = original_type.type_index();
 
 	// Only substitute UserDefined types (which might be template parameters)
-	if (result_type == Type::UserDefined) {
+	if (result_type == TypeCategory::UserDefined) {
 		// First try to get the type name from the token (useful for type aliases parsed inside templates
 		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
 		std::string_view type_name;
@@ -804,7 +804,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			type_name = StringTable::getStringView(type_info.name());
 			
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index, 
-				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.type_), 
+				", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info.typeEnum()), 
 				", underlying_type_index=", type_info.type_index_);
 		} else if (!type_name.empty()) {
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
@@ -894,7 +894,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 					
 					if (type_it != getTypesByNameMap().end()) {
 						const TypeInfo* resolved_info = type_it->second;
-						result_type = resolved_info->type_;
+						result_type = resolved_info->typeEnum();
 						result_type_index = resolved_info->type_index_;
 						found_match = true;
 					}
@@ -933,7 +933,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 						
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_info = type_it->second;
-							result_type = resolved_info->type_;
+							result_type = resolved_info->typeEnum();
 							result_type_index = resolved_info->type_index_;
 							found_match = true;
 						}
@@ -968,7 +968,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* resolved_info = type_it->second;
-								result_type = resolved_info->type_;
+								result_type = resolved_info->typeEnum();
 								result_type_index = resolved_info->type_index_;
 								found_match = true;
 								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
@@ -984,7 +984,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 			// This requires a valid type_index to look up the alias info
 			if (!found_match && result_type_index.is_valid() && result_type_index.index() < getTypeInfoCount()) {
 				const TypeInfo& type_info = getTypeInfo(result_type_index);
-				if (type_info.type_ == Type::UserDefined && type_info.type_index_ != result_type_index) {
+				if (type_info.resolvedType() == TypeCategory::UserDefined && type_info.type_index_ != result_type_index) {
 					// This is a type alias - recursively check what it resolves to
 					if (type_info.type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& alias_target_info = getTypeInfo(type_info.type_index_);
@@ -1071,10 +1071,10 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 								std::string_view inst_name = get_instantiated_class_name(concrete_tpl_name, concrete_args);
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
-									result_type = inst_it->second->type_;
+									result_type = inst_it->second->typeEnum();
 									result_type_index = inst_it->second->type_index_;
 									found_match = true;
-									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' → '{}' via concrete template '{}'",
+									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 									                 base_tpl_name, inst_name, concrete_tpl_name);
 								}
 							}
@@ -1086,7 +1086,7 @@ std::pair<Type, TypeIndex> Parser::substitute_template_parameter(
 		}
 	}
 
-	return {result_type, result_type_index};
+	return result_type_index.withCategory(result_type);
 }
 
 
@@ -1206,21 +1206,21 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 
 	FunctionSignature sig;
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
-		sig.return_type = deduced_return->type();
+		sig.return_type_index = deduced_return->type_index();
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
-		sig.return_type = Type::Void;
+		sig.return_type_index = nativeTypeIndex(TypeCategory::Void);
 	}
 
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
 			const auto& param_decl = param.as<DeclarationNode>();
 			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-			sig.parameter_types.push_back(param_type.type());
+			sig.parameter_type_indices.push_back(param_type.type_index());
 		}
 	}
 
-	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token());
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, lambda.lambda_token(), CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1232,12 +1232,12 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 	}
 
 	FunctionSignature sig;
-	sig.return_type = sig_opt->return_type.type();
+	sig.return_type_index = sig_opt->return_type.type_index();
 	for (const auto& param_type : sig_opt->param_types) {
-		sig.parameter_types.push_back(param_type.type());
+		sig.parameter_type_indices.push_back(param_type.type_index());
 	}
 
-	TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64, source_token);
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, source_token, CVQualifier::None);
 	fp_type.set_function_signature(sig);
 	return fp_type;
 }
@@ -1274,11 +1274,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1289,15 +1289,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 	// Handle different expression types
 	if (std::holds_alternative<BoolLiteralNode>(expr)) {
-		return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+		return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<NumericLiteralNode>(expr)) {
 		const auto& literal = std::get<NumericLiteralNode>(expr);
-		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits());
+		return TypeSpecifierNode(literal.type(), literal.qualifier(), literal.sizeInBits(), Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<StringLiteralNode>(expr)) {
 		// String literals have type "const char*" (pointer to const char)
-		TypeSpecifierNode char_type(Type::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
+		TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, {}, CVQualifier::Const);
 		char_type.add_pointer_level();
 		return char_type;
 	}
@@ -1388,12 +1388,12 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		    op_kind == tok::Less || op_kind == tok::Greater ||
 		    op_kind == tok::LessEq || op_kind == tok::GreaterEq ||
 		    op_kind == tok::LogicalAnd || op_kind == tok::LogicalOr) {
-			return TypeSpecifierNode(Type::Bool, TypeQualifier::None, 8);
+			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
 		}
 
 		// For bitwise/arithmetic operators, check the LHS type
 		// If LHS is an enum, check for free function operator overloads
-		if (lhs_type_opt.has_value() && lhs_type_opt->type() == Type::Enum) {
+		if (lhs_type_opt.has_value() && lhs_type_opt->category() == TypeCategory::Enum) {
 			// Look for a free function operator overload (e.g., operator&(EnumA, EnumB) -> EnumA)
 			StringBuilder op_name_builder;
 			op_name_builder.append("operator"sv);
@@ -1420,7 +1420,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Default: return int for arithmetic/bitwise operations
-		return TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+		return TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
 	}
 	else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		// For unary operators, handle type transformations
@@ -1464,7 +1464,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					}
 					if (!lambda_ptr) {
 						const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
-						if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+						if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1507,7 +1507,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		// Fallback: treat unary + on captureless lambda objects as decay to function pointer using struct info
-		if (op == "+" && operand_type.type() == Type::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
+		if (op == "+" && operand_type.category() == TypeCategory::Struct && operand_type.type_index().index() < getTypeInfoCount()) {
 			const TypeInfo& type_info = getTypeInfo(operand_type.type_index());
 			const StructTypeInfo* struct_info = type_info.getStructInfo();
 			if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1544,7 +1544,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const ASTNode& object_node = member_call.object();
 		if (object_node.is<ExpressionNode>()) {
 			auto object_type_opt = get_expression_type(object_node);
-			if (object_type_opt.has_value() && object_type_opt->type() == Type::Struct) {
+			if (object_type_opt.has_value() && object_type_opt->category() == TypeCategory::Struct) {
 				size_t struct_type_index = object_type_opt->type_index().index();
 				if (struct_type_index < getTypeInfoCount()) {
 					const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
@@ -1588,11 +1588,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			if (closure_type->getStructInfo()) {
 				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
 			}
-			return TypeSpecifierNode(Type::Struct, closure_type->type_index_, closure_size_bits, lambda.lambda_token());
+			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(Type::Struct, TypeIndex{}, 64, lambda.lambda_token());
+		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 	else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For constructor calls like Widget(42), return the type being constructed
@@ -1652,7 +1652,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(member_ctx.struct_type_index);
-						object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+						object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
 					}
 				}
 			}
@@ -1667,7 +1667,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const TypeSpecifierNode& object_type = *object_type_opt;
 		
 		// Handle struct/class member access
-		if (is_struct_type(object_type.type())) {
+		if (is_struct_type(object_type.category())) {
 			size_t struct_type_index = object_type.type_index().index();
 			if (struct_type_index < getTypeInfoCount()) {
 				// Look up the member
@@ -1675,7 +1675,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (member_result) {
 					// Return the member's type
 					// member->size is in bytes, TypeSpecifierNode expects bits
-					TypeSpecifierNode member_type(member_result.member->type, TypeQualifier::None, member_result.member->size * 8);
+					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8, Token{}, CVQualifier::None);
 					member_type.set_type_index(member_result.member->type_index);
 					if (member_result.member->pointer_depth > 0) {
 						member_type.add_pointer_levels(member_result.member->pointer_depth);
@@ -1698,7 +1698,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 	else if (std::holds_alternative<PseudoDestructorCallNode>(expr)) {
 		// Pseudo-destructor call (obj.~Type()) always returns void
 		const auto& dtor_call = std::get<PseudoDestructorCallNode>(expr);
-		return TypeSpecifierNode(Type::Void, TypeQualifier::None, 0, dtor_call.type_name_token());
+		return TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, 0, dtor_call.type_name_token(), CVQualifier::None);
 	}
 	else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		// For ternary expressions (cond ? true_expr : false_expr), determine the common type
@@ -1723,8 +1723,8 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 			
 			// Handle common type conversions for arithmetic types
-			if (!is_struct_type(true_type.type()) &&
-				!is_struct_type(false_type.type())) {
+			if (!is_struct_type(true_type.category()) &&
+				!is_struct_type(false_type.category())) {
 				// For arithmetic types, use usual arithmetic conversions
 				// Return the larger type (in terms of bit width)
 				if (true_type.size_in_bits() >= false_type.size_in_bits()) {
@@ -1782,7 +1782,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 					if (static_member && owner_struct) {
 						// Found the static member - return its type
-						TypeSpecifierNode member_type(static_member->type, TypeQualifier::None, static_member->size * 8);
+						TypeSpecifierNode member_type(static_member->memberType(), TypeQualifier::None, static_member->size * 8, Token{}, CVQualifier::None);
 						member_type.set_type_index(static_member->type_index);
 						if (static_member->is_const()) {
 							member_type.set_cv_qualifier(CVQualifier::Const);
@@ -1798,11 +1798,11 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				}
 			} else if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->getEnumInfo()) {
 				// C++20 [basic.lookup.argdep]/2: for enum-typed arguments (e.g. Ns::Color::Red),
-				// return a TypeSpecifierNode with Type::Enum and the enum's type_index so ADL
+				// return a TypeSpecifierNode with TypeCategory::Enum and the enum's type_index so ADL
 				// can find functions in the enum's associated namespace.
 				const TypeInfo* enum_type_info = struct_type_it->second;
-				TypeSpecifierNode enum_type(Type::Enum, TypeQualifier::None,
-				                            enum_type_info->getEnumInfo()->underlying_size);
+				TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None,
+				                            enum_type_info->getEnumInfo()->underlying_size, Token{}, CVQualifier::None);
 				enum_type.set_type_index(enum_type_info->type_index_);
 				return enum_type;
 			}
@@ -1814,7 +1814,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 }
 
 // Helper function to deduce the type of an expression for auto type deduction
-Type Parser::deduce_type_from_expression(const ASTNode& expr) {
+TypeCategory Parser::deduce_type_from_expression(const ASTNode& expr) {
 	// For now, use a simple approach: use the existing get_expression_type function
 	// which returns TypeSpecifierNode, and extract the type from it
 	auto type_spec_opt = get_expression_type(expr);
@@ -1823,7 +1823,7 @@ Type Parser::deduce_type_from_expression(const ASTNode& expr) {
 	}
 
 	// Default to int if we can't determine the type
-	return Type::Int;
+	return TypeCategory::Int;
 }
 
 // Helper function to deduce and update auto return type from function body
@@ -2069,7 +2069,7 @@ bool Parser::are_types_compatible(const TypeSpecifierNode& type1, const TypeSpec
 	}
 	
 	// For user-defined types (Struct, Enum), check type index
-	if (type1.type() == Type::Struct || type1.type() == Type::Enum) {
+	if (type1.category() == TypeCategory::Struct || type1.category() == TypeCategory::Enum) {
 		if (type1.type_index() != type2.type_index()) {
 			return false;
 		}
@@ -2102,43 +2102,39 @@ std::string Parser::type_to_string(const TypeSpecifierNode& type) const {
 	}
 	
 	// Add base type name
-	switch (type.type()) {
-		case Type::Void: result += "void"; break;
-		case Type::Bool: result += "bool"; break;
-		case Type::Char: result += "char"; break;
-		case Type::UnsignedChar: result += "unsigned char"; break;
-		case Type::Short: result += "short"; break;
-		case Type::UnsignedShort: result += "unsigned short"; break;
-		case Type::Int: result += "int"; break;
-		case Type::UnsignedInt: result += "unsigned int"; break;
-		case Type::Long: result += "long"; break;
-		case Type::UnsignedLong: result += "unsigned long"; break;
-		case Type::LongLong: result += "long long"; break;
-		case Type::UnsignedLongLong: result += "unsigned long long"; break;
-		case Type::Float: result += "float"; break;
-		case Type::Double: result += "double"; break;
-		case Type::LongDouble: result += "long double"; break;
-		case Type::Auto: result += "auto"; break;
-		case Type::DeclTypeAuto: result += "decltype(auto)"; break;
-		case Type::Struct:
+	switch (type.category()) {
+		case TypeCategory::Void: result += "void"; break;
+		case TypeCategory::Bool: result += "bool"; break;
+		case TypeCategory::Char: result += "char"; break;
+		case TypeCategory::UnsignedChar: result += "unsigned char"; break;
+		case TypeCategory::Short: result += "short"; break;
+		case TypeCategory::UnsignedShort: result += "unsigned short"; break;
+		case TypeCategory::Int: result += "int"; break;
+		case TypeCategory::UnsignedInt: result += "unsigned int"; break;
+		case TypeCategory::Long: result += "long"; break;
+		case TypeCategory::UnsignedLong: result += "unsigned long"; break;
+		case TypeCategory::LongLong: result += "long long"; break;
+		case TypeCategory::UnsignedLongLong: result += "unsigned long long"; break;
+		case TypeCategory::Float: result += "float"; break;
+		case TypeCategory::Double: result += "double"; break;
+		case TypeCategory::LongDouble: result += "long double"; break;
+		case TypeCategory::Auto: result += "auto"; break;
+		case TypeCategory::DeclTypeAuto: result += "decltype(auto)"; break;
+		case TypeCategory::Struct:
+		case TypeCategory::UserDefined:
+		case TypeCategory::TypeAlias:
+		case TypeCategory::Enum:
 			if (type.type_index().index() < getTypeInfoCount()) {
 				result += std::string(StringTable::getStringView(getTypeInfo(type.type_index()).name()));
 			} else {
-				result += "struct";
+				result += (type.category() == TypeCategory::Enum) ? "enum" : "struct";
 			}
 			break;
-		case Type::Enum:
-			if (type.type_index().index() < getTypeInfoCount()) {
-				result += std::string(StringTable::getStringView(getTypeInfo(type.type_index()).name()));
-			} else {
-				result += "enum";
-			}
-			break;
-		case Type::Function: result += "function"; break;
-		case Type::FunctionPointer: result += "function pointer"; break;
-		case Type::MemberFunctionPointer: result += "member function pointer"; break;
-		case Type::MemberObjectPointer: result += "member object pointer"; break;
-		case Type::Nullptr: result += "nullptr_t"; break;
+		case TypeCategory::Function: result += "function"; break;
+		case TypeCategory::FunctionPointer: result += "function pointer"; break;
+		case TypeCategory::MemberFunctionPointer: result += "member function pointer"; break;
+		case TypeCategory::MemberObjectPointer: result += "member object pointer"; break;
+		case TypeCategory::Nullptr: result += "nullptr_t"; break;
 		default: result += "unknown"; break;
 	}
 	

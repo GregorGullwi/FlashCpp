@@ -285,247 +285,10 @@ enum class TargetDataModel {
 // Default is platform-dependent
 extern TargetDataModel g_target_data_model;
 
-enum class Type : int_fast16_t {
-	Invalid = 0,          // Must be 0 so zero-initialized memory is detected as uninitialized
-	Void,
-	Bool,
-	Char,
-	UnsignedChar,
-	WChar,             // wchar_t - distinct built-in type (mangled as 'w')
-	Char8,             // char8_t (C++20) - distinct built-in type (mangled as 'Du')
-	Char16,            // char16_t (C++11) - distinct built-in type (mangled as 'Ds')
-	Char32,            // char32_t (C++11) - distinct built-in type (mangled as 'Di')
-	Short,
-	UnsignedShort,
-	Int,
-	UnsignedInt,
-	Long,
-	UnsignedLong,
-	LongLong,
-	UnsignedLongLong,
-	Float,
-	Double,
-	LongDouble,
-	FunctionPointer,
-	MemberFunctionPointer,
-	MemberObjectPointer,  // Pointer to data member: int MyClass::*
-	UserDefined,
-	Auto,
-	DeclTypeAuto,
-	Function,
-	Struct,
-	Enum,
-	Nullptr,              // nullptr_t type
-	Template,             // Nested template param
-	Count_,               // Sentinel — must be last; static_assert below enforces count
-};
-
-inline bool isPlaceholderAutoType(Type type) {
-	return type == Type::Auto || type == Type::DeclTypeAuto;
-}
-
-// Type classification model:
-// - Primitive builtins are identified entirely by the Type enum and never need a
-//   gTypeInfo lookup for identity.
-// - Struct, Enum, and UserDefined represent semantic types whose concrete
-//   identity lives in TypeIndex/gTypeInfo.
-// - Type::Template placeholders may also carry a TypeIndex during substitution,
-//   but callers still handle that unresolved case explicitly today instead of
-//   folding it into needs_type_index().
-// - is_struct_type() remains the narrower "struct/class-like object" helper and
-//   intentionally excludes enums and unresolved template placeholders.
-constexpr bool is_primitive_type(Type type) {
-	switch (type) {
-	case Type::Void:
-	case Type::Bool:
-	case Type::Char:
-	case Type::UnsignedChar:
-	case Type::WChar:
-	case Type::Char8:
-	case Type::Char16:
-	case Type::Char32:
-	case Type::Short:
-	case Type::UnsignedShort:
-	case Type::Int:
-	case Type::UnsignedInt:
-	case Type::Long:
-	case Type::UnsignedLong:
-	case Type::LongLong:
-	case Type::UnsignedLongLong:
-	case Type::Float:
-	case Type::Double:
-	case Type::LongDouble:
-	case Type::Nullptr:
-		return true;
-	default:
-		return false;
-	}
-}
-
-constexpr bool needs_type_index(Type type) {
-	// Type::Template is intentionally excluded: it is an unresolved placeholder
-	// whose identity has not been committed to gTypeInfo yet.  Callers that need
-	// to detect template placeholders should use TypeInfo::isTemplatePlaceholder()
-	// (or compare directly against Type::Template) rather than folding it here.
-	return type == Type::Struct || type == Type::Enum || type == Type::UserDefined;
-}
-
-static_assert(is_primitive_type(Type::Void));
-static_assert(is_primitive_type(Type::LongDouble));
-static_assert(is_primitive_type(Type::Nullptr));
-static_assert(!is_primitive_type(Type::Struct));
-static_assert(!is_primitive_type(Type::Enum));
-static_assert(!is_primitive_type(Type::UserDefined));
-static_assert(!is_primitive_type(Type::Template));
-
-static_assert(needs_type_index(Type::Struct));
-static_assert(needs_type_index(Type::Enum));
-static_assert(needs_type_index(Type::UserDefined));
-static_assert(!needs_type_index(Type::Int));
-static_assert(!needs_type_index(Type::Nullptr));
-static_assert(!needs_type_index(Type::Template));
-
-// True for all builtin types that have a valid get_type_size_bits() answer:
-// Void through MemberObjectPointer in the enum. This is broader than
-// is_primitive_type() — it also covers FunctionPointer, MemberFunctionPointer,
-// and MemberObjectPointer (but NOT Auto, DeclTypeAuto, or Nullptr).
-constexpr bool is_builtin_type(Type type) {
-	switch (type) {
-	case Type::Void:
-	case Type::Bool:
-	case Type::Char:
-	case Type::UnsignedChar:
-	case Type::WChar:
-	case Type::Char8:
-	case Type::Char16:
-	case Type::Char32:
-	case Type::Short:
-	case Type::UnsignedShort:
-	case Type::Int:
-	case Type::UnsignedInt:
-	case Type::Long:
-	case Type::UnsignedLong:
-	case Type::LongLong:
-	case Type::UnsignedLongLong:
-	case Type::Float:
-	case Type::Double:
-	case Type::LongDouble:
-	case Type::FunctionPointer:
-	case Type::MemberFunctionPointer:
-	case Type::MemberObjectPointer:
-		return true;
-	default:
-		return false;
-	}
-}
-
-// Arithmetic types per C++20 [basic.fundamental]: Bool, all integral types,
-// and all floating-point types.
-constexpr bool isArithmeticType(Type type) {
-	switch (type) {
-	case Type::Bool:
-	case Type::Char:
-	case Type::UnsignedChar:
-	case Type::WChar:
-	case Type::Char8:
-	case Type::Char16:
-	case Type::Char32:
-	case Type::Short:
-	case Type::UnsignedShort:
-	case Type::Int:
-	case Type::UnsignedInt:
-	case Type::Long:
-	case Type::UnsignedLong:
-	case Type::LongLong:
-	case Type::UnsignedLongLong:
-	case Type::Float:
-	case Type::Double:
-	case Type::LongDouble:
-		return true;
-	default:
-		return false;
-	}
-}
-
-// Fundamental types per C++20 [basic.fundamental]: arithmetic + void + nullptr_t.
-constexpr bool isFundamentalType(Type type) {
-	return type == Type::Void || type == Type::Nullptr || isArithmeticType(type);
-}
-
-static_assert(isArithmeticType(Type::Bool));
-static_assert(isArithmeticType(Type::LongDouble));
-static_assert(!isArithmeticType(Type::Void));
-static_assert(!isArithmeticType(Type::Struct));
-static_assert(isFundamentalType(Type::Void));
-static_assert(isFundamentalType(Type::Nullptr));
-static_assert(!isFundamentalType(Type::Struct));
-static_assert(is_builtin_type(Type::FunctionPointer));
-static_assert(!is_builtin_type(Type::Struct));
-static_assert(!is_builtin_type(Type::Template));
-
-// Compile-time count guard: if a new Type variant is added, this fires
-// and forces a manual review of all classification helpers.
-// Current count: 31 (Invalid=0, Void..Template=1..30, Count_=31) as of Milestone 2.
-static_assert(static_cast<int>(Type::Count_) == 31,
-	"New Type variant added — audit is_primitive_type, needs_type_index, is_builtin_type, "
-	"isArithmeticType, isIntegralType, and other classification helpers, then update this count.");
-
-inline bool isIntegralType(Type type) {
-	switch (type) {
-	case Type::Bool:
-	case Type::Char:
-	case Type::Short:
-	case Type::Int:
-	case Type::Long:
-	case Type::LongLong:
-	case Type::UnsignedChar:
-	case Type::UnsignedShort:
-	case Type::UnsignedInt:
-	case Type::UnsignedLong:
-	case Type::UnsignedLongLong:
-	case Type::WChar:      // wchar_t is integral per C++20 [basic.fundamental]
-	case Type::Char8:      // char8_t is integral per C++20 [basic.fundamental]
-	case Type::Char16:     // char16_t is integral per C++20 [basic.fundamental]
-	case Type::Char32:     // char32_t is integral per C++20 [basic.fundamental]
-		return true;
-	default:
-		return false;
-	}
-}
-
-inline bool isFloatingPointType(Type type) {
-	return type == Type::Float || type == Type::Double || type == Type::LongDouble;
-}
-
-inline bool isUnsignedIntegralType(Type type) {
-	switch (type) {
-	case Type::UnsignedChar:
-	case Type::UnsignedShort:
-	case Type::UnsignedInt:
-	case Type::UnsignedLong:
-	case Type::UnsignedLongLong:
-	case Type::Char8:
-	case Type::Char16:
-	case Type::Char32:
-		return true;
-	// wchar_t is target-dependent: unsigned on Windows (LLP64), signed on Linux (LP64)
-	case Type::WChar:
-		return g_target_data_model == TargetDataModel::LLP64;
-	default:
-		return false;
-	}
-}
-
-// TypeCategory — a distinct type from `Type` that allows the compiler to flag
-// every remaining `Type::` usage as a migration error once TypeCategory is in use.
-// Explicit values 0-23 match the old Type enum exactly so that a numeric value
-// printed in a debug log has the same meaning in both systems.  TypeAlias (24) is
-// inserted between UserDefined (23) and Auto (25), shifting Auto and all later
-// values up by 1 relative to the old Type enum.
-//
-// TypeAlias is the key new discriminant: `register_type_alias` sets
-// TypeCategory::TypeAlias while `add_user_type` sets TypeCategory::UserDefined,
-// resolving the long-standing Type::UserDefined semantic ambiguity (§7.1).
+// TypeCategory — the canonical type classification enum for FlashCpp.
+// Explicit values 0-23 match historical numbering so that numeric values
+// printed in debug logs remain consistent.  TypeAlias (24) represents
+// resolved type aliases, distinct from UserDefined (23).
 enum class TypeCategory : uint8_t {
 	Invalid              =  0,
 	Void                 =  1,
@@ -551,52 +314,24 @@ enum class TypeCategory : uint8_t {
 	MemberFunctionPointer= 21,
 	MemberObjectPointer  = 22,
 	UserDefined          = 23,  // opaque/unresolved user type or builtin alias (e.g. __builtin_va_list)
-	TypeAlias            = 24,  // NEW: explicit typedef/using alias (was ambiguously Type::UserDefined)
-	Auto                 = 25,  // was Type::Auto = 24
-	DeclTypeAuto         = 26,  // was Type::DeclTypeAuto = 25
-	Function             = 27,  // was Type::Function = 26
-	Struct               = 28,  // was Type::Struct = 27
-	Enum                 = 29,  // was Type::Enum = 28
-	Nullptr              = 30,  // was Type::Nullptr = 29
-	Template             = 31,  // was Type::Template = 30
+	TypeAlias            = 24,  // explicit typedef/using alias
+	Auto                 = 25,
+	DeclTypeAuto         = 26,
+	Function             = 27,
+	Struct               = 28,
+	Enum                 = 29,
+	Nullptr              = 30,
+	Template             = 31,
 };
 
-// Correspondence checks: values 0-23 match the old Type enum exactly; values >= 24
-// are each one greater because TypeAlias (24) was inserted between UserDefined and Auto.
-static_assert(static_cast<int>(TypeCategory::Invalid)     == static_cast<int>(Type::Invalid));
-static_assert(static_cast<int>(TypeCategory::Void)        == static_cast<int>(Type::Void));
-static_assert(static_cast<int>(TypeCategory::Int)         == static_cast<int>(Type::Int));
-static_assert(static_cast<int>(TypeCategory::UserDefined) == static_cast<int>(Type::UserDefined));
-static_assert(static_cast<int>(TypeCategory::TypeAlias)   == static_cast<int>(Type::UserDefined) + 1);
-static_assert(static_cast<int>(TypeCategory::Struct)      == static_cast<int>(Type::Struct)   + 1);
-static_assert(static_cast<int>(TypeCategory::Enum)        == static_cast<int>(Type::Enum)     + 1);
-static_assert(static_cast<int>(TypeCategory::Template)    == static_cast<int>(Type::Template) + 1);
-
-// Convert a legacy Type value to the corresponding TypeCategory.
-// Values 0-23 map 1:1.  Values >= 24 are shifted up by 1 to account for the
-// TypeAlias insertion.  Note: Type::UserDefined maps to TypeCategory::UserDefined
-// (not TypeAlias) — use TypeCategory::TypeAlias explicitly in register_type_alias.
-constexpr TypeCategory typeToCategory(Type t) noexcept {
-	auto v = static_cast<int>(t);
-	if (v <= 23) return static_cast<TypeCategory>(v);
-	return static_cast<TypeCategory>(v + 1);
-}
-
-// Convert a TypeCategory back to the legacy Type enum for APIs that still accept Type.
-// Values 0-23 map 1:1.  TypeAlias (24) has no direct Type equivalent — mapped to
-// Type::UserDefined as the closest semantic match.  Values >= 25 are shifted down by 1.
-constexpr Type categoryToType(TypeCategory cat) noexcept {
-	auto v = static_cast<int>(cat);
-	if (v <= 23) return static_cast<Type>(v);
-	if (v == 24) return Type::UserDefined;  // TypeAlias → UserDefined
-	return static_cast<Type>(v - 1);
-}
-
-// --- TypeCategory classification helpers (Milestone 7 Step 2) ---
-// These mirror the Type-based helpers above and allow call sites that have
-// already migrated to TypeIndex to avoid a gTypeInfo lookup for simple queries.
+// --- TypeCategory classification helpers ---
 // Helpers needed by TypeIndex itself are declared first so that TypeIndex
 // methods can delegate to them instead of duplicating the switch logic.
+
+// TypeCategory overload for isPlaceholderAutoType.
+inline bool isPlaceholderAutoType(TypeCategory cat) {
+	return cat == TypeCategory::Auto || cat == TypeCategory::DeclTypeAuto;
+}
 
 // True for primitive scalar types (no gTypeInfo lookup needed for identity).
 constexpr bool is_primitive_type(TypeCategory cat) {
@@ -627,13 +362,14 @@ constexpr bool is_primitive_type(TypeCategory cat) {
 	}
 }
 
-// True for Struct, UserDefined (opaque), or TypeAlias — any user-defined type
-// that may carry struct-like metadata (StructTypeInfo) or be resolved via alias
-// lookup.  Intentionally excludes Enum and Template placeholders.
+// True for Struct or UserDefined (opaque) — types that may carry struct-like
+// metadata (StructTypeInfo).  TypeAlias is intentionally excluded: an alias
+// to a primitive (e.g., `using MyInt = int`) is NOT struct-like.  Callers
+// that need to handle aliases should resolve through getTypeInfo() first.
+// Intentionally excludes Enum and Template placeholders.
 constexpr bool is_struct_type(TypeCategory cat) {
 	return cat == TypeCategory::Struct
-		|| cat == TypeCategory::UserDefined
-		|| cat == TypeCategory::TypeAlias;
+		|| cat == TypeCategory::UserDefined;
 }
 
 // True for any type that requires a gTypeInfo entry for identity
@@ -675,8 +411,8 @@ struct TypeIndex {
 	// Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
 	// a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
 	// is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
-	static constexpr TypeIndex fromTypeAndIndex(Type t, TypeIndex idx) noexcept {
-		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : typeToCategory(t);
+	static constexpr TypeIndex fromTypeAndIndex(TypeCategory t, TypeIndex idx) noexcept {
+		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : t;
 		return TypeIndex{idx.index(), cat};
 	}
 
@@ -707,6 +443,8 @@ struct TypeIndex {
 	// Mutates only the category cache (not the index).  Use to stamp the correct
 	// TypeCategory onto a TypeIndex that was built with the legacy 1-arg ctor.
 	constexpr void setCategory(TypeCategory cat) noexcept { category_ = cat; }
+	// Returns a new TypeIndex with the same index but a different category.
+	constexpr TypeIndex withCategory(TypeCategory cat) const noexcept { return TypeIndex{index_, cat}; }
 
 	constexpr bool isStruct()              const noexcept { return category_ == TypeCategory::Struct; }
 	constexpr bool isEnum()               const noexcept { return category_ == TypeCategory::Enum; }
@@ -745,6 +483,8 @@ inline std::ostream& operator<<(std::ostream& os, const TypeIndex& idx) {
 // TypeIndex (above) so that TypeIndex methods can delegate to them.
 
 // True for all builtin types that have a valid get_type_size_bits() answer.
+// Includes Nullptr (nullptr_t is fundamental per C++20 [basic.fundamental]/13).
+// Excludes Auto and DeclTypeAuto.
 constexpr bool is_builtin_type(TypeCategory cat) {
 	switch (cat) {
 	case TypeCategory::Void:
@@ -769,6 +509,7 @@ constexpr bool is_builtin_type(TypeCategory cat) {
 	case TypeCategory::FunctionPointer:
 	case TypeCategory::MemberFunctionPointer:
 	case TypeCategory::MemberObjectPointer:
+	case TypeCategory::Nullptr:
 		return true;
 	default:
 		return false;
@@ -834,6 +575,95 @@ constexpr bool isFloatingPointType(TypeCategory cat) {
 		|| cat == TypeCategory::LongDouble;
 }
 
+// TypeCategory overloads for the Type-based helpers in AstNodeTypes.cpp.
+// These allow call sites to operate directly on TypeCategory.
+constexpr bool is_integer_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::WChar:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr bool is_bool_type(TypeCategory cat) {
+	return cat == TypeCategory::Bool;
+}
+
+// WChar signedness is target-dependent: unsigned on Windows (LLP64), signed on Linux (LP64).
+// Char8/Char16/Char32 are always unsigned per C++20.
+inline bool is_unsigned_integer_type(TypeCategory cat) {
+	switch (cat) {
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::UnsignedLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Char8:
+	case TypeCategory::Char16:
+	case TypeCategory::Char32:
+		return true;
+	case TypeCategory::WChar:
+		return g_target_data_model == TargetDataModel::LLP64;
+	default:
+		return false;
+	}
+}
+
+constexpr bool is_floating_point_type(TypeCategory cat) {
+	return isFloatingPointType(cat);
+}
+
+inline bool is_signed_integer_type(TypeCategory cat) {
+	// Note: plain char is treated as signed, matching the most common implementations.
+	// WChar is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64).
+	switch (cat) {
+	case TypeCategory::Char:
+	case TypeCategory::Short:
+	case TypeCategory::Int:
+	case TypeCategory::Long:
+	case TypeCategory::LongLong:
+		return true;
+	case TypeCategory::WChar:
+		return g_target_data_model != TargetDataModel::LLP64;
+	default:
+		return false;
+	}
+}
+
+constexpr bool is_standard_arithmetic_type(TypeCategory cat) {
+	return is_integer_type(cat) || is_floating_point_type(cat) || is_bool_type(cat);
+}
+
+// TypeCategory overload for isUnsignedIntegralType — mirrors the Type-based version above.
+inline bool isUnsignedIntegralType(TypeCategory cat) {
+	return is_unsigned_integer_type(cat);
+}
+
+// Helper to calculate alignment from size in bytes
+// Standard alignment rules: min(size, 8) for most platforms, with special case for long double
+inline size_t calculate_alignment_from_size(size_t size_in_bytes, TypeCategory cat) {
+	// Special case for long double on x86-64: often has 16-byte alignment
+	if (cat == TypeCategory::LongDouble) {
+		return 16;
+	}
+	// Standard alignment: same as size, up to 8 bytes
+	return (size_in_bytes < 8) ? size_in_bytes : 8;
+}
+
 // Identity record that travels with every deferred/lazy template member.
 // Slice 1 populates the source-side fields; Slice 2 fills instantiated_lookup_name.
 struct DeferredMemberIdentity {
@@ -879,79 +709,51 @@ struct DeferredTemplateMemberBody {
 	InlineVector<StringHandle, 4> template_param_names; // Template parameter names
 };
 
-/// Helper function to get the C++ name string for a Type
+/// Helper function to get the C++ name string for a type category.
 /// Returns the string used in C++ source code (e.g., "int", "unsigned long")
 /// Returns empty string_view for non-primitive types
-inline std::string_view getTypeName(Type t) {
-	switch (t) {
-		case Type::Int: return "int";
-		case Type::UnsignedInt: return "unsigned int";
-		case Type::Long: return "long";
-		case Type::UnsignedLong: return "unsigned long";
-		case Type::LongLong: return "long long";
-		case Type::UnsignedLongLong: return "unsigned long long";
-		case Type::Short: return "short";
-		case Type::UnsignedShort: return "unsigned short";
-		case Type::Char: return "char";
-		case Type::UnsignedChar: return "unsigned char";
-		case Type::WChar: return "wchar_t";
-		case Type::Char8: return "char8_t";
-		case Type::Char16: return "char16_t";
-		case Type::Char32: return "char32_t";
-		case Type::Bool: return "bool";
-		case Type::Float: return "float";
-		case Type::Double: return "double";
-		case Type::LongDouble: return "long double";
-		case Type::Void: return "void";
+inline std::string_view getTypeName(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Int: return "int";
+		case TypeCategory::UnsignedInt: return "unsigned int";
+		case TypeCategory::Long: return "long";
+		case TypeCategory::UnsignedLong: return "unsigned long";
+		case TypeCategory::LongLong: return "long long";
+		case TypeCategory::UnsignedLongLong: return "unsigned long long";
+		case TypeCategory::Short: return "short";
+		case TypeCategory::UnsignedShort: return "unsigned short";
+		case TypeCategory::Char: return "char";
+		case TypeCategory::UnsignedChar: return "unsigned char";
+		case TypeCategory::WChar: return "wchar_t";
+		case TypeCategory::Char8: return "char8_t";
+		case TypeCategory::Char16: return "char16_t";
+		case TypeCategory::Char32: return "char32_t";
+		case TypeCategory::Bool: return "bool";
+		case TypeCategory::Float: return "float";
+		case TypeCategory::Double: return "double";
+		case TypeCategory::LongDouble: return "long double";
+		case TypeCategory::Void: return "void";
 		default: return "";
 	}
 }
 
-/// Helper function to determine if a Type is signed (for MOVSX vs MOVZX)
-/// MSVC treats char as signed by default.
-inline bool isSignedType(Type t) {
-	switch (t) {
-		case Type::Char:      // char is signed by default in MSVC
-		case Type::Short:
-		case Type::Int:
-		case Type::Long:
-		case Type::LongLong:
+/// Helper function to determine if a type category is signed (for MOVSX vs MOVZX)
+inline bool isSignedType(TypeCategory cat) {
+	switch (cat) {
+		case TypeCategory::Char:
+		case TypeCategory::Short:
+		case TypeCategory::Int:
+		case TypeCategory::Long:
+		case TypeCategory::LongLong:
 			return true;
-		// wchar_t is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64)
-		case Type::WChar:
-			return g_target_data_model != TargetDataModel::LLP64;  // signed on LP64, unsigned on LLP64
-		// Explicitly unsigned types
-		case Type::Bool:
-		case Type::UnsignedChar:
-		case Type::Char8:     // char8_t is always unsigned (C++20)
-		case Type::Char16:    // char16_t is always unsigned
-		case Type::Char32:    // char32_t is always unsigned
-		case Type::UnsignedShort:
-		case Type::UnsignedInt:
-		case Type::UnsignedLong:
-		case Type::UnsignedLongLong:
-		// Non-integer types
-		case Type::Float:
-		case Type::Double:
-		case Type::LongDouble:
-		case Type::Void:
-		case Type::UserDefined:
-		case Type::Auto:
-		case Type::DeclTypeAuto:
-		case Type::Function:
-		case Type::Struct:
-		case Type::Enum:
-		case Type::FunctionPointer:
-		case Type::MemberFunctionPointer:
-		case Type::MemberObjectPointer:
-		case Type::Nullptr:
-		case Type::Invalid:
+		case TypeCategory::WChar:
+			return g_target_data_model != TargetDataModel::LLP64;
 		default:
 			return false;
 	}
 }
 
-// Linkage specification for functions (C vs C++)
+
 enum class Linkage : uint8_t {
 	None,           // Default C++ linkage (with name mangling)
 	C,              // C linkage (no name mangling)
@@ -1040,12 +842,15 @@ struct DeferredTemplateBaseClassSpecifier {
 
 // Function signature for function pointers
 struct FunctionSignature {
-	Type return_type;
-	std::vector<Type> parameter_types;
+	TypeIndex return_type_index {};
+	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;           // C vs C++ linkage
 	std::optional<std::string> class_name;     // For member function pointers
 	bool is_const = false;                     // For const member functions
 	bool is_volatile = false;                  // For volatile member functions
+
+	// Accessor helpers
+	TypeCategory returnType() const { return return_type_index.category(); }
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation
@@ -1060,8 +865,7 @@ struct DeferredStaticAssert {
 // Struct member information
 struct StructMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.)
+	TypeIndex type_index;   // Index into gTypeInfo for complex types (structs, etc.); category encodes Type
 	size_t offset;          // Offset in bytes from start of struct
 	size_t size;            // Size in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -1079,8 +883,9 @@ struct StructMember {
 	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
+	TypeCategory memberType() const { return type_index.category(); }
 
-	StructMember(StringHandle n, Type t, TypeIndex tidx, size_t off, size_t sz, size_t align,
+	StructMember(StringHandle n, TypeIndex tidx, size_t off, size_t sz, size_t align,
 	            AccessSpecifier acc,
 	            std::optional<ASTNode> init,
 	            ReferenceQualifier ref_qual,
@@ -1089,7 +894,7 @@ struct StructMember {
 	            std::vector<size_t> arr_dims,
 	            int ptr_depth,
 	            std::optional<size_t> bf_width)
-		: name(n), type(t), type_index(tidx), offset(off), size(sz),
+		: name(n), type_index(tidx), offset(off), size(sz),
 		  bitfield_width(bf_width), referenced_size_bits(ref_size_bits ? ref_size_bits : sz * 8), alignment(align),
 		  access(acc), reference_qualifier(ref_qual),
 		  default_initializer(std::move(init)), is_array(is_arr), array_dimensions(std::move(arr_dims)),
@@ -1271,8 +1076,7 @@ struct RTTITypeInfo {
 // Static member information
 struct StructStaticMember {
 	StringHandle name;
-	Type type;
-	TypeIndex type_index;   // Index into gTypeInfo for complex types
+	TypeIndex type_index;   // Index into gTypeInfo for complex types; category encodes Type
 	size_t size;            // Size in bytes
 	size_t alignment;       // Alignment requirement
 	AccessSpecifier access; // Access level (public/protected/private)
@@ -1285,11 +1089,12 @@ struct StructStaticMember {
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
+	TypeCategory memberType() const { return type_index.category(); }
 
-	StructStaticMember(StringHandle n, Type t, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
+	StructStaticMember(StringHandle n, TypeIndex tidx, size_t sz, size_t align, AccessSpecifier acc = AccessSpecifier::Public,
 	                   std::optional<ASTNode> init = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
 	                   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
-		: name(n), type(t), type_index(tidx), size(sz), alignment(align), access(acc),
+		: name(n), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), cv_qualifier(cv_qual), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
 	
 	StringHandle getName() const {

@@ -358,7 +358,7 @@
 		emitAndClearFullExpressionTempDestructors();
 
 		// Get the condition type and value
-		Type condition_type = condition_result.type;
+		TypeCategory condition_type = condition_result.typeEnum();
 		int condition_size = condition_result.size_in_bits.value;
 
 		// Mark switch begin for break support (switch acts like a loop for break)
@@ -405,7 +405,7 @@
 			// Create typed BinaryOp for the Equal comparison
 			BinaryOp bin_op{
 				.lhs = makeTypedValue(condition_type, SizeInBits{static_cast<int>(condition_size)}, toIrValue(condition_result.value)),
-				.rhs = makeTypedValue(case_value_result.type, case_value_result.size_in_bits, toIrValue(case_value_result.value)),
+				.rhs = makeTypedValue(case_value_result.typeEnum(), case_value_result.size_in_bits, toIrValue(case_value_result.value)),
 				.result = cmp_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(bin_op), Token()));
@@ -421,7 +421,7 @@
 			CondBranchOp cond_branch;
 			cond_branch.label_true = StringTable::getOrInternStringHandle(case_label);       // Fall through to unconditional branch when TRUE
 			cond_branch.label_false = StringTable::getOrInternStringHandle(next_check_label); // Jump to next check when FALSE
-			cond_branch.condition = makeTypedValue(Type::Bool, SizeInBits{1}, cmp_result);
+			cond_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), Token()));
 
 			// Unconditional branch to case label (when condition is true, we fall through here)
@@ -565,12 +565,14 @@
 				if (resolveMemberAccessType(std::get<MemberAccessNode>(expr_variant), resolved_struct_info, resolved_member) &&
 					resolved_member) {
 					inferred_range_type.emplace(
-						isIrStructType(toIrType(resolved_member->type))
-							? Type::Struct
-							: resolved_member->type,
-						resolved_member->type_index,
+						resolved_member->type_index.withCategory(
+							isIrStructType(toIrType(resolved_member->memberType()))
+								? TypeCategory::Struct
+								: resolved_member->memberType()),
 						static_cast<int>(resolved_member->size * 8),
-						Token()
+						Token(),
+						CVQualifier::None,
+						ReferenceQualifier::None
 					);
 					if (resolved_member->pointer_depth > 0) {
 						inferred_range_type->add_pointer_levels(resolved_member->pointer_depth);
@@ -657,7 +659,7 @@
 					StringHandle size_str = StringTable::createStringHandle(sb);
 					Token size_token(Token::Type::Literal, StringTable::getStringView(size_str), 0, 0, 0);
 					array_size_node = ASTNode::emplace_node<ExpressionNode>(
-						NumericLiteralNode(size_token, static_cast<unsigned long long>(inferred_size), Type::Int, TypeQualifier::None, 32)
+						NumericLiteralNode(size_token, static_cast<unsigned long long>(inferred_size), TypeCategory::Int, TypeQualifier::None, 32)
 					);
 				}
 			}
@@ -714,14 +716,14 @@
 		// Create pointer type for begin/end (element_type*)
 		// The size_in_bits should be the element size for correct pointer arithmetic
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), element_size_bits, Token()
-		);
+			array_type.type_index().withCategory(array_type.type()), element_size_bits, Token()
+		, CVQualifier::None, ReferenceQualifier::None);
 		begin_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			array_type.type(), array_type.type_index(), element_size_bits, Token()
-		);
+			array_type.type_index().withCategory(array_type.type()), element_size_bits, Token()
+		, CVQualifier::None, ReferenceQualifier::None);
 		end_type_node.as<TypeSpecifierNode>().add_pointer_level();
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
@@ -731,7 +733,7 @@
 		);
 		auto zero_literal = ASTNode::emplace_node<ExpressionNode>(
 			NumericLiteralNode(Token(Token::Type::Literal, "0"sv, 0, 0, 0),
-				static_cast<unsigned long long>(0), Type::Int, TypeQualifier::None, 32)
+				static_cast<unsigned long long>(0), TypeCategory::Int, TypeQualifier::None, 32)
 		);
 		auto first_element = ASTNode::emplace_node<ExpressionNode>(
 			ArraySubscriptNode(array_expr_begin, zero_literal, Token(Token::Type::Punctuator, "["sv, 0, 0, 0))
@@ -903,14 +905,14 @@
 
 		// Create type nodes for the iterator variables (they're pointers typically)
 		auto begin_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
-		);
+			begin_return_type.type_index().withCategory(begin_return_type.type()), begin_return_type.size_in_bits(), Token()
+		, CVQualifier::None, ReferenceQualifier::None);
 		begin_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 		auto begin_decl_node = ASTNode::emplace_node<DeclarationNode>(begin_type_node, begin_token);
 
 		auto end_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			begin_return_type.type(), begin_return_type.type_index(), begin_return_type.size_in_bits(), Token()
-		);
+			begin_return_type.type_index().withCategory(begin_return_type.type()), begin_return_type.size_in_bits(), Token()
+		, CVQualifier::None, ReferenceQualifier::None);
 		end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 		auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
@@ -999,8 +1001,8 @@
 		if (begin_return_type.pointer_depth() > 0) {
 			auto deref_begin_ident_expr = ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token));
 			auto loop_ptr_type = ASTNode::emplace_node<TypeSpecifierNode>(
-				loop_type.type(), loop_type.type_index(), static_cast<int>(loop_type.size_in_bits()), Token()
-			);
+				loop_type.type_index().withCategory(loop_type.type()), static_cast<int>(loop_type.size_in_bits()), Token()
+			, CVQualifier::None, ReferenceQualifier::None);
 			// Copy existing pointer depth (e.g., for `int*& p : arr`, loop_type is int* with depth=1)
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_levels(static_cast<int>(loop_type.pointer_depth()));
 			loop_ptr_type.as<TypeSpecifierNode>().add_pointer_level();

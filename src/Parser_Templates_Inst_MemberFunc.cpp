@@ -59,11 +59,11 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template(
 			return std::nullopt;
 		} else if (param.kind() == TemplateParameterKind::Type) {
 			if (arg_index < arg_types.size()) {
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type(), arg_types[arg_index].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[arg_index].type_index().withCategory(arg_types[arg_index].type())));
 				arg_index++;
 			} else {
 				// Not enough arguments - use first argument type
-				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type(), arg_types[0].type_index()));
+				template_args.push_back(TemplateTypeArg::makeType(arg_types[0].type_index().withCategory(arg_types[0].type())));
 			}
 		} else {
 			// Non-type parameter - not yet supported
@@ -290,19 +290,19 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// Also tracks which inner template parameter index corresponds to each auto parameter
 	// so that we know which template argument supplies the concrete type for each auto param.
 	size_t auto_param_index = 0;
-	auto resolve_template_type = [&](Type type, TypeIndex type_index) -> std::pair<Type, TypeIndex> {
-		if (type == Type::Auto) {
+	auto resolve_template_type = [&](TypeCategory type, TypeIndex type_index) -> TypeIndex {
+		if (type == TypeCategory::Auto) {
 			// Abbreviated function template parameter (concept auto / auto):
 			// Map this to the corresponding inner template parameter's argument type.
 			// Inner template params for auto are named _T0, _T1, etc.
 			if (auto_param_index < template_args.size()) {
 				const auto& arg = template_args[auto_param_index];
 				auto_param_index++;
-				return { arg.typeEnum(), arg.type_index };
+				return arg.type_index.withCategory(arg.typeEnum());
 			}
-			return { type, type_index };
+			return type_index.withCategory(type);
 		}
-		if (type == Type::UserDefined && type_index.index() < getTypeInfoCount()) {
+		if (type == TypeCategory::UserDefined && type_index.index() < getTypeInfoCount()) {
 			const TypeInfo& ti = getTypeInfo(type_index);
 			std::string_view tn = StringTable::getStringView(ti.name());
 
@@ -310,7 +310,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (size_t i = 0; i < template_params.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == tn && i < template_args.size()) {
-					return { template_args[i].typeEnum(), template_args[i].type_index };
+					return template_args[i].type_index.withCategory(template_args[i].typeEnum());
 				}
 			}
 			// Check outer template params (e.g., T→int from class template)
@@ -318,17 +318,17 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 				for (size_t i = 0; i < outer_binding->param_names.size() && i < outer_binding->param_args.size(); ++i) {
 					if (StringTable::getStringView(outer_binding->param_names[i]) == tn) {
 						const auto& arg = outer_binding->param_args[i];
-						return { arg.typeEnum(), arg.type_index };
+						return arg.type_index.withCategory(arg.typeEnum());
 					}
 				}
 			}
 		}
-		return { type, type_index };
+		return type_index.withCategory(type);
 	};
 
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
-	auto [return_type, return_type_index] = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
+	TypeIndex return_type_index = resolve_template_type(return_type_spec.type(), return_type_spec.type_index());
 
 	// Create mangled token
 	Token mangled_token(Token::Type::Identifier, mangled_name,
@@ -337,10 +337,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Create return type node
 	ASTNode substituted_return_type = emplace_node<TypeSpecifierNode>(
-		return_type,
+		return_type_index.category(),
 		TypeQualifier::None,
-		get_type_size_bits(return_type),
-		Token()
+		get_type_size_bits(return_type_index.category()),
+		Token(),
+		CVQualifier::None
 	);
 	
 	// Copy pointer levels and set type_index from the resolved type
@@ -390,15 +391,15 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			const DeclarationNode& param_decl = param.as<DeclarationNode>();
 			const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-			auto [param_type, param_type_index] = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
+			TypeIndex param_type_index = resolve_template_type(param_type_spec.type(), param_type_spec.type_index());
 
 			// Create the substituted parameter type specifier
 			auto substituted_param_type = emplace_node<TypeSpecifierNode>(
-				param_type,
+				param_type_index.category(),
 				TypeQualifier::None,
-				get_type_size_bits(param_type),
+				get_type_size_bits(param_type_index.category()),
 				Token()
-			);
+			, CVQualifier::None);
 			
 			// Copy pointer levels and set type_index from the resolved type
 			auto& substituted_param_type_spec = substituted_param_type.as<TypeSpecifierNode>();
@@ -504,10 +505,11 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Add 'this' pointer to symbol table
 	ASTNode this_type = emplace_node<TypeSpecifierNode>(
-		Type::UserDefined,
-		struct_type_index,
+		struct_type_index.withCategory(TypeCategory::Struct),
 		64,  // Pointer size
-		Token()
+		Token(),
+		CVQualifier::None,
+		ReferenceQualifier::None
 	);
 
 	Token this_token(Token::Type::Keyword, "this"sv, 0, 0, 0);

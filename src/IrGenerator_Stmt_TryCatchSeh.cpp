@@ -101,8 +101,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				// Emit CatchBegin marker with exception type and qualifiers
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
-				catch_op.type_index = type_index;
-				catch_op.exception_type = type_node.type();  // Store the Type enum for built-in types
+				catch_op.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_index);
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = type_node.is_const();
@@ -122,13 +121,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				if (!exception_var_name.empty()) {
 					// Create a variable declaration for the exception parameter
 					VariableDeclOp decl_op;
-					decl_op.type = type_node.type();
+					decl_op.type_index = type_node.type_index();
 					decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 
 					// Create a TypedValue for the initializer
 					TypedValue init_value;
-					init_value.type = type_node.type();
+					init_value.setType(type_node.type());
 					init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					init_value.type_index = type_index;
 					init_value.value = exception_temp;
@@ -156,7 +155,6 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = TempVar(0);
 				catch_op.type_index = TypeIndex(0);
-				catch_op.exception_type = Type::Void;  // No specific type for catch(...)
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = false;
@@ -231,7 +229,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			// Generate code for the expression to throw
 			ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
-			Type expr_type = expr_result.type;
+			TypeCategory expr_type = expr_result.typeEnum();
 			size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
 			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
@@ -260,7 +258,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			if (!catch_scope_stack_.empty()) {
 				bool needs_materialization =
-					typeToCategory(expr_type) == TypeCategory::Struct &&
+					expr_type == TypeCategory::Struct &&
 					!is_rvalue &&
 					(std::holds_alternative<StringHandle>(exception_value) ||
 					 (std::holds_alternative<TempVar>(exception_value) &&
@@ -273,13 +271,13 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					StringHandle throw_storage_name = StringTable::getOrInternStringHandle(temp_name_builder.commit());
 
 					VariableDeclOp materialized_throw_decl;
-					materialized_throw_decl.type = expr_type;
+					materialized_throw_decl.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
 					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
 					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
 
 					TypedValue materialized_init;
-					materialized_init.type = expr_type;
+					materialized_init.setType(expr_type);
 					materialized_init.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_init.value = exception_value;
 					materialized_init.type_index = exception_type_index;
@@ -296,8 +294,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			throw_op.type_index = exception_type_index;
-			throw_op.exception_type = expr_type;  // Store the actual Type enum
+			throw_op.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.is_rvalue = is_rvalue;
 			throw_op.value_is_materialized = value_is_materialized;

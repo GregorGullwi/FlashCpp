@@ -214,7 +214,7 @@ inline OffsetofPathResult resolveOffsetofMemberPath(
 		}
 		total_offset += member_result.adjusted_offset;
 		if (i + 1 < member_path.size()) {
-			if (member_result.member->type != Type::Struct || !member_result.member->type_index.is_valid()) {
+			if (!member_result.member->type_index.isStruct() || !member_result.member->type_index.is_valid()) {
 				return {0, std::string("offsetof nested member '") + std::string(member_path[i].value()) + "' must be a struct"};
 			}
 			current_type_index = member_result.member->type_index;

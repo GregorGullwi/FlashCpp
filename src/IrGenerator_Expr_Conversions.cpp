@@ -3,10 +3,31 @@
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
 
-	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token) {
+	ExprResult AstToIr::generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token) {
+		// Pointer values are always 64-bit addresses on x64. Numeric type conversion
+		// must never change their size (e.g. truncate 64→32). Only update the type
+		// metadata if needed; the value representation stays the same.
+		if (operands.pointer_depth.value > 0) {
+			if (operands.category() == toType) {
+				return operands;
+			}
+			return makeExprResult(toType, SizeInBits{64}, operands.value,
+				operands.type_index, operands.pointer_depth, operands.storage);
+		}
+
 		// Resolve enum to its underlying integer type so downstream size/signedness
 		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
-		fromType = resolveEnumUnderlyingType(fromType, operands.type_index);
+		// Only override fromType when the operand carries a concrete type identity
+		// (i.e., the resolved category is not Invalid).  Primitive float/int variables
+		// carry TypeIndex{} (default, category=Invalid) so must not clobber fromType —
+		// doing so would cause is_floating_point_type(fromType) to return false for
+		// Float operands, silently skipping the required FloatToInt/FloatToFloat
+		// conversion instruction and reinterpreting float bits as integers instead.
+		{
+			const TypeCategory resolved = resolveEnumUnderlyingTypeCategory(operands.type_index);
+			if (resolved != TypeCategory::Invalid)
+				fromType = resolved;
+		}
 
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
@@ -22,11 +43,11 @@
 
 		if (fromType == toType && fromSize == toSize) {
 			// No conversion instruction needed.  However, the operands may still
-			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingType
+			// carry a stale type tag (e.g. Type::Enum after resolveEnumUnderlyingTypeCategory
 			// mapped fromType to the underlying int).  Ensure the returned ExprResult
 			// reflects the requested target type so downstream consumers see the
 			// correct primitive type for signedness / domain queries.
-			if (operands.type != toType) {
+			if (operands.category() != toType) {
 				return makeExprResult(
 					toType,
 					SizeInBits{toSize},
@@ -58,7 +79,7 @@
 					assert(std::holds_alternative<double>(operands.value) &&
 						"float literal must be stored as double in IrOperand");
 					const double src_val = std::get<double>(operands.value);
-					if (toType == Type::Bool) {
+					if (toType == TypeCategory::Bool) {
 						// C++20 [conv.bool]: zero → false, any other value → true.
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
 						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -82,7 +103,7 @@
 					TypeConversionOp conv_op{
 						.result = resultVar,
 						.from = toTypedValue(operands),
-						.to_type = toType,
+						.to_type_index = TypeIndex{0, toType},
 						.to_size_in_bits = SizeInBits{toSize
 					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
@@ -111,7 +132,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex{0, toType},
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 
@@ -132,7 +153,7 @@
 			TypeConversionOp conv_op{
 				.result = resultVar,
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex{0, toType},
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatToFloat, std::move(conv_op), source_token));
@@ -159,7 +180,7 @@
 			// Extension needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex{0, toType},
 				.to_size = toSize,
 				.result = resultVar
 			};
@@ -206,7 +227,7 @@
 			// Truncation needed
 			ConversionOp conv_op{
 				.from = toTypedValue(operands),
-				.to_type = toType,
+				.to_type_index = TypeIndex{0, toType},
 				.to_size = toSize,
 				.result = resultVar
 			};
@@ -231,7 +252,7 @@
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer
-		return makeExprResult(Type::Char, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeCategory::Char, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
@@ -248,12 +269,14 @@
 			{
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
 				if (binding_info.is_global_or_static &&
-					binding_info.type != Type::Void &&
+					binding_info.type_index.category() != TypeCategory::Void &&
 					binding_info.size_in_bits.is_set()) {
 					AddressComponents result;
 					result.base = binding_info.store_name;
 					result.total_member_offset = accumulated_offset;
-					result.final_type = binding_info.type;
+					// resolveGlobalOrStaticBinding currently preserves storage symbol, size, and semantic
+					// Type but does not carry a richer TypeIndex. Preserve the embedded TypeCategory here.
+					result.final_type_index = TypeIndex{0, binding_info.bindingType()};
 					result.final_size_bits = binding_info.size_in_bits;
 					return result;
 				}
@@ -271,9 +294,9 @@
 			AddressComponents result;
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
-			result.final_type = type_node->type();
+			result.final_type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
-			if (result.final_type == Type::Struct && !result.final_size_bits.is_set() &&
+			if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
 				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
@@ -297,14 +320,14 @@
 			// Get object type to lookup member
 			ExprResult object_operands = visitExpressionNode(obj_expr, ExpressionContext::LValueAddress);
 
-			Type object_type = object_operands.type;
+			const TypeCategory object_category = object_operands.category();
 			TypeIndex type_index {};
 			if (object_operands.type_index.is_valid()) {
 				type_index = object_operands.type_index;
 			}
 
 			// Look up member information
-			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_type != Type::Struct) {
+			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_category != TypeCategory::Struct) {
 				return std::nullopt;
 			}
 
@@ -325,7 +348,7 @@
 			}
 
 			// Update type to member type
-			base_components->final_type = result.member->type;
+			base_components->final_type_index = TypeIndex::fromTypeAndIndex(result.member->memberType(), result.member->type_index);
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
@@ -349,7 +372,8 @@
 			ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
 
-			Type element_type = array_operands.type;
+			const TypeCategory element_category = array_operands.category();
+			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(element_category, array_operands.type_index);
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -359,10 +383,11 @@
 				const DeclarationNode* decl_ptr = lookupDeclaration(array_name);
 				if (decl_ptr && (decl_ptr->is_array() || decl_ptr->type_node().as<TypeSpecifierNode>().is_array())) {
 					const TypeSpecifierNode& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
+					element_type_index = type_node.type_index();
 					if (type_node.pointer_depth() > 0) {
 						element_size_bits = 64;
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
-					} else if (type_node.type() == Type::Struct) {
+					} else if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
 						if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
 							const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
@@ -374,7 +399,7 @@
 					} else {
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(type_node.type());
+							element_size_bits = get_type_size_bits(type_node.category());
 						}
 					}
 				}
@@ -382,12 +407,12 @@
 				// Array from expression (e.g., member access: obj.arr_member[idx])
 				// array_operands[1] contains total array size, we need element size
 				// For primitive types, use the type's size directly
-				if (element_type == Type::Struct) {
+				if (element_category == TypeCategory::Struct) {
 					// For struct arrays, element_size_bits is already correct from member info
 					// (it contains the struct size, not the total array size)
 				} else {
 					// For primitive type arrays, get the element size from the type
-					element_size_bits = get_type_size_bits(element_type);
+					element_size_bits = get_type_size_bits(element_category);
 				}
 				// Try to get pointer depth from array_operands[3] if available
 				if (array_operands.pointer_depth.is_pointer()) {
@@ -407,7 +432,7 @@
 			arr_idx.element_size_bits = SizeInBits{element_size_bits};
 
 			// Capture index type information for proper sign extension
-			arr_idx.index_type = index_operands.type;
+			arr_idx.index_type_index = TypeIndex::fromTypeAndIndex(index_operands.typeEnum(), index_operands.type_index);
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
@@ -422,7 +447,7 @@
 			}
 
 			base_components->array_indices.push_back(arr_idx);
-			base_components->final_type = element_type;
+			base_components->final_type_index = element_type_index;
 			base_components->final_size_bits = SizeInBits{element_size_bits};
 			base_components->pointer_depth = PointerDepth{element_pointer_depth};  // Set pointer depth for the element
 
@@ -458,14 +483,14 @@
 
 		TempVar func_addr_var = var_counter.next();
 		FunctionAddressOp op;
-		op.result.type = Type::FunctionPointer;
+		op.result.setType(TypeCategory::FunctionPointer);
 		op.result.ir_type = IrType::FunctionPointer;
 		op.result.size_in_bits = SizeInBits{64};
 		op.result.value = func_addr_var;
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-		return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
@@ -487,7 +512,7 @@
 				if (decl) {
 					const TypeSpecifierNode* type_node = &decl->type_node().as<TypeSpecifierNode>();
 
-					if (type_node->type() == Type::Struct && type_node->pointer_depth() == 0) {
+					if (type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
 						// Check for operator& overload
 						auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::BitwiseAnd);
 
@@ -527,14 +552,14 @@
 							// Create CallOp
 							CallOp call_op;
 							call_op.result = ret_var;
-							call_op.return_type = return_type.type();
+							call_op.return_type_index = return_type.type_index();
 							// For pointer return types, use 64-bit size (pointer size on x64)
 							if (return_type.pointer_depth() > 0) {
 								call_op.return_size_in_bits = SizeInBits{64};
 							} else {
 								call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 								if (!call_op.return_size_in_bits.is_set()) {
-									call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.type())};
+									call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 								}
 							}
 							call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
@@ -572,14 +597,14 @@
 
 			if ((unaryOperatorNode.op() == "++" || unaryOperatorNode.op() == "--") && type_node) {
 				const auto binding_info = resolveGlobalOrStaticBinding(identifier);
-				if (binding_info.is_global_or_static && binding_info.type != Type::Void && binding_info.size_in_bits.is_set()) {
+				if (binding_info.is_global_or_static && binding_info.type_index.category() != TypeCategory::Void && binding_info.size_in_bits.is_set()) {
 					int size_bits = (type_node->pointer_depth() > 0 || type_node->is_reference() || type_node->is_function_pointer())
 						? 64
 						: static_cast<int>(type_node->size_in_bits());
 
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp load_op;
-					load_op.result.type = type_node->type();
+					load_op.result.setType(type_node->category());
 					load_op.result.ir_type = toIrType(type_node->type());
 					load_op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 					load_op.result.value = result_temp;
@@ -587,8 +612,8 @@
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), unaryOperatorNode.get_token()));
 
 					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name),
-						type_node->type(), size_bits));
+						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name, 0),
+						type_node->category(), size_bits));
 
 					out = makeExprResult(
 						type_node->type(),
@@ -606,7 +631,7 @@
 			if (static_local_it != static_local_names_.end()) {
 				constexpr TypeIndex kStaticLocalTypeIndex {};
 				out = makeExprResult(
-					static_local_it->second.type,
+					static_local_it->second.type(),
 					static_local_it->second.size_in_bits,
 					IrOperand{static_local_it->second.mangled_name},
 					kStaticLocalTypeIndex,
@@ -648,14 +673,14 @@
 				compute_addr_op.base = addr_components->base;
 				compute_addr_op.array_indices = std::move(addr_components->array_indices);
 				compute_addr_op.total_member_offset = addr_components->total_member_offset;
-				compute_addr_op.result_type = addr_components->final_type;
+				compute_addr_op.result_type_index = addr_components->final_type_index;
 				compute_addr_op.result_size_bits = addr_components->final_size_bits;
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 
 				// Return pointer to result (64-bit pointer)
 				return makeExprResult(
-					addr_components->final_type,
+					addr_components->final_type_index.category(),
 					SizeInBits{64},
 					result_var,
 					TypeIndex{},
@@ -681,7 +706,7 @@
 
 						// Check that we have valid operands
 						{
-							Type element_type = array_operands.type;
+							const TypeCategory element_category = array_operands.category();
 							int element_size_bits = array_operands.size_in_bits.value;
 
 							// For arrays, array_operands[1] is the pointer size (64), not element size
@@ -695,7 +720,7 @@
 									if (type_node.pointer_depth() > 0) {
 										// Array of pointers
 										element_size_bits = 64;
-									} else if (type_node.type() == Type::Struct) {
+									} else if (type_node.category() == TypeCategory::Struct) {
 										// Array of structs
 										TypeIndex type_index_from_decl = type_node.type_index();
 										if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
@@ -709,7 +734,7 @@
 										// Regular array - use type size
 										element_size_bits = static_cast<int>(type_node.size_in_bits());
 										if (element_size_bits == 0) {
-											element_size_bits = get_type_size_bits(type_node.type());
+											element_size_bits = get_type_size_bits(type_node.category());
 										}
 									}
 								}
@@ -722,7 +747,7 @@
 							}
 
 							// Look up member information
-							if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && element_type == Type::Struct) {
+							if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && element_category == TypeCategory::Struct) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -732,7 +757,7 @@
 									TempVar elem_addr_var = var_counter.next();
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
-									elem_addr_payload.element_type = element_type;
+									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, type_index);
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
@@ -752,14 +777,14 @@
 									// Treat the pointer as a 64-bit integer for arithmetic purposes
 									TempVar member_addr_var = var_counter.next();
 									BinaryOp add_offset;
-									add_offset.lhs = { Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, elem_addr_var };  // pointer treated as integer
-									add_offset.rhs = { Type::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, static_cast<unsigned long long>(member_result.adjusted_offset) };
+									add_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, elem_addr_var);  // pointer treated as integer
+									add_offset.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, static_cast<unsigned long long>(member_result.adjusted_offset));
 									add_offset.result = member_addr_var;
 
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
 
 									// Return pointer to member (64-bit pointer, 0 for no additional type info)
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -775,7 +800,7 @@
 					ExprResult object_operands = visitExpressionNode(object_node.as<ExpressionNode>(), ExpressionContext::LValueAddress);
 
 					{
-						Type object_type = object_operands.type;
+						const TypeCategory object_category = object_operands.category();
 
 						// Get the struct type index
 						TypeIndex type_index {};
@@ -784,7 +809,7 @@
 						}
 
 						// Look up member information
-						if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && object_type == Type::Struct) {
+						if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && object_category == TypeCategory::Struct) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -812,13 +837,13 @@
 									addr_member_op.result = result_var;
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
-									addr_member_op.member_type = member_result.member->type;
+									addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(member_result.member->memberType(), member_result.member->type_index);
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 
 									// Return pointer to member
-									return makeExprResult(member_result.member->type, SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -868,10 +893,10 @@
 
 						// Get element type and size
 						const TypeSpecifierNode& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
-						Type element_type = type_node.type();
+						const TypeCategory element_category = type_node.category();
 						int element_size_bits = static_cast<int>(type_node.size_in_bits());
 						if (element_size_bits == 0) {
-							element_size_bits = get_type_size_bits(element_type);
+							element_size_bits = get_type_size_bits(element_category);
 						}
 						TypeIndex element_type_index = type_node.type_index();
 
@@ -887,7 +912,7 @@
 									// flat_index = indices[k]
 									AssignmentOp assign_op;
 									assign_op.result = flat_index;
-									assign_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+									assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 									assign_op.rhs = toTypedValue(idx_operands);
 									ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), Token()));
 									first_term = false;
@@ -895,7 +920,7 @@
 									// flat_index += indices[k]
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
+									add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
 									add_op.rhs = toTypedValue(idx_operands);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
@@ -906,7 +931,7 @@
 								TempVar temp_prod = var_counter.next();
 								BinaryOp mul_op;
 								mul_op.lhs = toTypedValue(idx_operands);
-								mul_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
+								mul_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(strides[k]));
 								mul_op.result = IrValue{temp_prod};
 								ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(mul_op), Token()));
 
@@ -917,8 +942,8 @@
 									// flat_index += temp
 									TempVar new_flat = var_counter.next();
 									BinaryOp add_op;
-									add_op.lhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, flat_index);
-									add_op.rhs = makeTypedValue(Type::UnsignedLongLong, SizeInBits{64}, temp_prod);
+									add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, flat_index);
+									add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, temp_prod);
 									add_op.result = IrValue{new_flat};
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), Token()));
 									flat_index = new_flat;
@@ -930,10 +955,10 @@
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
-						payload.element_type = element_type;
+						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, element_type_index);
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
-						payload.index.type = Type::UnsignedLongLong;
+						payload.index.setType(TypeCategory::UnsignedLongLong);
 						payload.index.ir_type = IrType::Integer;
 						payload.index.size_in_bits = SizeInBits{64};
 						payload.index.value = flat_index;
@@ -941,7 +966,7 @@
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
-						return makeExprResult(element_type, SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(element_category, SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -951,7 +976,7 @@
 				ExprResult array_operands = visitExpressionNode(arraySubscript.array_expr().as<ExpressionNode>());
 				ExprResult index_operands = visitExpressionNode(arraySubscript.index_expr().as<ExpressionNode>());
 
-				Type element_type = array_operands.type;
+				const TypeCategory element_category = array_operands.category();
 				int element_size_bits = array_operands.size_in_bits.value;
 
 				// For arrays, array_operands[1] is the pointer size (64), not element size
@@ -965,7 +990,7 @@
 						if (type_node.pointer_depth() > 0) {
 							// Array of pointers
 							element_size_bits = 64;
-						} else if (type_node.type() == Type::Struct) {
+						} else if (type_node.category() == TypeCategory::Struct) {
 							// Array of structs
 							TypeIndex type_index = type_node.type_index();
 							if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
@@ -979,7 +1004,7 @@
 							// Regular array - use type size
 							element_size_bits = static_cast<int>(type_node.size_in_bits());
 							if (element_size_bits == 0) {
-								element_size_bits = get_type_size_bits(type_node.type());
+								element_size_bits = get_type_size_bits(type_node.category());
 							}
 						}
 					}
@@ -991,7 +1016,7 @@
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
-				payload.element_type = element_type;
+				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, {});
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)
@@ -1007,7 +1032,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
 				// Return pointer to element (64-bit pointer)
-				return makeExprResult(element_type, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeExprResult(element_category, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
 			}
 		}
 
@@ -1019,7 +1044,7 @@
 		const Token& token, size_t adjusted_offset) -> ExprResult {
 			int member_size_bits = static_cast<int>(member->size * 8);
 			int increment_amount = (member->pointer_depth > 0) ?
-				getPointerElementSize(member->type, member->type_index, member->pointer_depth) : 1;
+				getPointerElementSize(member->type_index, member->pointer_depth) : 1;
 			TempVar result_var = var_counter.next();
 			StringHandle member_name = member->getName();
 
@@ -1028,7 +1053,7 @@
 				TempVar ptr_temp = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = ptr_temp;
-				member_load.result.type = member->type;
+				member_load.result.setType(member->type_index.category());
 				member_load.result.size_in_bits = SizeInBits{64};  // pointer
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1038,12 +1063,12 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), token));
 
 				// Load current value through pointer
-				TempVar current_val = emitDereference(member->type, 64, 1, ptr_temp, token);
+				TempVar current_val = emitDereference(member->memberType(), 64, 1, ptr_temp, token);
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
-					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
+					.lhs = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, current_val),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1052,21 +1077,22 @@
 
 				// Store back through pointer
 				DereferenceStoreOp store_op;
-				store_op.pointer.type = member->type;
+				store_op.pointer.setType(member->type_index.category());
+				store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(member->memberType(), member->type_index);
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
-				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
+				store_op.value = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, result_var);
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// By-value: load member, inc/dec, store back to member
 				TempVar current_val = var_counter.next();
 				MemberLoadOp member_load;
 				member_load.result.value = current_val;
-				member_load.result.type = member->type;
+				member_load.result.setType(member->type_index.category());
 				member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				member_load.object = object_name;
 				member_load.member_name = member_name;
@@ -1077,8 +1103,8 @@
 
 				bool is_prefix = unaryOperatorNode.is_prefix();
 				BinaryOp add_op{
-					.lhs = { member->type, SizeInBits{member_size_bits}, current_val },
-					.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount) },
+					.lhs = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, current_val),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(increment_amount)),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(
@@ -1090,12 +1116,12 @@
 				store_op.object = object_name;
 				store_op.member_name = member_name;
 				store_op.offset = static_cast<int>(adjusted_offset);
-				store_op.value = { member->type, SizeInBits{member_size_bits}, result_var };
+				store_op.value = makeTypedValue(member->memberType(), SizeInBits{member_size_bits}, result_var);
 				store_op.ref_qualifier = CVReferenceQualifier::None;
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->type, SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		};
 
@@ -1148,7 +1174,7 @@
 							const DeclarationNode* object_decl = get_decl_from_symbol(*symbol);
 							if (object_decl) {
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
-								if (is_struct_type(object_type.type())) {
+								if (is_struct_type(object_type.category())) {
 									TypeIndex type_index = object_type.type_index();
 									if (type_index.index() < getTypeInfoCount()) {
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
@@ -1194,7 +1220,7 @@
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
-					if (type_node.type() == Type::Struct && type_node.type_index().index() < getTypeInfoCount()) {
+					if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
 						const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info && isLambdaClosureStruct(*struct_info)) {
@@ -1221,7 +1247,7 @@
 
 				// Return the address of the __invoke function
 				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
-				return makeExprResult(Type::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (lambda_struct_info) {
 				if (auto fp_operands = decayLambdaStructToFunctionPointer(*lambda_struct_info, unaryOperatorNode.get_token())) {
 					return *fp_operands;
@@ -1260,7 +1286,7 @@
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
 							return makeExprResult(
-								member_result.member->type,
+								member_result.member->memberType(),
 								SizeInBits{64},
 								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
 								TypeIndex{member_result.member->type_index}
@@ -1276,11 +1302,11 @@
 		}
 
 		// Get the type of the operand
-		Type operandType = operandIrOperands.type;
+		TypeCategory operandType = operandIrOperands.category();
 		[[maybe_unused]] int operandSize = operandIrOperands.size_in_bits.value;
 
 		// Fallback: if operand is a captureless lambda closure object, decay to function pointer using struct info
-		if (unaryOperatorNode.op() == "+" && operandType == Type::Struct) {
+		if (unaryOperatorNode.op() == "+" && operandType == TypeCategory::Struct) {
 			size_t struct_type_index = operandIrOperands.type_index.index();
 			if (struct_type_index == 0 && unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 				const ExpressionNode& op_expr = unaryOperatorNode.get_operand().as<ExpressionNode>();
@@ -1314,12 +1340,12 @@
 				const auto slot = sema_->getSlot(key);
 				if (slot.has_value() && slot->has_cast()) {
 					const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-					Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-					const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
-					if (from_t != Type::Struct && to_t != Type::Struct) {
-						// Handle enum mismatch (sema annotates Type::Enum but codegen resolved early)
-						if (from_t != operandIrOperands.type && from_t == Type::Enum)
-							from_t = operandIrOperands.type;
+					TypeCategory from_t = sema_->typeContext().get(ci.source_type_id).category();
+					const TypeCategory to_t = sema_->typeContext().get(ci.target_type_id).category();
+					if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
+						// Handle enum mismatch (sema annotates TypeCategory::Enum but codegen resolves early)
+						if (from_t != operandIrOperands.typeEnum() && from_t == TypeCategory::Enum)
+							from_t = operandIrOperands.typeEnum();
 						operandIrOperands = generateTypeConversion(operandIrOperands, from_t, to_t, unaryOperatorNode.get_token());
 						operandType = to_t;
 						promoted = true;
@@ -1329,12 +1355,12 @@
 			// Phase 15: sema should annotate all unary operand integral promotions.
 			// When sema_ is null (e.g., template instantiation), keep the fallback
 			// unconditionally to avoid dropping promotions.
-			if (!promoted && (operandType == Type::Bool ||
+			if (!promoted && (operandType == TypeCategory::Bool ||
 				(is_integer_type(operandType) && get_integer_rank(operandType) < 3))) {
 				if (sema_normalized_current_function_)
 					throw InternalError(std::string("Phase 15: sema missed unary promotion (") + std::string(getTypeName(operandType)) + " -> int)");
-				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, Type::Int, unaryOperatorNode.get_token());
-				operandType = Type::Int;
+				operandIrOperands = generateTypeConversion(operandIrOperands, operandType, TypeCategory::Int, unaryOperatorNode.get_token());
+				operandType = TypeCategory::Int;
 			}
 			// Unary plus is a no-op after promotion — return immediately without
 			// allocating an unused result_var.
@@ -1359,12 +1385,12 @@
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
 			// Logical NOT always returns bool8
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
 			// After promotion, non-integral operands (e.g. float/double) are ill-formed.
-			if (!is_integer_type(operandType) && operandType != Type::Bool) {
+			if (!is_integer_type(operandType) && operandType != TypeCategory::Bool) {
 				throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 			}
 			// Bitwise NOT - use UnaryOp struct
@@ -1416,7 +1442,7 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.operand.type = operandType;
+			op.operand.setType(operandType);
 			op.operand.size_in_bits = operandIrOperands.size_in_bits;
 			op.operand.pointer_depth = PointerDepth{static_cast<int>(operand_ptr_depth)};
 
@@ -1528,7 +1554,7 @@
 					base,
 					0  // offset is 0 for simple dereference
 				);
-				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info));
+				setTempVarMetadata(lvalue_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
@@ -1572,13 +1598,13 @@
 			if (pointer_depth <= 1) {
 				// Single-level pointer or less: result is base type size
 				switch (operandType) {
-					case Type::Bool: element_size = 8; break;
-					case Type::Char: element_size = 8; break;
-					case Type::Short: element_size = 16; break;
-					case Type::Int: element_size = 32; break;
-					case Type::Long: element_size = 64; break;
-					case Type::Float: element_size = 32; break;
-					case Type::Double: element_size = 64; break;
+					case TypeCategory::Bool: element_size = 8; break;
+					case TypeCategory::Char: element_size = 8; break;
+					case TypeCategory::Short: element_size = 16; break;
+					case TypeCategory::Int: element_size = 32; break;
+					case TypeCategory::Long: element_size = 64; break;
+					case TypeCategory::Float: element_size = 32; break;
+					case TypeCategory::Double: element_size = 64; break;
 					default: element_size = 64; break;  // Fallback for unknown types
 				}
 			}
@@ -1589,7 +1615,8 @@
 			op.result = result_var;
 
 			// Populate TypedValue with full type information
-			op.pointer.type = operandType;
+			op.pointer.setType(operandType);
+			op.pointer.type_index = TypeIndex{operandIrOperands.type_index.index(), operandType};
 			// Use element_size as pointee size so IRConverter can load correct width
 			op.pointer.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 			op.pointer.pointer_depth = PointerDepth{pointer_depth};
@@ -1619,7 +1646,7 @@
 				base,
 				0  // offset is 0 for simple dereference
 			);
-			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info));
+			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
@@ -1646,11 +1673,11 @@
 // or std::nullopt if no overload was found.
 std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	OverloadableOperator op_kind,  // Increment or Decrement
-	Type operandType,
+	TypeCategory operandType,
 	const ExprResult& operandIrResult,
 	bool is_prefix
 ) {
-	if (operandType != Type::Struct)
+	if (!is_struct_type(operandType))
 		return std::nullopt;
 
 	TypeIndex operand_type_index = operandIrResult.type_index;
@@ -1697,7 +1724,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	const auto& actual_params = func_decl.parameter_nodes();
 	if (actual_params.size() == 1 && actual_params[0].is<DeclarationNode>()) {
 		// Postfix overload has a dummy int parameter
-		TypeSpecifierNode int_type(Type::Int, TypeQualifier::None, 32, Token());
+		TypeSpecifierNode int_type(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 		param_types.push_back(int_type);
 	}
 	std::vector<std::string_view> empty_namespace;
@@ -1712,12 +1739,11 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op;
 	call_op.result = ret_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type = return_type.type();
+	call_op.return_type_index = return_type.type_index();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
 		call_op.return_size_in_bits = SizeInBits{static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8)};
 	}
-	call_op.return_type_index = return_type.type_index();
 	call_op.is_member_function = true;
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
@@ -1735,8 +1761,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 	TypedValue this_arg;
-	this_arg.type = operandType;
-	this_arg.ir_type = toIrType(operandType);
+	this_arg.setType(operandType);
 	this_arg.size_in_bits = SizeInBits{64};
 	this_arg.value = this_addr;
 	call_op.args.push_back(this_arg);
@@ -1747,7 +1772,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	// since the fallback path may match a prefix function for a postfix call or vice versa.
 	if (actual_params.size() == 1) {
 		TypedValue dummy_arg;
-		dummy_arg.type = Type::Int;
+		dummy_arg.setType(TypeCategory::Int);
 		dummy_arg.ir_type = IrType::Integer;
 		dummy_arg.size_in_bits = SizeInBits{32};
 		dummy_arg.value = 0ULL;
@@ -1756,7 +1781,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	int result_size = call_op.return_size_in_bits.value;
 	TypeIndex result_type_index = call_op.return_type_index;
-	Type result_type = call_op.return_type;
+	TypeCategory result_type = call_op.returnType();
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
 	return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, ret_var, result_type_index, PointerDepth{}, ValueStorage::ContainsData);
 }
@@ -1772,7 +1797,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	bool operandHandledAsIdentifier,
 	const UnaryOperatorNode& unaryOperatorNode,
 	const ExprResult& operandIrResult,
-	Type operandType,
+	TypeCategory operandType,
 	TempVar result_var
 ) {
 	auto getOperandPointerDepth = [&]() -> int {
@@ -1791,7 +1816,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typed_value.category()) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
@@ -1805,7 +1830,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<StringHandle>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
+			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -1819,7 +1844,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			AssignmentOp assign_op;
 			auto lhs_value = std::get<TempVar>(operandIrResult.value);
 			assign_op.result = lhs_value;
-			assign_op.lhs = makeTypedValue(operandIrResult.type, operandIrResult.size_in_bits, lhs_value);
+			assign_op.lhs = makeTypedValue(operandIrResult.typeEnum(), operandIrResult.size_in_bits, lhs_value);
 			populateIncDecTypedValueMetadata(assign_op.lhs);
 			assign_op.rhs = toTypedValue(rhs_operands);
 			populateIncDecTypedValueMetadata(assign_op.rhs);
@@ -1834,7 +1859,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	int element_size = 1;
 	if (operand_pointer_depth > 0) {
 		is_pointer = true;
-		element_size = getPointerElementSize(operandType, operandIrResult.type_index, operand_pointer_depth);
+		element_size = getPointerElementSize(TypeIndex{operandIrResult.type_index.index(), operandType}, operand_pointer_depth);
 	}
 	if (!is_pointer && std::holds_alternative<TempVar>(operandIrResult.value)) {
 		TempVar operand_temp = std::get<TempVar>(operandIrResult.value);
@@ -1849,7 +1874,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 					member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		}
@@ -1864,7 +1889,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (remaining_pointer_depth > 1) {
 			element_size = 8;  // Multi-level pointer: element is a pointer
 		} else {
-			element_size = getSizeInBytes(type_node.type(), type_node.type_index(), get_type_size_bits(type_node.type()));
+			element_size = getSizeInBytes(type_node.type_index(), get_type_size_bits(type_node.category()));
 			if (element_size == 0) {
 				element_size = 1;
 			}
@@ -1891,7 +1916,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			is_pointer = true;
 			operand_pointer_depth = resolved_pointer_depth;
-			element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+			element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 			return true;
 		};
 
@@ -1935,7 +1960,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 						auto type_it = getTypesByNameMap().find(current_struct_name_);
 						if (type_it != getTypesByNameMap().end() && type_it->second) {
 							const TypeInfo& type_info = *type_it->second;
-							object_type_opt = TypeSpecifierNode(Type::Struct, type_info.type_index_, type_info.type_size_ * 8);
+							object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						}
 					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
@@ -1956,7 +1981,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				if (member_result && member_result.member->pointer_depth > 0) {
 					is_pointer = true;
 					operand_pointer_depth = member_result.member->pointer_depth;
-					element_size = getPointerElementSize(member_result.member->type, member_result.member->type_index, operand_pointer_depth);
+					element_size = getPointerElementSize(member_result.member->type_index, operand_pointer_depth);
 				}
 			}
 		} else if (!operandHandledAsIdentifier && std::holds_alternative<UnaryOperatorNode>(operandExpr)) {
@@ -1984,8 +2009,8 @@ ExprResult AstToIr::generateBuiltinIncDec(
 
 		if (is_prefix) {
 			BinaryOp bin_op{
-				.lhs = { Type::UnsignedLongLong, SizeInBits{64}, ptr_operand },
-				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
+				.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_operand),
+				.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2006,13 +2031,13 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			TempVar old_value = var_counter.next();
 			AssignmentOp save_op;
 			save_op.result = old_value;
-			save_op.lhs = { Type::UnsignedLongLong, SizeInBits{64}, old_value };
+			save_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, old_value);
 			save_op.rhs = toTypedValue(operandIrResult);
 			populateIncDecTypedValueMetadata(save_op.rhs);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 			BinaryOp bin_op{
-				.lhs = { Type::UnsignedLongLong, SizeInBits{64}, ptr_operand },
-				.rhs = { Type::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size) },
+				.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_operand),
+				.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
 				.result = result_var,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2046,14 +2071,14 @@ ExprResult AstToIr::generateBuiltinIncDec(
 		if (gsi.is_global_or_static) {
 			// For global/static: manually do load → add/sub 1 → store
 			IrOpcode arith_opcode_int = is_increment ? IrOpcode::Add : IrOpcode::Subtract;
-			Type elem_type = operandIrResult.type;
+			const TypeCategory elem_category = operandIrResult.category();
 			int elem_size = operandIrResult.size_in_bits.value;
 			IrValue loaded_val = toIrValue(operandIrResult.value);
 
 			if (is_prefix) {
 				BinaryOp bin_op{
-					.lhs = {elem_type, SizeInBits{elem_size}, loaded_val},
-					.rhs = {Type::Int, SizeInBits{32}, 1ULL},
+					.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2066,13 +2091,13 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				TempVar old_val = var_counter.next();
 				AssignmentOp save_op;
 				save_op.result = old_val;
-				save_op.lhs = {elem_type, SizeInBits{elem_size}, old_val};
-				save_op.rhs = {elem_type, SizeInBits{elem_size}, loaded_val};
+				save_op.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, old_val);
+				save_op.rhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val);
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(save_op), unaryOperatorNode.get_token()));
 
 				BinaryOp bin_op{
-					.lhs = {elem_type, SizeInBits{elem_size}, loaded_val},
-					.rhs = {Type::Int, SizeInBits{32}, 1ULL},
+					.lhs = makeTypedValue(elem_category, SizeInBits{elem_size}, loaded_val),
+					.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 1ULL),
 					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(arith_opcode_int, std::move(bin_op), unaryOperatorNode.get_token()));
@@ -2290,16 +2315,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 	return false;
 }
 
-	Type AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
-		if (!sema_ || !node.is<ExpressionNode>()) return Type::Invalid;
+	TypeCategory AstToIr::getSemaAnnotatedTargetType(const ASTNode& node) const {
+		if (!sema_ || !node.is<ExpressionNode>()) return TypeCategory::Invalid;
 		const void* key = &node.as<ExpressionNode>();
 		const auto slot = sema_->getSlot(key);
-		if (!slot.has_value() || !slot->has_cast()) return Type::Invalid;
+		if (!slot.has_value() || !slot->has_cast()) return TypeCategory::Invalid;
 		const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
-		const Type from_t = sema_->typeContext().get(ci.source_type_id).base_type;
-		const Type to_t = sema_->typeContext().get(ci.target_type_id).base_type;
-		if (from_t == Type::Struct || to_t == Type::Struct) return Type::Invalid;
-		return to_t;
+		const TypeCategory from_cat = sema_->typeContext().get(ci.source_type_id).category();
+		const TypeCategory to_cat = sema_->typeContext().get(ci.target_type_id).category();
+		if (from_cat == TypeCategory::Struct || to_cat == TypeCategory::Struct) return TypeCategory::Invalid;
+		return to_cat;
 	}
 
 	ExprResult AstToIr::applyConditionBoolConversion(ExprResult condition, const ASTNode& cond_node, const Token& source_token) {
@@ -2318,8 +2343,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 			// Materialize a 0.0 constant with the same float type as the condition.
-			// The caller guarantees cond.type is Float or Double.
-			ExprResult zero = makeExprResult(cond.type, cond.size_in_bits, IrOperand{0.0}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			// The caller guarantees cond.typeEnum() is Float or Double.
+			ExprResult zero = makeExprResult(cond.typeEnum(), cond.size_in_bits, IrOperand{0.0}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			// Emit: result = (cond != 0.0)
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
@@ -2330,7 +2355,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
 			// FloatNotEqual produces a bool8 result via SETNE; the backend's
 			// conditional branch already handles bool8 values correctly.
-			return makeExprResult(Type::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		// 1. Try sema annotation (Phase 6/8 contextual bool).
@@ -2343,7 +2368,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 				// Float/double → bool: emit FloatNotEqual(cond, 0.0).
-				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.base_type)) {
+				if (from_desc.pointer_levels.empty() && is_floating_point_type(from_desc.category())) {
 					return emitFloatNonZeroTest(condition);
 				}
 				// Enum/pointer → bool (Phase 9): backend TEST already implements
@@ -2356,7 +2381,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				// Phase 23: Struct → bool via user-defined operator bool().
 				// Sema annotates as UserDefined; call emitConversionOperatorCall.
 				if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-					from_desc.base_type == Type::Struct) {
+					from_desc.category() == TypeCategory::Struct) {
 					// Sema already verified the operator exists via structHasConversionOperatorTo;
 					// set flag immediately so the fallback doesn't duplicate this lookup.
 					sema_applied_bool_conv = true;
@@ -2366,12 +2391,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, source_is_const);
+							src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
 								StringTable::getStringView(src_type_info.name()), " to bool");
 							if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-									Type::Bool, TypeIndex{}, 8, source_token))
+									TypeCategory::Bool, TypeIndex{}, 8, source_token))
 								return *result;
 						}
 					}
@@ -2383,21 +2408,21 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		//    would mishandle -0.0, which has nonzero bits but is semantically false.
 		//    Guard: pointer types (even float*/double*) are integer-width addresses
 		//    and must use TEST, not FloatNotEqual.
-		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.type)) {
+		if (condition.pointer_depth.value == 0 && is_floating_point_type(condition.typeEnum())) {
 			return emitFloatNonZeroTest(condition);
 		}
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
-		if (!sema_applied_bool_conv && condition.type == Type::Struct) {
+		if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 			TypeIndex cond_type_idx = condition.type_index;
 			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
 				const StructMemberFunction* conv_op = findConversionOperator(
-					src_type_info.getStructInfo(), Type::Bool, TypeIndex{}, false);
+					src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, false);
 				if (conv_op) {
 					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
 						StringTable::getStringView(src_type_info.name()), " to bool");
 					if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-							Type::Bool, TypeIndex{}, 8, source_token))
+							TypeCategory::Bool, TypeIndex{}, 8, source_token))
 						return *result;
 				}
 			}
@@ -2410,7 +2435,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// For reference/rvalue-reference parameters, apply any sema-annotated or standard
 		// pre-bind type conversion (e.g. int → const double& needs int→double first).
 		// The *address-of* step for the converted value is handled by buildConstructorArgumentValue.
-		const Type param_base_type = param_type.type();
+		const TypeCategory param_base_type = param_type.type();
 		bool sema_applied = false;
 
 		// 1. Try sema annotation (most accurate path).
@@ -2421,10 +2446,10 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				const ImplicitCastInfo& ci = sema_->castInfoTable()[slot->cast_info_index.value - 1];
 				const CanonicalTypeDesc& from_desc = sema_->typeContext().get(ci.source_type_id);
 				const CanonicalTypeDesc& to_desc = sema_->typeContext().get(ci.target_type_id);
-				Type from_t = from_desc.base_type;
-				const Type to_t = to_desc.base_type;
+				TypeCategory from_t = from_desc.category();
+				const TypeCategory to_t = to_desc.category();
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
-					from_desc.base_type == Type::Struct) {
+					from_desc.category() == TypeCategory::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
 					if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
@@ -2445,8 +2470,8 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					}
 				} else if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					ci.selected_constructor &&
-					from_desc.base_type != Type::Struct &&
-					param_base_type != Type::Struct) {
+					from_desc.category() != TypeCategory::Struct &&
+					param_base_type != TypeCategory::Struct) {
 					// Pre-bind conversion: target is the selected constructor's first parameter type,
 					// not the outer param type (which may be the struct being constructed).
 					const auto& ctor_params = ci.selected_constructor->parameter_nodes();
@@ -2455,19 +2480,19 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					const ASTNode& ptn = ctor_params[0].as<DeclarationNode>().type_node();
 					if (!ptn.is<TypeSpecifierNode>())
 						throw InternalError("applyConstructorArgConversion: selected_constructor first parameter has no TypeSpecifierNode");
-					const Type ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
-					Type ctor_from_t = from_desc.base_type;
-					if (ctor_from_t == Type::Enum && ctor_from_t != arg_result.type)
-						ctor_from_t = arg_result.type;
+					const TypeCategory ctor_first_param_type = ptn.as<TypeSpecifierNode>().type();
+					TypeCategory ctor_from_t = from_desc.category();
+					if (ctor_from_t == TypeCategory::Enum && ctor_from_t != arg_result.typeEnum())
+						ctor_from_t = arg_result.typeEnum();
 					if (ctor_from_t != ctor_first_param_type) {
 						arg_result = generateTypeConversion(arg_result, ctor_from_t, ctor_first_param_type, source_token);
 					}
 					sema_applied = true;
-				} else if (from_t != Type::Struct && to_t != Type::Struct) {
-					// Sema may annotate as Type::Enum while codegen resolves enum
+				} else if (!is_struct_type(from_t) && !is_struct_type(to_t)) {
+					// Sema may annotate as TypeCategory::Enum while codegen resolves enum
 					// constants to their underlying type; use actual runtime type.
-					if (from_t == Type::Enum && from_t != arg_result.type)
-						from_t = arg_result.type;
+					if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum())
+						from_t = arg_result.typeEnum();
 					arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
 					sema_applied = true;
 				}
@@ -2476,13 +2501,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		// Phase 15: sema must annotate all standard constructor arg conversions.
 		if (!sema_applied && param_type.pointer_depth() == 0 &&
-			arg_result.type != param_base_type) {
-			TypeConversionResult conv = can_convert_type(arg_result.type, param_base_type);
+			arg_result.typeEnum() != param_base_type) {
+			TypeConversionResult conv = can_convert_type(arg_result.typeEnum(), param_base_type);
 			if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
-				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.type) && is_standard_arithmetic_type(param_base_type))
-					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
+				if (sema_normalized_current_function_ && is_standard_arithmetic_type(arg_result.typeEnum()) && is_standard_arithmetic_type(param_base_type))
+					throw InternalError(std::string("Phase 15: sema missed constructor arg conversion (") + std::string(getTypeName(arg_result.typeEnum())) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 				// Fallback for non-arithmetic types (enum, etc.)
-				arg_result = generateTypeConversion(arg_result, arg_result.type, param_base_type, source_token);
+				arg_result = generateTypeConversion(arg_result, arg_result.category(), param_base_type, source_token);
 			}
 		}
 
@@ -2502,7 +2527,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		auto registerStructTempDestructorIfNeeded = [&](const ExprResult& value_result) {
-			if (value_result.type != Type::Struct || !value_result.type_index.is_valid()) {
+			if (value_result.category() != TypeCategory::Struct || !value_result.type_index.is_valid()) {
 				return;
 			}
 			if (value_result.type_index.index() >= getTypeInfoCount()) {
@@ -2519,7 +2544,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		};
 
 		auto materializeTemporaryAndTakeAddress = [&](ExprResult value_result) -> ExprResult {
-			if (value_result.type == Type::Struct) {
+			if (value_result.category() == TypeCategory::Struct) {
 				if (std::holds_alternative<TempVar>(value_result.value)) {
 					registerStructTempDestructorIfNeeded(value_result);
 					return value_result;
@@ -2529,12 +2554,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			TempVar temp_var = var_counter.next();
 			AssignmentOp assign_op;
 			assign_op.result = temp_var;
-			assign_op.lhs = makeTypedValue(value_result.type, value_result.size_in_bits, temp_var);
+			assign_op.lhs = makeTypedValue(value_result.typeEnum(), value_result.size_in_bits, temp_var);
 			assign_op.rhs = toTypedValue(value_result);
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
-			TempVar addr_var = emitAddressOf(value_result.type, value_result.size_in_bits.value, IrValue(temp_var), source_token);
-			return makeExprResult(value_result.type, SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+			TempVar addr_var = emitAddressOf(value_result.category(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
+			return makeExprResult(value_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		if (binding_info->binds_directly()) {
@@ -2552,7 +2577,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					}
 
 					TempVar addr_var = emitAddressOf(
-						type_node.type(),
+						type_node.category(),
 						static_cast<int>(type_node.size_in_bits()),
 						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 						source_token);
@@ -2574,11 +2599,11 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				}
 
 				TempVar addr_var = emitAddressOf(
-					arg_result.type,
+					arg_result.category(),
 					arg_result.size_in_bits.value,
 					IrValue(expr_var),
 					source_token);
-				return makeExprResult(arg_result.type, SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(arg_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			return std::nullopt;
@@ -2592,12 +2617,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			const ImplicitCastInfo& cast_info = sema_->castInfoTable()[binding_info->pre_bind_cast_info_index.value - 1];
 			const CanonicalTypeDesc& from_desc = sema_->typeContext().get(cast_info.source_type_id);
 			const CanonicalTypeDesc& to_desc = sema_->typeContext().get(cast_info.target_type_id);
-			Type from_t = from_desc.base_type;
-			const Type to_t = to_desc.base_type;
-			if (from_t == Type::Enum && from_t != arg_result.type) {
-				from_t = arg_result.type;
+			TypeCategory from_t = from_desc.category();
+			const TypeCategory to_t = to_desc.category();
+			if (from_t == TypeCategory::Enum && from_t != arg_result.typeEnum()) {
+				from_t = arg_result.typeEnum();
 			}
-			if (from_t == Type::Struct || to_t == Type::Struct) {
+			if (from_t == TypeCategory::Struct || to_t == TypeCategory::Struct) {
 				return std::nullopt;
 			}
 			arg_result = generateTypeConversion(arg_result, from_t, to_t, source_token);
@@ -2610,9 +2635,9 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		ExprResult source_result,
 		const TypeSpecifierNode& ref_param_type,
 		const Token& source_token) {
-		const Type referred_type = ref_param_type.type();
+		const TypeCategory referred_type = ref_param_type.type();
 		// Convert the source value to the referred-to type.
-		ExprResult converted = generateTypeConversion(source_result, source_result.type, referred_type, source_token);
+		ExprResult converted = generateTypeConversion(source_result, source_result.category(), referred_type, source_token);
 		const int ref_type_bits = get_type_size_bits(referred_type);
 		// Materialize the converted value into a stack temporary.
 		TempVar conv_temp = var_counter.next();
@@ -2624,8 +2649,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Take the address of the temporary and return it as the reference argument.
 		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
-		result.type = referred_type;
-		result.ir_type = toIrType(referred_type);
+		result.setType(referred_type);
 		result.size_in_bits = SizeInBits{64};
 		result.value = addr_var;
 		result.ref_qualifier = ref_param_type.is_rvalue_reference()
@@ -2641,7 +2665,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const ConstructorDeclarationNode& selected_ctor,
 		const Token& source_token,
 		bool use_return_slot) {
-		if (target_type.type() != Type::Struct || !target_type.type_index().is_valid()) {
+		if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 			return std::nullopt;
 		}
 		if (target_type.type_index().index() >= getTypeInfoCount()) {
@@ -2698,7 +2722,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		} else if (param_type.is_reference()) {
 			init_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 		}
-		if (param_type.type() == Type::Struct && param_type.type_index().is_valid()) {
+		if (param_type.category() == TypeCategory::Struct && param_type.type_index().is_valid()) {
 			init_arg.type_index = param_type.type_index();
 		}
 
@@ -2711,7 +2735,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 		return makeExprResult(
-			Type::Struct,
+			TypeCategory::Struct,
 			SizeInBits{actual_size_bits},
 			IrOperand{result_var},
 			target_type.type_index(), PointerDepth{}, ValueStorage::ContainsData);
@@ -2724,7 +2748,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		const Token& source_token,
 		bool use_return_slot) {
 		if (!sema_ || !source_expr.is<ExpressionNode>() ||
-			target_type.type() != Type::Struct ||
+			target_type.category() != TypeCategory::Struct ||
 			target_type.is_reference() ||
 			target_type.is_rvalue_reference()) {
 			return std::nullopt;
@@ -2741,7 +2765,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		}
 
 		const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
-		if (target_desc.base_type != Type::Struct ||
+		if (target_desc.category() != TypeCategory::Struct ||
 			target_desc.type_index != target_type.type_index()) {
 			return std::nullopt;
 		}

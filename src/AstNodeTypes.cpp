@@ -73,15 +73,7 @@ std::unordered_map<TypeCategory, const TypeInfo*> gNativeTypes;
 
 TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, NamespaceHandle ns) {
     TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::UserDefined, idx, type_size_in_bits);
-    type_info.setNamespaceHandle(ns);
-    gTypesByName.emplace(type_info.name(), &type_info);
-    return TypeCreationResult{type_info, idx};
-}
-
-TypeCreationResult add_function_type(StringHandle name, [[maybe_unused]] Type return_type, NamespaceHandle ns) {
-    TypeIndex idx{gTypeInfo.size(), TypeCategory::Function};
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Function, idx, 0);
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), idx, type_size_in_bits);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return TypeCreationResult{type_info, idx};
@@ -103,7 +95,7 @@ TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
     }
 
     TypeIndex idx{gTypeInfo.size(), TypeCategory::Struct};
-    auto& type_info = gTypeInfo.emplace_back(name, Type::Struct, idx, 0);
+    auto& type_info = gTypeInfo.emplace_back(name, idx, 0);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return TypeCreationResult{type_info, idx};
@@ -111,7 +103,7 @@ TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
 
 TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns) {
     TypeIndex idx{gTypeInfo.size(), TypeCategory::Enum};
-    auto& type_info = gTypeInfo.emplace_back(std::move(name), Type::Enum, idx, 0);
+    auto& type_info = gTypeInfo.emplace_back(std::move(name), idx, 0);
     type_info.setNamespaceHandle(ns);
     gTypesByName.emplace(type_info.name(), &type_info);
     return TypeCreationResult{type_info, idx};
@@ -119,7 +111,7 @@ TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns) {
 
 TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
     TypeIndex alias_idx{gTypeInfo.size(), TypeCategory::TypeAlias};
-    auto& info = gTypeInfo.emplace_back(name, type_spec.type(), type_spec.type_index(), type_spec.size_in_bits());
+    auto& info = gTypeInfo.emplace_back(name, type_spec.type_index(), type_spec.size_in_bits());
     info.setNamespaceHandle(ns);
     info.is_type_alias_ = true;
     info.pointer_depth_ = type_spec.pointer_depth();
@@ -127,7 +119,7 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
     if (type_spec.has_function_signature()) {
         info.function_signature_ = type_spec.function_signature();
     }
-    if (type_spec.type() == Type::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
+    if (type_spec.category() == TypeCategory::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
         if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
             info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
         }
@@ -158,24 +150,32 @@ const TypeInfo* findNativeType(TypeCategory cat) {
     return it != gNativeTypes.end() ? it->second : nullptr;
 }
 
+TypeIndex nativeTypeIndex(TypeCategory cat) {
+	const TypeInfo* ti = findNativeType(cat);
+	// For native types, return the real gTypeInfo slot (index >= 1, so is_valid() == true).
+	// For non-native categories (Struct, Enum, UserDefined, …), fall back to TypeIndex{0, cat}
+	// to preserve category information for callers that use .category() on placeholders.
+	return ti ? ti->type_index_ : TypeIndex{0, cat};
+}
+
 size_t getTypeInfoCount() {
     return gTypeInfo.size();
 }
 
-TypeInfo& add_template_param_type(StringHandle name, Type kind, uint32_t size_bits) {
-    auto& type_info = gTypeInfo.emplace_back(name, kind, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), typeToCategory(kind)}, size_bits);
+TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), kind}, size_bits);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_instantiated_type(StringHandle name, Type type, uint32_t size_bits) {
-    auto& type_info = gTypeInfo.emplace_back(name, type, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), typeToCategory(type)}, size_bits);
+TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), kind}, size_bits);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
 
-TypeInfo& add_type_alias_copy(StringHandle name, Type type, TypeIndex source_type_index, uint32_t size_bits) {
-    auto& type_info = gTypeInfo.emplace_back(name, type, source_type_index, size_bits);
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits) {
+    auto& type_info = gTypeInfo.emplace_back(name, source_type_index, size_bits);
     gTypesByName.emplace(type_info.name(), &type_info);
     return type_info;
 }
@@ -201,74 +201,78 @@ void initialize_native_types() {
         return;
     }
 
+	// Index 0 is reserved as the null/invalid sentinel — TypeIndex::is_valid() returns
+	// (index_ > 0), so gTypeInfo[0] must not be a real type. All real types start at 1.
+	gTypeInfo.emplace_back(StringTable::createStringHandle(""sv), TypeIndex{0, TypeCategory::Invalid}, 0);
+
     // Add basic native types
-    auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), Type::Void, TypeIndex{gTypeInfo.size(), TypeCategory::Void}, 0);
+    auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Void}, 0);
     gNativeTypes[TypeCategory::Void] = &void_type;
 
-    auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), Type::Bool, TypeIndex{gTypeInfo.size(), TypeCategory::Bool}, get_type_size_bits(Type::Bool));
+    auto& bool_type = gTypeInfo.emplace_back(StringTable::createStringHandle("bool"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Bool}, get_type_size_bits(TypeCategory::Bool));
     gNativeTypes[TypeCategory::Bool] = &bool_type;
 
-    auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), Type::Char, TypeIndex{gTypeInfo.size(), TypeCategory::Char}, get_type_size_bits(Type::Char));
+    auto& char_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Char}, get_type_size_bits(TypeCategory::Char));
     gNativeTypes[TypeCategory::Char] = &char_type;
     
-    auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("wchar_t"sv), Type::WChar, TypeIndex{gTypeInfo.size(), TypeCategory::WChar}, get_wchar_size_bits());
+    auto& wchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("wchar_t"sv), TypeIndex{gTypeInfo.size(), TypeCategory::WChar}, get_wchar_size_bits());
     gNativeTypes[TypeCategory::WChar] = &wchar_type;
     
-    auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char8_t"sv), Type::Char8, TypeIndex{gTypeInfo.size(), TypeCategory::Char8}, get_type_size_bits(Type::Char8));
+    auto& char8_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char8_t"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Char8}, get_type_size_bits(TypeCategory::Char8));
     gNativeTypes[TypeCategory::Char8] = &char8_type;
     
-    auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char16_t"sv), Type::Char16, TypeIndex{gTypeInfo.size(), TypeCategory::Char16}, get_type_size_bits(Type::Char16));
+    auto& char16_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char16_t"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Char16}, get_type_size_bits(TypeCategory::Char16));
     gNativeTypes[TypeCategory::Char16] = &char16_type;
     
-    auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char32_t"sv), Type::Char32, TypeIndex{gTypeInfo.size(), TypeCategory::Char32}, get_type_size_bits(Type::Char32));
+    auto& char32_type = gTypeInfo.emplace_back(StringTable::createStringHandle("char32_t"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Char32}, get_type_size_bits(TypeCategory::Char32));
     gNativeTypes[TypeCategory::Char32] = &char32_type;
 
-    auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), Type::UnsignedChar, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedChar}, get_type_size_bits(Type::UnsignedChar));
+    auto& uchar_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uchar"sv), TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedChar}, get_type_size_bits(TypeCategory::UnsignedChar));
     gNativeTypes[TypeCategory::UnsignedChar] = &uchar_type;
 
-    auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), Type::Short, TypeIndex{gTypeInfo.size(), TypeCategory::Short}, get_type_size_bits(Type::Short));
+    auto& short_type = gTypeInfo.emplace_back(StringTable::createStringHandle("short"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Short}, get_type_size_bits(TypeCategory::Short));
     gNativeTypes[TypeCategory::Short] = &short_type;
 
-    auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), Type::UnsignedShort, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedShort}, get_type_size_bits(Type::UnsignedShort));
+    auto& ushort_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ushort"sv), TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedShort}, get_type_size_bits(TypeCategory::UnsignedShort));
     gNativeTypes[TypeCategory::UnsignedShort] = &ushort_type;
 
-    auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), Type::Int, TypeIndex{gTypeInfo.size(), TypeCategory::Int}, get_type_size_bits(Type::Int));
+    auto& int_type = gTypeInfo.emplace_back(StringTable::createStringHandle("int"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Int}, get_type_size_bits(TypeCategory::Int));
     gNativeTypes[TypeCategory::Int] = &int_type;
 
-    auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), Type::UnsignedInt, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedInt}, get_type_size_bits(Type::UnsignedInt));
+    auto& uint_type = gTypeInfo.emplace_back(StringTable::createStringHandle("uint"sv), TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedInt}, get_type_size_bits(TypeCategory::UnsignedInt));
     gNativeTypes[TypeCategory::UnsignedInt] = &uint_type;
 
-	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), Type::Long, TypeIndex{gTypeInfo.size(), TypeCategory::Long}, get_type_size_bits(Type::Long));
+	auto& long_type = gTypeInfo.emplace_back(StringTable::createStringHandle("long"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Long}, get_type_size_bits(TypeCategory::Long));
 	gNativeTypes[TypeCategory::Long] = &long_type;
 
-	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), Type::UnsignedLong, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLong}, get_type_size_bits(Type::UnsignedLong));
+	auto& ulong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulong"sv), TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLong}, get_type_size_bits(TypeCategory::UnsignedLong));
 	gNativeTypes[TypeCategory::UnsignedLong] = &ulong_type;
 
-    auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), Type::LongLong, TypeIndex{gTypeInfo.size(), TypeCategory::LongLong}, get_type_size_bits(Type::LongLong));
+    auto& longlong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longlong"sv), TypeIndex{gTypeInfo.size(), TypeCategory::LongLong}, get_type_size_bits(TypeCategory::LongLong));
     gNativeTypes[TypeCategory::LongLong] = &longlong_type;
 
-    auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), Type::UnsignedLongLong, TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLongLong}, get_type_size_bits(Type::UnsignedLongLong));
+    auto& ulonglong_type = gTypeInfo.emplace_back(StringTable::createStringHandle("ulonglong"sv), TypeIndex{gTypeInfo.size(), TypeCategory::UnsignedLongLong}, get_type_size_bits(TypeCategory::UnsignedLongLong));
     gNativeTypes[TypeCategory::UnsignedLongLong] = &ulonglong_type;
 
-    auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), Type::Float, TypeIndex{gTypeInfo.size(), TypeCategory::Float}, get_type_size_bits(Type::Float));
+    auto& float_type = gTypeInfo.emplace_back(StringTable::createStringHandle("float"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Float}, get_type_size_bits(TypeCategory::Float));
     gNativeTypes[TypeCategory::Float] = &float_type;
 
-    auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), Type::Double, TypeIndex{gTypeInfo.size(), TypeCategory::Double}, get_type_size_bits(Type::Double));
+    auto& double_type = gTypeInfo.emplace_back(StringTable::createStringHandle("double"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Double}, get_type_size_bits(TypeCategory::Double));
     gNativeTypes[TypeCategory::Double] = &double_type;
 
-    auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), Type::LongDouble, TypeIndex{gTypeInfo.size(), TypeCategory::LongDouble}, get_type_size_bits(Type::LongDouble));
+    auto& longdouble_type = gTypeInfo.emplace_back(StringTable::createStringHandle("longdouble"sv), TypeIndex{gTypeInfo.size(), TypeCategory::LongDouble}, get_type_size_bits(TypeCategory::LongDouble));
     gNativeTypes[TypeCategory::LongDouble] = &longdouble_type;
 
-    auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), Type::Auto, TypeIndex{gTypeInfo.size(), TypeCategory::Auto}, 0);
+    auto& auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("auto"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Auto}, 0);
     gNativeTypes[TypeCategory::Auto] = &auto_type;
 
-    auto& decltype_auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("decltype(auto)"sv), Type::DeclTypeAuto, TypeIndex{gTypeInfo.size(), TypeCategory::DeclTypeAuto}, 0);
+    auto& decltype_auto_type = gTypeInfo.emplace_back(StringTable::createStringHandle("decltype(auto)"sv), TypeIndex{gTypeInfo.size(), TypeCategory::DeclTypeAuto}, 0);
     gNativeTypes[TypeCategory::DeclTypeAuto] = &decltype_auto_type;
 
-    auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), Type::FunctionPointer, TypeIndex{gTypeInfo.size(), TypeCategory::FunctionPointer}, get_type_size_bits(Type::FunctionPointer));
+    auto& function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("function_pointer"sv), TypeIndex{gTypeInfo.size(), TypeCategory::FunctionPointer}, get_type_size_bits(TypeCategory::FunctionPointer));
     gNativeTypes[TypeCategory::FunctionPointer] = &function_pointer_type;
 
-    auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), Type::MemberFunctionPointer, TypeIndex{gTypeInfo.size(), TypeCategory::MemberFunctionPointer}, get_type_size_bits(Type::MemberFunctionPointer));
+    auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), TypeIndex{gTypeInfo.size(), TypeCategory::MemberFunctionPointer}, get_type_size_bits(TypeCategory::MemberFunctionPointer));
     gNativeTypes[TypeCategory::MemberFunctionPointer] = &member_function_pointer_type;
 
     // Register GCC builtin types used by libstdc++ headers
@@ -276,91 +280,16 @@ void initialize_native_types() {
     // We register it as a user-defined type so lookupTypeInCurrentContext finds it,
     // allowing declarations like '__builtin_va_list args;' to parse correctly.
     auto va_list_handle = StringTable::createStringHandle("__builtin_va_list"sv);
-    auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64); // Pointer-sized opaque handle
+    auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64); // Pointer-sized opaque handle
     gTypesByName.emplace(va_list_handle, &va_list_type_info);
 
     auto gnuc_va_list_handle = StringTable::createStringHandle("__gnuc_va_list"sv);
-    auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, Type::UserDefined, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64);
+    auto& gnuc_va_list_type_info = gTypeInfo.emplace_back(gnuc_va_list_handle, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64);
     gTypesByName.emplace(gnuc_va_list_handle, &gnuc_va_list_type_info);
 
 }
 
-bool is_integer_type(Type type) {
-    switch (type) {
-        case Type::Char:
-        case Type::UnsignedChar:
-        case Type::WChar:      // wchar_t is an integer type
-        case Type::Char8:      // char8_t is an integer type (C++20)
-        case Type::Char16:     // char16_t is an integer type
-        case Type::Char32:     // char32_t is an integer type
-        case Type::Short:
-        case Type::UnsignedShort:
-        case Type::Int:
-        case Type::UnsignedInt:
-        case Type::Long:
-        case Type::UnsignedLong:
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
-            return true;
-        default:
-            return false;
-    }
-}
-
-bool is_bool_type(Type type) {
-    return type == Type::Bool;
-}
-
-bool is_floating_point_type(Type type) {
-    switch (type) {
-        case Type::Float:
-        case Type::Double:
-        case Type::LongDouble:
-            return true;
-        default:
-            return false;
-    }
-}
-
-bool is_struct_type(Type type) {
-    return type == Type::Struct || type == Type::UserDefined;
-}
-
-bool is_signed_integer_type(Type type) {
-    switch (type) {
-        case Type::Char:  // char is signed by default in most implementations
-        case Type::Short:
-        case Type::Int:
-        case Type::Long:
-        case Type::LongLong:
-            return true;
-        case Type::WChar:
-            return g_target_data_model != TargetDataModel::LLP64;  // signed on Linux
-        default:
-            return false;
-    }
-}
-
-bool is_unsigned_integer_type(Type type) {
-    switch (type) {
-        case Type::UnsignedChar:
-        case Type::UnsignedShort:
-        case Type::UnsignedInt:
-        case Type::UnsignedLong:
-        case Type::UnsignedLongLong:
-            return true;
-        case Type::Char8:
-        case Type::Char16:
-        case Type::Char32:
-            return true;
-        case Type::WChar:
-            return g_target_data_model == TargetDataModel::LLP64;  // unsigned on Windows
-        default:
-            return false;
-    }
-}
-
-int get_integer_rank(Type type) {
+int get_integer_rank(TypeCategory type) {
     // C++20 integer conversion rank (higher rank = larger type)
     // [conv.rank] specifies the conversion rank:
     // - bool has the lowest rank
@@ -370,30 +299,30 @@ int get_integer_rank(Type type) {
     // - long/unsigned long have the same rank
     // - long long/unsigned long long have the highest standard integer rank
     switch (type) {
-        case Type::Bool:
+        case TypeCategory::Bool:
             return 0;  // Bool has lowest rank
-        case Type::Char:
-        case Type::UnsignedChar:
+        case TypeCategory::Char:
+        case TypeCategory::UnsignedChar:
             return 1;
-        case Type::Short:
-        case Type::UnsignedShort:
+        case TypeCategory::Short:
+        case TypeCategory::UnsignedShort:
             return 2;
-        case Type::Int:
-        case Type::UnsignedInt:
+        case TypeCategory::Int:
+        case TypeCategory::UnsignedInt:
             return 3;
-        case Type::Long:
-        case Type::UnsignedLong:
+        case TypeCategory::Long:
+        case TypeCategory::UnsignedLong:
             return 4;
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
+        case TypeCategory::LongLong:
+        case TypeCategory::UnsignedLongLong:
             return 5;
-        case Type::Char8:
+        case TypeCategory::Char8:
             return 1;  // Same rank as unsigned char
-        case Type::Char16:
+        case TypeCategory::Char16:
             return 2;  // Same rank as uint_least16_t (short)
-        case Type::Char32:
+        case TypeCategory::Char32:
             return 3;  // Same rank as uint_least32_t (int)
-        case Type::WChar:
+        case TypeCategory::WChar:
             // wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
             return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
         default:
@@ -401,123 +330,116 @@ int get_integer_rank(Type type) {
     }
 }
 
-int get_floating_point_rank(Type type) {
+int get_floating_point_rank(TypeCategory type) {
     // Floating-point conversion rank (higher rank = larger type)
     switch (type) {
-        case Type::Float:
+        case TypeCategory::Float:
             return 1;
-        case Type::Double:
+        case TypeCategory::Double:
             return 2;
-        case Type::LongDouble:
+        case TypeCategory::LongDouble:
             return 3;
         default:
             return 0;
     }
 }
 
-int get_type_size_bits(Type type) {
-    switch (type) {
-        case Type::Bool:
+int get_type_size_bits(TypeCategory cat) {
+    switch (cat) {
+        case TypeCategory::Bool:
             return 8;
-        case Type::Char:
-        case Type::UnsignedChar:
-        case Type::Char8:      // char8_t is always 8 bits
+        case TypeCategory::Char:
+        case TypeCategory::UnsignedChar:
+        case TypeCategory::Char8:      // char8_t is always 8 bits
             return 8;
-        case Type::Char16:     // char16_t is always 16 bits
+        case TypeCategory::Char16:     // char16_t is always 16 bits
             return 16;
-        case Type::Char32:     // char32_t is always 32 bits
+        case TypeCategory::Char32:     // char32_t is always 32 bits
             return 32;
-        case Type::WChar:
+        case TypeCategory::WChar:
             return get_wchar_size_bits();  // Target-dependent: 16 bits (LLP64) or 32 bits (LP64)
-        case Type::Short:
-        case Type::UnsignedShort:
+        case TypeCategory::Short:
+        case TypeCategory::UnsignedShort:
             return 16;
-        case Type::Int:
-        case Type::UnsignedInt:
+        case TypeCategory::Int:
+        case TypeCategory::UnsignedInt:
             return 32;
-        case Type::Long:
-        case Type::UnsignedLong:
+        case TypeCategory::Long:
+        case TypeCategory::UnsignedLong:
             return get_long_size_bits();  // Target-dependent: 32 bits (LLP64) or 64 bits (LP64)
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
+        case TypeCategory::LongLong:
+        case TypeCategory::UnsignedLongLong:
             return 64;
-        case Type::Float:
+        case TypeCategory::Float:
             return 32;
-        case Type::Double:
+        case TypeCategory::Double:
             return 64;
-        case Type::LongDouble:
+        case TypeCategory::LongDouble:
             return 80;  // x87 extended precision
-        case Type::Enum:
-            // Fallback only: when code still carries Type::Enum but lost the concrete
+        case TypeCategory::Enum:
+            // Fallback only: when code still carries TypeCategory::Enum but lost the concrete
             // enum metadata, assume the common default underlying type (int, 32 bits).
             // This is expected only for still-buggy dependent/template instantiation paths;
             // normal enum sizing should come from the enum's TypeIndex/type_size_.
             return 32;
-        case Type::FunctionPointer:
-        case Type::MemberFunctionPointer:
-        case Type::MemberObjectPointer:
-            return 64;  // Function and member pointers are 64-bit (sizeof(void*))
+        case TypeCategory::FunctionPointer:
+        case TypeCategory::MemberFunctionPointer:
+        case TypeCategory::MemberObjectPointer:
+        case TypeCategory::Nullptr:
+            return 64;  // Function/member pointers and nullptr_t are 64-bit (sizeof(void*))
+        case TypeCategory::TypeAlias:
+            return 0;   // Aliases have no intrinsic size; use the resolved type instead
         default:
             return 0;
     }
 }
 
-int get_type_size_bits(TypeCategory cat) {
-    return get_type_size_bits(categoryToType(cat));
-}
-
-Type promote_integer_type(Type type) {
+TypeCategory promote_integer_type(TypeCategory type) {
     // C++ integer promotion rules: bool, char, and short promote to int
     switch (type) {
-        case Type::Bool:
-        case Type::Char:
-        case Type::Short:
-        case Type::Char8:      // char8_t (8-bit unsigned) promotes to int
-        case Type::Char16:     // char16_t (16-bit unsigned) promotes to int
-            return Type::Int;
-        case Type::UnsignedChar:
-        case Type::UnsignedShort:
+        case TypeCategory::Bool:
+        case TypeCategory::Char:
+        case TypeCategory::Short:
+        case TypeCategory::Char8:      // char8_t (8-bit unsigned) promotes to int
+        case TypeCategory::Char16:     // char16_t (16-bit unsigned) promotes to int
+            return TypeCategory::Int;
+        case TypeCategory::UnsignedChar:
+        case TypeCategory::UnsignedShort:
             // If int can represent all values of the original type, promote to int
             // Otherwise promote to unsigned int (but for char/short, int is always sufficient)
-            return Type::Int;
-        case Type::WChar:
+            return TypeCategory::Int;
+        case TypeCategory::WChar:
             // wchar_t promotion is target-dependent:
             // On Windows (16-bit): promotes to int
             // On Linux (32-bit): doesn't promote (same size as int)
-            return (get_wchar_size_bits() < 32) ? Type::Int : Type::WChar;
-        case Type::Char32:
+            return (get_wchar_size_bits() < 32) ? TypeCategory::Int : TypeCategory::WChar;
+        case TypeCategory::Char32:
             // char32_t (32-bit) doesn't promote - same size as int
-            return Type::Char32;
+            return TypeCategory::Char32;
         default:
             // Types int and larger don't get promoted
             return type;
     }
 }
 
-Type promote_floating_point_type(Type type) {
-    // Floating-point promotions: float promotes to double in some contexts
-    // For now, keep types as-is (no automatic promotion)
-    return type;
-}
-
 // Helper function to get the unsigned version of an integer type
-static Type get_unsigned_version(Type type) {
+static TypeCategory get_unsigned_version(TypeCategory type) {
     switch (type) {
-        case Type::Char:
-        case Type::UnsignedChar:
-            return Type::UnsignedChar;
-        case Type::Short:
-        case Type::UnsignedShort:
-            return Type::UnsignedShort;
-        case Type::Int:
-        case Type::UnsignedInt:
-            return Type::UnsignedInt;
-        case Type::Long:
-        case Type::UnsignedLong:
-            return Type::UnsignedLong;
-        case Type::LongLong:
-        case Type::UnsignedLongLong:
-            return Type::UnsignedLongLong;
+        case TypeCategory::Char:
+        case TypeCategory::UnsignedChar:
+            return TypeCategory::UnsignedChar;
+        case TypeCategory::Short:
+        case TypeCategory::UnsignedShort:
+            return TypeCategory::UnsignedShort;
+        case TypeCategory::Int:
+        case TypeCategory::UnsignedInt:
+            return TypeCategory::UnsignedInt;
+        case TypeCategory::Long:
+        case TypeCategory::UnsignedLong:
+            return TypeCategory::UnsignedLong;
+        case TypeCategory::LongLong:
+        case TypeCategory::UnsignedLongLong:
+            return TypeCategory::UnsignedLongLong;
         default:
             return type;  // Keep as-is for non-integer types
     }
@@ -532,7 +454,7 @@ static Type get_unsigned_version(Type type) {
 // because max(long) = 2^63-1 > max(uint) = 2^32-1.
 // But: signed int (32 bits) CANNOT represent all unsigned int (32 bits) values
 // because max(int) = 2^31-1 < max(uint) = 2^32-1.
-static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
+static bool can_represent_all_values(TypeCategory signed_type, TypeCategory unsigned_type) {
     // Get the bit sizes for comparison
     int signed_bits = get_type_size_bits(signed_type);
     int unsigned_bits = get_type_size_bits(unsigned_type);
@@ -541,12 +463,12 @@ static bool can_represent_all_values(Type signed_type, Type unsigned_type) {
     return signed_bits > unsigned_bits;
 }
 
-Type get_common_type(Type left, Type right) {
+TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
     // C++20 usual arithmetic conversions [conv.arith]
     
     // Floating-point types have higher precedence than integer types
-    bool left_is_fp = is_floating_point_type(left);
-    bool right_is_fp = is_floating_point_type(right);
+    bool left_is_fp = isFloatingPointType(left);
+    bool right_is_fp = isFloatingPointType(right);
 
     if (left_is_fp && right_is_fp) {
         // Both floating-point: higher rank wins
@@ -574,8 +496,25 @@ Type get_common_type(Type left, Type right) {
     }
 
     // Get signedness and ranks
-    bool left_unsigned = is_unsigned_integer_type(left);
-    bool right_unsigned = is_unsigned_integer_type(right);
+    auto is_unsigned_integer_category = [](TypeCategory type) {
+        switch (type) {
+            case TypeCategory::UnsignedChar:
+            case TypeCategory::UnsignedShort:
+            case TypeCategory::UnsignedInt:
+            case TypeCategory::UnsignedLong:
+            case TypeCategory::UnsignedLongLong:
+            case TypeCategory::Char8:
+            case TypeCategory::Char16:
+            case TypeCategory::Char32:
+                return true;
+            case TypeCategory::WChar:
+                return g_target_data_model == TargetDataModel::LLP64;
+            default:
+                return false;
+        }
+    };
+    bool left_unsigned = is_unsigned_integer_category(left);
+    bool right_unsigned = is_unsigned_integer_category(right);
     int left_rank = get_integer_rank(left);
     int right_rank = get_integer_rank(right);
 
@@ -586,8 +525,8 @@ Type get_common_type(Type left, Type right) {
 
     // Case 2: One is signed, one is unsigned - apply C++20 rules
     // Identify which is signed and which is unsigned
-    Type signed_type = left_unsigned ? right : left;
-    Type unsigned_type = left_unsigned ? left : right;
+    TypeCategory signed_type = left_unsigned ? right : left;
+    TypeCategory unsigned_type = left_unsigned ? left : right;
     int signed_rank = left_unsigned ? right_rank : left_rank;
     int unsigned_rank = left_unsigned ? left_rank : right_rank;
 
@@ -603,10 +542,6 @@ Type get_common_type(Type left, Type right) {
 
     // Rule 3: Convert both to unsigned version of the signed type
     return get_unsigned_version(signed_type);
-}
-
-bool requires_conversion(Type from, Type to) {
-    return from != to && is_integer_type(from) && is_integer_type(to);
 }
 
 // Helper function to get CV-qualifier string
@@ -639,24 +574,25 @@ std::string TypeSpecifierNode::getReadableString() const {
     }
 
     // Add base type name
-    std::string_view name = getTypeName(type_);
+    std::string_view name = getTypeName(category());
     if (!name.empty()) {
         oss << name;
     } else {
         // getTypeName returns "" for non-primitive types; provide fallback names
-        switch (type_) {
-            case Type::UserDefined: oss << "user_defined"; break;
-            case Type::Auto: oss << "auto"; break;
-            case Type::DeclTypeAuto: oss << "decltype(auto)"; break;
-            case Type::Function: oss << "function"; break;
-            case Type::Struct: oss << "struct"; break;
-            case Type::Enum: oss << "enum"; break;
-            case Type::FunctionPointer: oss << "function_pointer"; break;
-            case Type::MemberFunctionPointer: oss << "member_function_pointer"; break;
-            case Type::MemberObjectPointer: oss << "member_object_pointer"; break;
-            case Type::Nullptr: oss << "nullptr_t"; break;
-            case Type::Template: oss << "template"; break;
-            case Type::Invalid: oss << "invalid"; break;
+        switch (category()) {
+            case TypeCategory::UserDefined: oss << "user_defined"; break;
+            case TypeCategory::Auto: oss << "auto"; break;
+            case TypeCategory::DeclTypeAuto: oss << "decltype(auto)"; break;
+            case TypeCategory::Function: oss << "function"; break;
+            case TypeCategory::Struct: oss << "struct"; break;
+            case TypeCategory::Enum: oss << "enum"; break;
+            case TypeCategory::TypeAlias: oss << "type_alias"; break;
+            case TypeCategory::FunctionPointer: oss << "function_pointer"; break;
+            case TypeCategory::MemberFunctionPointer: oss << "member_function_pointer"; break;
+            case TypeCategory::MemberObjectPointer: oss << "member_object_pointer"; break;
+            case TypeCategory::Nullptr: oss << "nullptr_t"; break;
+            case TypeCategory::Template: oss << "template"; break;
+            case TypeCategory::Invalid: oss << "invalid"; break;
             default: oss << "unknown"; break;
         }
     }
@@ -858,7 +794,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 			continue;
 		}
 		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-		if (param_type.type() != Type::Struct || !isOwnTypeIndex(param_type.type_index())) {
+		if (param_type.category() != TypeCategory::Struct || !isOwnTypeIndex(param_type.type_index())) {
 			continue;
 		}
 
@@ -951,7 +887,7 @@ namespace {
 			? param_type.is_rvalue_reference()
 			: param_type.is_lvalue_reference();
 		return matches_reference
-			&& param_type.type() == Type::Struct
+			&& param_type.category() == TypeCategory::Struct
 			&& struct_info.isOwnTypeIndex(param_type.type_index());
 	}
 }

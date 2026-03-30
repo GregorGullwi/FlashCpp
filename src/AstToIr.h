@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "IrGenerator.h"
 #include "InlineVector.h"
 
@@ -56,7 +56,7 @@ private:
 		std::variant<StringHandle, TempVar> base;           // Base variable or temp
 		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
 		int total_member_offset = 0;                        // Accumulated member offsets
-		Type final_type = Type::Void;                       // Type of final result
+		TypeIndex final_type_index {};                      // Type identity of final result (TypeCategory embedded)
 		SizeInBits final_size_bits;                         // Size in bits
 		PointerDepth pointer_depth;                         // Pointer depth of final result
 	};
@@ -75,8 +75,12 @@ private:
 	struct GlobalStaticBindingInfo {
 		bool is_global_or_static = false;
 		StringHandle store_name;
-		Type type = Type::Void;
+		// TypeCategory is embedded in type_index; default = Void to preserve original sentinel.
+		TypeIndex type_index = nativeTypeIndex(TypeCategory::Void);
 		SizeInBits size_in_bits;
+
+		// Returns the TypeCategory derived from the embedded TypeIndex.
+		TypeCategory bindingType() const { return type_index.category(); }
 	};
 
 
@@ -197,7 +201,7 @@ private:
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
-	ExprResult generateTypeConversion(const ExprResult& operands, Type fromType, Type toType, const Token& source_token);
+	ExprResult generateTypeConversion(const ExprResult& operands, TypeCategory fromType, TypeCategory toType, const Token& source_token);
 	// Apply sema-annotated contextual bool conversion to a condition expression.
 	// If the sema pass annotated the condition with BooleanConversion (e.g. float→bool),
 	// emit the proper type conversion.  Falls back to a local conversion for
@@ -230,8 +234,8 @@ private:
 		const TypeSpecifierNode& ref_param_type,
 		const Token& source_token);
 	// Read the sema-annotated conversion target type for an expression node.
-	// Returns Type::Invalid if no annotation exists or if either endpoint is a struct.
-	Type getSemaAnnotatedTargetType(const ASTNode& node) const;
+	// Returns TypeCategory::Invalid if no annotation exists or if either endpoint is a struct.
+	TypeCategory getSemaAnnotatedTargetType(const ASTNode& node) const;
 	ExprResult generateStringLiteralIr(const StringLiteralNode& stringLiteralNode);
 	GlobalStaticBindingInfo resolveGlobalOrStaticBinding(const IdentifierNode& identifier);
 	std::optional<AddressComponents> analyzeAddressExpression(
@@ -266,21 +270,21 @@ private:
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
+		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
+		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
-	static ExprResult makeMemberResult(Type type, SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
+	static ExprResult makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
 	bool setupBaseFromIdentifier(
 		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
-		Type& base_type,
+		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
@@ -289,9 +293,9 @@ private:
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
 	ExprResult generateOffsetofIr(const OffsetofExprNode& offsetofNode);
-	bool isScalarType(Type type, bool is_reference, size_t pointer_depth) const;
-	bool isArithmeticType(Type type) const;
-	bool isFundamentalType(Type type) const;
+	bool isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const;
+	bool isArithmeticType(TypeCategory type) const;
+	bool isFundamentalType(TypeCategory type) const;
 	ExprResult generateTypeTraitIr(const TypeTraitExprNode& traitNode);
 	ExprResult generateNewExpressionIr(const NewExpressionNode& newExpr);
 	ExprResult generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr);
@@ -302,27 +306,27 @@ private:
 	void markReferenceMetadata(
 		const ExprResult& expr_operands,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		bool is_rvalue_ref,
 		const char* cast_name = "cast");
 	void generateAddressOfForReference(
 		const std::variant<StringHandle, TempVar>& base,
 		TempVar result_var,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		const Token& token,
 		const char* cast_name = "cast");
 	ExprResult handleRValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
 		const char* cast_name);
 	ExprResult handleLValueReferenceCast(
 		const ExprResult& expr_operands,
-		Type target_type,
+		TypeCategory target_type,
 		int target_size,
 		TypeIndex target_type_index,
 		const Token& token,
@@ -354,7 +358,7 @@ private:
 	// or std::nullopt if no overload was found.
 	std::optional<ExprResult> generateUnaryIncDecOverloadCall(
 		OverloadableOperator op_kind,  // Increment or Decrement
-		Type operandType,
+		TypeCategory operandType,
 		const ExprResult& operandIrResult,
 		bool is_prefix
 	);
@@ -368,7 +372,7 @@ private:
 		bool operandHandledAsIdentifier,
 		const UnaryOperatorNode& unaryOperatorNode,
 		const ExprResult& operandIrResult,
-		Type operandType,
+		TypeCategory operandType,
 		TempVar result_var
 	);
 
@@ -410,7 +414,7 @@ private:
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 				value = *ull_val;
 			}
-			return makeExprResult(Type::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed
@@ -459,7 +463,7 @@ private:
 				size_t abs_offset = base_offset + member.offset;
 				const ASTNode& member_init = init_list.initializers()[i];
 				if (member_init.is<InitializerListNode>() &&
-					isIrStructType(toIrType(member.type)) &&
+					isIrStructType(toIrType(member.memberType())) &&
 					member.type_index.is_valid() &&
 					member.type_index.index() < getTypeInfoCount()) {
 					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
@@ -469,7 +473,7 @@ private:
 					break;
 				}
 
-				unsigned long long value = eval_to_value(member_init, member.type);
+				unsigned long long value = eval_to_value(member_init, member.memberType());
 				if (member.bitfield_width.has_value()) {
 					size_t width = *member.bitfield_width;
 					size_t bit_offset = member.bitfield_bit_offset;
@@ -535,7 +539,7 @@ private:
 	ExprResult materializeConstevalAggregateResult(
 		const ConstExpr::EvalResult& eval_result,
 		const TypeSpecifierNode& ret_spec,
-		Type ret_type,
+		TypeCategory ret_type,
 		SizeInBits ret_size,
 		const Token& call_token);
 
@@ -638,7 +642,7 @@ private:
 	// These can be used by both the unified handler and special-case code
 
 	// Emit ArrayStore instruction
-	void emitArrayStore(Type element_type, int element_size_bits,
+	void emitArrayStore(TypeCategory element_type, int element_size_bits,
 		std::variant<StringHandle, TempVar> array,
 		const TypedValue& index, const TypedValue& value,
 		int64_t member_offset, bool is_pointer_to_array,
@@ -655,7 +659,7 @@ private:
 		size_t bitfield_bit_offset = 0);
 
 	// Emit DereferenceStore instruction
-	void emitDereferenceStore(const TypedValue& value, Type pointee_type, [[maybe_unused]] int pointee_size_bits,
+	void emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
 	std::variant<StringHandle, TempVar> pointer,
 	const Token& token);
 
@@ -672,7 +676,7 @@ private:
 	//                  refuses to call non-const ones when set.
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
-		Type target_type,
+		TypeCategory target_type,
 		TypeIndex target_type_index,
 		bool source_is_const) const;
 
@@ -696,7 +700,7 @@ private:
 		const ExprResult& source,
 		const TypeInfo& source_type_info,
 		const StructMemberFunction& conv_op,
-		Type target_type,
+		TypeCategory target_type,
 		TypeIndex target_type_index,
 		int target_size_bits,
 		const Token& token);
@@ -704,10 +708,10 @@ private:
 	// Helper to get the size of a type in bytes
 	// Reuses the same logic as sizeof() operator
 	// Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
-	size_t getSizeInBytes(Type type, TypeIndex type_index, int size_in_bits) const;
-	int getPointerElementSize(Type type, TypeIndex type_index, int pointer_depth) const;
-	Type getRuntimeValueType(Type semantic_type, TypeIndex type_index, PointerDepth pointer_depth) const;
-	int getRuntimeValueSizeBits(Type semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
+	size_t getSizeInBytes(TypeIndex type_index, int size_in_bits) const;
+	int getPointerElementSize(TypeIndex type_index, int pointer_depth) const;
+	TypeCategory getRuntimeValueType(TypeIndex semantic_type_index, PointerDepth pointer_depth) const;
+	int getRuntimeValueSizeBits(TypeCategory semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
@@ -779,15 +783,15 @@ private:
 	}
 
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
-	TempVar emitAddressOf(Type type, int size_in_bits, IrValue source, Token token = Token());
+	TempVar emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token = Token());
 
 	/// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
-	TempVar emitDereference(Type pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
+	TempVar emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token = Token());
 
 	// ============================================================================
 	// Return IR helper
 	// ============================================================================
-	void emitReturn(IrValue return_value, Type return_type, int return_size, const Token& token);
+	void emitReturn(IrValue return_value, TypeCategory return_type, int return_size, const Token& token);
 
 	void emitVoidReturn(const Token& token) {
 		ReturnOp ret_op;
@@ -809,9 +813,15 @@ private:
 	// Current function mangled name (used for static local variable namespacing)
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
-	Type current_function_return_type_;  // Current function's return type
 	int current_function_return_size_;   // Current function's return size in bits
-	TypeIndex current_function_return_type_index_ {};  // Type index for struct/class return types
+	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
+
+	TypeCategory currentFunctionReturnType() const {
+		return current_function_return_type_index_.category();
+	}
+	TypeIndex currentFunctionReturnTypeIndex() const {
+		return current_function_return_type_index_;
+	}
 	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
 	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
@@ -822,9 +832,9 @@ private:
 	// Static local variable information
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
-		Type type;
 		SizeInBits size_in_bits;
-		TypeIndex type_index {};
+		TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
+		TypeCategory type() const { return type_index.category(); }
 	};
 
 	// Map from local static variable name to info
@@ -911,7 +921,7 @@ private:
 		StringHandle qualified_template_name;  // e.g., "Container::insert"
 		StringHandle mangled_name;  // e.g., "insert_int"
 		StringHandle struct_name;   // e.g., "Container"
-		std::vector<Type> template_args;  // Concrete types
+		std::vector<TypeCategory> template_args;  // Concrete types
 		SaveHandle body_position;  // Handle to saved position where the template body starts
 		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
 		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template

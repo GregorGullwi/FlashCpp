@@ -18,7 +18,7 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value()) return std::nullopt;
 	const auto& type_spec = *type_opt;
-	if (!is_struct_type(type_spec.type())) return std::nullopt;
+	if (!is_struct_type(type_spec.category())) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
 	if (type_idx.index() >= getTypeInfoCount()) return std::nullopt;
 	auto struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
@@ -38,7 +38,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	auto type_opt = get_expression_type(*object_expr);
 	if (!type_opt.has_value()) return nullptr;
 	const auto& type_spec = *type_opt;
-	if (!is_struct_type(type_spec.type())) return nullptr;
+	if (!is_struct_type(type_spec.category())) return nullptr;
 	TypeIndex type_idx = type_spec.type_index();
 	if (type_idx.index() >= getTypeInfoCount()) return nullptr;
 
@@ -172,7 +172,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				}
 				
 				// Create a member function call node for the operator
-				auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, operator_name_token);
+				auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 				auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 				
@@ -239,7 +239,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				} else if (known_member_func) {
 					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, member_name_token);
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
 					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 					func_ref_ptr = &func_decl_node;
@@ -319,7 +319,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 				} else if (known_member_func) {
 					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, member_name_token);
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
 					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
 					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 					func_ref_ptr = &func_decl_node;
@@ -358,7 +358,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result)
 			// Create operator() call as a member function call
 			Token operator_token(Token::Type::Identifier, "operator()"sv,
 			                     paren_token.line(), paren_token.column(), paren_token.file_index());
-			auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
+			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
 			auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
@@ -467,7 +467,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
 									if (member.getName() == StringTable::getOrInternStringHandle(member_name)) {
-										if (member.type == Type::FunctionPointer) {
+										if (member.type_index.category() == TypeCategory::FunctionPointer) {
 											is_function_pointer_call = true;
 										}
 										break;
@@ -505,7 +505,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				// Create a placeholder function declaration with the member name
 				Token member_token(Token::Type::Identifier, member_access->member_name(),
 				                   paren_token.line(), paren_token.column(), paren_token.file_index());
-				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_token);
+				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
@@ -520,7 +520,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 
 				// Create a temporary function declaration for operator()
 				// This will be resolved during code generation
-				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, operator_token);
+				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
@@ -611,7 +611,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							if (!consume(")"_tok)) {
 								return ParseResult::error("Expected ')' after qualified member function call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, qualified_member_token);
+							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, qualified_member_token, CVQualifier::None, ReferenceQualifier::None);
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
@@ -651,7 +651,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 								discard_saved_token(saved_pos);
 								return ParseResult::error("Expected ')' after qualified operator member call", current_token_);
 							}
-							auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, op_token);
+							auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
@@ -877,7 +877,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							final_identifier);
 					}
 					// Namespace exists — create forward declaration for external functions (e.g., std::print)
-					auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, final_identifier);
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, final_identifier, CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, final_identifier);
 					decl_ptr = &forward_decl.as<DeclarationNode>();
 				}
@@ -970,11 +970,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
 					const TypeInfo* type_info = type_it->second;
-					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->type_, 
+					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->typeEnum(), 
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->type_ == Type::Struct && type_info->type_index_.index() < getTypeInfoCount()) {
+					if (type_info->isStruct() && type_info->type_index_.index() < getTypeInfoCount()) {
 						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type.getStructInfo();
 						if (struct_info) {
@@ -1218,7 +1218,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 			
 			// Create a member function call node for the operator
 			// The operator is treated as a regular member function with a special name
-			auto type_spec = emplace_node<TypeSpecifierNode>(Type::Auto, TypeIndex{}, 0, member_operator_name_token);
+			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 			
@@ -1282,7 +1282,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					if (symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-							if (is_struct_type(type_spec.type())) {
+							if (is_struct_type(type_spec.category())) {
 								TypeIndex type_idx = type_spec.type_index();
 								if (type_idx.index() < getTypeInfoCount()) {
 									object_struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
@@ -1409,7 +1409,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 			} else {
 				// Create a temporary function declaration node for the member function
-				auto temp_type = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, member_name_token);
+				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 				func_ref_ptr = &func_ref;

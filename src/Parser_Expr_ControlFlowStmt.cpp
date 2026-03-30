@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -833,7 +833,7 @@ ParseResult Parser::parse_lambda_expression() {
         // Determine the type for the capture variable
         // For init-captures, we need to get the type from the initializer
         // For regular captures, we look up the original variable
-        TypeSpecifierNode capture_type_node(Type::Auto, TypeQualifier::None, 0, id_token);
+        TypeSpecifierNode capture_type_node(TypeCategory::Auto, TypeQualifier::None, 0, id_token, CVQualifier::None);
         
         if (capture.has_initializer()) {
             // Init-capture: [x = expr]
@@ -929,7 +929,7 @@ ParseResult Parser::parse_lambda_expression() {
                         // If we couldn't deduce (possibly due to circular dependency guard),
                         // default to int as a safe fallback
                         if (!deduced_type.has_value()) {
-                            deduced_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                            deduced_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                             all_return_types.emplace_back(*deduced_type, lambda_token);
                             FLASH_LOG(Parser, Debug, "Lambda return type defaulted to int (type resolution failed)");
                         }
@@ -996,7 +996,7 @@ ParseResult Parser::parse_lambda_expression() {
             FLASH_LOG(Parser, Debug, "Lambda auto return type deduced: type=", (int)deduced_type->type());
         } else {
             // No return statement found or return with no value - lambda returns void
-            return_type = emplace_node<TypeSpecifierNode>(Type::Void, TypeQualifier::None, 0);
+            return_type = emplace_node<TypeSpecifierNode>(TypeCategory::Void, TypeQualifier::None, 0, Token(), CVQualifier::None);
             FLASH_LOG(Parser, Debug, "Lambda has no return or returns void");
         }
     }
@@ -1125,7 +1125,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 				TypeInfo::TemplateArgInfo info;
 				if (subst.is_value_param) {
-					info.type_index = TypeIndex{0, typeToCategory(subst.value_type)};
+					info.type_index = TypeIndex{0, subst.value_type};
 					info.value = subst.value;
 					info.is_value = true;
 				} else if (subst.is_type_param) {
@@ -1178,15 +1178,14 @@ ParseResult Parser::parse_lambda_expression() {
             if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
                 // [this] capture: store a pointer to the enclosing object (8 bytes on x64)
                 // We'll store it with a special member name so it can be accessed later
-                TypeSpecifierNode ptr_type(Type::Void, TypeQualifier::None, 64);
+                TypeSpecifierNode ptr_type(TypeCategory::Void, TypeQualifier::None, 64, Token{}, CVQualifier::None);
                 ptr_type.add_pointer_level();  // Make it a void*
                 
                 // Phase 7B: Intern special member name and use StringHandle overload
                 StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
                 closure_struct_info->addMember(
                     this_member_handle,  // Special member name for captured this
-                    Type::Void,         // Base type (will be treated as pointer)
-                    TypeIndex{},        // No type index
+                    nativeTypeIndex(TypeCategory::Void),  // Void pointer type
                     8,                  // Pointer size on x64
                     8,                  // Alignment
                     AccessSpecifier::Public,
@@ -1212,7 +1211,6 @@ ParseResult Parser::parse_lambda_expression() {
                             StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
                             closure_struct_info->addMember(
                                 copy_this_member_handle,            // Special member name for copied this
-                                Type::Struct,                       // Struct type
                                 enclosing_type->type_index_,        // Type index of enclosing struct
                                 enclosing_struct->total_size,       // Size of the entire struct
                                 enclosing_struct->alignment,        // Alignment from enclosing struct
@@ -1228,7 +1226,7 @@ ParseResult Parser::parse_lambda_expression() {
             }
 
             auto var_name = StringTable::getOrInternStringHandle(capture.identifier_name());
-            TypeSpecifierNode var_type(Type::Int, TypeQualifier::None, 32);  // Default type
+            TypeSpecifierNode var_type(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);  // Default type
             
             if (capture.has_initializer()) {
                 // Init-capture: type is inferred from the initializer
@@ -1237,7 +1235,7 @@ ParseResult Parser::parse_lambda_expression() {
                 
                 // Try to infer type from the initializer expression
                 if (init_expr.is<NumericLiteralNode>()) {
-                    var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                    var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                 } else if (init_expr.is<IdentifierNode>()) {
                     // Look up the identifier's type
                     auto init_id = init_expr.as<IdentifierNode>().nameHandle();
@@ -1253,7 +1251,7 @@ ParseResult Parser::parse_lambda_expression() {
                     const auto& expr_node = init_expr.as<ExpressionNode>();
                     if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
                         // For binary operations, assume int type for arithmetic
-                        var_type = TypeSpecifierNode(Type::Int, TypeQualifier::None, 32);
+                        var_type = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None);
                     } else if (std::holds_alternative<IdentifierNode>(expr_node)) {
                         auto init_id = std::get<IdentifierNode>(expr_node).nameHandle();
                         auto init_symbol = lookup_symbol(init_id);
@@ -1285,7 +1283,7 @@ ParseResult Parser::parse_lambda_expression() {
             // Determine size and alignment based on capture kind
             size_t member_size;
             size_t member_alignment;
-            Type member_type;
+            TypeCategory member_type_cat;
             TypeIndex type_index {};
 
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
@@ -1293,18 +1291,20 @@ ParseResult Parser::parse_lambda_expression() {
 				// We store the base type (e.g., Int) but the member will be accessed as a pointer
 				member_size = 8;
 				member_alignment = 8;
-				member_type = var_type.type();
-				if (var_type.category() == TypeCategory::Struct) {
-					type_index = var_type.type_index();
-				}
 			} else {
                 // By-value capture: store the actual value
                 member_size = var_type.size_in_bits() / 8;
                 member_alignment = member_size;  // Simple alignment = size
-                member_type = var_type.type();
-                if (var_type.category() == TypeCategory::Struct) {
-                    type_index = var_type.type_index();
-                }
+            }
+
+            // Resolve type category and type index from the captured variable's type.
+            // Primitive types (int, float, etc.) have TypeIndex with category Invalid
+            // since they don't need a gTypeInfo identity; fix up the category so that
+            // the StructMember carries a meaningful classification.
+            member_type_cat = var_type.type();
+            type_index = var_type.type_index();
+            if (type_index.category() == TypeCategory::Invalid) {
+                type_index = TypeIndex{type_index.index(), member_type_cat};
             }
 
 			size_t referenced_size_bits = member_size * 8;
@@ -1328,7 +1328,6 @@ ParseResult Parser::parse_lambda_expression() {
 
 			closure_struct_info->addMember(
 				var_name,
-				member_type,
 				type_index,
 				member_size,
 				member_alignment,
@@ -1348,7 +1347,7 @@ ParseResult Parser::parse_lambda_expression() {
     // Generate operator() member function for the lambda
     // This allows lambda() calls to work
     // Determine return type
-    TypeSpecifierNode return_type_spec(Type::Void, TypeQualifier::None, 0);
+    TypeSpecifierNode return_type_spec(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
     if (return_type.has_value()) {
         return_type_spec = return_type->as<TypeSpecifierNode>();
     }

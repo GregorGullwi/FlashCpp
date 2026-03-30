@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 
 #include "AstNodeTypes.h"
@@ -118,33 +118,37 @@ enum class MemberPointerKind : uint8_t {
 // Provides a lightweight representation that can be reused across different contexts
 // This is distinct from TypedValue (IRTypes.h) which is for IR-level runtime values
 struct TemplateArgumentValue {
-	Type type = Type::Invalid;
-	TypeIndex type_index {};
+	TypeIndex type_index {};   // TypeCategory is embedded in the index (replaces raw Type field)
 	int64_t value = 0;
-	
+
+	// Returns the TypeCategory derived from the embedded TypeCategory.
+	TypeCategory typeEnum() const { return type_index.category(); }
+
 	// Factory methods
-	static TemplateArgumentValue makeType(Type t, TypeIndex idx = TypeIndex{}) {
+	static TemplateArgumentValue makeType(TypeIndex idx) {
 		TemplateArgumentValue v;
-		v.type = t;
 		v.type_index = idx;
 		return v;
 	}
-	
-	static TemplateArgumentValue makeValue(int64_t val, Type value_type = Type::Int) {
+
+	static TemplateArgumentValue makeValue(int64_t val, TypeCategory value_type) {
 		TemplateArgumentValue v;
-		v.type = value_type;
+		v.type_index = TypeIndex::fromTypeAndIndex(value_type, TypeIndex{});
 		v.value = val;
 		return v;
 	}
-	
+
 	bool operator==(const TemplateArgumentValue& other) const {
-		return type == other.type && 
-		       type_index == other.type_index && 
+		// TypeIndex::operator== compares only the index_ slot, not the embedded
+		// category.  We must check category explicitly to distinguish e.g. Type::Int
+		// from Type::Float when both are stored with index_==0 (no gTypeInfo entry).
+		return type_index.category() == other.type_index.category() &&
+		       type_index == other.type_index &&
 		       value == other.value;
 	}
-	
+
 	size_t hash() const {
-		size_t h = std::hash<int>{}(static_cast<int>(type));
+		size_t h = std::hash<int>{}(static_cast<int>(type_index.category()));
 		h ^= std::hash<TypeIndex>{}(type_index) << 1;
 		h ^= std::hash<int64_t>{}(value) << 2;
 		return h;
@@ -182,10 +186,10 @@ struct TemplateTypeArg {
 	// --- Accessors ---
 	// Returns the TypeCategory embedded in type_index.
 	TypeCategory category() const noexcept { return type_index.category(); }
-	// Returns the legacy Type enum value for APIs that still require it.
-	Type typeEnum() const noexcept { return categoryToType(type_index.category()); }
+	// Returns the TypeCategory — replaces legacy Type accessor.
+	TypeCategory typeEnum() const noexcept { return type_index.category(); }
 	// Set the type (updates type_index category without changing the index slot).
-	void setType(Type t) noexcept { type_index.setCategory(typeToCategory(t)); }
+	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
@@ -193,14 +197,13 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
-	// Helper: delegates to TypeIndex::fromTypeAndIndex — builds a TypeIndex with the
-	// correct category for a given Type+index pair.  Kept as a convenience wrapper.
-	static TypeIndex makeTypeIndex(Type t, TypeIndex idx) noexcept {
-		return TypeIndex::fromTypeAndIndex(t, idx);
+	// Builds a TypeIndex with category directly.
+	static TypeIndex makeTypeIndex(TypeIndex idx) noexcept {
+		return idx;
 	}
 
 	TemplateTypeArg()
-		: type_index(TypeIndex{0, TypeCategory::Invalid})
+		: type_index(TypeIndex{})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -217,7 +220,7 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 
 	explicit TemplateTypeArg(const TypeSpecifierNode& type_spec)
-		: type_index(makeTypeIndex(type_spec.type(), type_spec.type_index()))
+		: type_index(makeTypeIndex(type_spec.type_index().withCategory(type_spec.type())))
 		, ref_qualifier(type_spec.reference_qualifier())
 		, pointer_depth(type_spec.pointer_depth())
 		, pointer_cv_qualifiers()
@@ -238,7 +241,7 @@ struct TemplateTypeArg {
 
 	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
-		: type_index(TypeIndex{0, TypeCategory::Int})
+		: type_index(nativeTypeIndex(TypeCategory::Int))
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -254,8 +257,8 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Constructor for non-type template parameters with explicit type
-	TemplateTypeArg(int64_t val, Type type)
-		: type_index(TypeIndex{0, typeToCategory(type)})
+	TemplateTypeArg(int64_t val, TypeCategory category)
+		: type_index(TypeIndex{0, category})
 		, ref_qualifier(ReferenceQualifier::None)
 		, pointer_depth(0)
 		, pointer_cv_qualifiers()
@@ -271,9 +274,9 @@ struct TemplateTypeArg {
 		, template_name_handle() {}
 	
 	// Factory methods
-	static TemplateTypeArg makeType(Type t, TypeIndex idx = TypeIndex{}) {
+	static TemplateTypeArg makeType(TypeIndex idx) {
 		TemplateTypeArg arg;
-		arg.type_index = makeTypeIndex(t, idx);
+		arg.type_index = makeTypeIndex(idx);
 		return arg;
 	}
 	
@@ -281,8 +284,8 @@ struct TemplateTypeArg {
 		return TemplateTypeArg(ts);  // delegate to existing constructor
 	}
 	
-	static TemplateTypeArg makeValue(int64_t v, Type type = Type::Int) {
-		return TemplateTypeArg(v, type);
+	static TemplateTypeArg makeValue(int64_t v, TypeCategory cat) {
+		return TemplateTypeArg(v, cat);
 	}
 	
 	static TemplateTypeArg makeTemplate(StringHandle name) {
@@ -576,7 +579,7 @@ namespace FlashCpp {
 inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	TypeIndexArg result;
 	result.type_index = arg.type_index;
-	result.base_type = arg.typeEnum();  // TypeIndexArg still uses legacy Type
+	result.base_type = arg.typeEnum();  // TypeIndexArg now uses TypeCategory directly
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
@@ -632,4 +635,3 @@ inline std::string_view generateInstantiatedNameFromArgs(
 }
 
 } // namespace FlashCpp
-

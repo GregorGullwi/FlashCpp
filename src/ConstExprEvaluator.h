@@ -479,7 +479,7 @@ public:
 			EvaluationContext& context,
 			const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 		static EvalResult materialize_array_value(
-			Type element_type,
+			TypeCategory element_type,
 			TypeIndex element_type_index,
 			const InitializerListNode& init_list,
 			EvaluationContext& context,
@@ -538,8 +538,8 @@ public:
 			const IdentifierNode& identifier,
 			size_t index,
 			EvaluationContext& context);
-		static bool isArithmeticType(Type type);
-		static bool isFundamentalType(Type type);
+		static bool isArithmeticType(TypeCategory type);
+		static bool isFundamentalType(TypeCategory type);
 
 	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {

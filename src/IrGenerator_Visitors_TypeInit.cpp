@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "IrGenerator.h"
 
 	AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
@@ -584,7 +584,7 @@
 					emitted_static_members_.insert(name_handle);
 
 					GlobalVariableDeclOp op;
-					op.type = static_member.type;
+					op.type_index = static_member.type_index;
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (!op.size_in_bits.is_set() && static_member.type_index.is_valid() && static_member.type_index.index() < getTypeInfoCount()) {
@@ -608,15 +608,15 @@
 							zero_initialize();
 						} else if (op.is_initialized) {
 							if (static_member.initializer->is<InitializerListNode>()) {
-								if (static_member.type == Type::Struct &&
+								if (static_member.type_index.category() == TypeCategory::Struct &&
 									static_member.type_index.is_valid() &&
 									static_member.type_index.index() < getTypeInfoCount()) {
 									if (const StructTypeInfo* static_struct_info = getTypeInfo(static_member.type_index).getStructInfo()) {
 										op.init_data.resize(static_struct_info->total_size, 0);
-										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, Type target_type) -> unsigned long long {
+										auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
 											unsigned long long leaf_value = 0;
 											if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
-												if (target_type == Type::Float) {
+												if (target_type == TypeCategory::Float) {
 													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 													ctx.storage_duration = ConstExpr::StorageDuration::Static;
 													ctx.parser = parser_;
@@ -627,7 +627,7 @@
 														std::memcpy(&f_bits, &f, sizeof(float));
 														return f_bits;
 													}
-												} else if (target_type == Type::Double || target_type == Type::LongDouble) {
+												} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
 													ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 													ctx.storage_duration = ConstExpr::StorageDuration::Static;
 													ctx.parser = parser_;
@@ -1038,7 +1038,7 @@
 							"' for ", type_name, " from base ", base_name_str);
 
 							GlobalVariableDeclOp alias_op;
-							alias_op.type = static_member_ptr->type;
+							alias_op.type_index = static_member_ptr->type_index;
 							alias_op.size_in_bits = SizeInBits{static_cast<int>(static_member_ptr->size * 8)};
 							alias_op.var_name = derived_name_handle;
 							alias_op.is_initialized = true;
@@ -1143,7 +1143,7 @@
 				FunctionDeclOp ctor_decl_op;
 				ctor_decl_op.function_name = type_info->name();
 				ctor_decl_op.struct_name = type_info->name();
-				ctor_decl_op.return_type = Type::Void;
+				ctor_decl_op.return_type_index = nativeTypeIndex(TypeCategory::Void);
 				ctor_decl_op.return_size_in_bits = SizeInBits{0};
 				ctor_decl_op.return_pointer_depth = PointerDepth{};
 				ctor_decl_op.linkage = Linkage::CPlusPlus;
@@ -1171,7 +1171,7 @@
 					if (last_colon != std::string_view::npos) {
 						func_name = class_name.substr(last_colon + 2);
 					}
-					TypeSpecifierNode void_return(Type::Void, TypeQualifier::None, 0);
+					TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 					ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
 						func_name,
 						void_return,
@@ -1241,7 +1241,7 @@
 						for (const auto& member : struct_info->members) {
 							if (member.offset == offset && member.bitfield_width.has_value()) {
 								MemberStoreOp combined_store;
-								combined_store.value.type = member.type;
+								combined_store.value.setType(member.type_index.category());
 								combined_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								combined_store.value.value = combined_bitfield_values[offset];
 								combined_store.object = StringTable::getOrInternStringHandle("this");
@@ -1282,7 +1282,7 @@
 							}
 
 							MemberStoreOp member_store;
-							member_store.value.type = member.type;
+							member_store.value.setType(member.type_index.category());
 							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 							member_store.value.value = member_value;
 							member_store.object = StringTable::getOrInternStringHandle("this");
@@ -1315,7 +1315,7 @@
 // Important: only resolves when the unfinalized type's name matches the base name of the
 // enclosing struct — avoids incorrectly resolving outer class references in nested classes.
 void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex enclosing_type_index) {
-	if (type.type() == Type::Struct && type.type_index().is_valid() && type.type_index().index() < getTypeInfoCount()) {
+	if (type.category() == TypeCategory::Struct && type.type_index().is_valid() && type.type_index().index() < getTypeInfoCount()) {
 		auto& ti = getTypeInfo(type.type_index());
 		if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
 			if (enclosing_type_index.index() < getTypeInfoCount()) {
@@ -1476,7 +1476,7 @@ void AstToIr::emitRecursiveZeroFill(
 	const Token& token)
 {
 	for (const StructMember& sub_member : struct_info.members) {
-		bool is_nested_struct = isIrStructType(toIrType(sub_member.type))
+		bool is_nested_struct = isIrStructType(toIrType(sub_member.memberType()))
 			&& sub_member.type_index.index() < getTypeInfoCount()
 			&& getTypeInfo(sub_member.type_index).struct_info_
 			&& (sub_member.size * 8) > 64;
@@ -1489,7 +1489,7 @@ void AstToIr::emitRecursiveZeroFill(
 				token);
 		} else {
 			MemberStoreOp member_store;
-			member_store.value.type = sub_member.type;
+			member_store.value.setType(sub_member.type_index.category());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(sub_member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1589,10 +1589,10 @@ const Token& token)
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-			member.type,
+			member.memberType(),
 			element_size_bits,
 			base_object,
-			makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 			toTypedValue(init_operands),
 			base_offset + static_cast<int>(member.offset),
 			false,
@@ -1603,7 +1603,7 @@ const Token& token)
 	// Zero-fill trailing uninitialized elements.
 	// For struct-typed elements larger than 64 bits, a single ArrayStore with 0ULL
 	// would only zero the first 8 bytes. Instead, recursively zero each sub-member.
-	const bool is_struct_element = isIrStructType(toIrType(member.type))
+	const bool is_struct_element = isIrStructType(toIrType(member.memberType()))
 		&& member.type_index.index() < getTypeInfoCount()
 		&& getTypeInfo(member.type_index).struct_info_
 		&& element_size_bits > 64;
@@ -1618,12 +1618,12 @@ const Token& token)
 			emitRecursiveZeroFill(*getTypeInfo(member.type_index).struct_info_,
 				base_object, element_byte_offset, token);
 		} else {
-			auto zero_value = makeTypedValue(member.type, SizeInBits{element_size_bits}, 0ULL);
+			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-				member.type,
+				member.memberType(),
 				element_size_bits,
 				base_object,
-				makeTypedValue(Type::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
 				zero_value,
 				base_offset + static_cast<int>(member.offset),
 				false,
@@ -1665,7 +1665,7 @@ const Token& token)
 		if (!member_values.count(member_name)) {
 			// Zero-initialize unspecified members
 			MemberStoreOp member_store;
-			member_store.value.type = member.type;
+			member_store.value.setType(member.type_index.category());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = 0ULL;
 			member_store.object = base_object;
@@ -1719,7 +1719,7 @@ const Token& token)
 					}
 
 				MemberStoreOp member_store;
-				member_store.value.type = member.type;
+				member_store.value.setType(member.type_index.category());
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = member_value;
 				member_store.object = base_object;
@@ -1731,7 +1731,7 @@ const Token& token)
 			} else {
 				// Zero-initialize if we can't extract a value
 				MemberStoreOp member_store;
-				member_store.value.type = member.type;
+				member_store.value.setType(member.type_index.category());
 				member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 				member_store.value.value = 0ULL;
 				member_store.object = base_object;
@@ -1756,7 +1756,7 @@ const Token& token)
 				}
 
 			MemberStoreOp member_store;
-			member_store.value.type = member.type;
+			member_store.value.setType(member.type_index.category());
 			member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 			member_store.value.value = member_value;
 			member_store.object = base_object;
@@ -1795,7 +1795,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Add return type
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	func_decl_op.return_type = return_type.type();
+	func_decl_op.return_type_index = return_type.type_index();
 	func_decl_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(return_type.pointer_depth())};
 
@@ -1822,14 +1822,14 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			FunctionParam func_param;
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
-				Type concrete_type = inst_info.template_args[i];
-				func_param.type = concrete_type;
-				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_type)};
+				TypeCategory concrete_cat = inst_info.template_args[i];
+				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_cat, {});
+				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_cat)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {
 				// Use original parameter type
 				const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-				func_param.type = param_type.type();
+				func_param.type_index = param_type.type_index();
 				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
 				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			}
@@ -1925,10 +1925,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	if (struct_type_info) {
 		// Create a 'this' pointer type (pointer to the struct)
 		auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			Type::UserDefined,
-			struct_type_info->type_index_,
+			struct_type_info->type_index_.withCategory(TypeCategory::Struct),
 			64,  // Pointer size in bits
-			template_decl.identifier_token()
+			template_decl.identifier_token(),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 
 		// Set pointer depth to 1 (this is a pointer)
@@ -1953,13 +1954,13 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 			// Create declaration with concrete type
 			if (i < inst_info.template_args.size()) {
-				Type concrete_type = inst_info.template_args[i];
+				TypeCategory concrete_cat = inst_info.template_args[i];
 				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-					concrete_type,
+					concrete_cat,
 					TypeQualifier::None,
-					get_type_size_bits(concrete_type),
+					get_type_size_bits(concrete_cat),
 					param_decl.identifier_token()
-				);
+				, CVQualifier::None);
 				auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());
 				symbol_table.insert(param_decl.identifier_token().value(), concrete_param_decl);
 			} else {
@@ -1994,7 +1995,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Add implicit return for void functions
 	const TypeSpecifierNode& return_type = template_decl.type_node().as<TypeSpecifierNode>();
-	if (return_type.type() == Type::Void) {
+	if (return_type.category() == TypeCategory::Void) {
 		ReturnOp ret_op;  // No return value for void
 		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), mangled_token));
 	}

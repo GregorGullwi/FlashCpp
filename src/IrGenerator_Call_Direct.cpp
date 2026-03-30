@@ -46,14 +46,14 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 }
 
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
-static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, Type member_type) {
-	if (member_type == Type::Float) {
+static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, TypeCategory member_type) {
+	if (member_type == TypeCategory::Float) {
 		float fval = static_cast<float>(r.as_double());
 		uint32_t fbits = 0;
 		std::memcpy(&fbits, &fval, sizeof(float));
 		return static_cast<unsigned long long>(fbits);
 	}
-	if (member_type == Type::Double || member_type == Type::LongDouble) {
+	if (member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
 		double dval = r.as_double();
 		unsigned long long dbits = 0;
 		std::memcpy(&dbits, &dval, sizeof(double));
@@ -72,7 +72,7 @@ static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, 
 ExprResult AstToIr::materializeConstevalAggregateResult(
 	const ConstExpr::EvalResult& eval_result,
 	const TypeSpecifierNode& ret_spec,
-	Type ret_type,
+	TypeCategory ret_type,
 	SizeInBits ret_size,
 	const Token& call_token) {
 	if (eval_result.object_member_bindings.empty()) return {};
@@ -86,7 +86,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
 
 	VariableDeclOp vdecl;
-	vdecl.type = ret_type;
+	vdecl.type_index = TypeIndex::fromTypeAndIndex(ret_type, ret_spec.type_index());
 	vdecl.size_in_bits = ret_size;
 	vdecl.var_name = struct_tmp_handle;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));
@@ -96,9 +96,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		auto it = eval_result.object_member_bindings.find(member_sv);
 		if (it == eval_result.object_member_bindings.end()) continue;
 		MemberStoreOp ms;
-		ms.value.type = member.type;
+		ms.value.setType(member.type_index.category());
 		ms.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.type)};
+		ms.value.value = IrValue{evalResultMemberToRaw(it->second, member.memberType())};
 		ms.object = struct_tmp_handle;
 		ms.member_name = member.getName();
 		ms.offset = static_cast<int>(member.offset);
@@ -113,7 +113,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		irOperands.reserve(2 + functionCallNode.arguments().size() * 4);  // ret_var + name + ~4 operands per arg
 		auto appendArgumentIrResult = [&](const ExprResult& result) {
 			irOperands.reserve(irOperands.size() + 3);
-			irOperands.emplace_back(result.type);
+			irOperands.emplace_back(result.typeEnum());
 			irOperands.emplace_back(result.size_in_bits.value);
 			irOperands.emplace_back(result.value);
 		};
@@ -171,7 +171,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 									// Get type info from the identifier
 									StringHandle id_handle = StringTable::getOrInternStringHandle(ident.name());
-									Type operand_type = Type::Int;  // Default
+									TypeCategory operand_type = TypeCategory::Int;  // Default
 									int operand_size = 32;
 									if (const DeclarationNode* decl = lookupDeclaration(id_handle)) {
 										const TypeSpecifierNode& type = decl->type_node().as<TypeSpecifierNode>();
@@ -180,7 +180,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 										if (operand_size == 0) operand_size = get_type_size_bits(operand_type);
 									}
 
-									op.operand.type = operand_type;
+									op.operand.setType(operand_type);
 									op.operand.size_in_bits = SizeInBits{static_cast<int>(operand_size)};
 									op.operand.pointer_depth = PointerDepth{};
 									op.operand.value = id_handle;
@@ -242,7 +242,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				functionCallNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
 					// Extract type, size, and value from the expression result
-					Type arg_type = argumentIrOperands.type;
+					TypeCategory arg_type = argumentIrOperands.typeEnum();
 					int arg_size = argumentIrOperands.size_in_bits.value;
 					IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 						using T = std::decay_t<decltype(arg)>;
@@ -267,14 +267,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.return_type, SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
+					return makeExprResult(sig.returnType(), SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
-			if (func_type.type() == Type::Struct &&
+			if (func_type.category() == TypeCategory::Struct &&
 				func_type.type_index().is_valid() &&
 				func_type.type_index().index() < getTypeInfoCount()) {
 				// Check for a sema-pre-resolved operator() first.
@@ -330,12 +330,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 			// decltype(auto) is not a valid parameter type; reject it before
 			// the recursive-lambda auto&& callable fallback can mishandle it.
-			if (func_type.type() == Type::DeclTypeAuto) {
+			if (func_type.category() == TypeCategory::DeclTypeAuto) {
 				throw CompileError("'decltype(auto)' is not allowed as a parameter type");
 			}
 
 			bool is_recursive_lambda_self = false;
-			if (current_lambda_context_.isActive() && func_type.type() == Type::Struct &&
+			if (current_lambda_context_.isActive() && func_type.category() == TypeCategory::Struct &&
 				func_type.is_rvalue_reference()) {
 				auto closure_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (closure_type_it != getTypesByNameMap().end() &&
@@ -368,12 +368,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// Build the call operands
 					CallOp call_op;
 					call_op.result = ret_var;
-					call_op.return_type = Type::Int;  // Default, will be refined
+					call_op.return_type_index = TypeIndex::fromTypeAndIndex(TypeCategory::Int, {});  // Default, will be refined
 					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
 
 					// Add the object (self) as the first argument (this pointer)
-					call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+					call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 
 					// Generate IR for the remaining arguments and collect types for mangling
 					std::vector<TypeSpecifierNode> arg_types;
@@ -399,16 +399,16 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						if (is_self_arg) {
 							// For the self argument in recursive lambda calls, pass the reference directly
 							// Don't call visitExpressionNode which would dereference it
-							call_op.args.push_back(makeTypedValue(Type::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
+							call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
 
 							// Type for mangling is rvalue reference to closure type
-							TypeSpecifierNode self_type(Type::Struct, closure_type_index, 8, Token());
+							TypeSpecifierNode self_type(closure_type_index.withCategory(TypeCategory::Struct), 8, Token(), CVQualifier::None, ReferenceQualifier::None);
 							self_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 							arg_types.push_back(self_type);
 						} else {
 							// Normal argument - visit the expression
 							ExprResult argumentIrOperands = visitExpressionNode(argument.as<ExpressionNode>());
-							Type arg_type = argumentIrOperands.type;
+							TypeCategory arg_type = argumentIrOperands.typeEnum();
 							int arg_size = argumentIrOperands.size_in_bits.value;
 							IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
 								using T = std::decay_t<decltype(arg)>;
@@ -422,13 +422,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							call_op.args.push_back(makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, arg_value));
 
 							// Type for mangling
-							TypeSpecifierNode type_node(arg_type, TypeIndex{}, arg_size, Token());
+							TypeSpecifierNode type_node(TypeIndex{}.withCategory(arg_type), arg_size, Token(), CVQualifier::None, ReferenceQualifier::None);
 							arg_types.push_back(type_node);
 						}
 					});
 
 					// Generate mangled name for operator() call
-					TypeSpecifierNode return_type_node(Type::Int, TypeIndex{}, 32, Token());
+					TypeSpecifierNode return_type_node(TypeIndex{}.withCategory(TypeCategory::Int), 32, Token(), CVQualifier::None, ReferenceQualifier::None);
 					std::string_view mangled_name = generateMangledNameForCall(
 						"operator()",
 						return_type_node,
@@ -442,7 +442,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(Type::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
@@ -968,17 +968,17 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Materialize the constant result into an ExprResult without emitting a call instruction.
 			const TypeSpecifierNode& ret_spec =
 				matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
-			const Type ret_type = ret_spec.type();
+			const TypeCategory ret_type = ret_spec.type();
 			const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 			const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
 
 			// Float / double
-			if (ret_type == Type::Float) {
+			if (ret_type == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
 				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			if (ret_type == Type::Double || ret_type == Type::LongDouble) {
+			if (ret_type == TypeCategory::Double || ret_type == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
 				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
@@ -988,7 +988,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (!eval_result.object_member_bindings.empty()) {
 				auto agg = materializeConstevalAggregateResult(
 					eval_result, ret_spec, ret_type, ret_size, functionCallNode.called_from());
-				if (agg.type != Type::Void) return agg;
+				if (agg.category() != TypeCategory::Void) return agg;
 			}
 
 			// Scalar integer / bool / enum
@@ -1132,8 +1132,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			// Check if we need to call a conversion operator for this argument
 			// This handles cases like: func(myStruct) where func expects int and myStruct has operator int()
 			if (param_type && !materialized_selected_ctor) {
-				Type arg_type = argumentIrOperands.type;
-				Type param_base_type = param_type->type();
+				TypeCategory arg_type = argumentIrOperands.typeEnum();
+				TypeCategory param_base_type = param_type->type();
 
 				TypeIndex arg_type_index = argumentIrOperands.type_index;
 
@@ -1145,10 +1145,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					if (slot.has_value() && slot->has_cast()) {
 						const ImplicitCastInfo& cast_info =
 							sema_->castInfoTable()[slot->cast_info_index.value - 1];
-						Type from_type = sema_->typeContext().get(cast_info.source_type_id).base_type;
-						const Type to_type   = sema_->typeContext().get(cast_info.target_type_id).base_type;
+						TypeCategory from_type = sema_->typeContext().get(cast_info.source_type_id).category();
+						const TypeCategory to_type   = sema_->typeContext().get(cast_info.target_type_id).category();
 						if (cast_info.cast_kind == StandardConversionKind::UserDefined &&
-							from_type == Type::Struct) {
+							from_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
@@ -1165,19 +1165,19 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 											param_base_type, param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
-										arg_type = argumentIrOperands.type;
+										arg_type = argumentIrOperands.typeEnum();
 										arg_type_index = argumentIrOperands.type_index;
 										sema_applied_arg_conversion = true;
 									}
 								}
 							}
-						} else if (from_type != Type::Struct && to_type != Type::Struct) {
+						} else if (!is_struct_type(from_type) && !is_struct_type(to_type)) {
 							// Sema may annotate as Type::Enum while codegen resolves enum
 							// constants to their underlying type; use actual runtime type.
-							if (from_type == Type::Enum && from_type != argumentIrOperands.type)
-								from_type = argumentIrOperands.type;
+							if (from_type == TypeCategory::Enum && from_type != argumentIrOperands.typeEnum())
+								from_type = argumentIrOperands.typeEnum();
 							argumentIrOperands = generateTypeConversion(argumentIrOperands, from_type, to_type, functionCallNode.called_from());
-							arg_type = argumentIrOperands.type;
+							arg_type = argumentIrOperands.typeEnum();
 							arg_type_index = argumentIrOperands.type_index;
 							sema_applied_arg_conversion = true;
 						}
@@ -1204,14 +1204,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								+ std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 						}
 						argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());
-						arg_type = argumentIrOperands.type;
+						arg_type = argumentIrOperands.typeEnum();
 						arg_type_index = argumentIrOperands.type_index;
 					}
 				}
 
 				// Check if argument type doesn't match parameter type and parameter expects struct
 				// This handles implicit conversions via converting constructors
-				if (arg_type != param_base_type && param_base_type == Type::Struct && param_type->pointer_depth() == 0) {
+				if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
 					if (param_type_index.is_valid() && param_type_index.index() < getTypeInfoCount()) {
@@ -1283,7 +1283,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				}
 
 				// Check if argument is struct type and parameter expects different type
-				if (arg_type == Type::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
+				if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
 					if (arg_type_index.is_valid() && arg_type_index.index() < getTypeInfoCount()) {
 						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
 						const int param_size = static_cast<int>(param_type->size_in_bits());
@@ -1340,7 +1340,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// For arrays, we need to pass the address of the first element
 					// Create a temporary for the address
 					// Generate AddressOf IR instruction to get the address of the array
-					TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+					TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 					// Add the pointer (address) to the function call operands
 					// For now, we use the element type with 64-bit size to indicate it's a pointer
@@ -1358,7 +1358,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						irOperands.emplace_back(StringTable::getOrInternStringHandle(identifier.name()));
 					} else {
 						// Argument is a value - take its address
-						TempVar addr_var = emitAddressOf(type_node.type(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
+						TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 						// Pass the address
 						irOperands.emplace_back(type_node.type());
@@ -1367,7 +1367,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					}
 				} else if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 					// Argument is a reference but parameter expects a value - dereference
-					TempVar deref_var = emitDereference(type_node.type(), 64, 1,
+					TempVar deref_var = emitDereference(type_node.category(), 64, 1,
 						StringTable::getOrInternStringHandle(identifier.name()));
 
 					// Pass the dereferenced value
@@ -1395,7 +1395,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
-						Type literal_type = argumentIrOperands.type;
+						TypeCategory literal_type = argumentIrOperands.typeEnum();
 						int literal_size = argumentIrOperands.size_in_bits.value;
 
 						// Create a temporary variable to hold the literal value
@@ -1429,7 +1429,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					} else {
 						// Not a literal (expression result in a TempVar) - check if it needs address taken
 						if (std::holds_alternative<TempVar>(argumentIrOperands.value)) {
-							Type expr_type = argumentIrOperands.type;
+							TypeCategory expr_type = argumentIrOperands.typeEnum();
 							int expr_size = argumentIrOperands.size_in_bits.value;
 							TempVar expr_var = std::get<TempVar>(argumentIrOperands.value);
 
@@ -1451,7 +1451,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							}
 
 							// Fallback heuristic: 64-bit struct type likely holds an address
-							if (!is_already_address && expr_size == 64 && expr_type == Type::Struct) {
+							if (!is_already_address && expr_size == 64 && expr_type == TypeCategory::Struct) {
 								is_already_address = true;
 							}
 
@@ -1493,7 +1493,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		const TypeSpecifierNode* best_return_type = nullptr;
 		if (matched_func_decl) {
 			const auto& mrt = matched_func_decl->decl_node().type_node().as<TypeSpecifierNode>();
-			if (mrt.type() != Type::UserDefined) {
+			if (mrt.category() != TypeCategory::UserDefined) {
 				best_return_type = &mrt;
 			}
 		}
@@ -1501,25 +1501,24 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
 		}
 		const auto& return_type = *best_return_type;
-		call_op.return_type = return_type.type();
+		call_op.return_type_index = return_type.type_index();
 		// For pointers and references, use 64-bit size (pointer size on x64)
 		// References are represented as addresses at the IR level
 		call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
 			? 64
 			: static_cast<int>(return_type.size_in_bits())};
 		populateReferenceReturnInfo(call_op, return_type);
-		call_op.return_type_index = return_type.type_index();
 		call_op.is_member_function = false;
 		if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 			call_op.is_member_function = true;
-			Type this_type = Type::Struct;
+			TypeCategory this_type = TypeCategory::Struct;
 			TypeIndex this_type_index {};
 			std::string_view parent_struct = matched_func_decl->parent_struct_name();
 			if (!parent_struct.empty()) {
 				StringHandle parent_struct_handle = StringTable::getOrInternStringHandle(parent_struct);
 				auto parent_it = getTypesByNameMap().find(parent_struct_handle);
 				if (parent_it != getTypesByNameMap().end() && parent_it->second != nullptr) {
-					this_type = parent_it->second->type_;
+					this_type = parent_it->second->typeEnum();
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
@@ -1612,9 +1611,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			int referenced_size_bits = getTypeSpecSizeBits(return_type);
 			if (return_type.is_rvalue_reference()) {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
 			} else {
-				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.type(), referenced_size_bits));
+				setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
 			}
 		}
 

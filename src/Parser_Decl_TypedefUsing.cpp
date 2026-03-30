@@ -236,13 +236,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					// Parse parameter list (can be empty or have parameters)
 					// For now, we'll skip the parameter list - we just need to recognize the syntax
 					// and accept it for type traits purposes
-					std::vector<Type> param_types;
+					std::vector<TypeIndex> param_types;
 					while (!peek().is_eof() && peek() != ")"_tok) {
 						// Skip parameter - can be complex types
 						auto param_type_result = parse_type_specifier();
 						if (!param_type_result.is_error() && param_type_result.node().has_value()) {
 							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-							param_types.push_back(param_type.type());
+							param_types.push_back(param_type.type_index());
 						}
 						
 						// Handle pointer/reference/cv-qualifier modifiers after type
@@ -270,8 +270,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						// Successfully parsed function reference/pointer type!
 						// Mark the type accordingly
 						FunctionSignature func_sig;
-						func_sig.return_type = type_spec.type();
-						func_sig.parameter_types = std::move(param_types);
+						func_sig.return_type_index = type_spec.type_index();
+						func_sig.parameter_type_indices = std::move(param_types);
 						
 						if (is_function_ptr) {
 							type_spec.add_pointer_level(CVQualifier::None);
@@ -302,7 +302,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Could be a bare function type: ReturnType(Args...)
 				// e.g., using type = _Res(_Args...);
 				// The '(' was already consumed, we're looking at the first parameter type or ')'
-				std::vector<Type> param_types;
+				std::vector<TypeIndex> param_types;
 				bool parsed_bare_function_type = false;
 				
 				while (!peek().is_eof() && peek() != ")"_tok) {
@@ -321,7 +321,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						param_type.set_pack_expansion(true);
 					}
 					
-					param_types.push_back(param_type.type());
+					param_types.push_back(param_type.type_index());
 					
 					if (peek() == ","_tok) {
 						advance(); // consume ','
@@ -335,8 +335,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					parsed_bare_function_type = true;
 					
 					FunctionSignature func_sig;
-					func_sig.return_type = type_spec.type();
-					func_sig.parameter_types = std::move(param_types);
+					func_sig.return_type_index = type_spec.type_index();
+					func_sig.parameter_type_indices = std::move(param_types);
 					type_spec.set_function_signature(func_sig);
 					
 					FLASH_LOG(Parser, Debug, "Parsed bare function type in type alias");
@@ -613,10 +613,10 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 				
 				// For struct types, get the actual size from TypeInfo
-				if (member_type_spec.type() == Type::Struct) {
+				if (member_type_spec.category() == TypeCategory::Struct) {
 					TypeInfo* member_type_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
+		TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
 						if (ti.type_index_ == member_type_spec.type_index()) {
 							member_type_info = &ti;
 							break;
@@ -632,7 +632,6 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
-					member_type_spec.type(),
 					member_type_spec.type_index(),
 					member_size_in_bits,
 					member_alignment,
@@ -677,10 +676,11 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
 			}
 			TypeSpecifierNode type_spec(
-				Type::Struct,
-				struct_type_index,
+				struct_type_index.withCategory(TypeCategory::Struct),
 				struct_size_bits,
-				alias_token
+				alias_token,
+				CVQualifier::None,
+				ReferenceQualifier::None
 			);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
 			
@@ -817,7 +817,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-						Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
+						enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+						CVQualifier::None, ReferenceQualifier::None);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 				}
@@ -864,7 +865,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			}
 			
 			// Create type specifier for the typedef
-			TypeSpecifierNode type_spec(Type::Enum, TypeQualifier::None, underlying_size, alias_token);
+			TypeSpecifierNode type_spec(TypeCategory::Enum, TypeQualifier::None, underlying_size, alias_token, CVQualifier::None);
 			type_spec.set_type_index(enum_type_index);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
 			
@@ -1295,7 +1296,8 @@ ParseResult Parser::parse_typedef_declaration()
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					Type::Enum, enum_type_index, underlying_size, enumerator_name_token);
+					enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+					CVQualifier::None, ReferenceQualifier::None);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 			}
@@ -1331,7 +1333,7 @@ ParseResult Parser::parse_typedef_declaration()
 		ast_nodes_.push_back(enum_node);
 
 		// Create type specifier for the typedef
-		type_spec = TypeSpecifierNode(Type::Enum, TypeQualifier::None, underlying_size, typedef_keyword);
+		type_spec = TypeSpecifierNode(TypeCategory::Enum, TypeQualifier::None, underlying_size, typedef_keyword, CVQualifier::None);
 		type_spec.set_type_index(enum_type_index);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else if (is_inline_struct) {
@@ -1490,8 +1492,8 @@ ParseResult Parser::parse_typedef_declaration()
 							advance(); // consume the member name
 							
 							// Create type specifier for the anonymous type
-							TypeSpecifierNode anon_type_spec(Type::Struct, TypeQualifier::None, 
-								static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword);
+							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None, 
+								static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword, CVQualifier::None);
 							anon_type_spec.set_type_index(anon_type_info.type_index_);
 							for (int i = 0; i < ptr_levels; i++) {
 								anon_type_spec.add_pointer_level(CVQualifier::None);
@@ -1842,7 +1844,7 @@ ParseResult Parser::parse_typedef_declaration()
 			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
-			if (member_type_spec.type() == Type::Struct) {
+			if (member_type_spec.category() == TypeCategory::Struct) {
 				const TypeInfo* member_type_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
 			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
@@ -1868,7 +1870,6 @@ ParseResult Parser::parse_typedef_declaration()
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
 				member_name_handle,
-				member_type_spec.type(),
 				member_type_spec.type_index(),
 				member_size,
 				member_alignment,
@@ -1898,10 +1899,11 @@ ParseResult Parser::parse_typedef_declaration()
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
-			Type::Struct,
-			struct_type_index,
+			struct_type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
-			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0)
+			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
+			CVQualifier::None,
+			ReferenceQualifier::None
 		);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {
@@ -2020,16 +2022,16 @@ ParseResult Parser::parse_typedef_declaration()
 		
 		// For function pointer typedefs, create a proper FunctionPointer type
 		// The return type is in type_spec, create a function pointer type with it
-		Type return_type = type_spec.type();
+		TypeIndex return_type_index = type_spec.type_index();
 		
 		// Create a new TypeSpecifierNode for the function pointer (64-bit pointer)
-		TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 		
 		// Create a basic function signature with the return type
 		// Note: We don't have full parameter info here since we just skipped the param list
 		// This is a simplified implementation that handles the common case
 		FunctionSignature sig;
-		sig.return_type = return_type;
+		sig.return_type_index = return_type_index;
 		sig.linkage = Linkage::None;
 		fp_type.set_function_signature(sig);
 		

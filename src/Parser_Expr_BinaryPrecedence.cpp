@@ -272,7 +272,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 
 						// Fall back to forward declaration if lookup failed
 						if (!decl_ptr) {
-							auto type_node = emplace_node<TypeSpecifierNode>(Type::Int, TypeQualifier::None, 32, Token());
+							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
 							decl_ptr = &forward_decl.as<DeclarationNode>();
 						}
@@ -339,7 +339,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 						if (!decl) return TypeIndex{};
 						if (!decl->type_node().is<TypeSpecifierNode>()) return TypeIndex{};
 						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						if (!is_struct_type(type_spec.type())) return TypeIndex{};
+						if (!is_struct_type(type_spec.category())) return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
 						// Resolve template parameter types via sfinae_type_map_
 						if (type_idx.index() < getTypeInfoCount()) {
@@ -369,11 +369,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context)
 					auto apply_resolved_sfinae_type = [&](std::optional<TypeSpecifierNode>& type_spec, TypeIndex type_idx) {
 						if (!type_spec.has_value() || !type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return;
 						type_spec->set_type_index(type_idx);
-						Type resolved_type = getTypeInfo(type_idx).type_;
-						if (resolved_type == Type::Invalid || resolved_type == Type::Void) {
-							resolved_type = Type::Struct;
+						TypeCategory resolved_type = type_idx.category();
+						if (resolved_type == TypeCategory::Invalid || resolved_type == TypeCategory::Void) {
+							resolved_type = TypeCategory::Struct;
 						}
-						type_spec->set_type(resolved_type);
+						type_spec->set_category(resolved_type);
 					};
 
 					TypeIndex left_type_idx = resolve_operand_type_index(*leftNode);
@@ -562,20 +562,16 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		// Check for 'l' or 'L' suffix (long double)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
-		// Branchless type selection
-		// If is_float: Type::Float, else if is_long_double: Type::LongDouble, else Type::Double
-		typeInfo.type = static_cast<Type>(
-			static_cast<int>(Type::Float) * is_float +
-			static_cast<int>(Type::LongDouble) * is_long_double * (!is_float) +
-			static_cast<int>(Type::Double) * (!is_float) * (!is_long_double)
-		);
-
-		// Branchless size selection: float=32, double=64, long double=80
-		typeInfo.sizeInBits = static_cast<unsigned char>(
-			32 * is_float +
-			80 * is_long_double * (!is_float) +
-			64 * (!is_float) * (!is_long_double)
-		);
+		if (is_float) {
+			typeInfo.type = TypeCategory::Float;
+			typeInfo.sizeInBits = 32;
+		} else if (is_long_double) {
+			typeInfo.type = TypeCategory::LongDouble;
+			typeInfo.sizeInBits = 80;
+		} else {
+			typeInfo.type = TypeCategory::Double;
+			typeInfo.sizeInBits = 64;
+		}
 
 		typeInfo.typeQualifier = TypeQualifier::None;
 		return typeInfo;
@@ -604,17 +600,17 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 	// Constexpr lookup table stores the resolved type directly to avoid redundant counting.
 	struct IntSuffixInfo {
 		std::string_view text;
-		Type signed_type;
-		Type unsigned_type;
+		TypeCategory signed_type;
+		TypeCategory unsigned_type;
 	};
 	static constexpr IntSuffixInfo int_suffix_table[] = {
-		{"u",   Type::UnsignedInt,      Type::UnsignedInt},
-		{"l",   Type::Long,             Type::UnsignedLong},
-		{"ul",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"lu",  Type::UnsignedLong,     Type::UnsignedLong},
-		{"ll",  Type::LongLong,         Type::UnsignedLongLong},
-		{"ull", Type::UnsignedLongLong, Type::UnsignedLongLong},
-		{"llu", Type::UnsignedLongLong, Type::UnsignedLongLong},
+		{"u",   TypeCategory::UnsignedInt,      TypeCategory::UnsignedInt},
+		{"l",   TypeCategory::Long,             TypeCategory::UnsignedLong},
+		{"ul",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"lu",  TypeCategory::UnsignedLong,     TypeCategory::UnsignedLong},
+		{"ll",  TypeCategory::LongLong,         TypeCategory::UnsignedLongLong},
+		{"ull", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
+		{"llu", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong},
 	};
 	static constexpr std::string_view suffixCharacters = "ul";
 	std::string_view suffix = end_ptr;
@@ -643,25 +639,25 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 		bool is_negative = !lowerText.empty() && lowerText[0] == '-';
 		unsigned long long abs_val = is_negative ? (0ULL - val) : val;
 
-		int int_bits = get_type_size_bits(Type::Int);
-		int long_bits = get_type_size_bits(Type::Long);
+		int int_bits = get_type_size_bits(TypeCategory::Int);
+		int long_bits = get_type_size_bits(TypeCategory::Long);
 		// long long is always 64 bits per C++ standard.
 
 		if (is_decimal) {
 			// Decimal unsuffixed: int → long → long long (signed only).
 			// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
 			if (int_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 64 && abs_val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::Long;
+				typeInfo.type = TypeCategory::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type = TypeCategory::LongLong;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			}
 		} else {
@@ -672,22 +668,22 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text)
 			unsigned long long long_max_unsigned  = (long_bits == 64) ? 0xFFFFFFFFFFFFFFFFULL : (1ULL << long_bits) - 1;
 
 			if (val <= int_max_signed) {
-				typeInfo.type = Type::Int;
+				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= int_max_unsigned) {
-				typeInfo.type = Type::UnsignedInt;
+				typeInfo.type = TypeCategory::UnsignedInt;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= long_max_signed) {
-				typeInfo.type = Type::Long;
+				typeInfo.type = TypeCategory::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (val <= long_max_unsigned) {
-				typeInfo.type = Type::UnsignedLong;
+				typeInfo.type = TypeCategory::UnsignedLong;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			} else if (val <= 0x7FFFFFFFFFFFFFFFULL) {
-				typeInfo.type = Type::LongLong;
+				typeInfo.type = TypeCategory::LongLong;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
-				typeInfo.type = Type::UnsignedLongLong;
+				typeInfo.type = TypeCategory::UnsignedLongLong;
 				typeInfo.typeQualifier = TypeQualifier::Unsigned;
 			}
 		}
@@ -1143,7 +1139,7 @@ void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& tar
 // Parses types separated by commas, handling pack expansion (...), C-style varargs,
 // and pointer/reference modifiers. Stops before ')' — caller must consume it.
 // Returns true if at least one type was parsed or the list is empty (valid).
-bool Parser::parse_function_type_parameter_list(std::vector<Type>& out_param_types) {
+bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types) {
 	while (peek() != ")"_tok && !peek().is_eof()) {
 		// Handle C-style varargs: just '...' (without type before it)
 		if (peek() == "..."_tok) {
@@ -1162,7 +1158,7 @@ bool Parser::parse_function_type_parameter_list(std::vector<Type>& out_param_typ
 			
 			// Apply pointer/reference modifiers to the parameter type
 			consume_pointer_ref_modifiers(param_type);
-			out_param_types.push_back(param_type.type());
+			out_param_types.push_back(param_type.type_index());
 		} else {
 			return false; // Parsing failed
 		}
@@ -1489,7 +1485,6 @@ ParseResult Parser::parse_static_member_block(
 		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
 			type_it->second->getStructInfo()->addStaticMember(
 				static_member_name_handle,
-				type_spec.type(),
 				type_spec.type_index(),
 				member_size,
 				member_alignment,
@@ -1504,7 +1499,6 @@ ParseResult Parser::parse_static_member_block(
 		// Normal case - use provided struct_info directly
 		struct_info->addStaticMember(
 			static_member_name_handle,
-			type_spec.type(),
 			type_spec.type_index(),
 			member_size,
 			member_alignment,
@@ -1678,7 +1672,7 @@ std::optional<size_t> Parser::parse_alignas_specifier()
 			// Successfully parsed a type specifier - check if followed by ')'
 			if (consume(")"_tok)) {
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				Type parsed_type = type_spec.type();
+				TypeCategory parsed_type = type_spec.category();
 				
 				// Use existing get_type_alignment function for consistency
 				int type_size_bits = get_type_size_bits(parsed_type);

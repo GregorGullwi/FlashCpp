@@ -44,7 +44,7 @@ ParseResult Parser::parse_type_and_name() {
     // Also support: auto& [a, b] = pair; and auto&& [x, y] = temp;
     // Per C++20 [dcl.struct.bind], decltype(auto) is not permitted in structured bindings.
     // This must be checked after parsing the type specifier (auto) but before parsing pointer/reference/identifier
-    if (type_spec.type() == Type::DeclTypeAuto) {
+    if (type_spec.category() == TypeCategory::DeclTypeAuto) {
         if (type_spec.cv_qualifier() != CVQualifier::None) {
             return ParseResult::error("'decltype(auto)' cannot have cv-qualifiers", current_token_);
         }
@@ -62,7 +62,7 @@ ParseResult Parser::parse_type_and_name() {
             return ParseResult::error("'decltype(auto)' cannot be used in structured bindings", current_token_);
         }
     }
-    if (type_spec.type() == Type::Auto) {
+    if (type_spec.category() == TypeCategory::Auto) {
         // Check for optional reference qualifiers
         ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
         
@@ -97,12 +97,12 @@ ParseResult Parser::parse_type_and_name() {
     // The concept constraint was parsed as a UserDefined type by parse_type_specifier().
     // If followed by 'auto', this is an abbreviated function template parameter.
     // Store the concept name on the TypeSpecifierNode for requires clause generation.
-    if (type_spec.type() == Type::UserDefined && peek() == "auto"_tok) {
+    if (type_spec.category() == TypeCategory::UserDefined && peek() == "auto"_tok) {
         // Capture the concept name before converting the type to Auto
         std::string_view concept_name = type_spec.token().value();
         FLASH_LOG(Parser, Debug, "parse_type_and_name: Constrained auto parameter detected (concept='", concept_name, "'), consuming 'auto'");
         advance(); // consume 'auto'
-        type_spec.set_type(Type::Auto);
+        type_spec.set_category(TypeCategory::Auto);
         // Store the concept constraint so abbreviated template generation can build a requires clause
         type_spec.set_concept_constraint(concept_name);
     }
@@ -764,7 +764,7 @@ ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, Referenc
         std::string_view id_name = StringTable::getStringView(id_handle);
         
         // Create a placeholder TypeSpecifierNode (we'll use Auto type as a placeholder)
-        TypeSpecifierNode placeholder_type(Type::Auto, TypeQualifier::None, 0, Token());
+        TypeSpecifierNode placeholder_type(TypeCategory::Auto, TypeQualifier::None, 0, Token(), CVQualifier::None);
         
         // Create a placeholder DeclarationNode
         Token placeholder_token(Token::Type::Identifier, id_name, 0, 0, 0);
@@ -989,7 +989,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         advance(); // consume '('
 
         // Parse parameter list
-        std::vector<Type> param_types;
+        std::vector<TypeIndex> param_types;
 
         if (peek() != ")"_tok) {
             while (true) {
@@ -1007,7 +1007,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
                 // Example: void* or const int* const* or int&
                 consume_pointer_ref_modifiers(param_type);
                 
-                param_types.push_back(param_type.type());
+                param_types.push_back(param_type.type_index());
 
                 // Check for pack expansion '...' after the type (e.g., Args...)
                 // This handles function pointer parameters like void (*)(Args...)
@@ -1054,15 +1054,15 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
         // The base_type is the return type
         // We need to create a function pointer type
 
-        Type return_type = base_type.type();
+        TypeIndex return_type_index = base_type.type_index();
 
         // Create a new TypeSpecifierNode for the function pointer
         // Function pointers are 64 bits (8 bytes) on x64
-        TypeSpecifierNode fp_type(Type::FunctionPointer, TypeQualifier::None, 64);
+        TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
 
         FunctionSignature sig;
-        sig.return_type = return_type;
-        sig.parameter_types = param_types;
+        sig.return_type_index = return_type_index;
+        sig.parameter_type_indices = param_types;
         sig.linkage = linkage;
         fp_type.set_function_signature(sig);
 

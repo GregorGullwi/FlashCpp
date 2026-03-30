@@ -1,4 +1,4 @@
-#include "Parser.h"
+﻿#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -570,7 +570,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			// Handle boolean literals (true/false)
 			if (std::holds_alternative<BoolLiteralNode>(expr)) {
 				const BoolLiteralNode& lit = std::get<BoolLiteralNode>(expr);
-				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, Type::Bool);
+				TemplateTypeArg bool_arg(lit.value() ? 1 : 0, TypeCategory::Bool);
 				
 				// Check for pack expansion (...)
 				if (peek() == "..."_tok) {
@@ -618,7 +618,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 			if (std::holds_alternative<NumericLiteralNode>(expr)) {
 				const NumericLiteralNode& lit = std::get<NumericLiteralNode>(expr);
 				const auto& val = lit.value();
-				Type literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
+				TypeCategory literal_type = lit.type();  // Get the type of the literal (bool, int, etc.)
 				TemplateTypeArg num_arg;
 				if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
 					num_arg = TemplateTypeArg(static_cast<int64_t>(*ull_val), literal_type);
@@ -772,7 +772,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						FLASH_LOG(Templates, Debug, "Accepting dependent compile-time expression as template argument");
 						// Create a dependent template argument
 						TemplateTypeArg dependent_arg;
-						dependent_arg.type_index = TypeIndex{0, TypeCategory::Bool};  // noexcept, sizeof, alignof return bool/size_t
+						dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);  // noexcept, sizeof, alignof return bool/size_t
 						dependent_arg.is_value = true;  // This is a non-type (value) template argument
 						dependent_arg.is_dependent = true;
 						
@@ -945,7 +945,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 								// Template parameters are stored as Type::UserDefined without struct_info_,
 								// so this check correctly excludes them while accepting concrete types.
 								if (underlying.struct_info_ != nullptr || 
-								    underlying.type_ != Type::UserDefined) {
+								    underlying.resolvedType() != TypeCategory::UserDefined) {
 									// It's a type alias to a concrete type (struct or built-in)
 									is_concrete_type = true;
 									FLASH_LOG(Templates, Debug, "Identifier '", id.name(), "' is a type alias to concrete type, falling through to type parsing");
@@ -1049,7 +1049,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// this should be a TYPE argument, not a VALUE argument!
 						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
 						TemplateTypeArg dependent_arg;
-						dependent_arg.type_index = TypeIndex{0, TypeCategory::UserDefined};  // Template parameter is a user-defined type placeholder; will try to look up
+						dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
 						dependent_arg.is_value = false;  // This is a TYPE parameter, not a value
 						dependent_arg.is_dependent = true;
 						
@@ -1083,7 +1083,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							auto alias_opt = gTemplateRegistry.lookup_alias_template(id.name());
 							if (alias_opt.has_value()) {
 								const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-								Type target_type = alias_node.target_type_node().type();
+								TypeCategory target_type = alias_node.target_type_node().type();
 								
 								// If the alias always resolves to a concrete type (like void_t -> void),
 								// use that concrete type instead of marking as dependent
@@ -1279,7 +1279,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					advance(); // consume '('
 					
 					// Parse parameter list using shared helper
-					std::vector<Type> param_types;
+					std::vector<TypeIndex> param_types;
 					bool param_parse_ok = parse_function_type_parameter_list(param_types);
 					
 					if (!param_parse_ok) {
@@ -1317,8 +1317,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						
 						// Successfully parsed function reference/pointer type!
 						FunctionSignature func_sig;
-						func_sig.return_type = type_node.type();
-						func_sig.parameter_types = std::move(param_types);
+						func_sig.return_type_index = type_node.type_index();
+						func_sig.parameter_type_indices = std::move(param_types);
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
 						
@@ -1356,7 +1356,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// Save position within the parens
 				SaveHandle func_type_saved_pos = save_token_position();
 				bool is_bare_func_type = false;
-				std::vector<Type> func_param_types;
+				std::vector<TypeIndex> func_param_types;
 				
 				// Try to parse as function parameter list using shared helper
 				bool param_parse_ok = parse_function_type_parameter_list(func_param_types);
@@ -1367,8 +1367,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					
 					// Successfully parsed bare function type
 					FunctionSignature func_sig;
-					func_sig.return_type = type_node.type();
-					func_sig.parameter_types = std::move(func_param_types);
+					func_sig.return_type_index = type_node.type_index();
+					func_sig.parameter_type_indices = std::move(func_param_types);
 					type_node.set_function_signature(func_sig);
 					
 					// Consume trailing noexcept or noexcept(expr) if present
@@ -1447,7 +1447,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// 3. It's a UserDefined type with type_index=0 (placeholder)
 		FLASH_LOG_FORMAT(Templates, Debug, "Checking dependency for template argument: type={}, type_index={}, in_sfinae_context={}", 
 		                 static_cast<int>(type_node.type()), type_node.type_index(), in_sfinae_context_);
-		if (type_node.type() == Type::UserDefined) {
+		if (type_node.category() == TypeCategory::UserDefined || type_node.category() == TypeCategory::TypeAlias || type_node.category() == TypeCategory::Template) {
 			// BUGFIX: Use the original token value instead of looking up via type_index
 			// When template parameters are parsed, they may have type_index=0 (void),
 			// which causes incorrect dependency checks. The token value is always correct.
@@ -1549,7 +1549,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 		// In a template body, if the struct is a registered template and we're using template params, it's dependent
 		// BUT: If this is a template template argument (passing a template class as an argument), it's NOT dependent
 		// even if we're in a template body. A template class like HasType used as a template argument is concrete.
-		if (!arg.is_dependent && type_node.type() == Type::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
+		if (!arg.is_dependent && type_node.category() == TypeCategory::Struct && parsing_template_depth_ > 0 && !in_sfinae_context_) {
 			TypeIndex idx = type_node.type_index();
 			if (idx.index() < getTypeInfoCount()) {
 				std::string_view type_name = StringTable::getStringView(getTypeInfo(idx).name());
