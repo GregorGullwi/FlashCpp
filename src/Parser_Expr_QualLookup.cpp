@@ -122,7 +122,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name, 
 	                identifier_token.line(), identifier_token.column(), identifier_token.file_index());
-	auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, type_index, type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
+	auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, type_token, CVQualifier::None, ReferenceQualifier::None);
 	
 	// Create ConstructorCallNode
 	std::optional<ASTNode> result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), type_token));

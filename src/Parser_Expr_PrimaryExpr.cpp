@@ -3380,7 +3380,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					TypeIndex type_index = type_it->second->type_index_;
 					int type_size = getStructTypeSizeBits(type_index);
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						TypeCategory::Struct, type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+						type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 				
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -3992,7 +3992,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									if (inst_type_info.struct_info_) {
 										inst_type_size = static_cast<int>(inst_type_info.struct_info_->total_size * 8);
 									}
-									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::Struct, inst_type_index, inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
+									type_spec_node = emplace_node<TypeSpecifierNode>(inst_type_index.withCategory(TypeCategory::Struct), inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
 								} else {
 									// Type not found yet (e.g. dependent/incomplete); size 0 is the standard placeholder
 									type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, inst_type_token, CVQualifier::None);
@@ -4165,7 +4165,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 									// Create a dummy declaration for the concept call
 									Token void_token(Token::Type::Keyword, "void"sv, concept_token.line(), concept_token.column(), concept_token.file_index());
 									auto void_type = emplace_node<TypeSpecifierNode>(
-										TypeCategory::Void, TypeIndex{}, 0, void_token, CVQualifier::None, ReferenceQualifier::None);
+										TypeIndex{}.withCategory(TypeCategory::Void), 0, void_token, CVQualifier::None, ReferenceQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
 									
 									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
