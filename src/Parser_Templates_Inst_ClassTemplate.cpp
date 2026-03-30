@@ -406,7 +406,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto get_substituted_type_size_bytes = [&](TypeIndex substituted_type_index) -> size_t {
 		if (substituted_type_index.is_valid()) {
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+				const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == substituted_type_index) {
 					if (substituted_type_index.category() == TypeCategory::Struct) {
 						if (const StructTypeInfo* struct_info = ti.getStructInfo()) {
@@ -1444,7 +1444,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -1470,7 +1470,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For struct types, look up the actual alignment from gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3853,7 +3853,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3935,7 +3935,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			} else if (member_type_index.category() == TypeCategory::Struct && member_type_index.is_valid()) {
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3958,7 +3958,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// For struct types, look up the actual size in gTypeInfo
 				const TypeInfo* member_struct_info = nullptr;
 				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+					const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 					if (ti.type_index_ == member_type_index) {
 						member_struct_info = &ti;
 						break;
@@ -3988,7 +3988,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// For struct types, look up the actual alignment from gTypeInfo
 			const TypeInfo* member_struct_info = nullptr;
 			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+				const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 				if (ti.type_index_ == member_type_index) {
 					member_struct_info = &ti;
 					break;
@@ -4627,7 +4627,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
 						const TypeInfo* member_struct_info = nullptr;
 						for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+							const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 							if (ti.type_index_ == substituted_type_index) {
 								member_struct_info = &ti;
 								break;
@@ -4647,7 +4647,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+						const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == substituted_type_index) {
 							member_struct_info = &ti;
 							break;
@@ -4667,7 +4667,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				} else if (substituted_type_index.category() == TypeCategory::Struct && substituted_type_index.is_valid()) {
 					const TypeInfo* member_struct_info = nullptr;
 					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+						const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
 						if (ti.type_index_ == substituted_type_index) {
 							member_struct_info = &ti;
 							break;
