@@ -27,6 +27,8 @@ public:
 	std::string_view name() const { return name_.view(); }
 	StringHandle nameHandle() const { return name_; }
 	Token token() const { return token_; }
+	TypeIndex registered_type_index() const { return registered_type_index_; }
+	void set_registered_type_index(TypeIndex type_index) { registered_type_index_ = type_index; }
 
 	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
@@ -64,6 +66,7 @@ private:
 	bool is_variadic_ = false;  // True for parameter packs (typename... Args)
 	std::optional<std::string_view> concept_constraint_;  // Concept name for constrained parameters (e.g., Addable T)
 	std::vector<ASTNode> concept_args_;  // Template arguments for parameterized concepts (e.g., Concept<U> stores {U})
+	TypeIndex registered_type_index_;
 };
 
 // Template function declaration node - represents a function template

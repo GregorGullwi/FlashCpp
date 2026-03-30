@@ -608,19 +608,13 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 			}
 			
-			// If we didn't find it from orig_type, search in gTypeInfo
-			// This is needed for initializer expression substitution
+			// If we didn't find it from orig_type, use the placeholder type_index captured
+			// when this template parameter was parsed.
 			if (!found_param) {
-				// Search for the template parameter in gTypeInfo
-				// Template parameters have Type::UserDefined or Type::Template
-				for (TypeIndex ti {}; ti.index() < getTypeInfoCount(); ++ti) {
-					if ((getTypeInfo(ti).isStructLike() && !getTypeInfo(ti).isStruct()) || getTypeInfo(ti).isTemplatePlaceholder()) {
-						if (StringTable::getStringView(getTypeInfo(ti).name()) == param_name) {
-							param_type_index = TypeIndex{ti};
-							found_param = true;
-							break;
-						}
-					}
+				TypeIndex registered_param_type_index = tparam.registered_type_index();
+				if (registered_param_type_index.is_valid()) {
+					param_type_index = registered_param_type_index;
+					found_param = true;
 				}
 			}
 			
