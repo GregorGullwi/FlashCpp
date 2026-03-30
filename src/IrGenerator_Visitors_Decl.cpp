@@ -416,9 +416,9 @@
 							StringBuilder().append("spaceship_next_").append(current_spaceship).append("_").append(mi));
 
 						// For struct members, delegate to the member's operator<=>
-						if (member.type_index.category() == TypeCategory::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-							const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+						if (member.type_index.category() == TypeCategory::Struct) {
+							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+							const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 
 							// Find operator<=> in the member struct and generate its mangled name
 							StringHandle member_spaceship_mangled;
@@ -428,7 +428,7 @@
 										if (mf.function_decl.is<FunctionDeclarationNode>()) {
 											const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
 											// Use generateMangledNameForCall for consistent mangling across platforms
-											std::string_view member_struct_name = StringTable::getStringView(member_type_info.name());
+											std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
 											member_spaceship_mangled = StringTable::getOrInternStringHandle(
 												generateMangledNameForCall(spaceship_func, member_struct_name, {}));
 										}
@@ -1209,13 +1209,13 @@
 		// local enums in different functions — getTypesByNameMap() uses emplace which
 		// is a no-op on duplicate keys and would return the wrong TypeInfo.
 		const TypeIndex type_idx = node.type_index();
-		if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) {
+		TypeInfo* type_info = tryGetTypeInfoMut(type_idx);
+		if (!type_info) {
 			FLASH_LOG(Codegen, Debug, "visitEnumDeclarationNode: invalid or missing type_index for '",
 				node.name(), "' (type_index=", type_idx.index(), ") — parser may not have set it");
 			return;
 		}
-		TypeInfo& type_info = getTypeInfoMut(type_idx);
-		const EnumTypeInfo* enum_info = type_info.getEnumInfo();
+		const EnumTypeInfo* enum_info = type_info->getEnumInfo();
 		if (!enum_info)
 			return;
 
@@ -1229,7 +1229,7 @@
 			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
 			Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				type_info.type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
+				type_info->type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
 			symbol_table.insert(node.name(), decl_node);
 			return;
@@ -1242,7 +1242,7 @@
 			std::string_view enumerator_name = StringTable::getStringView(e.name);
 			Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
 			ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				type_info.type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
+				type_info->type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
 			ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
 			symbol_table.insert(enumerator_name, decl_node);
 		}
@@ -1463,9 +1463,8 @@
 						// For template instantiations, the base initializer stores the un-substituted
 						// name (e.g., "Base") but struct_info has the instantiated name (e.g., "Base$hash").
 						// Also match against the base template name.
-						if (base.type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& base_ti = getTypeInfo(base.type_index);
-							if (base_ti.isTemplateInstantiation() && init.getBaseClassName() == base_ti.baseTemplateName()) {
+						if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
+							if (base_ti->isTemplateInstantiation() && init.getBaseClassName() == base_ti->baseTemplateName()) {
 								base_init = &init;
 								break;
 							}
@@ -1473,14 +1472,14 @@
 					}
 
 					// Get base class type info
-					if (base.type_index.index() >= getTypeInfoCount()) {
+					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+					if (!base_type_info) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 					// Build constructor call: Base::Base(this, args...)
 					ConstructorCallOp ctor_op;
-					ctor_op.struct_name = base_type_info.name();
+					ctor_op.struct_name = base_type_info->name();
 					ctor_op.object = StringTable::getOrInternStringHandle("this");
 					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 					assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
@@ -1506,7 +1505,7 @@
 						if (!node.is_implicit() || is_implicit_default_ctor) {
 							// Only call base default constructor if the base class actually has constructors
 							// This avoids link errors when inheriting from classes without constructors
-							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 							if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 								// Call default constructor with no arguments
 								fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
@@ -1580,14 +1579,14 @@
 						// Step 1: Call base class copy/move constructors (in declaration order)
 						for (const auto& base : struct_info->base_classes) {
 							// Get base class type info
-							if (base.type_index.index() >= getTypeInfoCount()) {
+							const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+							if (!base_type_info) {
 								continue;  // Invalid base type index
 							}
-							const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 							// Only call base copy/move constructor if the base class actually has constructors
 							// This avoids link errors when inheriting from classes without constructors
-							const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 							if (!base_struct_info || !base_struct_info->hasAnyConstructor()) {
 								continue;  // Skip if base has no constructors
 							}
@@ -1596,7 +1595,7 @@
 							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
 							// For move constructors, pass 'other' as the move source
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = base_type_info.name();
+							ctor_op.struct_name = base_type_info->name();
 							ctor_op.object = StringTable::getOrInternStringHandle("this");
 							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 							assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
@@ -1607,7 +1606,7 @@
 							TypedValue other_arg;
 							other_arg.setType(TypeCategory::Struct);  // Parameter type (struct reference)
 							other_arg.ir_type = IrType::Struct;
-							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info.struct_info_ ? base_type_info.struct_info_->total_size * 8 : struct_info->total_size * 8)};
+							other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->total_size * 8 : struct_info->total_size * 8)};
 							other_arg.value = StringTable::getOrInternStringHandle("other");  // Parameter value ('other' object)
 							other_arg.type_index = base.type_index;  // Use BASE class type index for proper mangling
 							if (is_copy_constructor) {
@@ -1623,9 +1622,9 @@
 
 						// Step 2: Memberwise copy/move from 'other' to 'this'
 						for (const auto& member : struct_info->members) {
-							if (member.type_index.category() == TypeCategory::Struct && member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-								const StructTypeInfo* member_struct_info = member_type_info.getStructInfo();
+							if (member.type_index.category() == TypeCategory::Struct) {
+								const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+								const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
 								if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
 									TempVar member_source_addr = var_counter.next();
 									AddressOfMemberOp addr_member_op;
@@ -1637,7 +1636,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
 									ConstructorCallOp ctor_op;
-									ctor_op.struct_name = member_type_info.name();
+									ctor_op.struct_name = member_type_info->name();
 									ctor_op.object = StringTable::getOrInternStringHandle("this");
 									assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 									ctor_op.base_class_offset = static_cast<int>(member.offset);
@@ -1771,11 +1770,10 @@
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 									TypeIndex member_type_index = member.type_index;
-									if (member_type_index.index() < getTypeInfoCount()) {
-										const TypeInfo& member_type_info = getTypeInfo(member_type_index);
+									if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index)) {
 
 										// If this is a struct type, we need to initialize its members
-										if (member_type_info.struct_info_ && !member_type_info.struct_info_->members.empty()) {
+										if (member_type_info->struct_info_ && !member_type_info->struct_info_->members.empty()) {
 											// Build a map of member names to initializer expressions
 											std::unordered_map<StringHandle, const ASTNode*> member_values;
 											size_t positional_index = 0;
@@ -1787,8 +1785,8 @@
 													member_values[member_name] = &initializers[i];
 												} else {
 													// Positional initializer - map to member by index
-													if (positional_index < member_type_info.struct_info_->members.size()) {
-														StringHandle member_name = member_type_info.struct_info_->members[positional_index].getName();
+													if (positional_index < member_type_info->struct_info_->members.size()) {
+														StringHandle member_name = member_type_info->struct_info_->members[positional_index].getName();
 														member_values[member_name] = &initializers[i];
 														positional_index++;
 													}
@@ -1796,7 +1794,7 @@
 											}
 
 											// Generate nested member stores for each member of the nested struct
-											for (const StructMember& nested_member : member_type_info.struct_info_->members) {
+											for (const StructMember& nested_member : member_type_info->struct_info_->members) {
 												// Determine initial value for nested member
 												std::optional<IrValue> nested_member_value;
 												StringHandle nested_member_name_handle = nested_member.getName();
@@ -1811,13 +1809,12 @@
 
 														// Get the type info for the nested member
 														TypeIndex nested_member_type_index = nested_member.type_index;
-														if (nested_member_type_index.index() < getTypeInfoCount()) {
-															const TypeInfo& nested_member_type_info = getTypeInfo(nested_member_type_index);
+														if (const TypeInfo* nested_member_type_info = tryGetTypeInfo(nested_member_type_index)) {
 
 															// If this is a struct type, use the recursive helper
-															if (nested_member_type_info.struct_info_ && !nested_member_type_info.struct_info_->members.empty()) {
+															if (nested_member_type_info->struct_info_ && !nested_member_type_info->struct_info_->members.empty()) {
 																generateNestedMemberStores(
-																	*nested_member_type_info.struct_info_,
+																	*nested_member_type_info->struct_info_,
 																	nested_init_list,
 																	StringTable::getOrInternStringHandle("this"),
 																	static_cast<int>(member.offset + nested_member.offset),
@@ -1912,9 +1909,9 @@
 							} else {
 								// Check if this is a struct type with a constructor
 								bool is_struct_with_constructor = false;
-								if (member.type_index.category() == TypeCategory::Struct && member.type_index.index() < getTypeInfoCount()) {
-									const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-									if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+								if (member.type_index.category() == TypeCategory::Struct) {
+									const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+									if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
 										is_struct_with_constructor = true;
 									}
 								}
@@ -2056,10 +2053,11 @@
 									// Empty brace-init on non-array member (e.g., int x{}): value-initialize to zero.
 									if (init_expr_node.as<InitializerListNode>().size() == 0) {
 										member_value = isFloatingPointType(member.memberType()) ? IrValue{0.0} : IrValue{0ULL};
-									} else if ((is_struct_type(member.type_index.category())) &&
-										member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
+									} else if ((is_struct_type(member.type_index.category()))) {
 										// Struct aggregate brace-init (e.g., inner{1, 2}): emit per-member stores.
-										if (const StructTypeInfo* nested_info = getTypeInfo(member.type_index).getStructInfo()) {
+										if (const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+											member_type_info && member_type_info->getStructInfo()) {
+											const StructTypeInfo* nested_info = member_type_info->getStructInfo();
 											const InitializerListNode& agg_init_list = init_expr_node.as<InitializerListNode>();
 											const auto& agg_elements = agg_init_list.initializers();
 											const auto& nested_members = nested_info->members;
@@ -2173,9 +2171,9 @@
 						} else {
 							// Check if this is a struct type with a constructor
 							bool is_struct_with_constructor = false;
-							if (member.type_index.category() == TypeCategory::Struct && member.type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
-								if (member_type_info.struct_info_ && member_type_info.struct_info_->hasAnyConstructor()) {
+							if (member.type_index.category() == TypeCategory::Struct) {
+								const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+								if (member_type_info && member_type_info->struct_info_ && member_type_info->struct_info_->hasAnyConstructor()) {
 									is_struct_with_constructor = true;
 								}
 							}
@@ -2356,14 +2354,14 @@
 					const auto& base = *it;
 
 					// Get base class type info
-					if (base.type_index.index() >= getTypeInfoCount()) {
+					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+					if (!base_type_info) {
 						continue;  // Invalid base type index
 					}
-					const TypeInfo& base_type_info = getTypeInfo(base.type_index);
 
 					// Build destructor call: Base::~Base(this)
 					DestructorCallOp dtor_op;
-					dtor_op.struct_name = base_type_info.name();
+					dtor_op.struct_name = base_type_info->name();
 					dtor_op.object = StringTable::getOrInternStringHandle("this");
 
 					ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), node.name_token()));
@@ -2449,13 +2447,13 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Step 3: Create the initializer_list struct
 	TypeIndex init_list_type_index = target_type.type_index();
-	if (init_list_type_index.index() >= getTypeInfoCount()) {
+	const TypeInfo* init_list_type_info = tryGetTypeInfo(init_list_type_index);
+	if (!init_list_type_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: invalid type index");
 		return ExprResult{};
 	}
 
-	const TypeInfo& init_list_type_info = getTypeInfo(init_list_type_index);
-	const StructTypeInfo* init_list_struct_info = init_list_type_info.getStructInfo();
+	const StructTypeInfo* init_list_struct_info = init_list_type_info->getStructInfo();
 	if (!init_list_struct_info) {
 		FLASH_LOG(Codegen, Error, "InitializerListConstructionNode: target type is not a struct");
 		return ExprResult{};
@@ -2572,11 +2570,11 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Get the actual size of the struct from gTypeInfo
 	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
 	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-		if (type_info.struct_info_) {
-			actual_size_bits = static_cast<int>(type_info.struct_info_->total_size * 8);
-			struct_info = type_info.struct_info_.get();
+	if (type_spec.category() == TypeCategory::Struct) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+		if (type_info && type_info->struct_info_) {
+			actual_size_bits = static_cast<int>(type_info->struct_info_->total_size * 8);
+			struct_info = type_info->struct_info_.get();
 		}
 	} else {
 		// Fallback: look up by name
@@ -2658,11 +2656,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				// InitializerListNode, not ExpressionNode, and must be handled
 				// recursively rather than cast directly).
 				if (argument.is<InitializerListNode>() &&
-					member.type_index.category() == TypeCategory::Struct &&
-					member.type_index.is_valid() && member.type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& nested_ti = getTypeInfo(member.type_index);
-					if (nested_ti.getStructInfo()) {
-						int nested_bits = static_cast<int>(nested_ti.getStructInfo()->total_size * 8);
+					member.type_index.category() == TypeCategory::Struct) {
+					const TypeInfo* nested_ti = tryGetTypeInfo(member.type_index);
+					if (nested_ti && nested_ti->getStructInfo()) {
+						int nested_bits = static_cast<int>(nested_ti->getStructInfo()->total_size * 8);
 						TypeSpecifierNode nested_spec(member.type_index.withCategory(member.memberType()), nested_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {
