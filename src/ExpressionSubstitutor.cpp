@@ -1041,64 +1041,64 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	// Check if this is a struct/class type that might have template arguments
 	if (type.category() == TypeCategory::Struct) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-		std::string_view type_name = StringTable::getStringView(type_info->name());
-		FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());
+			std::string_view type_name = StringTable::getStringView(type_info->name());
+			FLASH_LOG(Templates, Debug, "  Type is struct: ", type_name, " type_index=", type.type_index());
 
-		if (type_info->isTemplateInstantiation()) {
-			std::string_view base_name = StringTable::getStringView(type_info->baseTemplateName());
-			FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
+			if (type_info->isTemplateInstantiation()) {
+				std::string_view base_name = StringTable::getStringView(type_info->baseTemplateName());
+				FLASH_LOG(Templates, Debug, "  Found template type: ", base_name);
 
-			const auto& stored_args = type_info->templateArgs();
-			std::vector<TemplateTypeArg> substituted_args;
-			substituted_args.reserve(stored_args.size());
+				const auto& stored_args = type_info->templateArgs();
+				std::vector<TemplateTypeArg> substituted_args;
+				substituted_args.reserve(stored_args.size());
 
-			bool needs_substitution = false;
-			for (const auto& arg : stored_args) {
-				TemplateTypeArg ta = toTemplateTypeArg(arg);
-				bool substituted = false;
+				bool needs_substitution = false;
+				for (const auto& arg : stored_args) {
+					TemplateTypeArg ta = toTemplateTypeArg(arg);
+					bool substituted = false;
 
-				if (ta.dependent_name.isValid()) {
-					std::string_view dep_name = StringTable::getStringView(ta.dependent_name);
-					auto dep_subst_it = param_map_.find(dep_name);
-					if (dep_subst_it != param_map_.end()) {
-						ta = dep_subst_it->second;
-						needs_substitution = true;
-						substituted = true;
-					}
-				}
-
-				if (!substituted && !ta.is_value) {
-					if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
-						std::string_view arg_type_name = StringTable::getStringView(arg_ti->name());
-						auto type_subst_it = param_map_.find(arg_type_name);
-						if (type_subst_it != param_map_.end()) {
-							ta = type_subst_it->second;
+					if (ta.dependent_name.isValid()) {
+						std::string_view dep_name = StringTable::getStringView(ta.dependent_name);
+						auto dep_subst_it = param_map_.find(dep_name);
+						if (dep_subst_it != param_map_.end()) {
+							ta = dep_subst_it->second;
 							needs_substitution = true;
+							substituted = true;
 						}
 					}
-				}
 
-				substituted_args.push_back(ta);
-			}
-
-			if (needs_substitution && !substituted_args.empty()) {
-				auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
-				if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
-					const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
-					StringHandle instantiated_name = class_decl.name();
-
-					auto type_it = getTypesByNameMap().find(instantiated_name);
-					if (type_it != getTypesByNameMap().end()) {
-						TypeIndex new_type_index = type_it->second->type_index_;
-						FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
-						return TypeSpecifierNode(new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
+					if (!substituted && !ta.is_value) {
+						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
+							std::string_view arg_type_name = StringTable::getStringView(arg_ti->name());
+							auto type_subst_it = param_map_.find(arg_type_name);
+							if (type_subst_it != param_map_.end()) {
+								ta = type_subst_it->second;
+								needs_substitution = true;
+							}
+						}
 					}
-					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
-				} else {
-					FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", base_name);
+
+					substituted_args.push_back(ta);
+				}
+
+				if (needs_substitution && !substituted_args.empty()) {
+					auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
+					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
+						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
+						StringHandle instantiated_name = class_decl.name();
+
+						auto type_it = getTypesByNameMap().find(instantiated_name);
+						if (type_it != getTypesByNameMap().end()) {
+							TypeIndex new_type_index = type_it->second->type_index_;
+							FLASH_LOG(Templates, Debug, "  Successfully instantiated template: ", base_name, " with type_index=", new_type_index);
+							return TypeSpecifierNode(new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, type.cv_qualifier(), ReferenceQualifier::None);
+						}
+						FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
+					} else {
+						FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", base_name);
+					}
 				}
 			}
-		}
 		}
 	}
 	

@@ -1282,9 +1282,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template)) {
 		// Check if this UserDefined type is actually a struct (e.g., instantiated template)
 		TypeIndex type_index = type_specifier.type_index();
-	if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->struct_info_) {
-		is_struct_like_type = true;
-	}
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index); type_info && type_info->struct_info_) {
+			is_struct_like_type = true;
+		}
 	}
 	// In template bodies, dependent UserDefined types (e.g., node_type, value_type) may not have
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
