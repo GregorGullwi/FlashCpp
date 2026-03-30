@@ -520,6 +520,15 @@ struct TemplateTypeArg {
 		if (is_template_template_arg) {
 			hash ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
+		if (function_signature.has_value()) {
+			const auto& sig = *function_signature;
+			hash ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			for (const auto& pt : sig.parameter_types) {
+				hash ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+				hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			}
+		}
 		
 		// Convert to hex string
 		char buf[17];
@@ -554,6 +563,15 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_template_template_arg) {
 			hash ^= std::hash<StringHandle>{}(arg.template_name_handle) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+		}
+		if (arg.function_signature.has_value()) {
+			const auto& sig = *arg.function_signature;
+			hash ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			for (const auto& pt : sig.parameter_types) {
+				hash ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+				hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			}
 		}
 		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
