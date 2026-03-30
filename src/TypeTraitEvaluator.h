@@ -48,7 +48,6 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 // Main type trait evaluation functions
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
-	TypeCategory base_type,
 	TypeIndex type_idx,
 	bool is_reference,
 	bool is_rvalue_reference,

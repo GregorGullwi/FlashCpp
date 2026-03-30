@@ -126,8 +126,7 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
-	TypeCategory base_type,
-	[[maybe_unused]] TypeIndex type_idx,
+	TypeIndex type_idx,
 	bool is_reference,
 	bool is_rvalue_reference,
 	bool is_lvalue_reference,
@@ -135,12 +134,11 @@ TypeTraitResult evaluateTypeTrait(
 	CVQualifier cv_qualifier,
 	bool is_array,
 	std::optional<size_t> array_size,
-	// Additional type info from gTypeInfo - caller provides these
-	[[maybe_unused]] const TypeInfo* type_info,
+	const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 ) {
 	using namespace TypeTraitEval;
-	const TypeCategory cat = base_type;
+	const TypeCategory cat = type_idx.category();
 	bool result = false;
 	
 	switch (kind) {
@@ -491,7 +489,6 @@ TypeTraitResult evaluateTypeTrait(
 ) {
 	return evaluateTypeTrait(
 		kind,
-		type_spec.category(),
 		type_spec.type_index(),
 		type_spec.is_reference(),
 		type_spec.is_rvalue_reference(),

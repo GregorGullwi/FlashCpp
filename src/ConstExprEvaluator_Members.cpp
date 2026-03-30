@@ -2808,7 +2808,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				struct TraitInput {
-					TypeCategory base_type;
 					TypeIndex type_index;
 					size_t pointer_depth;
 					ReferenceQualifier ref_qualifier;
@@ -2820,7 +2819,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				};
 
 				auto evaluateTypeTraitFromInput = [](TypeTraitKind trait_kind, const TraitInput& input) {
-					return evaluateTypeTrait(trait_kind, input.type_index.category(), input.type_index,
+					return evaluateTypeTrait(trait_kind, input.type_index,
 						input.ref_qualifier != ReferenceQualifier::None,
 						input.ref_qualifier == ReferenceQualifier::RValueReference,
 						input.ref_qualifier == ReferenceQualifier::LValueReference,
