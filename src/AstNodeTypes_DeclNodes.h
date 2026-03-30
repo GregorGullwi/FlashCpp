@@ -941,7 +941,8 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 				resolved = TypeIndex{resolved.index(), type_info.category()};
 			return CanonicalTypeAlias{resolved};
 		}
-		if (type_info.category() != TypeCategory::UserDefined ||
+		if ((type_info.category() != TypeCategory::UserDefined &&
+			type_info.category() != TypeCategory::TypeAlias) ||
 			!type_info.type_index_.is_valid() ||
 			type_info.type_index_ == current_type_index) {
 			break;

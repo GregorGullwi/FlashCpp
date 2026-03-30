@@ -232,7 +232,8 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 	if (function_signature.has_value()) {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
-		if (a.returnType() != b.returnType()) return false;
+		if (a.returnType() != b.returnType() ||
+		    a.return_type_index != b.return_type_index) return false;
 		if (a.parameter_type_indices.size() != b.parameter_type_indices.size()) return false;
 		for (size_t i = 0; i < a.parameter_type_indices.size(); ++i) {
 			if (a.parameter_type_indices[i].category() != b.parameter_type_indices[i].category() ||
@@ -2187,7 +2188,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type) {
 	CanonicalTypeDesc desc;
-	desc.type_index = TypeIndex::fromCategory(type.type());
 	desc.type_index = type.type_index();
 	desc.base_cv = type.cv_qualifier();
 	desc.ref_qualifier = type.reference_qualifier();

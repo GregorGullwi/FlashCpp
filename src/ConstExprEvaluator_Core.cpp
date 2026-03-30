@@ -1369,10 +1369,39 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 				}
 			case TypeCategory::Struct:
 			case TypeCategory::UserDefined:
-			case TypeCategory::TypeAlias:
 				// For struct types, return a success result with value 0
 				// This indicates successful default construction
 				return EvalResult::from_int(0);
+			case TypeCategory::TypeAlias:
+				{
+					// Resolve the alias to determine the correct zero-init representation.
+					// An alias to an unsigned type (e.g., using size_type = unsigned long long)
+					// should produce from_uint(0), not from_int(0).
+					TypeIndex ti = type_spec.type_index();
+					if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
+						const TypeInfo& alias_info = getTypeInfo(ti);
+						TypeCategory resolved = alias_info.category();
+						if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
+							return EvalResult::from_int(0);
+						}
+						if (is_unsigned_integer_type(resolved)) {
+							EvalResult result = EvalResult::from_uint(0);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+						if (isFloatingPointType(resolved)) {
+							EvalResult result = EvalResult::from_double(0.0);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+						if (resolved == TypeCategory::Bool) {
+							EvalResult result = EvalResult::from_bool(false);
+							result.set_exact_type(type_spec);
+							return result;
+						}
+					}
+					return EvalResult::from_int(0);
+				}
 			default:
 				return EvalResult::error("Unsupported type for default construction in constant expression");
 		}
@@ -1411,6 +1440,7 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
 		if (lhs_sig.returnType() != rhs_sig.returnType() ||
+			lhs_sig.return_type_index != rhs_sig.return_type_index ||
 			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||
