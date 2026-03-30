@@ -325,6 +325,15 @@ struct TemplateTypeArg {
 		if (is_template_template_arg) {
 			h ^= std::hash<StringHandle>{}(template_name_handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
+		if (function_signature.has_value()) {
+			const auto& sig = *function_signature;
+			h ^= std::hash<size_t>{}(sig.return_type.type_index().index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_type.type_index().category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			for (const auto& pt : sig.parameter_types) {
+				h ^= std::hash<size_t>{}(pt.type_index().index()) + 0x9e3779b9 + (h << 6) + (h >> 2);
+				h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(pt.type_index().category())) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
+		}
 		return h;
 	}
 	
@@ -353,7 +362,7 @@ struct TemplateTypeArg {
 			}
 		}
 		
-		return category_match &&
+		if (!(category_match &&
 		       type_index_match &&
 		       ref_qualifier == other.ref_qualifier &&
 		       pointer_depth == other.pointer_depth &&
@@ -363,9 +372,29 @@ struct TemplateTypeArg {
 		       array_size == other.array_size &&
 		       member_pointer_kind == other.member_pointer_kind &&
 		       is_value == other.is_value &&
-		       (!is_value || value == other.value) &&  // Only compare value if it's a value
+		       (!is_value || value == other.value) &&
 		       is_template_template_arg == other.is_template_template_arg &&
-		       (!is_template_template_arg || template_name_handle == other.template_name_handle);
+		       (!is_template_template_arg || template_name_handle == other.template_name_handle)))
+			return false;
+
+		// Compare function_signature to distinguish e.g. int(*)(int) from int(*)(double)
+		if (function_signature.has_value() != other.function_signature.has_value())
+			return false;
+		if (function_signature.has_value()) {
+			const auto& a = *function_signature;
+			const auto& b = *other.function_signature;
+			if (a.return_type.type_index() != b.return_type.type_index() ||
+			    a.return_type.type_index().category() != b.return_type.type_index().category())
+				return false;
+			if (a.parameter_types.size() != b.parameter_types.size())
+				return false;
+			for (size_t i = 0; i < a.parameter_types.size(); ++i) {
+				if (a.parameter_types[i].type_index() != b.parameter_types[i].type_index() ||
+				    a.parameter_types[i].type_index().category() != b.parameter_types[i].type_index().category())
+					return false;
+			}
+		}
+		return true;
 	}
 
 	// Helper method to check if this is a parameter pack
