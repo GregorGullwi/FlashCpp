@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "IrGenerator.h"
 
 	AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
@@ -1823,7 +1823,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			// Use concrete type if this parameter uses a template parameter
 			if (i < inst_info.template_args.size()) {
 				TypeCategory concrete_cat = inst_info.template_args[i];
-				func_param.type_index = TypeIndex::fromTypeAndIndex(concrete_cat, {});
+				func_param.type_index = nativeTypeIndex(concrete_cat);
 				func_param.size_in_bits = SizeInBits{get_type_size_bits(concrete_cat)};
 				func_param.pointer_depth = PointerDepth{};  // pointer depth
 			} else {

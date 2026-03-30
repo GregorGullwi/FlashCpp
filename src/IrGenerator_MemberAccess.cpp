@@ -244,7 +244,7 @@
 
 				ArrayAccessOp payload;
 				payload.result = result_var;
-				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, {});
+				payload.element_type_index = nativeTypeIndex(element_type);
 				payload.element_size_in_bits = base_element_size;
 				payload.array = qualified_name;
 				payload.member_offset = static_cast<int64_t>(member->offset);
@@ -380,7 +380,7 @@
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
-					payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
+					payload.element_type_index = TypeIndex{(TypeIndex{element_type_index}).index(), element_type};
 					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
@@ -468,7 +468,7 @@
 									// Create typed payload for ArrayAccess with qualified member name
 									ArrayAccessOp payload;
 									payload.result = result_var;
-									payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, member->type_index);
+									payload.element_type_index = TypeIndex{(member->type_index).index(), element_type};
 									payload.element_size_in_bits = element_size_bits;
 									payload.array = StringTable::getOrInternStringHandle(StringBuilder().append(object_name).append(".").append(member_name));
 									payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
@@ -704,7 +704,7 @@
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
 		payload.result = result_var;
-		payload.element_type_index = TypeIndex::fromTypeAndIndex(element_type, TypeIndex{element_type_index});
+		payload.element_type_index = TypeIndex{(TypeIndex{element_type_index}).index(), element_type};
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
@@ -1571,7 +1571,7 @@
 						FLASH_LOG(Codegen, Debug, "sizeof(qualified_type): struct=", struct_name, " member=", member_name);
 						size_t member_size = lookupStructMemberSize(struct_name, member_name);
 						if (member_size > 0) {
-							return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -1582,7 +1582,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -1595,7 +1595,7 @@
 					size_t param_size_bytes = resolveTemplateSizeFromStructName(struct_name);
 
 					if (param_size_bytes > 0) {
-						return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(param_size_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1665,7 +1665,7 @@
 					auto array_size = calculateArraySize(*decl);
 					if (array_size.has_value()) {
 						// Return sizeof result for array
-						return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(*array_size)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					// For regular variables, get the type size from the declaration
@@ -1676,16 +1676,16 @@
 							const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info && struct_info->total_size > 0) {
-								return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 							// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
 							if (type_info.type_size_ > 0) {
-								return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info.type_size_)}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
 						// Fallback: use size_in_bits from the type specifier node
 						if (var_type.size_in_bits() > 0) {
-							return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(var_type.size_in_bits() / 8)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					} else {
 						// Primitive type - use get_type_size_bits to handle cases where size_in_bits wasn't set
@@ -1694,7 +1694,7 @@
 							size_bits = get_type_size_bits(var_type.category());
 						}
 						size_in_bytes = size_bits / 8;
-						return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 			}
@@ -1743,7 +1743,7 @@
 									// Otherwise, search for instantiated types (template vs instantiation mismatch)
 									if (direct_member_size > 1) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): FOUND member size=", direct_member_size);
-										return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+										return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 									}
 
 									// Fallback: If direct lookup failed or found size <= 1 (could be unsubstituted template),
@@ -1763,7 +1763,7 @@
 												for (const auto& member : inst_struct_info->members) {
 													if (StringTable::getStringView(member.getName()) == member_name) {
 														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-														return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+														return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, PointerDepth{}, ValueStorage::ContainsData);
 													}
 												}
 											}
@@ -1773,7 +1773,7 @@
 									// If no instantiation found but direct lookup had a result, use that
 									if (direct_member_size > 0) {
 										FLASH_LOG(Codegen, Debug, "sizeof(member_access): Using direct lookup member size=", direct_member_size);
-										return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+										return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 									}
 								}
 							}
@@ -1855,7 +1855,7 @@
 							}
 
 							// Return the size without generating runtime IR
-							return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 
 						fallback_to_ir:
@@ -1875,7 +1875,7 @@
 
 				size_t member_size = lookupStructMemberSize(struct_name, member_name);
 				if (member_size > 0) {
-					return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -1907,7 +1907,7 @@
 
 		// Return sizeof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(size_in_bytes)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateAlignofIr(const AlignofExprNode& alignofNode) {
@@ -1973,7 +1973,7 @@
 								const TypeInfo& type_info = getTypeInfo(TypeIndex{type_index});
 								const StructTypeInfo* struct_info = type_info.getStructInfo();
 								if (struct_info) {
-									return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+									return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 								}
 							}
 						} else {
@@ -1984,7 +1984,7 @@
 							}
 							size_t size_in_bytes = size_bits / 8;
 							alignment = calculate_alignment_from_size(size_in_bytes, var_type.category());
-							return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -2017,7 +2017,7 @@
 
 		// Return alignof result as a constant unsigned long long (size_t equivalent)
 		// Format: [type, size_bits, value]
-		return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(alignment)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateOffsetofIr(const OffsetofExprNode& offsetofNode) {
@@ -2047,7 +2047,7 @@
 			return ExprResult{};
 		}
 
-		return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(path_result.total_offset)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	bool AstToIr::isScalarType(TypeCategory type, bool is_reference, size_t pointer_depth) const {
@@ -2142,7 +2142,7 @@
 					break;
 			}
 			// Return result as a bool constant
-			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For traits that require type arguments, extract the type information
@@ -2998,10 +2998,10 @@
 					const EnumTypeInfo* enum_info = type_info.getEnumInfo();
 					if (enum_info) {
 						// Return the enum's declared underlying type
-						return makeExprResult(enum_info->underlying_type, SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(enum_info->underlying_type), SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 					// Fallback to int if no enum info
-					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{0ULL}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 				// For non-enums, this is an error - return false/0
 				result = false;
@@ -3022,7 +3022,7 @@
 
 		// Return result as a bool constant
 		// Format: [type, size_bits, value]
-		return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{static_cast<unsigned long long>(result ? 1ULL : 0ULL)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 
@@ -3715,7 +3715,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = TypeIndex::fromTypeAndIndex(target_type, target_type_index);
+	call_op.return_type_index = TypeIndex{(target_type_index).index(), target_type};
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
@@ -3780,5 +3780,5 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(target_type, SizeInBits{target_size_bits}, IrOperand{result_var}, target_type_index, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(TypeIndex{(target_type_index).index(), target_type}, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

@@ -669,7 +669,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 		
 		TemplateTypeArg resolved_arg;
-		resolved_arg.type_index = TypeIndex::fromTypeAndIndex(resolved_base_type, resolved_type_index);
+		resolved_arg.type_index = TypeIndex{(resolved_type_index).index(), resolved_base_type};
 		
 		FLASH_LOG(Templates, Debug, "Resolved dependent type to: type=", 
 		          static_cast<int>(resolved_base_type), ", index=", resolved_type_index);
@@ -1364,7 +1364,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto type_it = getTypesByNameMap().find(h);
 								if (type_it != getTypesByNameMap().end()) {
 									TemplateTypeArg a;
-									a.type_index = TypeIndex::fromTypeAndIndex(type_it->second->typeEnum(), type_it->second->type_index_);
+									a.type_index = TypeIndex{(type_it->second->type_index_).index(), type_it->second->typeEnum()};
 									resolved_args.push_back(a);
 									resolved = true;
 								}
@@ -3245,7 +3245,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									TemplateTypeArg inst_arg;
-									inst_arg.type_index = TypeIndex::fromTypeAndIndex(TypeCategory::Struct, inst_it->second->type_index_);
+									inst_arg.type_index = TypeIndex{(inst_it->second->type_index_).index(), TypeCategory::Struct};
 									inst_arg.pointer_depth = type_spec.pointer_depth();
 									inst_arg.ref_qualifier = type_spec.reference_qualifier();
 									inst_arg.cv_qualifier = type_spec.cv_qualifier();
@@ -4848,7 +4848,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto resolved_it = getTypesByNameMap().find(resolved_handle);
 						if (resolved_it != getTypesByNameMap().end()) {
 							const TypeInfo* resolved_type = resolved_it->second;
-							member.type_index = TypeIndex::fromTypeAndIndex(resolved_type->typeEnum(), resolved_type->type_index_);
+							member.type_index = resolved_type->type_index_;
 							if (resolved_type->getStructInfo()) {
 								member.size = resolved_type->getStructInfo()->total_size;
 								member.alignment = resolved_type->getStructInfo()->alignment;

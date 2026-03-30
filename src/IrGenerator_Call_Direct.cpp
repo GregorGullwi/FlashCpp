@@ -86,7 +86,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 	StringHandle struct_tmp_handle = StringTable::getOrInternStringHandle(struct_tmp.name());
 
 	VariableDeclOp vdecl;
-	vdecl.type_index = TypeIndex::fromTypeAndIndex(ret_type, ret_spec.type_index());
+	vdecl.type_index = TypeIndex(ret_spec.type_index().index(), ret_type);
 	vdecl.size_in_bits = ret_size;
 	vdecl.var_name = struct_tmp_handle;
 	ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(vdecl), call_token));
@@ -105,7 +105,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 		ms.struct_type_info = struct_type_info;
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), call_token));
 	}
-	return makeExprResult(ret_type, ret_size, IrOperand{struct_tmp_handle}, ret_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(TypeIndex{(ret_spec.type_index()).index(), ret_type}, ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 	ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
@@ -188,13 +188,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 
 									// Return pointer type (64-bit address) with pointer depth 1
-									return makeExprResult(
-										operand_type,
-										SizeInBits{64},
-										IrOperand{result_var},
-										TypeIndex{},
-										PointerDepth{1}
-									, ValueStorage::ContainsData);
+									return makeExprResult(nativeTypeIndex(operand_type), SizeInBits{64}, IrOperand{result_var}, PointerDepth{1}, ValueStorage::ContainsData);
 								}
 								// For non-identifier expressions, fall through to generate a regular call
 								// (we can't inline complex expressions that need reference semantics)
@@ -267,10 +261,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// Return the result variable with the return type from the function signature
 				if (func_type.has_function_signature()) {
 					const auto& sig = func_type.function_signature();
-					return makeExprResult(sig.returnType(), SizeInBits{64}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
+					return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
 				} else {
 					// For auto types or missing signature, default to int
-					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -368,7 +362,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					// Build the call operands
 					CallOp call_op;
 					call_op.result = ret_var;
-					call_op.return_type_index = TypeIndex::fromTypeAndIndex(TypeCategory::Int, {});  // Default, will be refined
+					call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);  // Default, will be refined
 					call_op.return_size_in_bits = SizeInBits{32};
 					call_op.is_variadic = false;
 
@@ -442,7 +436,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-					return makeExprResult(TypeCategory::Int, SizeInBits{32}, IrOperand{ret_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 
 				// Not inside a lambda context — this is an unresolved placeholder that
@@ -976,12 +970,12 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			if (ret_type == TypeCategory::Float) {
 				float fval = static_cast<float>(eval_result.as_double());
 				uint32_t fbits; std::memcpy(&fbits, &fval, sizeof(float));
-				return makeExprResult(ret_type, SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{32}, IrOperand{static_cast<unsigned long long>(fbits)}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			if (ret_type == TypeCategory::Double || ret_type == TypeCategory::LongDouble) {
 				double dval = eval_result.as_double();
 				unsigned long long dbits; std::memcpy(&dbits, &dval, sizeof(double));
-				return makeExprResult(ret_type, SizeInBits{64}, IrOperand{dbits}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{64}, IrOperand{dbits}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// Aggregate / struct: emit VariableDecl + MemberStore sequence
@@ -992,7 +986,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			}
 
 			// Scalar integer / bool / enum
-			return makeExprResult(ret_type, ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(ret_type), ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Always add the return variable and function name (mangled for overload resolution)
@@ -1522,7 +1516,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					this_type_index = parent_it->second->type_index_;
 				}
 			}
-			call_op.args.push_back(makeTypedValue(this_type, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this")), this_type_index));
+			call_op.args.push_back(makeTypedValue(TypeIndex{this_type_index.index(), this_type}, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle("this"))));
 		}
 
 		// Detect if calling a function that returns struct by value (needs hidden return parameter for RVO)
@@ -1631,11 +1625,6 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 			ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
 				? ValueStorage::ContainsAddress
 				: ValueStorage::ContainsData;
-			return makeExprResult(
-				return_type.type(),
-				SizeInBits{result_size},
-				IrOperand{ret_var},
-				type_index_result,
-				PointerDepth{}, st);
+			return makeExprResult(TypeIndex{(type_index_result).index(), return_type.type()}, SizeInBits{result_size}, IrOperand{ret_var}, PointerDepth{}, st);
 		}
 	}

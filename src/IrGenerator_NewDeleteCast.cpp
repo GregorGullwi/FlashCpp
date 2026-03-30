@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "IrGenerator.h"
 
 	ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
@@ -59,7 +59,7 @@
 				// Create PlacementNewOp for array
 				PlacementNewOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
+				op.type_index = TypeIndex(type_spec.type_index().index(), allocated_type_enum);
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue
@@ -168,7 +168,7 @@
 				// Create HeapAllocArrayOp
 				HeapAllocArrayOp op;
 				op.result = result_var;
-				op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
+				op.type_index = TypeIndex(type_spec.type_index().index(), allocated_type_enum);
 				op.size_in_bytes = size_in_bits / 8;
 				op.pointer_depth = PointerDepth{pointer_depth};
 				// Convert IrOperand to IrValue for count
@@ -346,7 +346,7 @@
 			// Create PlacementNewOp
 			PlacementNewOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
+			op.type_index = TypeIndex(type_spec.type_index().index(), allocated_type_enum);
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 			// Convert IrOperand to IrValue
@@ -392,7 +392,7 @@
 			// Single object allocation: new Type or new Type(args)
 			HeapAllocOp op;
 			op.result = result_var;
-			op.type_index = TypeIndex::fromTypeAndIndex(allocated_type_enum, type_spec.type_index());
+			op.type_index = TypeIndex(type_spec.type_index().index(), allocated_type_enum);
 			op.size_in_bytes = size_in_bits / 8;
 			op.pointer_depth = PointerDepth{pointer_depth};
 
@@ -436,7 +436,7 @@
 
 		// Return pointer to allocated memory
 		// The result is a pointer, so we return it with pointer_depth + 1
-		return makeExprResult(allocated_type_enum, SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(allocated_type_enum), SizeInBits{static_cast<int>(size_in_bits)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& deleteExpr) {
@@ -501,7 +501,7 @@
 						TempVar count_var = var_counter.next();
 						ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 							.result = count_var,
-							.pointer = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, raw_ptr, nativeTypeIndex(TypeCategory::UnsignedLongLong), PointerDepth{1}),
+							.pointer = makeTypedValue(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, raw_ptr, PointerDepth{1}),
 						}, Token()));
 
 						// Emit reverse-order destructor loop: i = count-1 down to 0
@@ -692,7 +692,7 @@
 		// Primitive/reference-only targets have no semantic TypeIndex, so keep the
 		// source TypeIndex in that case.
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(TypeIndex{(result_type_index).index(), target_type}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::handleLValueReferenceCast(
@@ -720,7 +720,7 @@
 		// so downstream conversion-operator lookup finds Base's operators, not Derived's.
 		// Fall back to the source type_index for non-struct targets (primitives have no TypeIndex).
 		TypeIndex result_type_index = target_type_index.is_valid() ? target_type_index : expr_operands.type_index;
-		return makeExprResult(target_type, SizeInBits{64}, result_var, result_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
+		return makeExprResult(TypeIndex{(result_type_index).index(), target_type}, SizeInBits{64}, result_var, PointerDepth{}, ValueStorage::ContainsAddress);
 	}
 
 	ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
@@ -777,7 +777,7 @@
 			// All pointers are 64-bit on x64, so size should be 64
 			FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 				static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-			return makeExprResult(target_type, SizeInBits{64}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(target_type), SizeInBits{64}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For now, static_cast just changes the type metadata
@@ -787,7 +787,7 @@
 		// If the types are the same, just return the expression as-is
 		if (source_type == target_type && source_size == target_size) {
 			if (source_has_semantic_identity() && !carriesSemanticTypeIndex(target_type)) {
-				return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 			}
 			return expr_operands;
 		}
@@ -798,7 +798,7 @@
 		(source_type == TypeCategory::Enum && target_type == TypeCategory::UnsignedInt) ||
 		(source_type == TypeCategory::UnsignedInt && target_type == TypeCategory::Enum)) {
 			// Return the value with the new type
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-int conversions, generate FloatToInt IR
@@ -825,7 +825,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToInt, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For int-to-float conversions, generate IntToFloat IR
@@ -849,7 +849,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::IntToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-float conversions (float <-> double), generate FloatToFloat IR
@@ -873,7 +873,7 @@
 				.to_size_in_bits = SizeInBits{target_size
 			}};
 			ir_.addInstruction(IrOpcode::FloatToFloat, std::move(op), staticCastNode.cast_token());
-			return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For integer-to-bool conversions, normalize to 0 or 1 via != 0
@@ -886,7 +886,7 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For float-to-bool conversions, normalize to 0 or 1 via != 0.0
@@ -898,12 +898,12 @@
 				.result = result_temp,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), staticCastNode.cast_token()));
-			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateTypeidIr(const TypeidNode& typeidNode) {
@@ -963,7 +963,7 @@
 
 		// Return pointer to type_info (64-bit pointer)
 		// Use void* type for now (Type::Void with pointer depth)
-		return makeExprResult(TypeCategory::Void, SizeInBits{64}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{64}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode) {
@@ -1045,7 +1045,7 @@
 
 		// Return the casted pointer/reference
 		ValueStorage result_storage = is_reference_cast ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
-		return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, TypeIndex{}, PointerDepth{}, result_storage);
+		return makeExprResult(nativeTypeIndex(result_type), SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, PointerDepth{}, result_storage);
 	}
 
 	ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
@@ -1073,7 +1073,7 @@
 		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual value/address remains the same
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1103,5 +1103,5 @@
 		// For code generation purposes, we just return the expression with the new type metadata
 		// The actual bit pattern remains unchanged
 		int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-		return makeExprResult(target_type, SizeInBits{static_cast<int>(result_size)}, expr_operands.value, TypeIndex{}, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(result_size)}, expr_operands.value, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
 	}

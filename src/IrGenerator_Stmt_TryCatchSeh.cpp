@@ -101,7 +101,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				// Emit CatchBegin marker with exception type and qualifiers
 				CatchBeginOp catch_op;
 				catch_op.exception_temp = exception_temp;
-				catch_op.type_index = TypeIndex::fromTypeAndIndex(type_node.type(), type_index);
+				catch_op.type_index = TypeIndex{type_index.index(), type_node.type()};
 				catch_op.catch_end_label = catch_end_label;
 				catch_op.continuation_label = end_label;
 				catch_op.is_const = type_node.is_const();
@@ -271,7 +271,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 					StringHandle throw_storage_name = StringTable::getOrInternStringHandle(temp_name_builder.commit());
 
 					VariableDeclOp materialized_throw_decl;
-					materialized_throw_decl.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
+					materialized_throw_decl.type_index = TypeIndex{(exception_type_index).index(), expr_type};
 					materialized_throw_decl.size_in_bits = SizeInBits{static_cast<int>(type_size)};
 					materialized_throw_decl.var_name = throw_storage_name;
 					materialized_throw_decl.use_copy_constructor = (exception_type_index.is_valid());
@@ -294,7 +294,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 			// Create ThrowOp with typed data
 			ThrowOp throw_op;
-			throw_op.type_index = TypeIndex::fromTypeAndIndex(expr_type, exception_type_index);
+			throw_op.type_index = TypeIndex{(exception_type_index).index(), expr_type};
 			throw_op.size_in_bytes = type_size / 8;  // Convert bits to bytes
 			throw_op.is_rvalue = is_rvalue;
 			throw_op.value_is_materialized = value_is_materialized;

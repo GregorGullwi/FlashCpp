@@ -511,7 +511,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					auto closure_type = deduceLambdaClosureType(ast_node, decl.identifier_token());
 					if (closure_type.has_value() && lambda_ptr->captures().empty()) {
 						collectLambdaForDeferredGeneration(*lambda_ptr);
-						op.type_index = TypeIndex::fromTypeAndIndex(closure_type->type(), closure_type->type_index());
+						op.type_index = closure_type->type_index();
 						op.size_in_bits = SizeInBits{closure_type->size_in_bits()};
 						element_size = op.size_in_bits.value / 8;
 						op.is_initialized = true;
@@ -1692,7 +1692,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 		decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 		decl_op.is_array = decl.is_array();
 		if (decl.is_array() && operands.size() >= 10) {
-			decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(std::get<TypeCategory>(operands[7]), {});
+			decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
 			decl_op.array_element_size = std::get<int>(operands[8]);
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands[9])) {
 				decl_op.array_count = *ull_val;
@@ -1722,7 +1722,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Build ArrayElementAddressOp
 					ArrayElementAddressOp addr_op;
 					addr_op.result = addr_temp;
-					addr_op.element_type_index = TypeIndex::fromTypeAndIndex(elem_type, {});
+					addr_op.element_type_index = nativeTypeIndex(elem_type);
 					addr_op.element_size_in_bits = elem_size;
 					addr_op.array = lv_info.base;
 
@@ -2529,17 +2529,17 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 		// For arrays, we need to set up the array info properly
 		if (is_array) {
-			hidden_decl_op.type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+			hidden_decl_op.type_index = nativeTypeIndex(array_element_type);
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 			hidden_decl_op.is_array = true;
-			hidden_decl_op.array_element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+			hidden_decl_op.array_element_type_index = nativeTypeIndex(array_element_type);
 			hidden_decl_op.array_element_size = array_element_size;
 			hidden_decl_op.array_count = array_size;
 			// Don't set initializer here for arrays - we'll copy element by element
 		} else if (is_reference_binding) {
 			// For reference bindings (auto& [a,b] = x), the hidden variable is a reference
 			// to the original object, not a copy
-			hidden_decl_op.type_index = TypeIndex::fromTypeAndIndex(init_type, {});
+			hidden_decl_op.type_index = nativeTypeIndex(init_type);
 			hidden_decl_op.size_in_bits = SizeInBits{64};  // Reference is always 64-bit pointer
 			hidden_decl_op.ref_qualifier = node.is_rvalue_reference()
 				? CVReferenceQualifier::RValueReference
@@ -2571,7 +2571,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				hidden_decl_op.initializer = toTypedValue(init_operands);
 			}
 		} else {
-			hidden_decl_op.type_index = TypeIndex::fromTypeAndIndex(init_type, {});
+			hidden_decl_op.type_index = nativeTypeIndex(init_type);
 			hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 			hidden_decl_op.initializer = toTypedValue(init_operands);
 		}
@@ -2595,7 +2595,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					access_op.result = element_temp;
 					access_op.array = source_array;
 					access_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					access_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					access_op.element_type_index = nativeTypeIndex(array_element_type);
 					access_op.element_size_in_bits = array_element_size;
 					access_op.is_pointer_to_array = false;
 					access_op.member_offset = 0;
@@ -2604,7 +2604,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Store element to hidden array
 					ArrayStoreOp store_op;
-					store_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					store_op.element_type_index = nativeTypeIndex(array_element_type);
 					store_op.element_size_in_bits = array_element_size;
 					store_op.array = hidden_var_handle;
 					store_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
@@ -2670,7 +2670,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					addr_op.result = element_addr;
 					addr_op.array = hidden_var_handle;
 					addr_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					addr_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					addr_op.element_type_index = nativeTypeIndex(array_element_type);
 					addr_op.element_size_in_bits = array_element_size;
 					addr_op.is_pointer_to_array = false;
 
@@ -2683,7 +2683,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Declare the binding as a reference variable initialized with the address
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
-					binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					binding_var_decl.type_index = nativeTypeIndex(array_element_type);
 					binding_var_decl.size_in_bits = SizeInBits{64};  // References are pointers (64-bit addresses)
 					binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 						? CVReferenceQualifier::RValueReference
@@ -2698,7 +2698,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					load_op.result = element_val;
 					load_op.array = hidden_var_handle;
 					load_op.index = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i));
-					load_op.element_type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					load_op.element_type_index = nativeTypeIndex(array_element_type);
 					load_op.element_size_in_bits = array_element_size;
 					load_op.is_pointer_to_array = false;  // Local array
 					load_op.member_offset = 0;
@@ -2708,7 +2708,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					// Now, declare the binding variable with the element value as initializer
 					VariableDeclOp binding_var_decl;
 					binding_var_decl.var_name = binding_id;
-					binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(array_element_type, {});
+					binding_var_decl.type_index = nativeTypeIndex(array_element_type);
 					binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(array_element_size)};
 					binding_var_decl.initializer = makeTypedValue(array_element_type, SizeInBits{static_cast<int>(array_element_size)}, element_val);
 
@@ -3092,7 +3092,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				addr_op.result = member_addr;
 				addr_op.base = hidden_var_handle;
 				addr_op.total_member_offset = static_cast<int>(member.offset);
-				addr_op.result_type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+				addr_op.result_type_index = member.type_index;
 				addr_op.result_size_bits = SizeInBits{64};  // Address is 64-bit pointer
 
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(addr_op), binding_token));
@@ -3104,7 +3104,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Declare the binding as a reference variable initialized with the address
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+				binding_var_decl.type_index = member.type_index;
 				binding_var_decl.size_in_bits = SizeInBits{64};  // References are pointers (64-bit addresses)
 				binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 					? CVReferenceQualifier::RValueReference
@@ -3140,7 +3140,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				// Now, declare the binding variable with the member value as initializer
 				VariableDeclOp binding_var_decl;
 				binding_var_decl.var_name = binding_id;
-				binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+				binding_var_decl.type_index = member.type_index;
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
 				init_val2.setType(member.memberType());

@@ -14602,7 +14602,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					int32_t exception_ptr_slot = allocateElfTempStackSlot(8);
 					emitMovToFrame(X64Register::R15, exception_ptr_slot, 64);
 
-					TypedValue source_value = makeTypedValue(throw_op.type_index.category(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
+					TypedValue source_value = makeTypedValue(throw_op.type_index, SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 				}
 
@@ -14746,7 +14746,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 
 				bool exception_constructed = false;
 				if (throw_op.type_index.category() == TypeCategory::Struct && throw_op.type_index.is_valid() && !throw_op.value_is_materialized) {
-					TypedValue source_value = makeTypedValue(throw_op.type_index.category(), SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value, throw_op.type_index);
+					TypedValue source_value = makeTypedValue(throw_op.type_index, SizeInBits{static_cast<int>(exception_size * 8)}, throw_op.exception_value);
 						exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 				}
 

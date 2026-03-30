@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 
 #include "AstNodeTypes.h"
@@ -133,7 +133,7 @@ struct TemplateArgumentValue {
 
 	static TemplateArgumentValue makeValue(int64_t val, TypeCategory value_type) {
 		TemplateArgumentValue v;
-		v.type_index = TypeIndex::fromTypeAndIndex(value_type, TypeIndex{});
+		v.type_index = nativeTypeIndex(value_type);
 		v.value = val;
 		return v;
 	}

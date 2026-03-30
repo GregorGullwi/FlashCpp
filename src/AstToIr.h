@@ -414,7 +414,7 @@ private:
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&eval_result.value)) {
 				value = *ull_val;
 			}
-			return makeExprResult(TypeCategory::UnsignedLongLong, SizeInBits{64}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// Return default ExprResult if evaluation failed

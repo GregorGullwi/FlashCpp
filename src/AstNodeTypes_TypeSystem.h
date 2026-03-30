@@ -411,10 +411,6 @@ struct TypeIndex {
 	// Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
 	// a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
 	// is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
-	static constexpr TypeIndex fromTypeAndIndex(TypeCategory t, TypeIndex idx) noexcept {
-		TypeCategory cat = (idx.category() != TypeCategory::Invalid) ? idx.category() : t;
-		return TypeIndex{idx.index(), cat};
-	}
 
 	// Increment operators for loop variables (index only).
 	TypeIndex& operator++() noexcept { ++index_; return *this; }

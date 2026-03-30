@@ -1632,7 +1632,7 @@
 									addr_member_op.result = member_source_addr;
 									addr_member_op.base_object = StringTable::getOrInternStringHandle("other"sv);
 									addr_member_op.member_offset = static_cast<int>(member.offset);
-									addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
+									addr_member_op.member_type_index = member.type_index;
 									addr_member_op.member_size_in_bits = static_cast<int>(member.size * 8);
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
@@ -2509,12 +2509,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 
 	// Return operands for the constructed initializer_list
 	// Return the StringHandle for the variable name so the caller can use it
-	return makeExprResult(
-		TypeCategory::Struct,
-		SizeInBits{static_cast<int>(init_list_size_bits)},
-		IrOperand{init_list_name},
-		TypeIndex{init_list_type_index}
-	, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(TypeIndex{(TypeIndex{init_list_type_index}).index(), TypeCategory::Struct}, SizeInBits{static_cast<int>(init_list_size_bits)}, IrOperand{init_list_name}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -2535,9 +2530,9 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		const int type_size_bits = get_type_size_bits(type_spec.type());
 		if (num_args == 0) {
 			if (is_floating_point_type(type_spec.category())) {
-				return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0.0}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
 			}
-			return makeExprResult(type_spec.type(), SizeInBits{type_size_bits}, IrOperand{0ULL}, type_spec.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(type_spec.type_index(), SizeInBits{type_size_bits}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		if (num_args == 1) {
 			ASTNode first_arg;
@@ -2704,12 +2699,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			setTempVarMetadata(ret_var, TempVarMetadata::makeRVOEligiblePRValue());
 
 			TypeIndex result_type_index = type_spec.type_index();
-			return makeExprResult(
-				type_spec.type(),
-				SizeInBits{actual_size_bits},
-				IrOperand{ret_var},
-				TypeIndex{result_type_index}
-			, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{(TypeIndex{result_type_index}).index(), type_spec.type()}, SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 
@@ -2816,10 +2806,5 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Return the result variable with the constructed type, including type_index for struct types
 	TypeIndex result_type_index = type_spec.type_index();
-	return makeExprResult(
-		type_spec.type(),
-		SizeInBits{actual_size_bits},
-		IrOperand{ret_var},
-		TypeIndex{result_type_index}
-	, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(TypeIndex{(TypeIndex{result_type_index}).index(), type_spec.type()}, SizeInBits{actual_size_bits}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

@@ -11,8 +11,7 @@
 			if (operands.category() == toType) {
 				return operands;
 			}
-			return makeExprResult(toType, SizeInBits{64}, operands.value,
-				operands.type_index, operands.pointer_depth, operands.storage);
+			return makeExprResult(TypeIndex{(operands.type_index).index(), toType}, SizeInBits{64}, operands.value, operands.pointer_depth, operands.storage);
 		}
 
 		// Resolve enum to its underlying integer type so downstream size/signedness
@@ -48,13 +47,7 @@
 			// reflects the requested target type so downstream consumers see the
 			// correct primitive type for signedness / domain queries.
 			if (operands.category() != toType) {
-				return makeExprResult(
-					toType,
-					SizeInBits{toSize},
-					operands.value,
-					operands.type_index,
-					operands.pointer_depth
-				, ValueStorage::ContainsData);
+				return makeExprResult(TypeIndex{(operands.type_index).index(), toType}, SizeInBits{toSize}, operands.value, operands.pointer_depth, ValueStorage::ContainsData);
 			}
 			return operands;
 		}
@@ -82,7 +75,7 @@
 					if (toType == TypeCategory::Bool) {
 						// C++20 [conv.bool]: zero → false, any other value → true.
 						const auto int_val = static_cast<unsigned long long>(src_val != 0.0 ? 1 : 0);
-						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{int_val}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 					if (is_unsigned_integer_type(toType)) {
 						// Cast through long long first for safety: direct
@@ -91,10 +84,10 @@
 						// always non-negative (unary minus produces a TempVar), but
 						// the two-step cast is defensive against future changes.
 						const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
-						return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{int_val}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 					const auto int_val = static_cast<unsigned long long>(static_cast<long long>(src_val));
-					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{int_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{int_val}, PointerDepth{}, ValueStorage::ContainsData);
 				} else {
 					// int literal → float/double: emit IntToFloat IR instruction.
 					// handleIntToFloat uses loadTypedValueIntoRegister which handles
@@ -107,20 +100,20 @@
 						.to_size_in_bits = SizeInBits{toSize
 					}};
 					ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
-					return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{resultVar}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
 			// For same-domain literal conversions, keep the value immediate.
 			if (const auto* ull_val = std::get_if<unsigned long long>(&operands.value)) {
 				unsigned long long value = *ull_val;
-				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (const auto* int_val = std::get_if<int>(&operands.value)) {
 				int value = *int_val;
-				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{static_cast<unsigned long long>(value)}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{static_cast<unsigned long long>(value)}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (const auto* d_val = std::get_if<double>(&operands.value)) {
 				double value = *d_val;
-				return makeExprResult(toType, SizeInBits{toSize}, IrOperand{value}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -144,7 +137,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::IntToFloat, std::move(conv_op), source_token));
 			}
 
-			return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{resultVar}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// If both are floats but different sizes, use FloatToFloat conversion
@@ -157,20 +150,14 @@
 				.to_size_in_bits = SizeInBits{toSize
 			}};
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatToFloat, std::move(conv_op), source_token));
-			return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{resultVar}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		// If sizes are equal and only signedness differs, no actual conversion instruction is needed
 		// The value can be reinterpreted as the new type
 		if (fromSize == toSize) {
 			// Same size, different signedness - just change the type metadata
-			return makeExprResult(
-				toType,
-				SizeInBits{toSize},
-				operands.value,
-				operands.type_index,
-				operands.pointer_depth
-			, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{(operands.type_index).index(), toType}, SizeInBits{toSize}, operands.value, operands.pointer_depth, ValueStorage::ContainsData);
 		}
 
 		// For non-literal values (variables, TempVars), create a conversion instruction
@@ -234,7 +221,7 @@
 			ir_.addInstruction(IrInstruction(IrOpcode::Truncate, std::move(conv_op), source_token));
 		}
 		// Return the converted operands
-		return makeExprResult(toType, SizeInBits{toSize}, IrOperand{resultVar}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(toType), SizeInBits{toSize}, IrOperand{resultVar}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult
@@ -252,7 +239,7 @@
 
 		// Return the result as a char pointer (const char*)
 		// We use Type::Char with 64-bit size to indicate it's a pointer
-		return makeExprResult(TypeCategory::Char, SizeInBits{64}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::Char), SizeInBits{64}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
@@ -294,7 +281,7 @@
 			AddressComponents result;
 			result.base = identifier_handle;
 			result.total_member_offset = accumulated_offset;
-			result.final_type_index = TypeIndex::fromTypeAndIndex(type_node->type(), type_node->type_index());
+			result.final_type_index = type_node->type_index();
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
 			if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set() &&
 				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
@@ -348,7 +335,7 @@
 			}
 
 			// Update type to member type
-			base_components->final_type_index = TypeIndex::fromTypeAndIndex(result.member->memberType(), result.member->type_index);
+			base_components->final_type_index = TypeIndex{(result.member->type_index).index(), result.member->memberType()};
 			base_components->final_size_bits = SizeInBits{static_cast<int>(result.member->size * 8)};
 			// Use explicit pointer depth from struct member layout
 			base_components->pointer_depth = PointerDepth{result.member->pointer_depth};
@@ -373,7 +360,7 @@
 
 
 			const TypeCategory element_category = array_operands.category();
-			TypeIndex element_type_index = TypeIndex::fromTypeAndIndex(element_category, array_operands.type_index);
+			TypeIndex element_type_index = TypeIndex{(array_operands.type_index).index(), element_category};
 			int element_size_bits = array_operands.size_in_bits.value;
 			int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 
@@ -432,7 +419,7 @@
 			arr_idx.element_size_bits = SizeInBits{element_size_bits};
 
 			// Capture index type information for proper sign extension
-			arr_idx.index_type_index = TypeIndex::fromTypeAndIndex(index_operands.typeEnum(), index_operands.type_index);
+			arr_idx.index_type_index = index_operands.type_index;
 			arr_idx.index_size_bits = index_operands.size_in_bits;
 
 			// Set index value
@@ -490,7 +477,7 @@
 		op.function_name = StringTable::getOrInternStringHandle(invoke_name);
 		op.mangled_name = StringTable::getOrInternStringHandle(mangled);
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionAddress, std::move(op), source_token));
-		return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
@@ -575,13 +562,7 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), unaryOperatorNode.get_token()));
 
 							// Return the result
-							return makeExprResult(
-								return_type.type(),
-								ret_size_in_bits,
-								IrOperand{ret_var},
-								return_type.type_index(),
-								PointerDepth{static_cast<int>(return_type.pointer_depth())}
-							, ValueStorage::ContainsData);
+							return makeExprResult(return_type.type_index(), ret_size_in_bits, IrOperand{ret_var}, PointerDepth{static_cast<int>(return_type.pointer_depth())}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -615,13 +596,7 @@
 						LValueInfo(LValueInfo::Kind::Global, binding_info.store_name, 0),
 						type_node->category(), size_bits));
 
-					out = makeExprResult(
-						type_node->type(),
-						SizeInBits{size_bits},
-						IrOperand{result_temp},
-						type_node->type_index(),
-						PointerDepth{static_cast<int>(type_node->pointer_depth())}
-					, ValueStorage::ContainsData);
+					out = makeExprResult(type_node->type_index(), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
 					return true;
 				}
 			}
@@ -630,13 +605,7 @@
 			auto static_local_it = static_local_names_.find(identifier_handle);
 			if (static_local_it != static_local_names_.end()) {
 				constexpr TypeIndex kStaticLocalTypeIndex {};
-				out = makeExprResult(
-					static_local_it->second.type(),
-					static_local_it->second.size_in_bits,
-					IrOperand{static_local_it->second.mangled_name},
-					kStaticLocalTypeIndex,
-					PointerDepth{}
-				, ValueStorage::ContainsData); // pointer depth is always 0 for static locals here
+				out = makeExprResult(TypeIndex{(kStaticLocalTypeIndex).index(), static_local_it->second.type()}, static_local_it->second.size_in_bits, IrOperand{static_local_it->second.mangled_name}, PointerDepth{}, ValueStorage::ContainsData); // pointer depth is always 0 for static locals here
 				return true;
 			}
 
@@ -648,13 +617,7 @@
 			// - For struct types, ALWAYS return type_index (even if it's a pointer to struct)
 			// - For non-struct pointer types, return pointer_depth
 			// - Otherwise return 0
-			out = makeExprResult(
-				type_node->type(),
-				SizeInBits{static_cast<int>(type_node->size_in_bits())},
-				IrOperand{identifier_handle},
-				type_node->type_index(),
-				PointerDepth{static_cast<int>(type_node->pointer_depth())}
-			, ValueStorage::ContainsData);
+			out = makeExprResult(type_node->type_index(), SizeInBits{static_cast<int>(type_node->size_in_bits())}, IrOperand{identifier_handle}, PointerDepth{static_cast<int>(type_node->pointer_depth())}, ValueStorage::ContainsData);
 			return true;
 		};
 
@@ -679,12 +642,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ComputeAddress, std::move(compute_addr_op), unaryOperatorNode.get_token()));
 
 				// Return pointer to result (64-bit pointer)
-				return makeExprResult(
-					addr_components->final_type_index.category(),
-					SizeInBits{64},
-					result_var,
-					TypeIndex{},
-					PointerDepth{addr_components->pointer_depth.value + 1}, ValueStorage::ContainsAddress);
+				return makeExprResult(nativeTypeIndex(addr_components->final_type_index.category()), SizeInBits{64}, result_var, PointerDepth{addr_components->pointer_depth.value + 1}, ValueStorage::ContainsAddress);
 			}
 
 			// Fall back to legacy implementation if analysis failed
@@ -757,7 +715,7 @@
 									TempVar elem_addr_var = var_counter.next();
 									ArrayElementAddressOp elem_addr_payload;
 									elem_addr_payload.result = elem_addr_var;
-									elem_addr_payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, type_index);
+									elem_addr_payload.element_type_index = TypeIndex{(type_index).index(), element_category};
 									elem_addr_payload.element_size_in_bits = element_size_bits;
 
 									// Set array (either variable name or temp)
@@ -784,7 +742,7 @@
 									ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_offset), memberAccess.member_token()));
 
 									// Return pointer to member (64-bit pointer, 0 for no additional type info)
-									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(nativeTypeIndex(member_result.member->memberType()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{member_addr_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -837,13 +795,13 @@
 									addr_member_op.result = result_var;
 									addr_member_op.base_object = obj_name;
 									addr_member_op.member_offset = static_cast<int>(member_result.adjusted_offset);
-									addr_member_op.member_type_index = TypeIndex::fromTypeAndIndex(member_result.member->memberType(), member_result.member->type_index);
+									addr_member_op.member_type_index = TypeIndex{(member_result.member->type_index).index(), member_result.member->memberType()};
 									addr_member_op.member_size_in_bits = static_cast<int>(member_result.member->size * 8);
 
 									ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), memberAccess.member_token()));
 
 									// Return pointer to member
-									return makeExprResult(member_result.member->memberType(), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+									return makeExprResult(nativeTypeIndex(member_result.member->memberType()), SizeInBits{POINTER_SIZE_BITS}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 								}
 							}
 						}
@@ -955,7 +913,7 @@
 						TempVar addr_var = var_counter.next();
 						ArrayElementAddressOp payload;
 						payload.result = addr_var;
-						payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, element_type_index);
+						payload.element_type_index = TypeIndex{(element_type_index).index(), element_category};
 						payload.element_size_in_bits = element_size_bits;
 						payload.array = StringTable::getOrInternStringHandle(multi_dim.base_array_name);
 						payload.index.setType(TypeCategory::UnsignedLongLong);
@@ -966,7 +924,7 @@
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
-						return makeExprResult(element_category, SizeInBits{64}, addr_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(TypeIndex{(element_type_index).index(), element_category}, SizeInBits{64}, addr_var, PointerDepth{}, ValueStorage::ContainsData);
 					}
 				}
 
@@ -1016,7 +974,7 @@
 				// Create typed payload for ArrayElementAddress
 				ArrayElementAddressOp payload;
 				payload.result = addr_var;
-				payload.element_type_index = TypeIndex::fromTypeAndIndex(element_category, {});
+				payload.element_type_index = nativeTypeIndex(element_category);
 				payload.element_size_in_bits = element_size_bits;
 
 				// Set array (either variable name or temp)
@@ -1032,7 +990,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(payload), arraySubscript.bracket_token()));
 
 				// Return pointer to element (64-bit pointer)
-				return makeExprResult(element_category, SizeInBits{64}, IrOperand{addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsAddress);
+				return makeExprResult(nativeTypeIndex(element_category), SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsAddress);
 			}
 		}
 
@@ -1078,7 +1036,7 @@
 				// Store back through pointer
 				DereferenceStoreOp store_op;
 				store_op.pointer.setType(member->type_index.category());
-				store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(member->memberType(), member->type_index);
+				store_op.pointer.type_index = member->type_index;
 				store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
 				store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 				store_op.pointer.value = ptr_temp;
@@ -1086,7 +1044,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(member->memberType()), SizeInBits{member_size_bits}, IrOperand{return_val}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// By-value: load member, inc/dec, store back to member
 				TempVar current_val = var_counter.next();
@@ -1121,7 +1079,7 @@
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_op), token));
 
 				TempVar return_val = is_prefix ? result_var : current_val;
-				return makeExprResult(member->memberType(), SizeInBits{member_size_bits}, IrOperand{return_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(member->memberType()), SizeInBits{member_size_bits}, IrOperand{return_val}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		};
 
@@ -1247,7 +1205,7 @@
 
 				// Return the address of the __invoke function
 				TempVar func_addr_var = generateLambdaInvokeFunctionAddress(*lambda_ptr);
-				return makeExprResult(TypeCategory::FunctionPointer, SizeInBits{64}, IrOperand{func_addr_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(TypeCategory::FunctionPointer), SizeInBits{64}, IrOperand{func_addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 			} else if (lambda_struct_info) {
 				if (auto fp_operands = decayLambdaStructToFunctionPointer(*lambda_struct_info, unaryOperatorNode.get_token())) {
 					return *fp_operands;
@@ -1285,12 +1243,7 @@
 
 							// Return the offset directly as a constant value (no IR instruction needed)
 							// This is a pointer-to-member constant - use 64-bit size and the member's type
-							return makeExprResult(
-								member_result.member->memberType(),
-								SizeInBits{64},
-								IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)},
-								TypeIndex{member_result.member->type_index}
-							, PointerDepth{}, ValueStorage::ContainsData);
+							return makeExprResult(TypeIndex{(TypeIndex{member_result.member->type_index}).index(), member_result.member->memberType()}, SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member_result.adjusted_offset)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 				}
@@ -1385,7 +1338,7 @@
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::LogicalNot, unary_op, Token()));
 			// Logical NOT always returns bool8
-			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 		else if (unaryOperatorNode.op() == "~") {
 			// C++20 [expr.unary.op]/10: ~ requires integral or unscoped enumeration type.
@@ -1464,13 +1417,7 @@
 
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, op, Token()));
 			// Return 64-bit pointer with incremented pointer depth
-			return makeExprResult(
-				operandType,
-				SizeInBits{64},
-				IrOperand{result_var},
-				operandIrOperands.type_index,
-				PointerDepth{static_cast<int>(operand_ptr_depth + 1)}
-			, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{(operandIrOperands.type_index).index(), operandType}, SizeInBits{64}, IrOperand{result_var}, PointerDepth{static_cast<int>(operand_ptr_depth + 1)}, ValueStorage::ContainsData);
 		}
 		else if (unaryOperatorNode.op() == "*") {
 			// Dereference operator: *x
@@ -1559,12 +1506,7 @@
 				// Return with TempVar that has the lvalue metadata.
 				// The TempVar holds a 64-bit pointer (the address this lvalue refers to).
 				unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-				return makeExprResult(
-					operandType,
-					SizeInBits{64},
-					IrOperand{lvalue_temp},
-					operandIrOperands.type_index,
-					PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsAddress);
+				return makeExprResult(TypeIndex{(operandIrOperands.type_index).index(), operandType}, SizeInBits{64}, IrOperand{lvalue_temp}, PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsAddress);
 			}
 
 			int element_size = 64; // Default to pointer size
@@ -1650,20 +1592,14 @@
 
 			// Return the dereferenced value with the decremented pointer depth
 			unsigned long long result_ptr_depth = (pointer_depth > 0) ? (pointer_depth - 1) : 0;
-			return makeExprResult(
-				operandType,
-				SizeInBits{static_cast<int>(element_size)},
-				IrOperand{result_var},
-				operandIrOperands.type_index,
-				PointerDepth{static_cast<int>(result_ptr_depth)}
-			, ValueStorage::ContainsData);
+			return makeExprResult(TypeIndex{(operandIrOperands.type_index).index(), operandType}, SizeInBits{static_cast<int>(element_size)}, IrOperand{result_var}, PointerDepth{static_cast<int>(result_ptr_depth)}, ValueStorage::ContainsData);
 		}
 		else {
 			throw InternalError("Unary operator not implemented yet");
 		}
 
 		// Return the result
-		return makeExprResult(operandType, operandIrOperands.size_in_bits, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(nativeTypeIndex(operandType), operandIrOperands.size_in_bits, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 
@@ -1783,7 +1719,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	TypeIndex result_type_index = call_op.return_type_index;
 	TypeCategory result_type = call_op.returnType();
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), Token()));
-	return makeExprResult(result_type, SizeInBits{static_cast<int>(result_size)}, ret_var, result_type_index, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(TypeIndex{(result_type_index).index(), result_type}, SizeInBits{static_cast<int>(result_size)}, ret_var, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -1806,13 +1742,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 
 	int operand_pointer_depth = getOperandPointerDepth();
 	auto makeUpdatedPointerResult = [&](TempVar value_var) {
-		return makeExprResult(
-			operandType,
-			SizeInBits{64},
-			value_var,
-			operandIrResult.type_index,
-			PointerDepth{operand_pointer_depth}
-		, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{(operandIrResult.type_index).index(), operandType}, SizeInBits{64}, value_var, PointerDepth{operand_pointer_depth}, ValueStorage::ContainsData);
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
@@ -2019,13 +1949,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer increment/decrement result");
 				return ExprResult{};
 			}
-			return makeExprResult(
-				operandType,
-				SizeInBits{64},
-				IrOperand{result_var},
-				TypeIndex{},
-				PointerDepth{operand_pointer_depth}
-			, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(operandType), SizeInBits{64}, IrOperand{result_var}, PointerDepth{operand_pointer_depth}, ValueStorage::ContainsData);
 		} else {
 			// Postfix: save old value, modify, return old value
 			TempVar old_value = var_counter.next();
@@ -2046,13 +1970,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				FLASH_LOG(Codegen, Error, "Failed to store back pointer postfix increment/decrement result");
 				return ExprResult{};
 			}
-			return makeExprResult(
-				operandType,
-				SizeInBits{64},
-				IrOperand{old_value},
-				TypeIndex{},
-				PointerDepth{operand_pointer_depth}
-			, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(operandType), SizeInBits{64}, IrOperand{old_value}, PointerDepth{operand_pointer_depth}, ValueStorage::ContainsData);
 		}
 	} else {
 		// Regular integer increment/decrement
@@ -2105,14 +2023,14 @@ ExprResult AstToIr::generateBuiltinIncDec(
 				store_ops.emplace_back(gsi.store_name);
 				store_ops.emplace_back(result_var);
 				ir_.addInstruction(IrOpcode::GlobalStore, std::move(store_ops), Token());
-				return makeExprResult(operandType, SizeInBits{static_cast<int>(elem_size)}, IrOperand{old_val}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(operandType), SizeInBits{static_cast<int>(elem_size)}, IrOperand{old_val}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		} else {
 			ir_.addInstruction(IrInstruction(is_prefix ? pre_opcode : post_opcode, unary_op, unaryOperatorNode.get_token()));
 		}
 	}
 
-	return makeExprResult(operandType, operandIrResult.size_in_bits, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(nativeTypeIndex(operandType), operandIrResult.size_in_bits, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
@@ -2344,7 +2262,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		auto emitFloatNonZeroTest = [&](ExprResult cond) -> ExprResult {
 			// Materialize a 0.0 constant with the same float type as the condition.
 			// The caller guarantees cond.typeEnum() is Float or Double.
-			ExprResult zero = makeExprResult(cond.typeEnum(), cond.size_in_bits, IrOperand{0.0}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			ExprResult zero = makeExprResult(nativeTypeIndex(cond.typeEnum()), cond.size_in_bits, IrOperand{0.0}, PointerDepth{}, ValueStorage::ContainsData);
 			// Emit: result = (cond != 0.0)
 			TempVar result_var = var_counter.next();
 			BinaryOp bin_op{
@@ -2355,7 +2273,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(bin_op), source_token));
 			// FloatNotEqual produces a bool8 result via SETNE; the backend's
 			// conditional branch already handles bool8 values correctly.
-			return makeExprResult(TypeCategory::Bool, SizeInBits{8}, IrOperand{result_var}, TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		// 1. Try sema annotation (Phase 6/8 contextual bool).
@@ -2559,7 +2477,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), source_token));
 
 			TempVar addr_var = emitAddressOf(value_result.category(), value_result.size_in_bits.value, IrValue(temp_var), source_token);
-			return makeExprResult(value_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, value_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(value_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 		};
 
 		if (binding_info->binds_directly()) {
@@ -2569,11 +2487,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				if (decl) {
 					const auto& type_node = decl->type_node().as<TypeSpecifierNode>();
 					if (type_node.is_reference() || type_node.is_rvalue_reference()) {
-						return makeExprResult(
-							type_node.type(),
-							SizeInBits{64},
-							IrOperand{StringTable::getOrInternStringHandle(identifier.name())},
-							type_node.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{StringTable::getOrInternStringHandle(identifier.name())}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					TempVar addr_var = emitAddressOf(
@@ -2581,7 +2495,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						static_cast<int>(type_node.size_in_bits()),
 						IrValue(StringTable::getOrInternStringHandle(identifier.name())),
 						source_token);
-					return makeExprResult(type_node.type(), SizeInBits{64}, IrOperand{addr_var}, type_node.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(type_node.type_index(), SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 
@@ -2603,7 +2517,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					arg_result.size_in_bits.value,
 					IrValue(expr_var),
 					source_token);
-				return makeExprResult(arg_result.typeEnum(), SizeInBits{64}, IrOperand{addr_var}, arg_result.type_index, PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(arg_result.type_index, SizeInBits{64}, IrOperand{addr_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			return std::nullopt;
@@ -2734,11 +2648,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
 		setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
-		return makeExprResult(
-			TypeCategory::Struct,
-			SizeInBits{actual_size_bits},
-			IrOperand{result_var},
-			target_type.type_index(), PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(TypeIndex{(target_type.type_index()).index(), TypeCategory::Struct}, SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(

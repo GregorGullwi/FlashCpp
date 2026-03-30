@@ -436,10 +436,7 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 		return std::nullopt;
 	}
 
-	return makeExprResult(
-		enum_info.underlying_type,
-		SizeInBits{static_cast<int>(enum_info.underlying_size)},
-		static_cast<unsigned long long>(enumerator->value), TypeIndex{}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(nativeTypeIndex(enum_info.underlying_type), SizeInBits{static_cast<int>(enum_info.underlying_size)}, static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 
