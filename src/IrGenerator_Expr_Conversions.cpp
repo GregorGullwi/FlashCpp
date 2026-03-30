@@ -314,7 +314,7 @@
 			}
 
 			// Look up member information
-			if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount() || object_category != TypeCategory::Struct) {
+			if (object_category != TypeCategory::Struct || !tryGetTypeInfo(type_index)) {
 				return std::nullopt;
 			}
 
@@ -703,7 +703,7 @@
 							}
 
 							// Look up member information
-							if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && element_category == TypeCategory::Struct) {
+							if (element_category == TypeCategory::Struct && tryGetTypeInfo(type_index)) {
 								std::string_view member_name = memberAccess.member_name();
 								StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 								auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -765,7 +765,7 @@
 						}
 
 						// Look up member information
-						if (type_index.is_valid() && type_index.index() < getTypeInfoCount() && object_category == TypeCategory::Struct) {
+						if (object_category == TypeCategory::Struct && tryGetTypeInfo(type_index)) {
 							std::string_view member_name = memberAccess.member_name();
 							StringHandle member_handle = StringTable::getOrInternStringHandle(std::string(member_name));
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_handle);
@@ -1131,7 +1131,7 @@
 								const TypeSpecifierNode& object_type = object_decl->type_node().as<TypeSpecifierNode>();
 								if (is_struct_type(object_type.category())) {
 									TypeIndex type_index = object_type.type_index();
-									if (type_index.index() < getTypeInfoCount()) {
+									if (tryGetTypeInfo(type_index)) {
 										auto member_result = FlashCpp::gLazyMemberResolver.resolve(type_index, member_name);
 										if (member_result) {
 											return generateMemberIncDec(object_name, member_result.member, false,
@@ -1267,11 +1267,10 @@
 					}
 				}
 			}
-			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (const TypeInfo* type_info = tryGetTypeInfo(TypeIndex{struct_type_index})) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info && isLambdaClosureStruct(*struct_info)) {
-					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info.name()));
+					FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus decay via struct info: type_index={}, name={}", struct_type_index, StringTable::getStringView(type_info->name()));
 					if (auto fp_operands = decayLambdaStructToFunctionPointer(*struct_info, unaryOperatorNode.get_token())) {
 						return *fp_operands;
 					}
@@ -1907,7 +1906,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 			}
 			if (object_type_opt.has_value() &&
 				isIrStructType(toIrType(object_type_opt->type())) &&
-				object_type_opt->type_index().is_valid() && object_type_opt->type_index().index() < getTypeInfoCount()) {
+				tryGetTypeInfo(object_type_opt->type_index())) {
 				auto member_result = FlashCpp::gLazyMemberResolver.resolve(
 					object_type_opt->type_index(),
 					StringTable::getOrInternStringHandle(member_access.member_name()));
