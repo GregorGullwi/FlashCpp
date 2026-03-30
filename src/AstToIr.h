@@ -703,7 +703,7 @@ private:
 	size_t getSizeInBytes(TypeIndex type_index, int size_in_bits) const;
 	int getPointerElementSize(TypeIndex type_index, int pointer_depth) const;
 	TypeCategory getRuntimeValueType(TypeIndex semantic_type_index, PointerDepth pointer_depth) const;
-	int getRuntimeValueSizeBits(TypeCategory semantic_type, TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
+	int getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bits, PointerDepth pointer_depth) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryApplySemaCallArgReferenceBinding(ExprResult arg_result,

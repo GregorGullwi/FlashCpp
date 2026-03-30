@@ -988,7 +988,7 @@
 				// underlying integer type.
 				pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
 				pointee_size = getRuntimeValueSizeBits(
-					semantic_pointee_type, type_node.type_index(), pointee_size, PointerDepth{});
+					type_node.type_index(), pointee_size, PointerDepth{});
 
 				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
@@ -1019,8 +1019,6 @@
 			PointerDepth identifier_pointer_depth{static_cast<int>(type_node.pointer_depth())};
 			TypeCategory return_type = getRuntimeValueType(type_node.type_index(), identifier_pointer_depth);
 			size_bits = getRuntimeValueSizeBits(
-
-				type_node.type(),
 				type_node.type_index(),
 				size_bits,
 				identifier_pointer_depth);
