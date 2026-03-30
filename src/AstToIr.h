@@ -671,7 +671,6 @@ private:
 	//                  refuses to call non-const ones when set.
 	const StructMemberFunction* findConversionOperator(
 		const StructTypeInfo* struct_info,
-		TypeCategory target_type,
 		TypeIndex target_type_index,
 		bool source_is_const) const;
 
@@ -687,15 +686,13 @@ private:
 	// source           - ExprResult for the source struct object
 	// source_type_info - TypeInfo of the source struct (for struct name / mangling)
 	// conv_op          - conversion function found via findConversionOperator (must not be nullptr)
-	// target_type      - target primitive/struct type produced by the conversion
-	// target_type_index - TypeIndex of target (pass TypeIndex{} for primitive targets)
+	// target_type_index - TypeIndex of target (carrying the TypeCategory; use nativeTypeIndex(cat) for primitives)
 	// target_size_bits - size in bits of the target type
 	// token            - source token for IR instruction location
 	std::optional<ExprResult> emitConversionOperatorCall(
 		const ExprResult& source,
 		const TypeInfo& source_type_info,
 		const StructMemberFunction& conv_op,
-		TypeCategory target_type,
 		TypeIndex target_type_index,
 		int target_size_bits,
 		const Token& token);

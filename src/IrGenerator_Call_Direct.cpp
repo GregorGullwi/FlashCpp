@@ -1150,13 +1150,13 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
+									src_type_info.getStructInfo(), param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
 										StringTable::getStringView(src_type_info.name()), " to parameter type");
 									const int param_size = static_cast<int>(param_type->size_in_bits());
 									if (auto result = emitConversionOperatorCall(argumentIrOperands, src_type_info, *conv_op,
-											param_base_type, param_type->type_index(), param_size,
+											param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
 										arg_type = argumentIrOperands.typeEnum();
@@ -1285,14 +1285,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						// Look for a conversion operator to the parameter type
 						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_base_type, param_type->type_index(), source_is_const);
+							source_type_info.getStructInfo(), param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
 								StringTable::getStringView(source_type_info.name()),
 								" to parameter type");
 							if (auto result = emitConversionOperatorCall(argumentIrOperands, source_type_info, *conv_op,
-									param_base_type, param_type->type_index(), param_size, Token()))
+									param_type->type_index(), param_size, Token()))
 								argumentIrOperands = *result;
 						}
 					}

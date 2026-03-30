@@ -280,12 +280,12 @@
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_struct_info, return_type, ret_type_idx, source_is_const);
+									src_struct_info, ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
 										StringTable::getStringView(src_type_info.name()), " to return type");
 									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
-											return_type, ret_type_idx, return_size, node.return_token())) {
+											ret_type_idx, return_size, node.return_token())) {
 										operands = *result;
 										sema_applied_conversion = true;
 									}
@@ -319,14 +319,14 @@
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(
-								source_struct_info, return_type, ret_type_idx, isExprConstQualified(*expr_opt));
+								source_struct_info, ret_type_idx, isExprConstQualified(*expr_opt));
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
 									StringTable::getStringView(source_type_info.name()),
 									" to return type");
 								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
-										return_type, ret_type_idx, return_size, node.return_token()))
+										ret_type_idx, return_size, node.return_token()))
 									operands = *result;
 							} else {
 								// No conversion operator found - fall back to generateTypeConversion

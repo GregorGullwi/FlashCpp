@@ -3485,7 +3485,6 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 // Searches the struct and its base classes for "operator target_type()"
 const StructMemberFunction* AstToIr::findConversionOperator(
 	const StructTypeInfo* struct_info,
-	TypeCategory target_type,
 	TypeIndex target_type_index,
 	bool source_is_const) const {
 
@@ -3497,7 +3496,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 		target_type_name = StringTable::getStringView(getTypeInfo(target_type_index).name());
 	} else {
 		// For primitive types, use the helper function to get the type name
-		target_type_name = getTypeName(target_type);
+		target_type_name = getTypeName(target_type_index.category());
 		if (target_type_name.empty()) {
 			return nullptr;
 		}
@@ -3568,7 +3567,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						}
 					}
 
-					if (resolved_type == target_type) {
+					if (resolved_type == target_type_index.category()) {
 						// Prefer non-const match for non-const source; const for const source
 						if (source_is_const == member_func.is_const()) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
@@ -3582,15 +3581,15 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 					// but the size matches the target primitive type, accept it as a match.
 					// This handles template type aliases like `using value_type = T;` where T is substituted
 					// but the return type wasn't fully updated in the AST.
-					// Note: target_type can never be Struct, Enum, or UserDefined here — getTypeName()
+					// Note: target_type_index.category() can never be Struct, Enum, or UserDefined here — getTypeName()
 					// returns "" for those types, causing an early `return nullptr` above (line 3470-3472).
 					if (resolved_type == TypeCategory::UserDefined) {
-						int expected_size = get_type_size_bits(target_type);
+						int expected_size = get_type_size_bits(target_type_index.category());
 
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
 							if (source_is_const == member_func.is_const()) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type), " (size=", expected_size, ")");
+								type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type_index.category()), " (size=", expected_size, ")");
 								return &member_func;
 							}
 							if (!fallback_user_defined) fallback_user_defined = &member_func;
@@ -3611,7 +3610,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			if (base_type_info.isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(
-					base_struct_info, target_type, target_type_index, source_is_const);
+					base_struct_info, target_type_index, source_is_const);
 				if (result) return result;
 			}
 		}
@@ -3627,7 +3626,6 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	const ExprResult& source,
 	const TypeInfo& source_type_info,
 	const StructMemberFunction& conv_op,
-	TypeCategory target_type,
 	TypeIndex target_type_index,
 	int target_size_bits,
 	const Token& token) {
@@ -3705,7 +3703,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	CallOp call_op;
 	call_op.result = result_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = target_type_index.withCategory(target_type);
+	call_op.return_type_index = target_type_index;
 	call_op.return_size_in_bits = SizeInBits{target_size_bits};
 	call_op.is_member_function = true;
 	call_op.is_variadic = false;
@@ -3770,5 +3768,5 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), token));
 
-	return makeExprResult(target_type_index.withCategory(target_type), SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(target_type_index, SizeInBits{target_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }

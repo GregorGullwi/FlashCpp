@@ -2309,12 +2309,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, source_is_const);
+							src_type_info.getStructInfo(), nativeTypeIndex(TypeCategory::Bool), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
 								StringTable::getStringView(src_type_info.name()), " to bool");
 							if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-									TypeCategory::Bool, TypeIndex{}, 8, source_token))
+									nativeTypeIndex(TypeCategory::Bool), 8, source_token))
 								return *result;
 						}
 					}
@@ -2335,12 +2335,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
 				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
 				const StructMemberFunction* conv_op = findConversionOperator(
-					src_type_info.getStructInfo(), TypeCategory::Bool, TypeIndex{}, false);
+					src_type_info.getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false);
 				if (conv_op) {
 					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
 						StringTable::getStringView(src_type_info.name()), " to bool");
 					if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
-							TypeCategory::Bool, TypeIndex{}, 8, source_token))
+							nativeTypeIndex(TypeCategory::Bool), 8, source_token))
 						return *result;
 				}
 			}
@@ -2374,13 +2374,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), param_base_type, param_type.type_index(), source_is_const);
+							src_type_info.getStructInfo(), param_type.type_index(), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
 								StringTable::getStringView(src_type_info.name()), " to parameter type");
 							const int param_size = static_cast<int>(param_type.size_in_bits());
 							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
-									param_base_type, param_type.type_index(), param_size, source_token)) {
+									param_type.type_index(), param_size, source_token)) {
 								arg_result = *result;
 								sema_applied = true;
 							}
