@@ -123,10 +123,8 @@
 		}
 
 		if (is_struct_type(object_type.category())) {
-			size_t struct_type_index = object_type.type_index().index();
-			if (struct_type_index > 0 && struct_type_index < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(TypeIndex{struct_type_index});
-				const StructTypeInfo* struct_info = type_info.getStructInfo();
+			if (const TypeInfo* type_info = tryGetTypeInfo(object_type.type_index())) {
+				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					FLASH_LOG(Codegen, Debug, "Generating IR for destructor call on struct: ",
 					StringTable::getStringView(struct_info->getName()));
@@ -284,8 +282,10 @@
 			// for still-unmigrated pointer-depth consumers.
 			TypeCategory result_type = type_node.type();
 			const bool is_enum_pointer = type_node.category() == TypeCategory::Enum && type_node.pointer_depth() > 0;
-			if (!is_enum_pointer && type_node.category() == TypeCategory::Enum && type_node.type_index().index() < getTypeInfoCount()) {
-				if (const EnumTypeInfo* enum_info = getTypeInfo(type_node.type_index()).getEnumInfo()) {
+			if (!is_enum_pointer && type_node.category() == TypeCategory::Enum) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+					type_info && type_info->getEnumInfo()) {
+					const EnumTypeInfo* enum_info = type_info->getEnumInfo();
 					result_type = enum_info->underlying_type;
 				}
 			}
@@ -806,8 +806,9 @@
 
 						int member_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (member_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
-							const StructTypeInfo* member_si = getTypeInfo(static_member->type_index).getStructInfo();
+						if (member_size_bits == 0) {
+							const TypeInfo* member_type_info = tryGetTypeInfo(static_member->type_index);
+							const StructTypeInfo* member_si = member_type_info ? member_type_info->getStructInfo() : nullptr;
 							if (member_si) {
 								member_size_bits = static_cast<int>(member_si->total_size * 8);
 							}
@@ -839,8 +840,8 @@
 				if (struct_info) {
 					StringHandle id_handle = StringTable::getOrInternStringHandle(identifierNode.name());
 					for (TypeIndex enum_idx : struct_info->getNestedEnumIndices()) {
-						if (enum_idx.index() < getTypeInfoCount()) {
-							const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
+						if (const TypeInfo* enum_type_info = tryGetTypeInfo(enum_idx)) {
+							const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 							if (enum_info && !enum_info->is_scoped) {
 								if (std::optional<ExprResult> enumerator_constant = tryMakeEnumeratorConstantExpr(*enum_info, id_handle)) {
 									return *enumerator_constant;
@@ -1257,8 +1258,8 @@
 					const auto& decl = local_sym->as<DeclarationNode>();
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-						if (ts.category() == TypeCategory::Enum && ts.type_index().is_valid() && ts.type_index().index() < getTypeInfoCount())
-							scoped_enum_type_info = &getTypeInfo(ts.type_index());
+						if (ts.category() == TypeCategory::Enum)
+							scoped_enum_type_info = tryGetTypeInfo(ts.type_index());
 					}
 				}
 			}
@@ -1353,8 +1354,8 @@
 			if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isStruct()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				// If struct_info is null, this might be a type alias - resolve it via type_index
-				if (!struct_info && struct_type_it->second->type_index_.index() < getTypeInfoCount()) {
-					const TypeInfo* resolved_type = &getTypeInfo(struct_type_it->second->type_index_);
+				if (!struct_info) {
+					const TypeInfo* resolved_type = tryGetTypeInfo(struct_type_it->second->type_index_);
 					if (resolved_type && resolved_type->isStruct()) {
 						struct_info = resolved_type->getStructInfo();
 					}
@@ -1390,9 +1391,8 @@
 							const StructTypeInfo* accessed_struct = struct_type_it->second->getStructInfo();
 							if (accessed_struct) {
 								for (const auto& base : accessed_struct->base_classes) {
-									if (base.type_index.index() < getTypeInfoCount()) {
-										const TypeInfo& base_type = getTypeInfo(base.type_index);
-										const StructTypeInfo* base_struct = base_type.getStructInfo();
+									if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index)) {
+										const StructTypeInfo* base_struct = base_type->getStructInfo();
 										if (base_struct && base_struct->getName() == owner_struct->getName()) {
 											is_inheritance = true;
 											FLASH_LOG(Codegen, Debug, "Static member found via inheritance from base class: ", owner_struct->getName());
@@ -1422,11 +1422,10 @@
 								// Follow the full type alias chain (e.g., true_type -> bool_constant -> integral_constant)
 								std::unordered_set<TypeIndex> visited;
 								while (resolved_type &&
-								resolved_type->type_index_.index() < getTypeInfoCount() &&
 								resolved_type->type_index_.is_valid() &&
 								!visited.contains(resolved_type->type_index_)) {
 									visited.insert(resolved_type->type_index_);
-									const TypeInfo* target_type = &getTypeInfo(resolved_type->type_index_);
+									const TypeInfo* target_type = tryGetTypeInfo(resolved_type->type_index_);
 
 									if (target_type && target_type->isStruct() && target_type->getStructInfo()) {
 										// Use the target struct's name
@@ -1476,8 +1475,9 @@
 						FLASH_LOG(Codegen, Debug, "Found static member in owner struct: ", owner_struct->getName(), ", using qualified name with: ", qualified_struct_name);
 						int qsm_size_bits = static_cast<int>(static_member->size * 8);
 						// If size is 0 for struct types, look up from type info
-						if (qsm_size_bits == 0 && static_member->type_index.is_valid() && static_member->type_index.index() < getTypeInfoCount()) {
-							const StructTypeInfo* qsm_si = getTypeInfo(static_member->type_index).getStructInfo();
+						if (qsm_size_bits == 0) {
+							const TypeInfo* qsm_type_info = tryGetTypeInfo(static_member->type_index);
+							const StructTypeInfo* qsm_si = qsm_type_info ? qsm_type_info->getStructInfo() : nullptr;
 							if (qsm_si) {
 								qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
 							}
@@ -1523,8 +1523,8 @@
 			if (struct_info_ne) {
 				StringHandle member_handle = StringTable::getOrInternStringHandle(qualifiedIdNode.name());
 				for (TypeIndex enum_idx : struct_info_ne->getNestedEnumIndices()) {
-					if (enum_idx.index() < getTypeInfoCount()) {
-						const EnumTypeInfo* enum_info = getTypeInfo(enum_idx).getEnumInfo();
+					if (const TypeInfo* enum_type_info = tryGetTypeInfo(enum_idx)) {
+						const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 						if (enum_info && !enum_info->is_scoped) {
 							if (std::optional<ExprResult> enumerator_result =
 									tryMakeEnumeratorConstantExpr(*enum_info, member_handle)) {
