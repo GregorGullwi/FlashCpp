@@ -1369,9 +1369,13 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 				}
 			case TypeCategory::Struct:
 			case TypeCategory::UserDefined:
-				// For struct types, return a success result with value 0
-				// This indicates successful default construction
-				return EvalResult::from_int(0);
+				{
+					// For struct types, return a success result with value 0
+					// This indicates successful default construction
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
+				}
 			case TypeCategory::TypeAlias:
 				{
 					// Resolve the alias to determine the correct zero-init representation.
@@ -1382,7 +1386,9 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 						const TypeInfo& alias_info = getTypeInfo(ti);
 						TypeCategory resolved = alias_info.category();
 						if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
-							return EvalResult::from_int(0);
+							EvalResult result = EvalResult::from_int(0);
+							result.set_exact_type(type_spec);
+							return result;
 						}
 						if (is_unsigned_integer_type(resolved)) {
 							EvalResult result = EvalResult::from_uint(0);
@@ -1400,7 +1406,10 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 							return result;
 						}
 					}
-					return EvalResult::from_int(0);
+					// Unresolvable alias — fall back to signed zero with exact type metadata
+					EvalResult result = EvalResult::from_int(0);
+					result.set_exact_type(type_spec);
+					return result;
 				}
 			default:
 				return EvalResult::error("Unsupported type for default construction in constant expression");
