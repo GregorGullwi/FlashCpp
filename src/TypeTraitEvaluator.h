@@ -56,7 +56,6 @@ TypeTraitResult evaluateTypeTrait(
 	CVQualifier cv_qualifier,
 	bool is_array,
 	std::optional<size_t> array_size,
-	const TypeInfo* type_info,
 	const StructTypeInfo* struct_info
 );
 

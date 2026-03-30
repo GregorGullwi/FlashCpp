@@ -2823,7 +2823,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						input.ref_qualifier != ReferenceQualifier::None,
 						input.ref_qualifier == ReferenceQualifier::RValueReference,
 						input.ref_qualifier == ReferenceQualifier::LValueReference,
-						input.pointer_depth, input.cv, input.is_array, input.array_size, input.type_info, input.struct_info);
+						input.pointer_depth, input.cv, input.is_array, input.array_size, input.struct_info);
 				};
 
 				auto evaluate_unary_trait_from_resolved = [&](StringHandle trait_template_name) -> std::optional<EvalResult> {
