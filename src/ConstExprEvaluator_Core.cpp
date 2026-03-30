@@ -1085,7 +1085,7 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 	}
 
 	TypeIndex type_index = type_spec.type_index();
-	if (type_index.index() >= getTypeInfoCount()) {
+	if (!tryGetTypeInfo(type_index)) {
 		return EvalResult::error("Invalid type index for struct");
 	}
 

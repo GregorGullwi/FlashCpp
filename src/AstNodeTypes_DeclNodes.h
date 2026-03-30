@@ -1280,16 +1280,15 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	TypeCategory t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
-			const TypeInfo& ti = getTypeInfo(idx);
-			if (const StructTypeInfo* si = ti.getStructInfo()) {
+		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
+			if (const StructTypeInfo* si = ti->getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
 			}
-			if (const EnumTypeInfo* ei = ti.getEnumInfo()) {
+			if (const EnumTypeInfo* ei = ti->getEnumInfo()) {
 				return static_cast<int>(ei->underlying_size);
 			}
-			if (ti.type_size_ > 0) {
-				return ti.type_size_;
+			if (ti->type_size_ > 0) {
+				return ti->type_size_;
 			}
 		}
 	} else {

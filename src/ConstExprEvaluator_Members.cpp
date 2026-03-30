@@ -1923,15 +1923,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (id->name() == "this" && context.struct_info) {
 					EvalResult this_obj = EvalResult::from_int(0);
 					// Use the cached type index; validate it before trusting it.
-					if (context.struct_type_index.is_valid() &&
-						context.struct_type_index.index() < getTypeInfoCount()) {
-						this_obj.object_type_index = context.struct_type_index;
-					} else {
+					if (!tryGetTypeInfo(context.struct_type_index)) {
 						// struct_type_index must be set alongside struct_info when entering a
 						// member function body. This indicates a call site that sets struct_info
 						// but forgets to populate struct_type_index.
 						return EvalResult::error("Internal error: *this used in constexpr member function but struct_type_index is not set — ensure evaluate_member_function_call sets context.struct_type_index");
 					}
+					this_obj.object_type_index = context.struct_type_index;
 					// Copy current member bindings into the object
 					for (const auto& member : context.struct_info->members) {
 						std::string_view member_name = StringTable::getStringView(member.getName());
@@ -2119,8 +2117,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		const ASTNode& type_node = ctor_call->type_node();
 		if (type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-			if ((is_struct_type(type_spec.category())) &&
-				type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
+			if (is_struct_type(type_spec.category()) && tryGetTypeInfo(type_spec.type_index())) {
 				return materialize_constructor_object_value(*ctor_call, context, &bindings);
 			}
 		}
@@ -2712,18 +2709,19 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				// Limit iterations to prevent infinite loops from cycles
 				constexpr size_t MAX_ALIAS_CHAIN_DEPTH = 100;
 				size_t alias_depth = 0;
-				while (type_info && type_info->type_index_.is_valid() && type_info->type_index_.index() < getTypeInfoCount() && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
+				while (type_info && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
 					// Check if we already have StructInfo - if so, we're done
 					if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 						break;
 					}
 					// Follow the type_index_ to find the underlying type
-					const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
-					if (&underlying == type_info) break;  // Avoid direct self-reference
+					const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+					if (!underlying) break;
+					if (underlying == type_info) break;  // Avoid direct self-reference
 					if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 						FLASH_LOG(ConstExpr, Debug, "Following type alias to index ", type_info->type_index_);
 					}
-					type_info = &underlying;
+					type_info = underlying;
 					++alias_depth;
 				}
 				
