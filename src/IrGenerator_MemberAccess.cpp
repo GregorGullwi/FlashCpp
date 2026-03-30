@@ -762,7 +762,6 @@
 	bool AstToIr::validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
@@ -782,7 +781,6 @@
 				// This is a type name - set up for static member access
 				FLASH_LOG(Codegen, Debug, "Found type '", object_name, "' in getTypesByNameMap() with type_index=", type_it->second->type_index_);
 				base_object = StringTable::getOrInternStringHandle(object_name);
-				base_type = TypeCategory::Struct;
 				base_type_index = type_it->second->type_index_;
 				is_pointer_dereference = false;  // Type names don't need dereferencing
 				return true;
@@ -813,7 +811,6 @@
 		}
 
 		base_object = StringTable::getOrInternStringHandle(object_name);
-		base_type = object_type.category();
 		base_type_index = object_type.type_index();
 
 		// Check if this is a pointer to struct (e.g., P* pp) or a reference to struct (e.g., P& pr)
@@ -829,11 +826,9 @@
 	bool AstToIr::extractBaseFromOperands(
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context) {
 
-		base_type = operands.category();
 		if (const auto* temp_var = std::get_if<TempVar>(&operands.value)) {
 			base_object = *temp_var;
 		} else if (const auto* string = std::get_if<StringHandle>(&operands.value)) {
@@ -869,7 +864,6 @@
 		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference) {
 
@@ -877,20 +871,18 @@
 			// First try [*this] capture - returns copy of the object
 			if (auto copy_this_temp = emitLoadCopyThis(member_token)) {
 				base_object = *copy_this_temp;
-				base_type = TypeCategory::Struct;
 				base_type_index = current_lambda_context_.enclosing_struct_type_index;
 				return true;
 			}
 			// Then try [this] capture - returns pointer to the object
 			if (auto this_ptr_temp = emitLoadThisPointer(member_token)) {
 				base_object = *this_ptr_temp;
-				base_type = TypeCategory::Struct;
 				base_type_index = current_lambda_context_.enclosing_struct_type_index;
 				is_pointer_dereference = true;
 				return true;
 			}
 		}
-		if (!validateAndSetupIdentifierMemberAccess(identifier.name(), base_object, base_type, base_type_index, is_pointer_dereference)) {
+		if (!validateAndSetupIdentifierMemberAccess(identifier.name(), base_object, base_type_index, is_pointer_dereference)) {
 			return false;
 		}
 		const auto binding_info = resolveGlobalOrStaticBinding(identifier);
@@ -911,7 +903,6 @@
 
 		// Variables to hold the base object info
 		std::variant<StringHandle, TempVar> base_object;
-		TypeCategory base_type = TypeCategory::Void;
 		TypeIndex base_type_index{};
 		bool is_pointer_dereference = false;  // Track if we're accessing through pointer (ptr->member)
 		bool base_setup_complete = false;
@@ -995,7 +986,6 @@
 						// operator-> should return a pointer, so we treat ptr_result as pointing to the actual object
 						if (return_type.pointer_depth() > 0) {
 							base_object = ptr_result;
-							base_type = return_type.category();
 							base_type_index = return_type.type_index();
 							is_pointer_dereference = true;
 							base_setup_complete = true;
@@ -1008,13 +998,13 @@
 		if (!base_setup_complete) {
 			if (const IdentifierNode* ident = get_identifier()) {
 				if (!setupBaseFromIdentifier(*ident, memberAccessNode.member_token(),
-				base_object, base_type, base_type_index, is_pointer_dereference)) {
+				base_object, base_type_index, is_pointer_dereference)) {
 					throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 				}
 			}
 			else if (const QualifiedIdentifierNode* qualified_ident = tryGetQualifiedIdentifier(object_node)) {
 				auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident);
-				if (!extractBaseFromOperands(qualified_result, base_object, base_type, base_type_index, "qualified identifier")) {
+				if (!extractBaseFromOperands(qualified_result, base_object, base_type_index, "qualified identifier")) {
 					throw InternalError(std::string("Failed to extract base from qualified identifier result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1023,7 +1013,7 @@
 			}
 			else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 				auto call_result = generateMemberFunctionCallIr(*call);
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "member function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 					throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1032,10 +1022,10 @@
 			}
 			else if (expr && std::holds_alternative<MemberAccessNode>(*expr)) {
 				auto nested_result = generateMemberAccessIr(std::get<MemberAccessNode>(*expr), context);
-				if (!extractBaseFromOperands(nested_result, base_object, base_type, base_type_index, "nested member access")) {
+				if (!extractBaseFromOperands(nested_result, base_object, base_type_index, "nested member access")) {
 					throw InternalError(std::string("Failed to evaluate nested member access for '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
-				if (!is_struct_type(base_type)) {
+				if (!base_type_index.isStructLike()) {
 					throw InternalError("nested member access on non-struct type");
 				}
 				if (is_arrow) {
@@ -1111,7 +1101,6 @@
 							setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 							base_object = copy_this_ref;
-							base_type = TypeCategory::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						} else {
 							// [this] capture: load the pointer from __this
@@ -1131,7 +1120,6 @@
 							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_this), memberAccessNode.member_token()));
 
 							base_object = this_ptr;
-							base_type = TypeCategory::Struct;
 							base_type_index = current_lambda_context_.enclosing_struct_type_index;
 						}
 					}
@@ -1139,7 +1127,7 @@
 
 				if (!is_lambda_this) {
 					auto pointer_operands = visitExpressionNode(operand_expr);
-					if (!extractBaseFromOperands(pointer_operands, base_object, base_type, base_type_index, "pointer expression")) {
+					if (!extractBaseFromOperands(pointer_operands, base_object, base_type_index, "pointer expression")) {
 						throw InternalError(std::string("Failed to extract base from pointer dereference for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 					}
 					is_pointer_dereference = true;
@@ -1147,13 +1135,13 @@
 			}
 			else if (expr && std::holds_alternative<ArraySubscriptNode>(*expr)) {
 				auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
-				if (!extractBaseFromOperands(array_operands, base_object, base_type, base_type_index, "array subscript")) {
+				if (!extractBaseFromOperands(array_operands, base_object, base_type_index, "array subscript")) {
 					throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 			}
 			else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
 				auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
-				if (!extractBaseFromOperands(call_result, base_object, base_type, base_type_index, "function call")) {
+				if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
 					throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {
@@ -1165,7 +1153,7 @@
 				// casts, conditional expressions, etc.) so member access can operate on the
 				// resulting temporary instead of special-casing each AST variant.
 				auto object_result = visitExpressionNode(*expr);
-				if (!extractBaseFromOperands(object_result, base_object, base_type, base_type_index, "object expression")) {
+				if (!extractBaseFromOperands(object_result, base_object, base_type_index, "object expression")) {
 					throw InternalError(std::string("Failed to extract base from object expression result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 				}
 				if (is_arrow) {

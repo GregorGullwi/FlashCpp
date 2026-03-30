@@ -270,13 +270,11 @@ private:
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	bool extractBaseFromOperands(
 		const ExprResult& operands,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		std::string_view error_context);
 	static ExprResult makeMemberResult(SizeInBits size_bits, TempVar result_var, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage);
@@ -284,7 +282,6 @@ private:
 		const IdentifierNode& identifier,
 		const Token& member_token,
 		std::variant<StringHandle, TempVar>& base_object,
-		TypeCategory& base_type,
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
