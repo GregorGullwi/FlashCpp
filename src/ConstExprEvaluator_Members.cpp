@@ -2731,23 +2731,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 			}
 			
-			// If still not found, try resolving by checking if there's a type alias in gTypeInfo
-			// Note: This linear search is a fallback for edge cases; primary lookup uses getTypesByNameMap()
-			if (!struct_info) {
-				// Try looking up by iterating through gTypeInfo to find a type with matching name
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& type_info = getTypeInfo(TypeIndex{_gti_i_});
-					if (type_info.isStruct()) {
-						const StructTypeInfo* si = type_info.getStructInfo();
-						if (si && si->name == struct_handle) {
-							struct_info = si;
-							resolved_type_info = &type_info;
-							break;
-						}
-					}
-				}
-			}
-			
 			if (struct_info) {
 				// Look for static member recursively (checks base classes too)
 				StringHandle member_handle = StringTable::getOrInternStringHandle(qualified_id.name());

@@ -1180,13 +1180,14 @@
 		// If not found by index, search through all type info entries
 		// This handles cases where type_index might not be set correctly
 		if (!type_info) {
-			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+			forEachTypeInfo([&](const TypeInfo& ti) {
+				if (type_info) {
+					return;
+				}
 				if (ti.type_index_ == base_type_index && isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					type_info = &ti;
-					break;
 				}
-			}
+			});
 		}
 
 		if (!type_info || !type_info->getStructInfo()) {
@@ -1195,12 +1196,11 @@
 				std::cerr << "  Object name: " << *string_ptr << "\n";
 			}
 			std::cerr << "  Available struct types in gTypeInfo:\n";
-			for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+			forEachTypeInfo([&](const TypeInfo& ti) {
 				if (isIrStructType(toIrType(ti)) && ti.getStructInfo()) {
 					std::cerr << "    - " << ti.name() << " (type_index=" << ti.type_index_.index() << ")\n";
 				}
-			}
+			});
 			std::cerr << "  Available types in getTypesByNameMap():\n";
 			for (const auto& [name, ti] : getTypesByNameMap()) {
 				if (isIrStructType(toIrType(*ti))) {
@@ -1740,8 +1740,10 @@
 									// search for instantiated types that match this base template name
 									// This handles cases like test<int> where type_index points to 'test'
 									// but we need 'test$hash' for the correct member size
-									for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
+									forEachTypeInfo([&](const TypeInfo& ti) {
+										if (direct_member_size > 1) {
+											return;
+										}
 										std::string_view ti_name = StringTable::getStringView(ti.name());
 										// Check if this is an instantiation of the base template
 										// Instantiated names start with base_name followed by '_' or '$'
@@ -1753,11 +1755,16 @@
 												for (const auto& member : inst_struct_info->members) {
 													if (StringTable::getStringView(member.getName()) == member_name) {
 														FLASH_LOG(Codegen, Debug, "sizeof(member_access): Found in instantiated type '", ti_name, "' member size=", member.size);
-														return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(member.size)}, PointerDepth{}, ValueStorage::ContainsData);
+														direct_member_size = member.size;
+														return;
 													}
 												}
 											}
 										}
+									});
+
+									if (direct_member_size > 1) {
+										return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(direct_member_size)}, PointerDepth{}, ValueStorage::ContainsData);
 									}
 
 									// If no instantiation found but direct lookup had a result, use that
