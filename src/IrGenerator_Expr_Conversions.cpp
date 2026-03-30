@@ -1816,7 +1816,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	};
 
 	auto populateIncDecTypedValueMetadata = [&](TypedValue& typed_value) {
-		if (carriesSemanticTypeIndex(typed_value.type) && operandIrResult.type_index.is_valid()) {
+		if (carriesSemanticTypeIndex(typed_value.category()) && operandIrResult.type_index.is_valid()) {
 			typed_value.type_index = operandIrResult.type_index;
 		}
 		if (operand_pointer_depth > 0) {
@@ -2649,8 +2649,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Take the address of the temporary and return it as the reference argument.
 		TempVar addr_var = emitAddressOf(referred_type, ref_type_bits, IrValue(conv_temp), source_token);
 		TypedValue result;
-		result.type = referred_type;
-		result.ir_type = toIrType(referred_type);
+		result.setType(referred_type);
 		result.size_in_bits = SizeInBits{64};
 		result.value = addr_var;
 		result.ref_qualifier = ref_param_type.is_rvalue_reference()

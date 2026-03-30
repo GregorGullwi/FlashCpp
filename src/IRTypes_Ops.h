@@ -407,7 +407,6 @@ enum class ValueStorage : uint8_t {
 
 // Typed value - combines IrValue with its type information
 struct TypedValue {
-	TypeCategory type = TypeCategory::Void;	// 4 bytes (enum) — semantic type (now TypeCategory; Phase 4 will remove entirely)
 	SizeInBits size_in_bits;  // was: int size_in_bits = 0
 	IrValue value;          // 32 bytes (variant)
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
@@ -422,8 +421,7 @@ struct TypedValue {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
 	TypeCategory category() const {
-		const TypeCategory category_from_index = type_index.category();
-		return (category_from_index != TypeCategory::Invalid) ? category_from_index : type;
+		return type_index.category();
 	}
 	TypeCategory typeEnum() const { return category(); }
 
@@ -433,23 +431,16 @@ struct TypedValue {
 	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
 	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
 	void setType(TypeCategory cat) noexcept {
-		type = cat;
 		type_index = TypeIndex{type_index.index(), cat};
 		ir_type = toIrType(cat);
 		is_signed = isSignedType(cat);
 	}
 
 	// Returns the effective runtime representation type.
-	// During the transition period (Phase 1-3), some construction sites may not
-	// explicitly set ir_type.  This method computes it from the semantic type if
-	// ir_type is still the default.  Once all sites are migrated, this method
-	// can be replaced by a direct ir_type read.
 	IrType effectiveIrType() const {
-		// Return ir_type if it was explicitly set (non-Void), or if the semantic
-		// type IS Void (to avoid toIrType recomputation for genuinely void values).
-		if (ir_type != IrType::Void || type == TypeCategory::Void)
+		if (ir_type != IrType::Void || category() == TypeCategory::Void)
 			return ir_type;
-		return toIrType(type);
+		return toIrType(category());
 	}
 
 	// Storage discriminator: records whether `value` holds a data value or a

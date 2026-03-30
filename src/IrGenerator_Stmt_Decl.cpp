@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -1740,7 +1740,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 					// Use the address temp as the initializer instead of the original temp
 					TypedValue tv;
-					tv.type = elem_type;
+					tv.setType(elem_type);
 					tv.ir_type = toIrType(elem_type);
 					tv.size_in_bits = SizeInBits{64};  // Address is 64-bit pointer
 					tv.value = addr_temp;
@@ -2231,7 +2231,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 											ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), Token()));
 
 											// Create TypedValue with the address
-											init_arg.type = init_type.type();
+											init_arg.setType(init_type.type());
 											init_arg.ir_type = toIrType(init_type.type());
 											init_arg.size_in_bits = SizeInBits{64};  // Pointer size
 											init_arg.value = addr_var;
@@ -2960,7 +2960,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 
 						// Pass the hidden variable as argument
 						TypedValue arg;
-						arg.type = init_type;
+						arg.setType(init_type);
 						arg.ir_type = toIrType(init_type);
 						arg.size_in_bits = SizeInBits{static_cast<int>(init_size)};
 						arg.value = hidden_var_handle;
@@ -2977,7 +2977,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						binding_var_decl.type_index = nativeTypeIndex(element_type);
 						binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						TypedValue init_val3;
-						init_val3.type = element_type;
+						init_val3.setType(element_type);
 						init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						init_val3.value = result_temp;
 						init_val3.type_index = TypeIndex{element_type_index};
@@ -3109,7 +3109,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 					? CVReferenceQualifier::RValueReference
 					: CVReferenceQualifier::LValueReference;
 				TypedValue init_val;
-				init_val.type = member.memberType();
+				init_val.setType(member.memberType());
 				init_val.size_in_bits = SizeInBits{64};
 				init_val.value = member_addr;
 				init_val.storage = ValueStorage::ContainsAddress;
@@ -3142,7 +3142,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 				binding_var_decl.type_index = TypeIndex::fromTypeAndIndex(member.memberType(), member.type_index);
 				binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				TypedValue init_val2;
-				init_val2.type = member.memberType();
+				init_val2.setType(member.memberType());
 				init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
 				init_val2.value = member_val;
 				init_val2.type_index = member.type_index;

@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "IrGenerator.h"
 
 	ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
@@ -223,7 +223,7 @@
 						const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 						// Convert to TypedValue
 						TypedValue arg;
-						arg.type = type_node.type();
+						arg.setType(type_node.type());
 						arg.ir_type = toIrType(type_node.type());
 						arg.size_in_bits = SizeInBits{static_cast<int>(type_node.size_in_bits())};
 						arg.value = StringTable::getOrInternStringHandle(identifier.name());
@@ -1083,7 +1083,7 @@
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 
 					TypedValue tv;
-					tv.type = type_node.type();
+					tv.setType(type_node.type());
 					tv.ir_type = toIrType(type_node.type());
 					tv.size_in_bits = SizeInBits{type_node.size_in_bits()};
 					tv.value = StringTable::getOrInternStringHandle(identifier.name());

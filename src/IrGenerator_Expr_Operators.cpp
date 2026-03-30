@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -225,7 +225,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 				TypeSpecifierNode nested_type_spec(member.type_index.withCategory(member.memberType()), nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
-					store_type = nested_result->type;
+					store_type = nested_result->category();
 					store_size = nested_result->size_in_bits.value;
 					store_value = nested_result->value;
 					store_value_set = true;
@@ -266,7 +266,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 }
 
 void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node) {
-	value.type = type_node.type();
+	value.setType(type_node.type());
 	value.ir_type = toIrType(type_node.type());
 	if (type_node.pointer_depth() > 0
 		|| type_node.is_reference()
@@ -319,7 +319,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 		TempVar temp_var = var_counter.next();
 		AssignmentOp assign_op;
 		assign_op.result = temp_var;
-		assign_op.lhs = makeTypedValue(source_value.type, source_value.size_in_bits, temp_var, source_value.type_index);
+		assign_op.lhs = makeTypedValue(source_value.category(), source_value.size_in_bits, temp_var, source_value.type_index);
 		assign_op.rhs = source_value;
 		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), token));
 
@@ -361,7 +361,7 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 				addr_op.operand.value = StringTable::getOrInternStringHandle(identifier.name());
 				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), token));
 
-				value.type = arg_type.type();
+				value.setType(arg_type.type());
 				value.ir_type = toIrType(arg_type.type());
 				value.size_in_bits = SizeInBits{POINTER_SIZE_BITS};
 				value.value = addr_var;
@@ -1092,7 +1092,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					{
 						AssignmentOp mat;
 						mat.result = store_temp;
-						mat.lhs = { gsi.type_index.category(), gsi.size_in_bits, store_temp };
+						mat.lhs = makeTypedValue(gsi.type_index.category(), gsi.size_in_bits, IrValue{store_temp});
 						mat.rhs = toTypedValue(op_result);
 						ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(mat), binaryOperatorNode.get_token()));
 					}
@@ -3403,7 +3403,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar reg_value = var_counter.next();
 			DereferenceOp read_reg_value;
 			read_reg_value.result = reg_value;
-			read_reg_value.pointer.type = requested_type;
+			read_reg_value.pointer.setType(requested_type);
 			read_reg_value.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 			read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 			read_reg_value.pointer.pointer_depth = PointerDepth{1};
@@ -3501,7 +3501,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			TempVar overflow_value = var_counter.next();
 			DereferenceOp read_overflow_value;
 			read_overflow_value.result = overflow_value;
-			read_overflow_value.pointer.type = requested_type;
+			read_overflow_value.pointer.setType(requested_type);
 			read_overflow_value.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 			read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 			read_overflow_value.pointer.pointer_depth = PointerDepth{1};
@@ -3677,7 +3677,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar reg_value = var_counter.next();
 				DereferenceOp read_reg_value;
 				read_reg_value.result = reg_value;
-				read_reg_value.pointer.type = requested_type;
+				read_reg_value.pointer.setType(requested_type);
 				read_reg_value.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 				read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 				read_reg_value.pointer.pointer_depth = PointerDepth{1};
@@ -3772,7 +3772,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TempVar overflow_value = var_counter.next();
 				DereferenceOp read_overflow_value;
 				read_overflow_value.result = overflow_value;
-				read_overflow_value.pointer.type = requested_type;
+				read_overflow_value.pointer.setType(requested_type);
 				read_overflow_value.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 				read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 				read_overflow_value.pointer.pointer_depth = PointerDepth{1};
@@ -3850,7 +3850,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Step 2b: Dereference the struct pointer to get the actual struct
 					DereferenceOp deref_struct_op;
 					deref_struct_op.result = value;
-					deref_struct_op.pointer.type = requested_type;
+					deref_struct_op.pointer.setType(requested_type);
 					deref_struct_op.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 					deref_struct_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 					deref_struct_op.pointer.pointer_depth = PointerDepth{1};
@@ -3860,7 +3860,7 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					// Small types (≤8 bytes): read value directly from stack slot
 					DereferenceOp deref_value_op;
 					deref_value_op.result = value;
-					deref_value_op.pointer.type = requested_type;
+					deref_value_op.pointer.setType(requested_type);
 					deref_value_op.pointer.type_index = TypeIndex::fromTypeAndIndex(requested_type, {});
 					deref_value_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 					deref_value_op.pointer.pointer_depth = PointerDepth{1};
@@ -4353,7 +4353,7 @@ const Token& token) {
 			IrValue index_value = lv_info.array_index.value();
 			TypedValue index_tv;
 			index_tv.value = index_value;
-			index_tv.type = TypeCategory::Int;  // Index type (typically int)
+			index_tv.setType(TypeCategory::Int);  // Index type (typically int)
 			index_tv.ir_type = IrType::Integer;
 			index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 
@@ -4426,7 +4426,7 @@ const Token& token) {
 			TypeCategory pointee_type = lvalue_type;
 			int pointee_size_bits = inferLValueSizeBits();
 			TypedValue value_tv;
-			value_tv.type = pointee_type;
+			value_tv.setType(pointee_type);
 			value_tv.ir_type = toIrType(pointee_type);
 			value_tv.size_in_bits = SizeInBits{static_cast<int>(pointee_size_bits)};
 			value_tv.value = toIrValue(rhs_operands.value);
@@ -4537,7 +4537,7 @@ std::string_view op) {
 		// Generate a Dereference instruction to load the current value
 		DereferenceOp deref_op;
 		deref_op.result = current_value_temp;
-		deref_op.pointer.type = lvalue_type;
+		deref_op.pointer.setType(lvalue_type);
 		deref_op.pointer.type_index = TypeIndex::fromTypeAndIndex(lvalue_type, {});
 		deref_op.pointer.size_in_bits = SizeInBits{64};  // pointer size
 		deref_op.pointer.pointer_depth = PointerDepth{1};
@@ -4573,7 +4573,7 @@ std::string_view op) {
 
 		// Store result back through the pointer using DereferenceStore
 		TypedValue result_tv;
-		result_tv.type = lvalue_type;
+		result_tv.setType(lvalue_type);
 		result_tv.ir_type = toIrType(lvalue_type);
 		result_tv.size_in_bits = SizeInBits{static_cast<int>(lvalue_size_bits)};
 		result_tv.value = result_temp;
@@ -4591,7 +4591,7 @@ std::string_view op) {
 			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
 			// Generate DereferenceStore with StringHandle directly
 			DereferenceStoreOp store_op;
-			store_op.pointer.type = lvalue_type;
+			store_op.pointer.setType(lvalue_type);
 			store_op.pointer.type_index = TypeIndex::fromTypeAndIndex(lvalue_type, {});
 			store_op.pointer.size_in_bits = SizeInBits{64};
 			store_op.pointer.pointer_depth = PointerDepth{1};
@@ -4617,7 +4617,7 @@ std::string_view op) {
 		IrValue index_value = lv_info.array_index.value();
 		TypedValue index_tv;
 		index_tv.value = index_value;
-		index_tv.type = TypeCategory::Int;  // Index type (typically int)
+		index_tv.setType(TypeCategory::Int);  // Index type (typically int)
 		index_tv.ir_type = IrType::Integer;
 		index_tv.size_in_bits = SizeInBits{32};  // Standard index size
 

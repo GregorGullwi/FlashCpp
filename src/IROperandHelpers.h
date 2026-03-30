@@ -147,7 +147,6 @@ inline TypedValue withStorage(TypedValue tv, ValueStorage storage) {
 /// Basic TypedValue factory — sets ir_type, is_signed, and TypeCategory in type_index automatically.
 inline TypedValue makeTypedValue(TypeCategory type, SizeInBits size_in_bits, IrValue value) {
 	TypedValue tv;
-	tv.type = type;
 	tv.ir_type = toIrType(type);
 	tv.is_signed = isSignedType(type);
 	tv.size_in_bits = size_in_bits;
@@ -185,12 +184,12 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	
 	TypedValue result;
-	result.type = std::get<TypeCategory>(operands[0]);
-	result.ir_type = toIrType(result.type);
-	result.is_signed = isSignedType(result.type);
+	const TypeCategory cat = std::get<TypeCategory>(operands[0]);
+	result.ir_type = toIrType(cat);
+	result.is_signed = isSignedType(cat);
 	result.size_in_bits = SizeInBits{std::get<int>(operands[1])};
 	result.value = toIrValue(operands[2]);
-	result.type_index = TypeIndex::fromTypeAndIndex(result.type, {});
+	result.type_index = TypeIndex::fromTypeAndIndex(cat, {});
 	result.pointer_depth = PointerDepth{};
 	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
@@ -206,7 +205,6 @@ inline TypedValue toTypedValue(const std::vector<IrOperand>& operands) {
 
 inline TypedValue toTypedValue(const ExprResult& result) {
 	TypedValue tv;
-	tv.type = result.typeEnum();
 	tv.ir_type = result.ir_type;
 	tv.is_signed = isSignedType(result.typeEnum());
 	tv.size_in_bits = result.size_in_bits;

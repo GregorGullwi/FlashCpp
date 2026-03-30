@@ -1,4 +1,4 @@
-﻿#include "Log.h"
+#include "Log.h"
 #include "IRConverter.h"
 #include "OverloadResolution.h"
 
@@ -4079,7 +4079,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				const auto& arg = call_op.args[i];
 				// Reference arguments (including rvalue references) are passed as pointers,
 				// so they should use integer registers, not floating-point registers
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 				bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Determine if this argument goes on stack (overflows register file)
@@ -4203,7 +4203,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				// Determine if this is a floating-point argument
 				// Reference arguments (including rvalue references) are passed as pointers (addresses),
 				// so they should use integer registers regardless of the underlying type
-				bool is_float_arg = is_floating_point_type(arg.type) && !arg.is_reference();
+				bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 				bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
 				// Check if this argument fits in a register (accounting for param_shift)
@@ -4391,7 +4391,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Both sizes are explicit for clarity
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4418,7 +4418,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						// Use size-aware load: source (stack slot) -> destination (register)
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
-							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.type)}  // source: sized stack slot
+							SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}  // source: sized stack slot
 						);
 						regAlloc.flushSingleDirtyRegister(target_reg);
 					}
@@ -4433,7 +4433,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					size_t va_temp_float_idx = 0;
 					for (size_t i = 0; i < call_op.args.size(); ++i) {
 						const auto& arg = call_op.args[i];
-						if (is_floating_point_type(arg.type)) {
+						if (is_floating_point_type(arg.category())) {
 							if (va_temp_float_idx < max_float_regs) {
 								xmm_count++;
 								va_temp_float_idx++;
@@ -5435,7 +5435,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			// First pass: handle stack arguments
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(arg.category());
 
 				bool use_register = false;
 				if (is_float_arg) {
@@ -5462,7 +5462,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 
 			for (size_t i = 0; i < op.arguments.size(); ++i) {
 				const auto& arg = op.arguments[i];
-				bool is_float_arg = is_floating_point_type(arg.type);
+				bool is_float_arg = is_floating_point_type(arg.category());
 
 				bool use_register = false;
 				X64Register target_reg;
