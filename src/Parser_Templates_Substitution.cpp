@@ -892,17 +892,17 @@ ASTNode Parser::substituteTemplateParameters(
 
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,
 				template_args);
-			if (substituted_type != type_spec.type() || substituted_type_index != type_spec.type_index()) {
-				int substituted_size_bits = get_type_size_bits(substituted_type);
+			if (substituted_type_index.category() != type_spec.type() || substituted_type_index != type_spec.type_index()) {
+				int substituted_size_bits = get_type_size_bits(substituted_type_index.category());
 				if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
 					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
 				}
 				Token substituted_token = type_spec.token();
-				if (substituted_type == TypeCategory::Struct || substituted_type == TypeCategory::UserDefined) {
+				if (substituted_type_index.category() == TypeCategory::Struct || substituted_type_index.category() == TypeCategory::UserDefined) {
 					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
 						substituted_token = Token(
 							Token::Type::Identifier,
@@ -912,7 +912,7 @@ ASTNode Parser::substituteTemplateParameters(
 							type_spec.token().file_index());
 					}
 				} else {
-					std::string_view substituted_type_name = get_type_name(substituted_type);
+					std::string_view substituted_type_name = get_type_name(substituted_type_index.category());
 					if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
 						substituted_token = Token(
 							Token::Type::Keyword,
@@ -923,7 +923,7 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 				TypeSpecifierNode substituted_spec(
-					substituted_type_index.withCategory(substituted_type),
+					substituted_type_index,
 					substituted_size_bits,
 					substituted_token,
 					type_spec.cv_qualifier(),

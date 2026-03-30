@@ -894,7 +894,7 @@ private:
         bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
     private:
         bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);  // Phase 2: Instantiate lazy class to specified phase
-        std::optional<std::pair<TypeCategory, TypeIndex>> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
+        std::optional<TypeIndex> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
         std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
         std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
         std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
@@ -1247,7 +1247,7 @@ public:  // Public methods for template instantiation
 
         // Substitute template parameter in a type specification
         // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-        std::pair<TypeCategory, TypeIndex> substitute_template_parameter(
+        TypeIndex substitute_template_parameter(
             const TypeSpecifierNode& original_type,
             const InlineVector<ASTNode, 4>& template_params,
             const InlineVector<TemplateTypeArg, 4>& template_args

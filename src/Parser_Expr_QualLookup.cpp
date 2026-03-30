@@ -781,7 +781,7 @@ ParseResult Parser::validate_and_add_base_class(
 
 // Substitute template parameter in a type specification
 // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-std::pair<TypeCategory, TypeIndex> Parser::substitute_template_parameter(
+TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args
@@ -1086,7 +1086,7 @@ std::pair<TypeCategory, TypeIndex> Parser::substitute_template_parameter(
 		}
 	}
 
-	return {result_type, result_type_index};
+	return result_type_index.withCategory(result_type);
 }
 
 

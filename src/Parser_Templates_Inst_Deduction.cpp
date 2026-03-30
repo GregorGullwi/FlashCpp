@@ -679,13 +679,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Substitute template parameters in the return type
 	const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
-	auto [substituted_return_type, substituted_return_type_index] = substitute_template_parameter(
+	TypeIndex substituted_return_type_index = substitute_template_parameter(
 		orig_return_type, template_params, explicit_types);
 	
 	// Create return type with substituted type, preserving qualifiers
 	ASTNode return_type = emplace_node<TypeSpecifierNode>(
-		substituted_return_type_index.withCategory(substituted_return_type),
-		get_type_size_bits(substituted_return_type),
+		substituted_return_type_index,
+		get_type_size_bits(substituted_return_type_index.category()),
 		orig_return_type.token(),
 		orig_return_type.cv_qualifier(),
 		ReferenceQualifier::None
@@ -711,13 +711,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			const TypeSpecifierNode& orig_param_type = param_decl.type_node().as<TypeSpecifierNode>();
 			
 			// Substitute template parameters in the type
-			auto [substituted_type, substituted_type_index] = substitute_template_parameter(
+			TypeIndex substituted_type_index = substitute_template_parameter(
 				orig_param_type, template_params, explicit_types);
 			
 			// Create new type specifier with substituted type
 			ASTNode param_type = emplace_node<TypeSpecifierNode>(
-				substituted_type_index.withCategory(substituted_type),
-				get_type_size_bits(substituted_type),
+				substituted_type_index,
+				get_type_size_bits(substituted_type_index.category()),
 				orig_param_type.token(),
 				orig_param_type.cv_qualifier(),
 				ReferenceQualifier::None
@@ -1588,25 +1588,25 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 	} else {
 		// Fallback: Use simple substitution (old behavior)
-		auto [return_type_enum, return_type_index] = substitute_template_parameter(
+		TypeIndex return_type_index = substitute_template_parameter(
 			orig_return_type, template_params, template_args
 		);
 		
-		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "substitute_template_parameter returned: type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		if (return_type_index.is_valid() && return_type_index.index() < getTypeInfoCount()) {
 			FLASH_LOG(Parser, Debug, "  type_index points to: '", StringTable::getStringView(getTypeInfo(return_type_index).name()), "'");
 		}
 		
 		TypeSpecifierNode new_return_type(
-			return_type_enum,
+			return_type_index.category(),
 			TypeQualifier::None,
-			get_type_size_bits(return_type_enum),
+			get_type_size_bits(return_type_index.category()),
 			Token(),
 			orig_return_type.cv_qualifier()  // Preserve const/volatile qualifiers (CVQualifier)
 		);
 		new_return_type.set_type_index(return_type_index);
 		
-		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_enum, ", type_index=", return_type_index);
+		FLASH_LOG(Parser, Debug, "Template fallback: created return type with type=", (int)return_type_index.category(), ", type_index=", return_type_index);
 		
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
@@ -1912,7 +1912,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						}
 					}
 				} else {
-					auto [subst_type, subst_type_index] = substitute_template_parameter(
+					TypeIndex subst_type_index = substitute_template_parameter(
 						orig_param_type, template_params, template_args
 					);
 					// substitute_template_parameter only resolves UserDefined types by name
@@ -1934,22 +1934,22 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					// arg_type_index here would be incorrect after a variadic pack
 					// expansion, since arg_type_index advances through multiple arg slots
 					// for a single function parameter, breaking the correspondence.
-					if (subst_type == TypeCategory::UserDefined &&
+					if (subst_type_index.category() == TypeCategory::UserDefined &&
 					    subst_type_index == orig_param_type.type_index() &&
 					    subst_type_index.is_valid() && subst_type_index.index() < getTypeInfoCount() &&
 					    getTypeInfo(subst_type_index).isTemplateInstantiation() &&
 					    i < arg_types.size() &&
 					    arg_types[i].category() == TypeCategory::Struct) {
-						subst_type = TypeCategory::Struct;
+						subst_type_index.setCategory(TypeCategory::Struct);
 						subst_type_index = arg_types[i].type_index();
 						FLASH_LOG_FORMAT(Templates, Debug,
 							"[depth={}]: Using call-site Struct type_index={} for dependent-placeholder param",
 							recursion_depth, subst_type_index);
 					}
 					param_type = emplace_node<TypeSpecifierNode>(
-						subst_type,
+						subst_type_index.category(),
 						TypeQualifier::None,
-						get_type_size_bits(subst_type),
+						get_type_size_bits(subst_type_index.category()),
 						Token(),
 						orig_param_type.cv_qualifier()
 					);

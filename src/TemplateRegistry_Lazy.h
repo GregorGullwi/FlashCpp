@@ -424,12 +424,12 @@ public:
 	}
 	
 	// Get cached evaluation result (only valid if is_evaluated is true)
-	std::optional<std::pair<TypeCategory, TypeIndex>> getCachedResult(StringHandle instantiated_class_name, 
-	                                                           StringHandle member_name) const {
+	std::optional<TypeIndex> getCachedResult(StringHandle instantiated_class_name, 
+	                                         StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		if (it != lazy_aliases_.end() && it->second.is_evaluated) {
-			return std::pair<TypeCategory, TypeIndex>{it->second.evaluated_type_index.category(), it->second.evaluated_type_index};
+			return it->second.evaluated_type_index;
 		}
 		return std::nullopt;
 	}

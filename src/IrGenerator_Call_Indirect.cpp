@@ -861,7 +861,7 @@
 				// This is a member function template - we need to instantiate it
 
 				// Deduce template argument types from call arguments
-				std::vector<std::pair<TypeCategory, TypeIndex>> arg_types;
+				std::vector<TypeIndex> arg_types;
 				// DEBUG removed
 				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
@@ -877,11 +877,11 @@
 
 					// Get type of argument - for literals, use the literal type
 					if (std::holds_alternative<BoolLiteralNode>(arg_expr)) {
-						arg_types.push_back({TypeCategory::Bool, TypeIndex{}});
+						arg_types.push_back(TypeIndex{}.withCategory(TypeCategory::Bool));
 					} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 						const NumericLiteralNode& lit = *numeric_literal;
 						// DEBUG removed
-						arg_types.push_back({lit.type(), TypeIndex{}});
+						arg_types.push_back(TypeIndex{}.withCategory(lit.type()));
 					} else if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						// Look up variable type
 						const IdentifierNode& ident = std::get<IdentifierNode>(arg_expr);
@@ -891,7 +891,7 @@
 							const DeclarationNode& decl = symbol_opt->as<DeclarationNode>();
 							const TypeSpecifierNode& type = decl.type_node().as<TypeSpecifierNode>();
 							// DEBUG removed
-							arg_types.push_back({type.type(), type.type_index()});
+							arg_types.push_back(type.type_index().withCategory(type.type()));
 						}
 					} else {
 						// DEBUG removed
@@ -906,8 +906,8 @@
 					const TemplateFunctionDeclarationNode& template_func = template_opt->as<TemplateFunctionDeclarationNode>();
 
 					InlineVector<TemplateTypeArg, 4> template_args;
-					for (const auto& [arg_type, arg_type_index] : arg_types) {
-						template_args.push_back(TemplateTypeArg::makeType(arg_type_index.withCategory(arg_type)));
+					for (const auto& arg_type_index : arg_types) {
+						template_args.push_back(TemplateTypeArg::makeType(arg_type_index));
 					}
 
 					// Check if we already have this instantiation
@@ -931,8 +931,8 @@
 
 							// Convert arg_types to TemplateTypeArg for evaluation
 							InlineVector<TemplateTypeArg, 4> type_args;
-							for (const auto& [arg_type, arg_type_index] : arg_types) {
-								type_args.push_back(TemplateTypeArg::makeType(arg_type_index.withCategory(arg_type)));
+							for (const auto& arg_type_index : arg_types) {
+								type_args.push_back(TemplateTypeArg::makeType(arg_type_index));
 							}
 
 							// Evaluate the constraint with the template arguments
@@ -945,7 +945,7 @@
 								std::string args_str;
 								for (size_t i = 0; i < arg_types.size(); ++i) {
 									if (i > 0) args_str += ", ";
-									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].first));
+									args_str += std::string(TemplateRegistry::typeToString(arg_types[i].category()));
 								}
 
 								FLASH_LOG(Codegen, Error, "constraint not satisfied for template function '", func_name, "'");
