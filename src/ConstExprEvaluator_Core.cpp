@@ -81,8 +81,8 @@ namespace {
 		TypeCategory effective_category = category;
 		if (category == TypeCategory::Enum) {
 			TypeIndex ti = target_type.type_index();
-			if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
-				if (const EnumTypeInfo* ei = getTypeInfo(ti).getEnumInfo()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(ti)) {
+				if (const EnumTypeInfo* ei = type_info->getEnumInfo()) {
 					effective_category = ei->underlying_type;
 				}
 			}
@@ -832,9 +832,9 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 						const TemplateTypeArg& arg = context.template_args[i];
 						if (arg.isTypeArgument()) {
 							size_t param_size = get_type_size_bits(arg.category()) / 8;
-							if (param_size == 0 && arg.category() == TypeCategory::Struct && arg.type_index.is_valid() &&
-									arg.type_index.index() < getTypeInfoCount()) {
-								const StructTypeInfo* si = getTypeInfo(arg.type_index).getStructInfo();
+							if (param_size == 0 && arg.category() == TypeCategory::Struct) {
+								const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+								const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
 								if (si) param_size = si->total_size;
 							}
 							if (param_size > 0) {
@@ -994,9 +994,8 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 			// For struct types, look up alignment from type info
 			if (type_spec.category() == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
-				if (type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_index);
-					const StructTypeInfo* struct_info = type_info.getStructInfo();
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (struct_info) {
 						return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
 					}
@@ -1040,9 +1039,8 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 								// Handle struct types
 								if (type_spec.category() == TypeCategory::Struct) {
 									TypeIndex type_index = type_spec.type_index();
-									if (type_index.index() < getTypeInfoCount()) {
-										const TypeInfo& type_info = getTypeInfo(type_index);
-										const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+										const StructTypeInfo* struct_info = type_info->getStructInfo();
 										if (struct_info) {
 											return EvalResult::from_int(static_cast<long long>(struct_info->alignment));
 										}
@@ -1382,9 +1380,8 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 					// An alias to an unsigned type (e.g., using size_type = unsigned long long)
 					// should produce from_uint(0), not from_int(0).
 					TypeIndex ti = type_spec.type_index();
-					if (ti.is_valid() && ti.index() < getTypeInfoCount()) {
-						const TypeInfo& alias_info = getTypeInfo(ti);
-						TypeCategory resolved = alias_info.category();
+					if (const TypeInfo* alias_info = tryGetTypeInfo(ti)) {
+						TypeCategory resolved = alias_info->category();
 						if (resolved == TypeCategory::Struct || resolved == TypeCategory::UserDefined) {
 							EvalResult result = EvalResult::from_int(0);
 							result.set_exact_type(type_spec);
@@ -1605,10 +1602,11 @@ EvalResult Evaluator::evaluate_new_expression(
 	// Handle struct/class types via the constructor materialization path.
 	if (is_struct_type(type_spec.category())) {
 		TypeIndex type_index = type_spec.type_index();
-		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
+		const TypeInfo* type_info = tryGetTypeInfo(type_index);
+		if (!type_info) {
 			return EvalResult::error("new-expression: invalid struct type index");
 		}
-		const StructTypeInfo* struct_info = getTypeInfo(type_index).getStructInfo();
+		const StructTypeInfo* struct_info = type_info->getStructInfo();
 		if (!struct_info) {
 			return EvalResult::error("new-expression: type is not a struct/class");
 		}
@@ -1850,9 +1848,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			if (type_spec.category() == TypeCategory::Enum) {
 				// Look up the enumerator value from the type info
 				auto type_index = type_spec.type_index();
-				if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-					const TypeInfo& ti = getTypeInfo(type_index);
-					const EnumTypeInfo* enum_info = ti.getEnumInfo();
+				if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+					const EnumTypeInfo* enum_info = ti->getEnumInfo();
 					if (enum_info) {
 						const Enumerator* e = enum_info->findEnumerator(name_handle);
 						if (e) {
@@ -1913,10 +1910,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (initializer->is<InitializerListNode>() &&
 			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
-			if ((is_struct_type(type_spec.category())) &&
-				type_spec.type_index().is_valid() &&
-				type_spec.type_index().index() < getTypeInfoCount()) {
-				if (const StructTypeInfo* struct_info = getTypeInfo(type_spec.type_index()).getStructInfo()) {
+			if (is_struct_type(type_spec.category())) {
+				const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+				if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
 					return materialize_aggregate_object_value(
 						struct_info,
 						type_spec.type_index(),
@@ -3314,8 +3310,8 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 		const TypeSpecifierNode& ret_spec =
 			func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
-		if (ret_idx.is_valid() && ret_idx.index() < getTypeInfoCount())
-			context.return_type_info = &getTypeInfo(ret_idx);
+		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
+			context.return_type_info = return_type_info;
 	}
 	
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
@@ -3596,10 +3592,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					if (decl.type_node().is<TypeSpecifierNode>()) {
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-						if ((is_struct_type(type_spec.category())) &&
-							type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-							if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+						if (is_struct_type(type_spec.category())) {
+							const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+							if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
 								// Block-scope `Type o(a, b)` is parsed as InitializerListNode{a, b}.
 								// Prefer a matching user-defined constructor over aggregate init.
 								// FlashCpp generates implicit default/copy constructors for every struct,
@@ -3684,10 +3679,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// Uninitialized variable — check if it's a struct/class type requiring default construction
 			if (decl.type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
-				if ((is_struct_type(type_spec.category())) &&
-					type_spec.type_index().is_valid() && type_spec.type_index().index() < getTypeInfoCount()) {
-					const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-					if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+				if (is_struct_type(type_spec.category())) {
+					const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+					if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
 						TypeIndex type_index = type_spec.type_index();
 						EvalResult object_result = EvalResult::from_int(0LL);
 						object_result.object_type_index = type_index;

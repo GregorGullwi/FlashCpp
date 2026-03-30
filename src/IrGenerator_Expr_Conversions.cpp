@@ -283,9 +283,9 @@
 			result.total_member_offset = accumulated_offset;
 			result.final_type_index = type_node->type_index();
 			result.final_size_bits = SizeInBits{static_cast<int>(type_node->size_in_bits())};
-			if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set() &&
-				type_node->type_index().is_valid() && type_node->type_index().index() < getTypeInfoCount()) {
-				if (const StructTypeInfo* struct_info = getTypeInfo(type_node->type_index()).getStructInfo()) {
+			if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_node->type_index());
+					const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
 					result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
 				}
 			}
@@ -376,9 +376,8 @@
 						element_pointer_depth = type_node.pointer_depth();  // Track pointer depth
 					} else if (type_node.category() == TypeCategory::Struct) {
 						TypeIndex type_index_from_decl = type_node.type_index();
-						if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
 							}
@@ -681,9 +680,8 @@
 									} else if (type_node.category() == TypeCategory::Struct) {
 										// Array of structs
 										TypeIndex type_index_from_decl = type_node.type_index();
-										if (type_index_from_decl.is_valid() && type_index_from_decl.index() < getTypeInfoCount()) {
-											const TypeInfo& type_info = getTypeInfo(type_index_from_decl);
-											const StructTypeInfo* struct_info = type_info.getStructInfo();
+										if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
+											const StructTypeInfo* struct_info = type_info->getStructInfo();
 											if (struct_info) {
 												element_size_bits = static_cast<int>(struct_info->total_size * 8);
 											}
@@ -951,9 +949,8 @@
 						} else if (type_node.category() == TypeCategory::Struct) {
 							// Array of structs
 							TypeIndex type_index = type_node.type_index();
-							if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& type_info = getTypeInfo(type_index);
-								const StructTypeInfo* struct_info = type_info.getStructInfo();
+							if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+								const StructTypeInfo* struct_info = type_info->getStructInfo();
 								if (struct_info) {
 									element_size_bits = static_cast<int>(struct_info->total_size * 8);
 								}
@@ -1178,12 +1175,12 @@
 					const auto& decl = symbol->as<DeclarationNode>();
 					const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 					// If the variable's type is the closure struct for a lambda, derive invoke signature from struct info
-					if (type_node.category() == TypeCategory::Struct && type_node.type_index().index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (type_node.category() == TypeCategory::Struct) {
+						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
+						const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 						if (struct_info && isLambdaClosureStruct(*struct_info)) {
 							lambda_struct_info = struct_info;
-							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info.name()));
+							FLASH_LOG_FORMAT(Codegen, Debug, "Unary plus on lambda identifier '{}' -> using struct info", StringTable::getStringView(type_info->name()));
 						}
 					}
 					// Fallback: if struct info path didn't find a captureless closure,
@@ -1626,8 +1623,9 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	size_t expected_param_count = is_prefix ? 0 : 1;
 	const StructMemberFunction* matched_func = nullptr;
 	const StructMemberFunction* fallback_func = nullptr;
-	if (operand_type_index.index() < getTypeInfoCount()) {
-		const StructTypeInfo* struct_info = getTypeInfo(operand_type_index).getStructInfo();
+	const TypeInfo* operand_type_info = tryGetTypeInfo(operand_type_index);
+	if (operand_type_info) {
+		const StructTypeInfo* struct_info = operand_type_info->getStructInfo();
 		if (struct_info) {
 			for (const auto& mf : struct_info->member_functions) {
 				if (mf.operator_kind == op_kind) {
@@ -1646,10 +1644,12 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	if (!matched_func) matched_func = fallback_func;
 	if (!matched_func)
 		return std::nullopt;
+	if (!operand_type_info)
+		return std::nullopt;
 
 	const StructMemberFunction& member_func = *matched_func;
 	const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-	std::string_view struct_name = StringTable::getStringView(getTypeInfo(operand_type_index).name());
+	std::string_view struct_name = StringTable::getStringView(operand_type_info->name());
 	TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	resolveSelfReferentialType(return_type, operand_type_index);
 
@@ -1677,8 +1677,11 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 	call_op.return_type_index = return_type.type_index();
 	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-	if (!call_op.return_size_in_bits.is_set() && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount() && getTypeInfo(return_type.type_index()).struct_info_) {
-		call_op.return_size_in_bits = SizeInBits{static_cast<int>(getTypeInfo(return_type.type_index()).struct_info_->total_size * 8)};
+	if (!call_op.return_size_in_bits.is_set()) {
+		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
+			return_type_info && return_type_info->struct_info_) {
+			call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_info->struct_info_->total_size * 8)};
+		}
 	}
 	call_op.is_member_function = true;
 
@@ -2304,16 +2307,15 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 					// set flag immediately so the fallback doesn't duplicate this lookup.
 					sema_applied_bool_conv = true;
 					TypeIndex source_type_idx = from_desc.type_index;
-					if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
-						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
+					if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), nativeTypeIndex(TypeCategory::Bool), source_is_const);
+							src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in contextual bool from ",
-								StringTable::getStringView(src_type_info.name()), " to bool");
-							if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
+								StringTable::getStringView(src_type_info->name()), " to bool");
+							if (auto result = emitConversionOperatorCall(condition, *src_type_info, *conv_op,
 									nativeTypeIndex(TypeCategory::Bool), 8, source_token))
 								return *result;
 						}
@@ -2332,14 +2334,13 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		// Fallback: struct → bool via operator bool() when sema did not annotate.
 		if (!sema_applied_bool_conv && condition.category() == TypeCategory::Struct) {
 			TypeIndex cond_type_idx = condition.type_index;
-			if (cond_type_idx.is_valid() && cond_type_idx.index() < getTypeInfoCount()) {
-				const TypeInfo& src_type_info = getTypeInfo(cond_type_idx);
+			if (const TypeInfo* src_type_info = tryGetTypeInfo(cond_type_idx)) {
 				const StructMemberFunction* conv_op = findConversionOperator(
-					src_type_info.getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false);
+					src_type_info->getStructInfo(), nativeTypeIndex(TypeCategory::Bool), false);
 				if (conv_op) {
 					FLASH_LOG(Codegen, Debug, "Fallback user-defined conversion in contextual bool from ",
-						StringTable::getStringView(src_type_info.name()), " to bool");
-					if (auto result = emitConversionOperatorCall(condition, src_type_info, *conv_op,
+						StringTable::getStringView(src_type_info->name()), " to bool");
+					if (auto result = emitConversionOperatorCall(condition, *src_type_info, *conv_op,
 							nativeTypeIndex(TypeCategory::Bool), 8, source_token))
 						return *result;
 				}
@@ -2369,17 +2370,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 				if (ci.cast_kind == StandardConversionKind::UserDefined &&
 					from_desc.category() == TypeCategory::Struct) {
 					TypeIndex source_type_idx = from_desc.type_index;
-					if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
-						const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
+					if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
 						const bool source_is_const = ((static_cast<uint8_t>(from_desc.base_cv))
 							& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 						const StructMemberFunction* conv_op = findConversionOperator(
-							src_type_info.getStructInfo(), param_type.type_index(), source_is_const);
+							src_type_info->getStructInfo(), param_type.type_index(), source_is_const);
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in constructor arg from ",
-								StringTable::getStringView(src_type_info.name()), " to parameter type");
+								StringTable::getStringView(src_type_info->name()), " to parameter type");
 							const int param_size = static_cast<int>(param_type.size_in_bits());
-							if (auto result = emitConversionOperatorCall(arg_result, src_type_info, *conv_op,
+							if (auto result = emitConversionOperatorCall(arg_result, *src_type_info, *conv_op,
 									param_type.type_index(), param_size, source_token)) {
 								arg_result = *result;
 								sema_applied = true;
@@ -2448,16 +2448,16 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			if (value_result.category() != TypeCategory::Struct || !value_result.type_index.is_valid()) {
 				return;
 			}
-			if (value_result.type_index.index() >= getTypeInfoCount()) {
+			const TypeInfo* type_info = tryGetTypeInfo(value_result.type_index);
+			if (!type_info) {
 				return;
 			}
-			const TypeInfo& type_info = getTypeInfo(value_result.type_index);
-			const StructTypeInfo* struct_info = type_info.getStructInfo();
+			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (!struct_info || !struct_info->hasDestructor()) {
 				return;
 			}
 			if (const auto* temp_var = std::get_if<TempVar>(&value_result.value)) {
-				registerFullExpressionTempDestructor(type_info.name(), *temp_var);
+				registerFullExpressionTempDestructor(type_info->name(), *temp_var);
 			}
 		};
 
@@ -2582,12 +2582,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
 			return std::nullopt;
 		}
-		if (target_type.type_index().index() >= getTypeInfoCount()) {
+		const TypeInfo* target_type_info = tryGetTypeInfo(target_type.type_index());
+		if (!target_type_info) {
 			return std::nullopt;
 		}
 
-		const TypeInfo& target_type_info = getTypeInfo(target_type.type_index());
-		const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
+		const StructTypeInfo* target_struct_info = target_type_info->getStructInfo();
 		if (!target_struct_info) {
 			return std::nullopt;
 		}
@@ -2599,7 +2599,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 
 		TempVar result_var = var_counter.next();
 		ConstructorCallOp ctor_op;
-		ctor_op.struct_name = target_type_info.name();
+		ctor_op.struct_name = target_type_info->name();
 		ctor_op.object = result_var;
 		ctor_op.use_return_slot = use_return_slot;
 

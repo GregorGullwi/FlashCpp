@@ -56,8 +56,10 @@ IrType toIrType(TypeCategory cat);
 // rather than the defensive IrType::Struct fallback in toIrType(TypeCategory).
 inline IrType toIrType(TypeIndex type_index) {
 	TypeCategory cat = type_index.category();
-	if (cat == TypeCategory::TypeAlias && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		cat = getTypeInfo(type_index).category();
+	if (cat == TypeCategory::TypeAlias) {
+		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+			cat = ti->category();
+		}
 	}
 	return toIrType(cat);
 }

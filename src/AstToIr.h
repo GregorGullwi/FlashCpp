@@ -458,14 +458,14 @@ private:
 				size_t abs_offset = base_offset + member.offset;
 				const ASTNode& member_init = init_list.initializers()[i];
 				if (member_init.is<InitializerListNode>() &&
-					isIrStructType(toIrType(member.memberType())) &&
-					member.type_index.is_valid() &&
-					member.type_index.index() < getTypeInfoCount()) {
-					const StructTypeInfo* nested_struct = getTypeInfo(member.type_index).getStructInfo();
-					if (nested_struct) {
-						fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);
+					isIrStructType(toIrType(member.memberType()))) {
+					if (const TypeInfo* nested_type_info = tryGetTypeInfo(member.type_index)) {
+						const StructTypeInfo* nested_struct = nested_type_info->getStructInfo();
+						if (nested_struct) {
+							fillAggregateInitData(init_data, *nested_struct, member_init.as<InitializerListNode>(), eval_to_value, abs_offset, depth + 1);
+						}
+						break;
 					}
-					break;
 				}
 
 				unsigned long long value = eval_to_value(member_init, member.memberType());
