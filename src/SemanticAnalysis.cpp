@@ -3132,11 +3132,24 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 
 	if (ambiguous_non_explicit) {
+		const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+		if (target_desc.type_index.is_valid() && target_desc.type_index.index() < getTypeInfoCount()) {
+			const auto& ti = getTypeInfo(target_desc.type_index);
+			FLASH_LOG(General, Error, "Ambiguous constructor call for type '",
+				StringTable::getStringView(ti.name()), "' context='", context_description, "'");
+		}
 		throw CompileError("Ambiguous constructor call");
 	}
 	if (!best_non_explicit) {
 		if (found_explicit_viable || best_any) {
-			throw CompileError("Cannot use copy initialization with explicit constructor");
+			// Debug: print info about the target type and expression
+			const CanonicalTypeDesc& target_desc = type_context_.get(target_type_id);
+			if (target_desc.type_index.is_valid() && target_desc.type_index.index() < getTypeInfoCount()) {
+				const auto& ti = getTypeInfo(target_desc.type_index);
+				FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for target type '",
+					StringTable::getStringView(ti.name()), "' context='", context_description, "'");
+			}
+			throw CompileError("Cannot use copy initialization with explicit constructor [SemanticAnalysis]");
 		}
 		return false;
 	}
