@@ -646,10 +646,10 @@ std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWri
 				if (!handler.is_catch_all) {
 					// Use IrType to detect struct-like types (both Type::Struct and Type::UserDefined
 					// map to IrType::Struct) and distinguish them from primitive built-in types.
-					IrType exc_ir_type = toIrType(handler.exception_type);
+					IrType exc_ir_type = toIrType(handler.type_index.category());
 					if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
-						// Built-in type - get name from Type enum
-						handler_info.type_name = getTypeName(handler.exception_type);
+						// Built-in type - get name from TypeCategory
+						handler_info.type_name = getTypeName(handler.type_index.category());
 					} else if (handler.type_index.index() < getTypeInfoCount()) {
 						// User-defined type - get name from gTypeInfo
 						handler_info.type_name = StringTable::getStringView(getTypeInfo(handler.type_index).name());
@@ -14233,7 +14233,6 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 				try_block.cleanup_vars = catch_op.cleanup_vars;
 			}
 			handler.type_index = catch_op.type_index;
-			handler.exception_type = catch_op.exceptionType();
 			handler.is_const = catch_op.is_const;
 			handler.ref_qualifier = catch_op.ref_qualifier;
 			handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index

@@ -1079,8 +1079,7 @@ private:
 
 	// Exception handling tracking
 	struct CatchHandler {
-		TypeIndex type_index;  // Type index for user-defined types
-		TypeCategory exception_type;   // TypeCategory for built-in types (Int, Double, etc.)
+		TypeIndex type_index;  // Type index (category embedded); valid for both primitives and user-defined types
 		uint32_t handler_offset;  // Code offset of catch handler
 		uint32_t handler_end_offset;  // Code offset where catch handler ends
 		uint32_t funclet_entry_offset;  // Code offset of catch funclet entry

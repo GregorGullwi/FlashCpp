@@ -1029,7 +1029,7 @@ std::optional<std::pair<TypeCategory, TypeIndex>> Parser::evaluateLazyTypeAlias(
 		target_type, lazy_info->template_params, lazy_info->template_args);
 	
 	// Cache the result
-	registry.markEvaluated(instantiated_class_name, member_name, substituted_type, substituted_type_index);
+	registry.markEvaluated(instantiated_class_name, member_name, substituted_type_index);
 	
 	FLASH_LOG(Templates, Debug, "Successfully evaluated lazy type alias: ", 
 	          instantiated_class_name, "::", member_name, 
