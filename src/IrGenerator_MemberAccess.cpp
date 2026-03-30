@@ -272,7 +272,7 @@
 				const auto& type_node = multi_dim.base_decl->type_node().as<TypeSpecifierNode>();
 				TypeCategory element_type = type_node.type();
 				int element_size_bits = static_cast<int>(type_node.size_in_bits());
-				TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
+				TypeIndex element_type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
 
 				// Get element size for struct types
 				if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
@@ -380,7 +380,7 @@
 					// Create ArrayAccessOp with the flat index
 					ArrayAccessOp payload;
 					payload.result = result_var;
-					payload.element_type_index = element_type_index.withCategory(element_type);
+					payload.element_type_index = element_type_index;
 					payload.element_size_in_bits = element_size_bits;
 					payload.member_offset = 0;
 					payload.is_pointer_to_array = false;
@@ -392,12 +392,12 @@
 
 					if (context == ExpressionContext::LValueAddress) {
 						// Don't emit ArrayAccess instruction (no load)
-						return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsAddress);
+						return makeArrayResult(element_type, element_size_bits, result_var, element_type_index, PointerDepth{}, ValueStorage::ContainsAddress);
 					}
 
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
-					return makeArrayResult(element_type, element_size_bits, result_var, TypeIndex{element_type_index}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeArrayResult(element_type, element_size_bits, result_var, element_type_index, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}
@@ -519,7 +519,7 @@
 		// If so, we need to get the base type size, not the pointer size (64)
 		// Look up the identifier to get the actual type info
 		bool is_pointer_to_array = false;
-		size_t element_type_index = 0;  // Track type_index for struct elements
+		TypeIndex element_type_index = TypeIndex{};  // Track type_index for struct elements
 		int element_pointer_depth = 0;  // Track pointer depth for pointer array elements
 		const ExpressionNode& arr_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(arr_expr)) {
@@ -528,9 +528,11 @@
 			if (decl_ptr) {
 				const auto& type_node = decl_ptr->type_node().as<TypeSpecifierNode>();
 
-				// Capture type_index for struct types (important for member access on array elements)
+				// Capture type_index for struct and native types (important for member access on array elements)
 				if (type_node.category() == TypeCategory::Struct) {
-					element_type_index = type_node.type_index().index();
+					element_type_index = type_node.type_index();
+				} else {
+					element_type_index = nativeTypeIndex(type_node.type());
 				}
 
 				// For array types, ALWAYS get the element size from type_node, not from array_operands
@@ -547,8 +549,8 @@
 						// Get the element size from type_node
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
 						// If still 0, compute from type info for struct types
-						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index != 0) {
-							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
+							const TypeInfo& type_info = getTypeInfo(element_type_index);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -578,8 +580,8 @@
 					} else {
 						// Single-level pointer/reference indexing yields the base object.
 						element_size_bits = static_cast<int>(type_node.size_in_bits());
-						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index != 0) {
-							const TypeInfo& type_info = getTypeInfo(TypeIndex{element_type_index});
+						if (element_size_bits == 0 && type_node.category() == TypeCategory::Struct && element_type_index.is_valid()) {
+							const TypeInfo& type_info = getTypeInfo(element_type_index);
 							const StructTypeInfo* struct_info = type_info.getStructInfo();
 							if (struct_info) {
 								element_size_bits = static_cast<int>(struct_info->total_size * 8);
@@ -704,7 +706,7 @@
 		// Create typed payload for ArrayAccess
 		ArrayAccessOp payload;
 		payload.result = result_var;
-		payload.element_type_index = TypeIndex{element_type_index, element_type};
+		payload.element_type_index = element_type_index;
 		payload.element_size_in_bits = element_size_bits;
 		payload.member_offset = 0;  // Not a member array
 		payload.is_pointer_to_array = is_pointer_to_array;
@@ -740,7 +742,7 @@
 				element_type,
 				element_size_bits,
 				result_var,
-				TypeIndex{element_type_index},
+				element_type_index,
 				PointerDepth{element_pointer_depth},
 				ValueStorage::ContainsAddress);
 		}
@@ -752,7 +754,7 @@
 			element_type,
 			element_size_bits,
 			result_var,
-			TypeIndex{element_type_index},
+			element_type_index,
 			PointerDepth{element_pointer_depth},
 			ValueStorage::ContainsData);
 	}

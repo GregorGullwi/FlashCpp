@@ -364,7 +364,7 @@
 							);
 							setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-							TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : TypeIndex{};
+							TypeIndex type_index = (orig_type.category() == TypeCategory::Struct) ? orig_type.type_index() : nativeTypeIndex(orig_type.type());
 							return makeIdentifierResult(orig_type.type(), static_cast<int>(orig_type.size_in_bits()), result_temp, type_index);
 						}
 
@@ -1589,12 +1589,12 @@
 					}
 
 				// Return the temp variable that will hold the loaded value
-				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-					return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+					return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 				// Local variable - just return the name
-				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-				return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
+				TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+				return makeExprResult(type_index, SizeInBits{static_cast<int>(type_node.size_in_bits())}, IrOperand{StringTable::getOrInternStringHandle(qualifiedIdNode.name())}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -1629,8 +1629,8 @@
 
 			// Return the temp variable that will hold the loaded value
 			// For pointers, return 64 bits (pointer size)
-			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : TypeIndex{};
-			return makeExprResult(type_index.withCategory(type_node.type()), SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+			TypeIndex type_index = (type_node.category() == TypeCategory::Struct) ? type_node.type_index() : nativeTypeIndex(type_node.type());
+			return makeExprResult(type_index, SizeInBits{size_bits}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		if (found_symbol->is<FunctionDeclarationNode>()) {

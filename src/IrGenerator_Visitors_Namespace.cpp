@@ -276,7 +276,7 @@
 							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
 								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
 								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
-								const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
+								const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
@@ -315,7 +315,7 @@
 						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
 							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
 							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
-							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : TypeIndex{};
+							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 
 							// Look for a conversion operator to the return type
 							const StructMemberFunction* conv_op = findConversionOperator(

@@ -2981,7 +2981,7 @@ bool AstToIr::isSameTypeXValueSource(const ASTNode& init_node, const ExprResult&
 						init_val3.setType(element_type);
 						init_val3.size_in_bits = SizeInBits{static_cast<int>(element_size)};
 						init_val3.value = result_temp;
-						init_val3.type_index = TypeIndex{element_type_index};
+						init_val3.type_index = element_type_index;
 						binding_var_decl.initializer = init_val3;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(binding_var_decl), binding_token));
