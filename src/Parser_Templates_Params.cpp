@@ -1324,15 +1324,15 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
 
-						if (is_ptr) {
+						if (is_member_ptr) {
+							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
+							type_node.set_size_in_bits(64);
+						} else if (is_ptr) {
 							// Rewrite type_node to canonical FunctionPointer form.
 							// A function pointer type is TypeCategory::FunctionPointer, 64-bit, with no
 							// extra pointer level — the "pointer-ness" is intrinsic to FunctionPointer.
 							// (Compare with Parser_Decl_DeclaratorCore.cpp which does the same.)
 							type_node.set_type_index(nativeTypeIndex(TypeCategory::FunctionPointer));
-							type_node.set_size_in_bits(64);
-						} else if (is_member_ptr) {
-							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
 							type_node.set_size_in_bits(64);
 						}
 						type_node.set_function_signature(func_sig);
