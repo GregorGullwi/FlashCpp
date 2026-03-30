@@ -13,6 +13,6 @@ int handler(int x) { return x; }
 int main() {
 	Wrapper<int(*)(int)> w;
 	w.func = handler;
-	int result = w.func(0);
-	return result;
+	if (w.func(42) != 42) return 1;
+	return 0;
 }
