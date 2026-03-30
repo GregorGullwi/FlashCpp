@@ -735,8 +735,8 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 			FLASH_LOG(Templates, Debug, "  Namespace '", ns_name, "' is a template parameter, substituting with concrete type");
 			
 			// The concrete type should be a struct type - get its instantiated name
-			if (is_struct_type(concrete_type.category()) && tryGetTypeInfo(concrete_type.type_index)) {
-				const TypeInfo* type_info = tryGetTypeInfo(concrete_type.type_index);
+			if (const TypeInfo* type_info = (is_struct_type(concrete_type.category()))
+			        ? tryGetTypeInfo(concrete_type.type_index) : nullptr) {
 				StringHandle type_name_handle = type_info->name();
 				
 				// If this is a template instantiation, ensure it's been instantiated
