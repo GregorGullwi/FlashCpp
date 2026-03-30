@@ -1327,6 +1327,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						if (is_member_ptr) {
 							type_node.set_type_index(nativeTypeIndex(TypeCategory::MemberFunctionPointer));
 							type_node.set_size_in_bits(64);
+							type_node.limit_pointer_depth(0);
 						} else if (is_ptr) {
 							// Rewrite type_node to canonical FunctionPointer form.
 							// A function pointer type is TypeCategory::FunctionPointer, 64-bit, with no
