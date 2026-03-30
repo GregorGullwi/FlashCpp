@@ -602,8 +602,7 @@ private:
 // Anonymous union member information - stored during parsing, processed during layout
 struct AnonymousUnionMemberInfo {
 	StringHandle member_name;            // Name of the union member
-	TypeCategory member_type;            // Base type category of the member
-	TypeIndex type_index;                // Type index for struct types
+	TypeIndex type_index;                // Type index (category embedded via TypeIndex::category())
 	size_t member_size;                  // Size in bytes (including array size if applicable)
 	size_t member_alignment;             // Alignment requirement in bytes
 	std::optional<size_t> bitfield_width; // Width in bits for bitfield members
@@ -623,7 +622,7 @@ struct AnonymousUnionMemberInfo {
 	                         bool is_arr,
 	                         int ptr_depth,
 	                         std::vector<size_t> arr_dims)
-		: member_name(name), member_type(tidx.category()), type_index(tidx), member_size(size),
+		: member_name(name), type_index(tidx), member_size(size),
 		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
 		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
 		  pointer_depth(ptr_depth) {}

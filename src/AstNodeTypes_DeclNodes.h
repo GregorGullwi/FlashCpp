@@ -853,11 +853,11 @@ struct TypeInfo
 	// authoritative TypeCategory embedded in type_index_ over raw category_.
 	TypeCategory typeEnum()      const { return category(); }
 	TypeCategory resolvedType()  const { return category(); }
-	// isStructLike: checks category() for the declared kind.  TypeAlias entries
-	// whose underlying type is struct/UserDefined are treated as struct-like
-	// because struct-info traversal must follow alias chains.
-	bool isStructLike()          const { return is_struct_type(category())
-	                                         || (isTypeAlias() && is_struct_type(category_)); }
+	// isStructLike: true when this type (or the underlying type of an alias)
+	// is Struct or UserDefined.  register_type_alias stores the underlying
+	// TypeIndex (not the alias slot), so category() already returns the
+	// underlying category for aliases — no separate alias branch needed.
+	bool isStructLike()          const { return is_struct_type(category()); }
 	bool isVoid()                const { return category() == TypeCategory::Void; }
 	bool isPrimitive()           const { return is_primitive_type(category()); }
 	bool needsTypeIndex()        const { return needs_type_index(category()); }
