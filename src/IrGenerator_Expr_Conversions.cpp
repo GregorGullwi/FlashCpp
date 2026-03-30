@@ -17,7 +17,17 @@
 
 		// Resolve enum to its underlying integer type so downstream size/signedness
 		// queries (get_type_size_bits, is_signed_integer_type) produce correct results.
-		fromType = resolveEnumUnderlyingTypeCategory(operands.type_index);
+		// Only override fromType when the operand carries a concrete type identity
+		// (i.e., the resolved category is not Invalid).  Primitive float/int variables
+		// carry TypeIndex{} (default, category=Invalid) so must not clobber fromType —
+		// doing so would cause is_floating_point_type(fromType) to return false for
+		// Float operands, silently skipping the required FloatToInt/FloatToFloat
+		// conversion instruction and reinterpreting float bits as integers instead.
+		{
+			const TypeCategory resolved = resolveEnumUnderlyingTypeCategory(operands.type_index);
+			if (resolved != TypeCategory::Invalid)
+				fromType = resolved;
+		}
 
 		// Get the actual size from the operands (they already contain the correct size)
 		int fromSize = operands.size_in_bits.is_set() ? operands.size_in_bits.value : get_type_size_bits(fromType);
