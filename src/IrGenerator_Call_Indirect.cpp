@@ -679,7 +679,6 @@
 		bool is_virtual_call = false;
 		int vtable_index = -1;
 
-		size_t struct_type_index = object_type.type_index().index();
 		const StructMemberFunction* called_member_func = nullptr;
 		const StructTypeInfo* struct_info = nullptr;
 

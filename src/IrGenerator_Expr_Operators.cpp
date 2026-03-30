@@ -2438,9 +2438,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				&& rhsCat == TypeCategory::Struct
 				&& lhsExprResult.type_index.is_valid()
 				&& rhsExprResult.type_index.is_valid()
-				&& lhsExprResult.type_index == rhsExprResult.type_index
-				&& lhsExprResult.type_index.index() < getTypeInfoCount()) {
-				if (const StructTypeInfo* struct_info = getTypeInfo(lhsExprResult.type_index).getStructInfo()) {
+				&& lhsExprResult.type_index == rhsExprResult.type_index) {
+				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(lhsExprResult.type_index)) {
 					diagnoseDeletedSameTypeAssignmentUsage(*struct_info, shouldPreferMoveAssignment(rhsExprResult));
 				}
 			}
@@ -2966,9 +2965,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 				TypeIndex struct_type_index = struct_it->second->type_index_;
 				bool needs_resolution = false;
 				// Check return type for self-referential struct
-				if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid() && return_type.type_index().index() < getTypeInfoCount()) {
-					auto& rti = getTypeInfo(return_type.type_index());
-					if (!rti.struct_info_ || rti.struct_info_->total_size == 0) {
+				if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
+					const TypeInfo* rti = tryGetTypeInfo(return_type.type_index());
+					if (!rti || !rti->struct_info_ || rti->struct_info_->total_size == 0) {
 						needs_resolution = true;
 					}
 				}
@@ -2976,9 +2975,9 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 					for (const auto& param : func_node.parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
 							const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-							if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid() && pt.type_index().index() < getTypeInfoCount()) {
-								auto& ti = getTypeInfo(pt.type_index());
-								if (!ti.struct_info_ || ti.struct_info_->total_size == 0) {
+							if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
+								const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
+								if (!ti || !ti->struct_info_ || ti->struct_info_->total_size == 0) {
 									needs_resolution = true;
 									break;
 								}
@@ -4227,12 +4226,11 @@ const Token& token) {
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
-				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
 				} else {
-					inferred_size_bits = static_cast<int>(type_info.type_size_);
+					inferred_size_bits = static_cast<int>(type_info->type_size_);
 				}
 			}
 		} else {
@@ -4471,12 +4469,11 @@ std::string_view op) {
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-			if (lhs_operands.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(lhs_operands.type_index);
-				if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
 				} else {
-					inferred_size_bits = static_cast<int>(type_info.type_size_);
+					inferred_size_bits = static_cast<int>(type_info->type_size_);
 				}
 			}
 		} else {
@@ -4710,7 +4707,7 @@ std::string_view op) {
 				const TypeSpecifierNode& type_node = decl->type_node().as<TypeSpecifierNode>();
 				if (is_struct_type(type_node.category())) {
 					TypeIndex type_index = type_node.type_index();
-					if (type_index.index() < getTypeInfoCount()) {
+					if (type_index.is_valid()) {
 						auto result = FlashCpp::gLazyMemberResolver.resolve(type_index, lv_info.member_name.value());
 						if (result) {
 							member_is_reference = result.member->is_reference();

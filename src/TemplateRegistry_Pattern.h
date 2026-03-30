@@ -470,7 +470,6 @@ struct TemplatePattern {
 			// template) must reach the template instantiation handler below, not the concrete
 			// type check. Detect that case up front.
 			const TypeInfo* p_arg_ti = tryGetTypeInfo(pattern_arg.type_index);
-			bool has_valid_type_index = p_arg_ti != nullptr;
 			bool is_struct_template_inst = (is_struct_type(pattern_arg.category()) || pattern_arg.category() == TypeCategory::Invalid) &&
 				p_arg_ti &&
 				p_arg_ti->isTemplateInstantiation();

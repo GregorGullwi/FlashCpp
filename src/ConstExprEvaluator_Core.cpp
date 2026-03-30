@@ -2981,8 +2981,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// without an instance (parameter count mismatch or missing 'this' context).
 		// Static member functions have no implicit 'this' parameter, so they work correctly.
 		
-		for (TypeIndex _gti_i_{}; _gti_i_.index() < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& type_info = getTypeInfo(_gti_i_);
+		for (size_t i = 1; i < getTypeInfoCount(); ++i) {
+			const TypeInfo& type_info = getTypeInfo(TypeIndex{i});
 			if (!type_info.struct_info_) continue;
 			
 			// Search member functions in this struct
@@ -3478,9 +3478,9 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (si) {
 				const InitializerListNode& init_list = return_expr.value().as<InitializerListNode>();
 				TypeIndex return_type_index {};
-				for (TypeIndex ti{}; ti.index() < getTypeInfoCount(); ++ti) {
-					if (&getTypeInfo(ti) == context.return_type_info) {
-						return_type_index = ti;
+				for (size_t i = 1; i < getTypeInfoCount(); ++i) {
+					if (&getTypeInfo(TypeIndex{i}) == context.return_type_info) {
+						return_type_index = TypeIndex{i};
 						break;
 					}
 				}

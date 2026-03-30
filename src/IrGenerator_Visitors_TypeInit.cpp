@@ -588,8 +588,8 @@
 					op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 					// If size is 0 for struct types, look up from type info
 					if (!op.size_in_bits.is_set()) {
-						if (const TypeInfo* type_info = tryGetTypeInfo(static_member.type_index)) {
-							if (const StructTypeInfo* member_si = type_info->getStructInfo()) {
+						if (const TypeInfo* static_type_info = tryGetTypeInfo(static_member.type_index)) {
+							if (const StructTypeInfo* member_si = static_type_info->getStructInfo()) {
 								op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
 							}
 						}

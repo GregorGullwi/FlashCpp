@@ -568,8 +568,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 										}
 										// Also check if the type_index name matches any template param
 										if (!t_arg.is_value) {
-											if (const TypeInfo* type_info = tryGetTypeInfo(t_arg.type_index);
-												type_info && contains_template_param(type_info->name())) {
+											if (const TypeInfo* t_arg_type_info = tryGetTypeInfo(t_arg.type_index);
+												t_arg_type_info && contains_template_param(t_arg_type_info->name())) {
 												confirmed_dependent = true;
 												break;
 											}

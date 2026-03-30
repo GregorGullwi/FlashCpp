@@ -184,7 +184,7 @@ inline ConversionPlan buildConversionPlan(TypeCategory from_category, TypeCatego
 // Returns the category unchanged if it is not an enum or the TypeIndex is invalid.
 inline TypeCategory resolveEnumUnderlyingTypeCategory(TypeIndex type_index) {
 	TypeCategory cat = type_index.category();
-	if (cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
+	if (cat == TypeCategory::Enum && type_index.is_valid()) {
 		if (const EnumTypeInfo* ei = getTypeInfo(type_index).getEnumInfo())
 			return ei->underlying_type;
 	}
@@ -204,14 +204,14 @@ inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to)
 inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_type, TypeIndex target_type_index) {
 	// First, try to get struct name from gTypeInfo and search gSymbolTable
 	// This is needed during parsing when gTypeInfo.member_functions is not yet populated
-	if (source_type_index.is_valid() && source_type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& source_type_info = getTypeInfo(source_type_index);
+	if (const TypeInfo* source_type_info_ptr = tryGetTypeInfo(source_type_index)) {
+		const TypeInfo& source_type_info = *source_type_info_ptr;
 		std::string_view struct_name = StringTable::getStringView(source_type_info.name());
 		
 		// Build the target type name for the operator
 		std::string_view target_type_name;
-		if (target_type_index.is_valid() && target_type_index.index() < getTypeInfoCount()) {
-			target_type_name = StringTable::getStringView(getTypeInfo(target_type_index).name());
+		if (const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index)) {
+			target_type_name = StringTable::getStringView(target_type_info->name());
 		} else {
 			// For primitive types, use the helper function to get the type name
 			target_type_name = getTypeName(target_type);
@@ -258,7 +258,7 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 			
 			// Search base classes recursively
 			for (const auto& base_spec : source_struct_info->base_classes) {
-				if (base_spec.type_index.is_valid() && base_spec.type_index.index() < getTypeInfoCount()) {
+				if (base_spec.type_index.is_valid()) {
 					if (hasConversionOperator(base_spec.type_index, target_type, target_type_index)) {
 						return true;
 					}
@@ -1279,8 +1279,10 @@ inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
 
 inline TypeCategory effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
 	TypeCategory type = spec.category();
-	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid() && spec.type_index().index() < getTypeInfoCount()) {
-		type = getTypeInfo(spec.type_index()).category();
+	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
+		if (const TypeInfo* ti = tryGetTypeInfo(spec.type_index())) {
+			type = ti->category();
+		}
 	}
 	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
 		return TypeCategory::Struct;
@@ -1314,20 +1316,19 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	TypeCategory effective_type = type_index.category();
 	int size_bits = 0;
 
-	if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		const auto& type_info = getTypeInfo(type_index);
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
-			if (type_info.category() != TypeCategory::Invalid && !type_info.isVoid()) {
-				effective_type = type_info.category();
+			if (type_info->category() != TypeCategory::Invalid && !type_info->isVoid()) {
+				effective_type = type_info->category();
 			} else if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void) {
 				effective_type = TypeCategory::Struct;
 			}
 		}
 
-		if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 			size_bits = static_cast<int>(struct_info->total_size * 8);
-		} else if (type_info.type_size_ > 0) {
-			size_bits = type_info.type_size_;
+		} else if (type_info->type_size_ > 0) {
+			size_bits = type_info->type_size_;
 		}
 	}
 
@@ -1439,7 +1440,7 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 	
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
-		if (base_spec.type_index.is_valid() && base_spec.type_index.index() < getTypeInfoCount()) {
+		if (base_spec.type_index.is_valid()) {
 			auto result = findUnaryOperatorOverload(base_spec.type_index, operator_kind);
 			if (result.has_match || result.is_ambiguous) {
 				return result;
@@ -1514,7 +1515,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 		}
 
 		for (const auto& base_spec : si->base_classes) {
-			if (base_spec.type_index.is_valid() && base_spec.type_index.index() < getTypeInfoCount()) {
+			if (base_spec.type_index.is_valid()) {
 				self(self, base_spec.type_index);
 			}
 		}
@@ -1562,7 +1563,7 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 
 inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_index, TypeIndex right_type_index, OverloadableOperator operator_kind, TypeCategory right_type) {
 	TypeCategory effective_right_type = right_type;
-	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
+	if (right_type_index.is_valid()) {
 		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
@@ -1809,7 +1810,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		TypeCategory right_type)
 {
 	TypeCategory effective_right_type = right_type;
-	if (right_type_index.is_valid() && right_type_index.index() < getTypeInfoCount()) {
+	if (right_type_index.is_valid()) {
 		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
 		if (binaryOperatorUsesTypeIndexIdentity(indexed_right_type)) {
 			effective_right_type = TypeCategory::Invalid;
