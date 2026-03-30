@@ -443,6 +443,26 @@ struct TemplateTypeArg {
 						result += "?";
 					}
 					break;
+				case TypeCategory::FunctionPointer:
+				case TypeCategory::MemberFunctionPointer: {
+					// Encode function pointer types using their signature to avoid
+					// collisions between e.g. int(*)(int) and int(*)(double).
+					result += (category() == TypeCategory::MemberFunctionPointer) ? "MFP(" : "FP(";
+					if (function_signature.has_value()) {
+						const auto& sig = *function_signature;
+						auto ret_name = getTypeName(sig.return_type_index.category());
+						result += ret_name.empty() ? "?" : ret_name;
+						result += "(";
+						for (size_t pi = 0; pi < sig.parameter_type_indices.size(); ++pi) {
+							if (pi > 0) result += ",";
+							auto pname = getTypeName(sig.parameter_type_indices[pi].category());
+							result += pname.empty() ? "?" : pname;
+						}
+						result += ")";
+					}
+					result += ")";
+					break;
+				}
 				default: result += "?"; break;
 			}
 		}

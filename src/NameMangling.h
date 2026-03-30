@@ -653,6 +653,50 @@ inline void appendItaniumTypeTemplateArgs(
 					}
 					break;
 				}
+				case TypeCategory::FunctionPointer: {
+					// Itanium ABI: function pointer is PF<return-type><param-types>E
+					output += "PF";
+					if (arg.function_signature.has_value()) {
+						const auto& sig = *arg.function_signature;
+						TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+						appendItaniumTypeCode(output, ret_spec);
+						if (sig.parameter_type_indices.empty()) {
+							output += 'v';
+						} else {
+							for (const TypeIndex& pt : sig.parameter_type_indices) {
+								TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+								appendItaniumTypeCode(output, param_spec);
+							}
+						}
+					} else {
+						throw InternalError("Itanium name mangling: FunctionPointer template arg missing function signature");
+					}
+					output += 'E';
+					break;
+				}
+				case TypeCategory::MemberFunctionPointer: {
+					// Itanium ABI: member function pointer is M<class>F<return><params>E
+					// Simplified: encode as PF (same as function pointer) since class info
+					// is not always available in TemplateTypeArg
+					output += "PF";
+					if (arg.function_signature.has_value()) {
+						const auto& sig = *arg.function_signature;
+						TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+						appendItaniumTypeCode(output, ret_spec);
+						if (sig.parameter_type_indices.empty()) {
+							output += 'v';
+						} else {
+							for (const TypeIndex& pt : sig.parameter_type_indices) {
+								TypeSpecifierNode param_spec(resolveTypeAliasIndex(pt), TypeQualifier::None, 0, Token{}, CVQualifier::None);
+								appendItaniumTypeCode(output, param_spec);
+							}
+						}
+					} else {
+						throw InternalError("Itanium name mangling: MemberFunctionPointer template arg missing function signature");
+					}
+					output += 'E';
+					break;
+				}
 				default: throw CompileError("Itanium name mangling: unknown type in template args — cannot generate valid symbol");
 			}
 		}
