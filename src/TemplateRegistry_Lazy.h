@@ -1195,7 +1195,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-		type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->category_);
+								type_arg.type_index = type_it->second->type_index_;
 								concept_args.push_back(type_arg);
 							}
 						}

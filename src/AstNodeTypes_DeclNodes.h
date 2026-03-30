@@ -732,13 +732,12 @@ struct QualifiedIdentifier {
 
 struct TypeInfo
 {
-	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), category_(idx.category()), type_index_(idx), type_size_(type_size) {
+	TypeInfo() = default;
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
-	TypeCategory category_;
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -815,13 +814,9 @@ struct TypeInfo
 		template_args_ = std::move(args);
 	}
 
-	// Returns the TypeCategory embedded in type_index_. For types registered via
-	// add_struct_type / add_enum_type / register_type_alias / etc. this is always
-	// correct. For legacy TypeInfo entries built before Milestone 7 (TypeCategory
-	// embedding), category() falls back to category_.
+	// Returns the TypeCategory embedded in type_index_.
 	TypeCategory category() const {
-		TypeCategory cat = type_index_.category();
-		return (cat != TypeCategory::Invalid) ? cat : category_;
+		return type_index_.category();
 	}
 
 	// Helper methods for struct types
@@ -848,9 +843,7 @@ struct TypeInfo
 		enum_info_ = std::move(info);
 	}
 
-	// Classification helpers.
-	// typeEnum() / resolvedType() delegate to category() which prefers the
-	// authoritative TypeCategory embedded in type_index_ over raw category_.
+	// Classification helpers delegated through type_index_.
 	TypeCategory typeEnum()      const { return category(); }
 	TypeCategory resolvedType()  const { return category(); }
 	// isStructLike: true when this type (or the underlying type of an alias)
