@@ -58,8 +58,8 @@ std::optional<TypeSpecifierNode> try_get_promoted_shift_operand_type(const EvalR
 		return TypeSpecifierNode(promoted_type, TypeQualifier::None, promoted_width, Token{}, CVQualifier::None);
 	}
 
- // Defensive fallback for unusual/dependent type shapes where the promoted
- // type is known but the width table cannot provide a concrete bit-size yet.
+	// Defensive fallback for unusual/dependent type shapes where the promoted
+	// type is known but the width table cannot provide a concrete bit-size yet.
 	if (type_spec.size_in_bits() > 0) {
 		return TypeSpecifierNode(promoted_type, TypeQualifier::None, type_spec.size_in_bits(), Token{}, CVQualifier::None);
 	}
@@ -107,10 +107,10 @@ std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 				if (!bound.array_values.empty()) {
 					return bound.array_values.size();
 				}
-	// Array with unknown size — cannot determine upper bound.
+				// Array with unknown size — cannot determine upper bound.
 				return std::nullopt;
 			}
-	// Non-array binding: scalar object, valid range is [0, 1].
+			// Non-array binding: scalar object, valid range is [0, 1].
 			return size_t{1};
 		}
 	}
@@ -209,8 +209,8 @@ unsigned long long apply_uint_type_mask(
 		return value;
 	}
 	const int bits = type_opt->size_in_bits();
- // No masking required when the width is unknown, zero, or at the full
- // 64-bit storage width — and (1ULL << 64) would be undefined behaviour.
+	// No masking required when the width is unknown, zero, or at the full
+	// 64-bit storage width — and (1ULL << 64) would be undefined behaviour.
 	if (bits <= 0 || bits >= 64) {
 		return value;
 	}
@@ -229,7 +229,7 @@ const ConstructorDeclarationNode* Evaluator::find_matching_constructor(
 
 	auto ctor_candidates = struct_info->getConstructorsByParameterCount(arguments.size(), false);
 	if (ctor_candidates.empty()) {
-	// No exact-arity match: fall back to constructors callable with this many args via default params.
+		// No exact-arity match: fall back to constructors callable with this many args via default params.
 		auto arity_result = resolve_constructor_overload_arity(*struct_info, arguments.size(), false);
 		return arity_result.selected_overload;
 	}
@@ -403,15 +403,15 @@ EvalResult* findMutableBindingValue(
 	return it == bindings.end() ? nullptr : &it->second;
 }
 
- // Extract the variable/member name for the address-of + array-subscript pattern.
- // Handles:  &data[i]       → "data" (plain identifier)
- //           &this->data[i] → "data" (member access via this)
- // Returns empty string_view when the pattern is not recognised.
+	// Extract the variable/member name for the address-of + array-subscript pattern.
+	// Handles:  &data[i]       → "data" (plain identifier)
+	//           &this->data[i] → "data" (member access via this)
+	// Returns empty string_view when the pattern is not recognised.
 std::string_view getArrayNameForAddressOf(const ASTNode& array_expr) {
 	std::string_view name = getIdentifierNameFromAstNode(array_expr);
 	if (!name.empty())
 		return name;
-	// Tolerate the `this->member` representation used inside member function bodies.
+		// Tolerate the `this->member` representation used inside member function bodies.
 	if (const auto* ma = tryGetNode<MemberAccessNode>(array_expr)) {
 		if (const IdentifierNode* obj_id = tryGetIdentifier(ma->object())) {
 			if (obj_id->name() == "this")
@@ -601,8 +601,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_access(
 		return std::nullopt;
 	}
 
- // For arrow member access (p->x) on a heap-allocated struct, dereference the
- // pointer first to get the struct's member bindings from the constexpr heap.
+	// For arrow member access (p->x) on a heap-allocated struct, dereference the
+	// pointer first to get the struct's member bindings from the constexpr heap.
 	if (member_access.is_arrow() && object_result->pointer_to_var.isValid() &&
 		!context.constexpr_heap.empty()) {
 		StringHandle heap_key = object_result->pointer_to_var;
@@ -671,7 +671,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_array_subscript(
 	if (!array_result) {
 		return std::nullopt;
 	}
- // Handle pointer subscript: ptr[i] → *(ptr + i)
+	// Handle pointer subscript: ptr[i] → *(ptr + i)
 	if (array_result->pointer_to_var.isValid()) {
 		EvalResult offset_ptr = *array_result;
 		offset_ptr.pointer_offset += index;
@@ -833,7 +833,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	auto saved_struct_type_index = context.struct_type_index;
 	context.struct_info = bound_struct_info;
 	context.struct_type_index = bound_type_index;
- // Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
 	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
@@ -896,8 +896,8 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 
- // Try instantiation's own member functions first, then fall back to the
- // base template (same logic as find_current_struct_member_function_candidate).
+	// Try instantiation's own member functions first, then fall back to the
+	// base template (same logic as find_current_struct_member_function_candidate).
 	auto match = find_member_function_candidate(
 		struct_info,
 		func_name_handle,
@@ -909,7 +909,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 
 	if ((!match.function && !match.ambiguous) ||
 		(match.function && !match.function->get_definition().has_value())) {
-	// Try the base template's struct info for template instantiations.
+		// Try the base template's struct info for template instantiations.
 		auto struct_type_it = getTypesByNameMap().find(struct_info->name);
 		if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
 			const TypeInfo* struct_type = struct_type_it->second;
@@ -943,7 +943,7 @@ EvalResult Evaluator::call_constexpr_member_fn_on_object(
 
 	auto member_bindings = object.object_member_bindings;
 
- // Load template type bindings, preferring function-level outer bindings when present.
+	// Load template type bindings, preferring function-level outer bindings when present.
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
 	if (match.function->has_outer_template_bindings()) {
@@ -1223,14 +1223,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return materialize_lambda_value(*lambda_expression, context, &bindings);
 	}
 
- // Check if it's an identifier that matches a parameter
+	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
 
-	// Fast path: pre-resolved Local bindings are always in the bindings map
+		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-	// Tag array results with their binding key so `array + N` can decay to a pointer.
+				// Tag array results with their binding key so `array + N` can decay to a pointer.
 				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
 					EvalResult tagged = *bound_value;
 					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
@@ -1238,14 +1238,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 				return *bound_value;
 			}
-	// fall through to existing logic as safety net
+			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
-	// Check if it's a bound parameter
+		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-	// Tag array results with their binding key so `array + N` can decay to a pointer.
+			// Tag array results with their binding key so `array + N` can decay to a pointer.
 			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
 				EvalResult tagged = *bound_value;
 				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
@@ -1254,7 +1254,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return *bound_value;	 // Return the bound value
 		}
 
-	// Not a parameter, evaluate normally
+		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
 
@@ -1266,31 +1266,31 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return *array_result;
 	}
 
- // For binary operators, recursively evaluate with bindings
+	// For binary operators, recursively evaluate with bindings
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
 		std::string_view op = bin_op.op();
 
-	// Handle assignment operators specially (they modify bindings)
+		// Handle assignment operators specially (they modify bindings)
 		if (op == "=" || isCompoundAssignmentOp(op)) {
 
-	// Helper: apply the assignment/compound-assignment operator to a target slot.
-	// Modifies `target` in place and returns the resulting value.
+			// Helper: apply the assignment/compound-assignment operator to a target slot.
+			// Modifies `target` in place and returns the resulting value.
 			auto apply_op_to = [&](EvalResult& target, const EvalResult& rhs) -> EvalResult {
 				if (op == "=") {
 					target = rhs;
 					return rhs;
 				}
-	// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
+				// Strip the trailing '=' to get the base operator (e.g., "+=" → "+")
 				std::string_view base_op = op.substr(0, op.size() - 1);
 				EvalResult new_val = apply_binary_op(target, rhs, base_op, &context, &bindings);
 				if (!new_val.success())
 					return new_val;
-	// Apply unsigned type-width truncation to match C++ assignment-conversion
-	// semantics. For unsigned integer types, the stored result must wrap at
-	// the declared type's width, regardless of any integer promotion during
-	// binary arithmetic. apply_uint_type_mask handles the 64-bit case by
-	// returning the value unmodified (masking with all-ones is a no-op).
+				// Apply unsigned type-width truncation to match C++ assignment-conversion
+				// semantics. For unsigned integer types, the stored result must wrap at
+				// the declared type's width, regardless of any integer promotion during
+				// binary arithmetic. apply_uint_type_mask handles the 64-bit case by
+				// returning the value unmodified (masking with all-ones is a no-op).
 				if (target.exact_type.has_value() &&
 					is_unsigned_integer_type(target.exact_type->category())) {
 					new_val = EvalResult::from_uint(apply_uint_type_mask(new_val.as_uint_raw(), target.exact_type));
@@ -1299,15 +1299,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				target = new_val;
 				return new_val;
 			};
-	// Get the left-hand side variable name
+			// Get the left-hand side variable name
 			const ASTNode& lhs = bin_op.get_lhs();
 			if (lhs.is<ExpressionNode>()) {
 				const ExpressionNode& lhs_expr = lhs.as<ExpressionNode>();
 
-	// Determine the name of the variable being assigned to.
-	// Two forms are accepted:
-	//   1. Plain identifier:     x = ...
-	//   2. this->member access:  this->x = ...
+				// Determine the name of the variable being assigned to.
+				// Two forms are accepted:
+				//   1. Plain identifier:     x = ...
+				//   2. this->member access:  this->x = ...
 				std::string_view var_name;
 				bool assign_to_member_binding = false;
 				if (const auto* identifier_ptr = std::get_if<IdentifierNode>(&lhs_expr)) {
@@ -1326,7 +1326,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 
 				if (!var_name.empty()) {
-		// Evaluate the right-hand side
+					// Evaluate the right-hand side
 					auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 					if (!rhs_result.success())
 						return rhs_result;
@@ -1341,7 +1341,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						target_binding = findMutableBindingValue(var_name, bindings, context);
 					}
 
-		// Perform the assignment
+					// Perform the assignment
 					if (op == "=") {
 						if (target_binding) {
 							*target_binding = rhs_result;
@@ -1350,7 +1350,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						return rhs_result;
 					} else {
-		// Compound assignment - use apply_op_to helper
+						// Compound assignment - use apply_op_to helper
 						if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
@@ -1358,8 +1358,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 				}
 
-	// Handle pointer dereference assignment: *ptr = value  (C++20 constexpr heap)
-	// LHS is UnaryOperatorNode(op="*", operand=expr_that_yields_pointer)
+				// Handle pointer dereference assignment: *ptr = value  (C++20 constexpr heap)
+				// LHS is UnaryOperatorNode(op="*", operand=expr_that_yields_pointer)
 				if (const auto* unary_ptr = std::get_if<UnaryOperatorNode>(&lhs_expr)) {
 					if (unary_ptr->op() == "*") {
 						auto ptr_result = evaluate_expression_with_bindings(
@@ -1379,14 +1379,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 						int64_t offset = ptr_result.pointer_offset;
 
-		// Evaluate the RHS
+						// Evaluate the RHS
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 						if (!rhs_result.success())
 							return rhs_result;
 
 						EvalResult& heap_val = heap_it->second.value;
 						if (heap_val.is_array) {
-		// Pointer into an array: update the element at offset
+							// Pointer into an array: update the element at offset
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
 								return EvalResult::error("Array index out of bounds in constexpr dereference assignment");
 							}
@@ -1400,12 +1400,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 				}
 
-	// Handle arrow member assignment: p->member = value  (C++20 constexpr heap)
-	// LHS is MemberAccessNode with is_arrow() == true.
+				// Handle arrow member assignment: p->member = value  (C++20 constexpr heap)
+				// LHS is MemberAccessNode with is_arrow() == true.
 				if (std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 					const auto& ma = std::get<MemberAccessNode>(lhs_expr);
 					if (ma.is_arrow()) {
-		// Evaluate the pointer object on the left side
+						// Evaluate the pointer object on the left side
 						auto ptr_result = evaluate_expression_with_bindings(ma.object(), bindings, context);
 						if (!ptr_result.success())
 							return ptr_result;
@@ -1420,16 +1420,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (heap_it->second.freed) {
 							return EvalResult::error("Arrow assignment: use after free in constant expression");
 						}
-		// Evaluate the RHS
+						// Evaluate the RHS
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 						if (!rhs_result.success())
 							return rhs_result;
-		// Update the member in the heap object
+						// Update the member in the heap object
 						auto& heap_val = heap_it->second.value;
 						int64_t offset = ptr_result.pointer_offset;
 						EvalResult* member_slot = nullptr;
 						if (heap_val.is_array) {
-		// Arrow on an element of a heap struct array
+							// Arrow on an element of a heap struct array
 							if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
 								return EvalResult::error("Arrow assignment: pointer offset out of bounds for heap struct array");
 							}
@@ -1453,13 +1453,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 				}
 
-	// Handle dot member assignment: local_obj.member = value (non-this, non-arrow)
-	// This handles patterns like: Pair p{3,4}; p.a = 10;
+			// Handle dot member assignment: local_obj.member = value (non-this, non-arrow)
+			// This handles patterns like: Pair p{3,4}; p.a = 10;
 				if (const auto* ma_ptr = std::get_if<MemberAccessNode>(&lhs_expr);
 					ma_ptr && !ma_ptr->is_arrow()) {
-	// Lambda encapsulates the dot-assignment logic with early returns for each
-	// precondition check (object is identifier, not 'this', found in bindings,
-	// member exists), returning nullopt to fall through to other handlers.
+				// Lambda encapsulates the dot-assignment logic with early returns for each
+				// precondition check (object is identifier, not 'this', found in bindings,
+				// member exists), returning nullopt to fall through to other handlers.
 					auto dot_assign = [&]() -> std::optional<EvalResult> {
 						const ASTNode& obj = ma_ptr->object();
 						if (!obj.is<ExpressionNode>())
@@ -1482,8 +1482,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						return *result;
 				}
 
-	// Handle subscript assignment: arr[i] = value  (C++20 constexpr heap arrays)
-	// LHS is ArraySubscriptNode(array=expr_that_yields_pointer, index=expr)
+			// Handle subscript assignment: arr[i] = value  (C++20 constexpr heap arrays)
+				// LHS is ArraySubscriptNode(array=expr_that_yields_pointer, index=expr)
 				if (std::holds_alternative<ArraySubscriptNode>(lhs_expr)) {
 					const auto& subscript = std::get<ArraySubscriptNode>(lhs_expr);
 					auto arr_result = evaluate_expression_with_bindings(subscript.array_expr(), bindings, context);
@@ -1498,7 +1498,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					if (!rhs_result.success())
 						return rhs_result;
 
-		// Case 1: arr_result is a pointer into the constexpr heap (new int[n])
+					// Case 1: arr_result is a pointer into the constexpr heap (new int[n])
 					if (arr_result.pointer_to_var.isValid()) {
 						StringHandle heap_key = arr_result.pointer_to_var;
 						int64_t base_offset = arr_result.pointer_offset;
@@ -1515,7 +1515,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						}
 					}
 
-		// Case 2: arr_result is a local array binding
+					// Case 2: arr_result is a local array binding
 					if (arr_result.is_array && arr_result.array_origin_var.isValid()) {
 						std::string_view arr_name = StringTable::getStringView(arr_result.array_origin_var);
 						EvalResult* bound = findMutableBindingValue(arr_name, bindings, context);
@@ -1526,9 +1526,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
 						}
 					}
-		// Case 3: nested subscript assignment for multi-dimensional arrays
-		// Pattern: mat[i][j] = val where mat is a local 2D array binding.
-		// subscript.array_expr() is an ASTNode containing ArraySubscriptNode(mat, i).
+					// Case 3: nested subscript assignment for multi-dimensional arrays
+					// Pattern: mat[i][j] = val where mat is a local 2D array binding.
+					// subscript.array_expr() is an ASTNode containing ArraySubscriptNode(mat, i).
 					{
 						const ASTNode& inner_arr_expr = subscript.array_expr();
 						const ArraySubscriptNode* inner_sub = nullptr;
@@ -1537,13 +1537,13 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							inner_sub = std::get_if<ArraySubscriptNode>(&ie);
 						}
 						if (inner_sub) {
-		// Evaluate outer index (i in mat[i][j])
+							// Evaluate outer index (i in mat[i][j])
 							auto outer_idx_result = evaluate_expression_with_bindings(inner_sub->index_expr(), bindings, context);
 							if (!outer_idx_result.success())
 								return outer_idx_result;
 							int64_t outer_idx = outer_idx_result.as_int();
 
-		// Extract base array name from the innermost identifier
+							// Extract base array name from the innermost identifier
 							std::string_view base_name = getIdentifierNameFromAstNode(inner_sub->array_expr());
 
 							if (!base_name.empty()) {
@@ -1569,10 +1569,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return EvalResult::error("Left-hand side of assignment must be a variable");
 		}
 
-	// Regular binary operators (non-assignment)
-	// Short-circuit && and || per C++ semantics: evaluate LHS first, skip RHS
-	// when the result is already determined.  This is critical for guard patterns
-	// like `p && *p` where the RHS must not be evaluated when LHS is falsy.
+		// Regular binary operators (non-assignment)
+		// Short-circuit && and || per C++ semantics: evaluate LHS first, skip RHS
+		// when the result is already determined.  This is critical for guard patterns
+		// like `p && *p` where the RHS must not be evaluated when LHS is falsy.
 		if (op == "&&" || op == "||") {
 			auto lhs_result = evaluate_expression_with_bindings(bin_op.get_lhs(), bindings, context);
 			if (!lhs_result.success())
@@ -1600,18 +1600,18 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}
 
- // Handle unary operators (including ++ and --)
+	// Handle unary operators (including ++ and --)
 	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
 		const auto& unary_op = std::get<UnaryOperatorNode>(expr);
 		std::string_view op = unary_op.op();
 
-	// Handle increment and decrement operators (they modify bindings)
+		// Handle increment and decrement operators (they modify bindings)
 		if (op == "++" || op == "--") {
 			const ASTNode& operand = unary_op.get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
 
-	// Resolve the target: either a plain identifier or a this->member access.
+				// Resolve the target: either a plain identifier or a this->member access.
 				std::string_view var_name;
 				bool is_member_binding = false;
 				if (const auto* id_ptr = std::get_if<IdentifierNode>(&operand_expr)) {
@@ -1630,7 +1630,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 
 				if (!var_name.empty()) {
-		// Get current value
+					// Get current value
 					EvalResult* target_binding = nullptr;
 					if (is_member_binding) {
 						auto member_it = bindings.find(var_name);
@@ -1645,7 +1645,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 					EvalResult current = *target_binding;
 
-		// Calculate new value
+					// Calculate new value
 					EvalResult one = EvalResult::from_int(1);
 					EvalResult new_value;
 					if (op == "++") {
@@ -1657,11 +1657,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					if (!new_value.success())
 						return new_value;
 
-		// Truncate to the declared type of the operand, matching C++
-		// assignment-conversion semantics.  For unsigned types narrower than
-		// 64 bits (e.g. unsigned char, unsigned short, unsigned int) the
-		// stored result must wrap at the declared type's width, regardless
-		// of any integer promotion that happened during the binary arithmetic.
+					// Truncate to the declared type of the operand, matching C++
+					// assignment-conversion semantics.  For unsigned types narrower than
+					// 64 bits (e.g. unsigned char, unsigned short, unsigned int) the
+					// stored result must wrap at the declared type's width, regardless
+					// of any integer promotion that happened during the binary arithmetic.
 					if (current.exact_type.has_value() &&
 						is_unsigned_integer_type(current.exact_type->category())) {
 						new_value = EvalResult::from_uint(apply_uint_type_mask(new_value.as_uint_raw(), current.exact_type));
@@ -1670,23 +1670,23 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 
 					*target_binding = new_value;
 
-		// Return old value for postfix, new value for prefix
+					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
 						return new_value;  // Prefix: return new value
 					} else {
-						return current; // Postfix: return old value
+						return current;	// Postfix: return old value
 					}
 				}
 			}
 			return EvalResult::error("Operand of increment/decrement must be a variable");
 		}
 
-	// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
+		// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
 		if (op == "&") {
 			const ASTNode& operand = unary_op.get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
-	// &identifier  or  &this->member
+				// &identifier  or  &this->member
 				std::string_view simple_name;
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
 					simple_name = id->name();
@@ -1698,15 +1698,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				}
 				if (!simple_name.empty()) {
 					EvalResult ptr_result = EvalResult::from_pointer(simple_name);
-		// Snapshot the current value so the pointer can be dereferenced in a
-		// different scope (e.g., when passed as an argument to another function).
+					// Snapshot the current value so the pointer can be dereferenced in a
+					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
 						ptr_result.array_elements = {*snap};
 					return ptr_result;
 				}
-	// &arr[i]: address of array element → pointer with offset.
-	// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
+				// &arr[i]: address of array element → pointer with offset.
+				// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
 					std::string_view arr_name = getArrayNameForAddressOf(subscript->array_expr());
 					if (!arr_name.empty()) {
@@ -1715,7 +1715,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-		// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the element so the pointer can be dereferenced in a different scope.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
@@ -1729,12 +1729,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 		}
 
-	// Regular unary operators
+		// Regular unary operators
 		auto operand_result = evaluate_expression_with_bindings(unary_op.get_operand(), bindings, context);
 		if (!operand_result.success())
 			return operand_result;
 
-	// Handle dereference (*): look up the pointed-to variable.
+		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
@@ -1745,7 +1745,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return apply_unary_op(operand_result, op);
 	}
 
- // For ternary operators
+	// For ternary operators
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
 		auto cond_result = evaluate_expression_with_bindings(ternary.condition(), bindings, context);
@@ -1760,12 +1760,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		}
 	}
 
- // For function calls (for recursion)
+	// For function calls (for recursion)
 	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
 		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, &bindings);
 	}
 
- // For direct lambda operator() calls inside a bound constexpr context
+	// For direct lambda operator() calls inside a bound constexpr context
 	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, &bindings)) {
 		return *call_result;
 	}
@@ -1774,21 +1774,21 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return *member_call_result;
 	}
 
- // For member access on 'this' (e.g., this->x in a member function)
- // Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
- // Writing (this->x = ...) is handled above in the assignment operator branch.
+	// For member access on 'this' (e.g., this->x in a member function)
+	// Reading is handled by the fall-through to evaluate_expression_with_bindings_const below.
+	// Writing (this->x = ...) is handled above in the assignment operator branch.
 
- // For new-expressions (C++20 constexpr dynamic allocation)
+	// For new-expressions (C++20 constexpr dynamic allocation)
 	if (const auto* new_expr = std::get_if<NewExpressionNode>(&expr)) {
 		return evaluate_new_expression(*new_expr, context, &bindings);
 	}
 
- // For delete-expressions (C++20 constexpr dynamic deallocation)
+	// For delete-expressions (C++20 constexpr dynamic deallocation)
 	if (const auto* del_expr = std::get_if<DeleteExpressionNode>(&expr)) {
 		return evaluate_delete_expression(*del_expr, context, &bindings);
 	}
 
- // For other expression types, use the const version (cast bindings to const)
+	// For other expression types, use the const version (cast bindings to const)
 	const std::unordered_map<std::string_view, EvalResult>& const_bindings = bindings;
 	return evaluate_expression_with_bindings_const(expr_node, const_bindings, context);
 }
@@ -1818,14 +1818,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return materialize_lambda_value(*lambda_expression, context, &bindings);
 	}
 
- // Check if it's an identifier that matches a parameter
+	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
 
-	// Fast path: pre-resolved Local bindings are always in the bindings map
+		// Fast path: pre-resolved Local bindings are always in the bindings map
 		if (id.binding() == IdentifierBinding::Local) {
 			if (const EvalResult* bound_value = findBindingValue(id.name(), bindings, context)) {
-	// Tag array results with their binding key so `array + N` can decay to a pointer.
+				// Tag array results with their binding key so `array + N` can decay to a pointer.
 				if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
 					EvalResult tagged = *bound_value;
 					tagged.array_origin_var = StringTable::getOrInternStringHandle(id.name());
@@ -1833,14 +1833,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				}
 				return *bound_value;
 			}
-	// fall through to existing logic as safety net
+			// fall through to existing logic as safety net
 		}
 
 		std::string_view name = id.name();
 
-	// Check if it's a bound parameter
+		// Check if it's a bound parameter
 		if (const EvalResult* bound_value = findBindingValue(name, bindings, context)) {
-	// Tag array results with their binding key so `array + N` can decay to a pointer.
+			// Tag array results with their binding key so `array + N` can decay to a pointer.
 			if (bound_value->is_array && !bound_value->array_origin_var.isValid()) {
 				EvalResult tagged = *bound_value;
 				tagged.array_origin_var = StringTable::getOrInternStringHandle(name);
@@ -1849,7 +1849,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			return *bound_value;	 // Return the bound value
 		}
 
-	// Not a parameter, evaluate normally
+		// Not a parameter, evaluate normally
 		return evaluate_identifier(id, context);
 	}
 
@@ -1865,7 +1865,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		const auto& bin_op = std::get<BinaryOperatorNode>(expr);
 		std::string_view op = bin_op.op();
 
-	// Short-circuit && and || per C++ semantics (see mutable-bindings path above).
+		// Short-circuit && and || per C++ semantics (see mutable-bindings path above).
 		if (op == "&&" || op == "||") {
 			auto lhs_result = recursive_eval(bin_op.get_lhs(), bindings, context);
 			if (!lhs_result.success())
@@ -1893,16 +1893,16 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return apply_binary_op(lhs_result, rhs_result, bin_op.op(), &context, &bindings);
 	}
 
- // For unary operators
+	// For unary operators
 	if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
 		std::string_view op = unary_op->op();
 
-	// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
+		// Handle address-of (&): return a pointer-to-variable result without evaluating the operand.
 		if (op == "&") {
 			const ASTNode& operand = unary_op->get_operand();
 			if (operand.is<ExpressionNode>()) {
 				const ExpressionNode& operand_expr = operand.as<ExpressionNode>();
-	// &identifier  or  &this->member
+				// &identifier  or  &this->member
 				std::string_view simple_name;
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
 					simple_name = id->name();
@@ -1914,15 +1914,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				}
 				if (!simple_name.empty()) {
 					EvalResult ptr_result = EvalResult::from_pointer(simple_name);
-		// Snapshot the current value so the pointer can be dereferenced in a
-		// different scope (e.g., when passed as an argument to another function).
+					// Snapshot the current value so the pointer can be dereferenced in a
+					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
 						ptr_result.array_elements = {*snap};
 					return ptr_result;
 				}
-	// &arr[i]: address of array element → pointer with offset.
-	// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
+				// &arr[i]: address of array element → pointer with offset.
+				// Recognises both plain identifiers (&arr[i]) and this->member form (&this->arr[i]).
 				if (const auto* subscript = std::get_if<ArraySubscriptNode>(&operand_expr)) {
 					std::string_view arr_name = getArrayNameForAddressOf(subscript->array_expr());
 					if (!arr_name.empty()) {
@@ -1931,7 +1931,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-		// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the element so the pointer can be dereferenced in a different scope.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
@@ -1945,10 +1945,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			return EvalResult::error("Address-of operator (&) is only supported on named variables and array elements in constant expressions");
 		}
 
- // Special case: *this in a constexpr member function body.
- // Constructs an EvalResult representing the current object state.
- // Uses context.struct_type_index (set alongside struct_info when entering a member function body)
- // to avoid an O(n) linear search through gTypeInfo.
+	// Special case: *this in a constexpr member function body.
+	// Constructs an EvalResult representing the current object state.
+	// Uses context.struct_type_index (set alongside struct_info when entering a member function body)
+	// to avoid an O(n) linear search through gTypeInfo.
 		if (op == "*") {
 			const ASTNode& operand = unary_op->get_operand();
 			if (operand.is<ExpressionNode>()) {
@@ -1956,15 +1956,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				if (const auto* id = std::get_if<IdentifierNode>(&operand_expr)) {
 					if (id->name() == "this" && context.struct_info) {
 						EvalResult this_obj = EvalResult::from_int(0);
-		// Use the cached type index; validate it before trusting it.
+					// Use the cached type index; validate it before trusting it.
 						if (!tryGetTypeInfo(context.struct_type_index)) {
-		// struct_type_index must be set alongside struct_info when entering a
-		// member function body. This indicates a call site that sets struct_info
-		// but forgets to populate struct_type_index.
+						// struct_type_index must be set alongside struct_info when entering a
+						// member function body. This indicates a call site that sets struct_info
+						// but forgets to populate struct_type_index.
 							return EvalResult::error("Internal error: *this used in constexpr member function but struct_type_index is not set — ensure evaluate_member_function_call sets context.struct_type_index");
 						}
 						this_obj.object_type_index = context.struct_type_index;
-		// Copy current member bindings into the object
+					// Copy current member bindings into the object
 						for (const auto& member : context.struct_info->members) {
 							std::string_view member_name = StringTable::getStringView(member.getName());
 							auto it = bindings.find(member_name);
@@ -1982,7 +1982,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		if (!operand_result.success())
 			return operand_result;
 
-	// Handle dereference (*): look up the pointed-to variable.
+		// Handle dereference (*): look up the pointed-to variable.
 		if (op == "*") {
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
@@ -1993,7 +1993,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return apply_unary_op(operand_result, op);
 	}
 
- // For ternary operators
+	// For ternary operators
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
 		auto cond_result = recursive_eval(ternary.condition(), bindings, context);
@@ -2008,12 +2008,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		}
 	}
 
- // For function calls (for recursion)
+	// For function calls (for recursion)
 	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
 		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, mutable_bindings);
 	}
 
- // For direct lambda operator() calls inside a bound constexpr context
+	// For direct lambda operator() calls inside a bound constexpr context
 	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, mutable_bindings)) {
 		return *call_result;
 	}
@@ -2022,33 +2022,33 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		return *member_call_result;
 	}
 
- // For member access on 'this' (e.g., this->x in a member function)
- // This handles implicit member accesses like 'x' which parser transforms to 'this->x'
+	// For member access on 'this' (e.g., this->x in a member function)
+	// This handles implicit member accesses like 'x' which parser transforms to 'this->x'
 	if (std::holds_alternative<MemberAccessNode>(expr)) {
 		const auto& member_access = std::get<MemberAccessNode>(expr);
 		std::string_view member_name = member_access.member_name();
 
-	// Check if the object is 'this' (implicit member access)
+		// Check if the object is 'this' (implicit member access)
 		const ASTNode& obj = member_access.object();
 		if (obj.is<ExpressionNode>()) {
 			const ExpressionNode& obj_expr = obj.as<ExpressionNode>();
 			if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 				const IdentifierNode& obj_id = std::get<IdentifierNode>(obj_expr);
 				if (obj_id.name() == "this") {
-		// This is an implicit member access - look up in bindings
+					// This is an implicit member access - look up in bindings
 					auto it = bindings.find(member_name);
 					if (it != bindings.end()) {
 						return it->second;  // Return the bound member value
 					}
 					return EvalResult::error("Member not found in constexpr object: " + std::string(member_name));
 				}
-	// Handle arrow access (ptr->member) where ptr is a pointer in local bindings.
+				// Handle arrow access (ptr->member) where ptr is a pointer in local bindings.
 				if (member_access.is_arrow()) {
 					auto binding_it = bindings.find(obj_id.name());
 					if (binding_it != bindings.end() && binding_it->second.pointer_to_var.isValid()) {
 						const EvalResult& ptr_eval = binding_it->second;
 						std::string_view ptr_var_name = StringTable::getStringView(ptr_eval.pointer_to_var);
-		// When the pointer has a non-zero offset, dereference the array element first.
+						// When the pointer has a non-zero offset, dereference the array element first.
 						if (ptr_eval.pointer_offset != 0) {
 							auto elem_result = deref_pointer_with_bindings(ptr_eval, bindings, context);
 							if (elem_result.success()) {
@@ -2060,9 +2060,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 							return EvalResult::error("Arrow member access (->): member '" + std::string(member_name) +
 													 "' not found at offset " + std::to_string(ptr_eval.pointer_offset));
 						}
-		// Check snapshot first (covers pointers to local / outer-scope variables).
-		// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
-		// "array_elements field reused for pointer value snapshot").
+						// Check snapshot first (covers pointers to local / outer-scope variables).
+						// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
+						// "array_elements field reused for pointer value snapshot").
 						if (!ptr_eval.array_elements.empty()) {
 							const EvalResult& snapshot = ptr_eval.array_elements[0];
 							auto member_it = snapshot.object_member_bindings.find(member_name);
@@ -2076,64 +2076,64 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				}
 			}
 		}
-	// Fall through to normal evaluation for non-this member access
+		// Fall through to normal evaluation for non-this member access
 	}
 
 	if (auto array_result = try_evaluate_bound_array_subscript(expr, bindings, context)) {
 		return *array_result;
 	}
 
- // Handle StaticCastNode (static_cast<T>(e) and C-style casts) using the
- // bindings-aware recursive evaluator so that local variables and function
- // parameters are visible inside the cast expression.
+	// Handle StaticCastNode (static_cast<T>(e) and C-style casts) using the
+	// bindings-aware recursive evaluator so that local variables and function
+	// parameters are visible inside the cast expression.
 	if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
 		const ASTNode& type_node = static_cast_node->target_type();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			return EvalResult::error("Cast without valid type specifier");
 		}
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	// Evaluate the inner expression with bindings.
+		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(static_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
 			return inner_result;
 		}
-	// For struct/user-defined/enum types, a static_cast that only changes cv/ref
-	// qualification (e.g., static_cast<const T&>(obj)) should pass through the
-	// value unchanged — no scalar conversion is needed.  This mirrors the
-	// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
-	// Guard with a type-match check so that cross-struct casts fall through to
-	// the scalar conversion switch (which correctly errors for struct types).
+		// For struct/user-defined/enum types, a static_cast that only changes cv/ref
+		// qualification (e.g., static_cast<const T&>(obj)) should pass through the
+		// value unchanged — no scalar conversion is needed.  This mirrors the
+		// typesMatchIgnoringCvAndRef short-circuit in evaluate_static_cast.
+		// Guard with a type-match check so that cross-struct casts fall through to
+		// the scalar conversion switch (which correctly errors for struct types).
 		if (needs_type_index(type_spec.type())) {
 			auto source_type = tryGetExpressionType(inner_result, static_cast_node->expr(), context);
 			if (source_type.has_value() && typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 				inner_result.set_exact_type(type_spec);
 				return inner_result;
 			}
-	// Source type unavailable or doesn't match — fall through to the
-	// scalar conversion switch which will error for struct/enum types.
+			// Source type unavailable or doesn't match — fall through to the
+			// scalar conversion switch which will error for struct/enum types.
 		}
-	// Apply the target-type conversion using the shared helper (mirrors evaluate_expr_node).
+		// Apply the target-type conversion using the shared helper (mirrors evaluate_expr_node).
 		return convertEvalResultToTargetType(type_spec, inner_result, "Unsupported type in cast for constant evaluation");
 	}
 
- // Handle ConstCastNode (const_cast<T>(e)) using the bindings-aware recursive
- // evaluator so that local variables and function parameters are visible inside
- // the cast expression.  const_cast only changes cv/ref qualification — no type
- // conversion is performed; the value/object identity is preserved as-is.
+	// Handle ConstCastNode (const_cast<T>(e)) using the bindings-aware recursive
+	// evaluator so that local variables and function parameters are visible inside
+	// the cast expression.  const_cast only changes cv/ref qualification — no type
+	// conversion is performed; the value/object identity is preserved as-is.
 	if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
 		const ASTNode& type_node = const_cast_node->target_type();
 		if (!type_node.is<TypeSpecifierNode>()) {
 			return EvalResult::error("Const cast without valid type specifier");
 		}
 		const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	// Evaluate the inner expression with bindings.
+		// Evaluate the inner expression with bindings.
 		auto inner_result = recursive_eval(const_cast_node->expr(), bindings, context);
 		if (!inner_result.success()) {
 			return inner_result;
 		}
-	// Validate that const_cast only changes cv/ref qualification — reject
-	// type-changing casts like const_cast<float*>(&int_value).  Uses the
-	// shared Evaluator::typesMatchIgnoringCvAndRef / tryGetExpressionType.
+		// Validate that const_cast only changes cv/ref qualification — reject
+		// type-changing casts like const_cast<float*>(&int_value).  Uses the
+		// shared Evaluator::typesMatchIgnoringCvAndRef / tryGetExpressionType.
 		if (auto source_type = tryGetExpressionType(inner_result, const_cast_node->expr(), context);
 			source_type.has_value() &&
 			!typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
@@ -2141,14 +2141,14 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				"const_cast in constant expression may only change cv-qualification",
 				EvalErrorType::NotConstantExpression);
 		}
-	// Only update the type metadata — no value conversion needed.
+		// Only update the type metadata — no value conversion needed.
 		inner_result.set_exact_type(type_spec);
 		return inner_result;
 	}
 
- // Handle ConstructorCallNode for struct types (e.g., Pair{a, b} inside constexpr function bodies).
- // When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
- // constructor arguments that reference local variables.
+	// Handle ConstructorCallNode for struct types (e.g., Pair{a, b} inside constexpr function bodies).
+	// When evaluating inside a function body with local bindings, we need outer_bindings to evaluate
+	// constructor arguments that reference local variables.
 	if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
 		const ASTNode& type_node = ctor_call->type_node();
 		if (type_node.is<TypeSpecifierNode>()) {
@@ -2159,7 +2159,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 		}
 	}
 
- // For literals and other expressions without parameters, evaluate normally
+	// For literals and other expressions without parameters, evaluate normally
 	return evaluate(expr_node, context);
 }
 
@@ -2168,7 +2168,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 std::optional<long long> Evaluator::safe_add(long long a, long long b) {
 	long long result;
 #if defined(_MSC_VER) && !defined(__clang__)
- // MSVC implementation using manual overflow detection
+	// MSVC implementation using manual overflow detection
 	if ((b > 0 && a > LLONG_MAX - b) || (b < 0 && a < LLONG_MIN - b)) {
 		return std::nullopt; // Overflow
 	}
@@ -2184,7 +2184,7 @@ std::optional<long long> Evaluator::safe_add(long long a, long long b) {
 std::optional<long long> Evaluator::safe_sub(long long a, long long b) {
 	long long result;
 #if defined(_MSC_VER) && !defined(__clang__)
- // MSVC implementation using manual overflow detection
+	// MSVC implementation using manual overflow detection
 	if ((b < 0 && a > LLONG_MAX + b) || (b > 0 && a < LLONG_MIN + b)) {
 		return std::nullopt; // Overflow
 	}
@@ -2200,11 +2200,11 @@ std::optional<long long> Evaluator::safe_sub(long long a, long long b) {
 std::optional<long long> Evaluator::safe_mul(long long a, long long b) {
 	long long result;
 #if defined(_MSC_VER) && !defined(__clang__)
- // MSVC implementation using manual overflow detection
+	// MSVC implementation using manual overflow detection
 	if (a == 0 || b == 0) {
 		result = 0;
 	} else if (a == LLONG_MIN || b == LLONG_MIN) {
-	// Special case: LLONG_MIN * anything except 0 or 1 overflows
+		// Special case: LLONG_MIN * anything except 0 or 1 overflows
 		if ((a == LLONG_MIN && (b < -1 || b > 1)) || (b == LLONG_MIN && (a < -1 || a > 1))) {
 			return std::nullopt;
 		}
@@ -2234,8 +2234,8 @@ std::optional<long long> Evaluator::safe_shl(long long a, long long b, int width
 		return 0; // Shifting zero is fine
 	}
 
- // Check if the shift would cause bits to be lost
- // For left shift, check if any bits would be shifted out
+	// Check if the shift would cause bits to be lost
+	// For left shift, check if any bits would be shifted out
 	long long shifted = a << b;
 	long long back_shifted = shifted >> b;
 	if (back_shifted != a) {
@@ -2259,22 +2259,22 @@ EvalResult Evaluator::apply_binary_op(
 	const EvalResult& lhs, const EvalResult& rhs, std::string_view op,
 	EvaluationContext* context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
- // Handle operations involving constexpr pointers.
- // Valid constexpr pointers (pointer_to_var.isValid()) are always non-null since they
- // represent address-of named constexpr variables.  nullptr evaluates to integer 0.
+	// Handle operations involving constexpr pointers.
+	// Valid constexpr pointers (pointer_to_var.isValid()) are always non-null since they
+	// represent address-of named constexpr variables.  nullptr evaluates to integer 0.
 	if (lhs.pointer_to_var.isValid() || rhs.pointer_to_var.isValid()) {
 		const bool lhs_is_ptr = lhs.pointer_to_var.isValid();
 		const bool rhs_is_ptr = rhs.pointer_to_var.isValid();
 
-	// Equality / inequality comparisons
+		// Equality / inequality comparisons
 		if (op == "==" || op == "!=") {
 			bool are_equal;
 			if (lhs_is_ptr && rhs_is_ptr) {
-	// ptr1 == ptr2: equal iff they point to the same named variable AND offset
+				// ptr1 == ptr2: equal iff they point to the same named variable AND offset
 				are_equal = (lhs.pointer_to_var == rhs.pointer_to_var) && (lhs.pointer_offset == rhs.pointer_offset);
 			} else if (lhs_is_ptr) {
-	// ptr == integer: nullptr (0) is the only null-pointer constant.
-	// Use raw unsigned comparison to avoid implementation-defined signed overflow.
+				// ptr == integer: nullptr (0) is the only null-pointer constant.
+				// Use raw unsigned comparison to avoid implementation-defined signed overflow.
 				const unsigned long long rhs_raw = rhs.is_uint() ? rhs.as_uint_raw()
 																 : static_cast<unsigned long long>(rhs.as_int());
 				if (rhs_raw != 0ULL) {
@@ -2282,7 +2282,7 @@ EvalResult Evaluator::apply_binary_op(
 				}
 				are_equal = false; // valid constexpr pointer is always non-null
 			} else {
-	// integer == ptr: same treatment as above
+				// integer == ptr: same treatment as above
 				const unsigned long long lhs_raw = lhs.is_uint() ? lhs.as_uint_raw()
 																 : static_cast<unsigned long long>(lhs.as_int());
 				if (lhs_raw != 0ULL) {
@@ -2293,7 +2293,7 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::from_bool(op == "==" ? are_equal : !are_equal);
 		}
 
-	// Relational comparisons on pointers into the same array
+		// Relational comparisons on pointers into the same array
 		if (op == "<" || op == "<=" || op == ">" || op == ">=") {
 			if (lhs_is_ptr && rhs_is_ptr) {
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
@@ -2310,10 +2310,10 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::error("Relational comparison between pointer and integer is not supported in constant expressions");
 		}
 
-	// Pointer arithmetic: ptr + n, n + ptr, ptr - n, ptr - ptr
+		// Pointer arithmetic: ptr + n, n + ptr, ptr - n, ptr - ptr
 		if (op == "+") {
 			if (lhs_is_ptr && !rhs_is_ptr) {
-	// ptr + n
+				// ptr + n
 				const auto new_offset = safe_add(lhs.pointer_offset, rhs.as_int());
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
@@ -2325,7 +2325,7 @@ EvalResult Evaluator::apply_binary_op(
 					bindings);
 			}
 			if (!lhs_is_ptr && rhs_is_ptr) {
-	// n + ptr
+				// n + ptr
 				const auto new_offset = safe_add(rhs.pointer_offset, lhs.as_int());
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
@@ -2340,7 +2340,7 @@ EvalResult Evaluator::apply_binary_op(
 		}
 		if (op == "-") {
 			if (lhs_is_ptr && !rhs_is_ptr) {
-	// ptr - n
+				// ptr - n
 				const auto new_offset = safe_sub(lhs.pointer_offset, rhs.as_int());
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
@@ -2352,7 +2352,7 @@ EvalResult Evaluator::apply_binary_op(
 					bindings);
 			}
 			if (lhs_is_ptr && rhs_is_ptr) {
-	// ptr - ptr: both must point into the same array
+				// ptr - ptr: both must point into the same array
 				if (lhs.pointer_to_var != rhs.pointer_to_var) {
 					return EvalResult::error("Subtraction of pointers to different variables is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 				}
@@ -2361,7 +2361,7 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::error("Subtraction of pointer from integer is not allowed in constant expressions");
 		}
 
-	// Logical operators: a valid constexpr pointer is always truthy
+		// Logical operators: a valid constexpr pointer is always truthy
 		if (op == "&&") {
 			const bool lhs_bool = lhs_is_ptr ? true : lhs.as_bool();
 			const bool rhs_bool = rhs_is_ptr ? true : rhs.as_bool();
@@ -2373,14 +2373,14 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::from_bool(lhs_bool || rhs_bool);
 		}
 
-	// All other pointer operations are unsupported
+		// All other pointer operations are unsupported
 		return EvalResult::error("Unsupported pointer operation '" + std::string(op) + "' in constant expressions");
 	}
 
- // Array decay: `array + n` or `n + array` produces a pointer to element n of the array.
- // This enables `return data + size;` style begin()/end() member functions in constexpr
- // range-based for loops, where `data` is a member array that has been tagged with its
- // origin variable name via array_origin_var.
+	// Array decay: `array + n` or `n + array` produces a pointer to element n of the array.
+	// This enables `return data + size;` style begin()/end() member functions in constexpr
+	// range-based for loops, where `data` is a member array that has been tagged with its
+	// origin variable name via array_origin_var.
 	if (lhs.is_array && lhs.array_origin_var.isValid() && !rhs.is_array && !rhs.pointer_to_var.isValid() && op == "+") {
 		int64_t offset = rhs.as_int();
 		return make_checked_constexpr_pointer_result(
@@ -2398,14 +2398,14 @@ EvalResult Evaluator::apply_binary_op(
 			bindings);
 	}
 
- // Determine the operand kinds so we can dispatch to the correct domain.
- // This mirrors C++ "usual arithmetic conversions" (C++20 [expr.arith.conv]):
- //   1. If either operand is floating-point → promote both to double.
- //   2. Else if either operand is unsigned long long → promote both to
- //      unsigned long long (the signed value is reinterpreted as unsigned,
- //      matching the standard's rule that the signed operand converts to the
- //      unsigned type when the unsigned type is at least as wide).
- //   3. Otherwise → use signed long long arithmetic.
+	// Determine the operand kinds so we can dispatch to the correct domain.
+	// This mirrors C++ "usual arithmetic conversions" (C++20 [expr.arith.conv]):
+	//   1. If either operand is floating-point → promote both to double.
+	//   2. Else if either operand is unsigned long long → promote both to
+	//      unsigned long long (the signed value is reinterpreted as unsigned,
+	//      matching the standard's rule that the signed operand converts to the
+	//      unsigned type when the unsigned type is at least as wide).
+	//   3. Otherwise → use signed long long arithmetic.
 	const bool lhs_is_double = std::holds_alternative<double>(lhs.value);
 	const bool rhs_is_double = std::holds_alternative<double>(rhs.value);
 	const bool either_is_double = lhs_is_double || rhs_is_double;
@@ -2414,9 +2414,9 @@ EvalResult Evaluator::apply_binary_op(
 	const bool rhs_is_uint = rhs.is_uint();
 	const bool either_is_uint = lhs_is_uint || rhs_is_uint;
 
- // --- Floating-point path ---
- // If either operand is a floating-point double (or float, which is stored as
- // double), use floating-point arithmetic/comparison for all operations.
+	// --- Floating-point path ---
+	// If either operand is a floating-point double (or float, which is stored as
+	// double), use floating-point arithmetic/comparison for all operations.
 	if (either_is_double) {
 		const double lv = lhs.as_double();
 		const double rv = rhs.as_double();
@@ -2432,7 +2432,7 @@ EvalResult Evaluator::apply_binary_op(
 				return EvalResult::error("Division by zero in constant expression");
 			return EvalResult::from_double(lv / rv);
 		}
-	// Bitwise operators are not valid on floating-point types.
+		// Bitwise operators are not valid on floating-point types.
 		if (op == "==")
 			return EvalResult::from_bool(lv == rv);
 		if (op == "!=")
@@ -2452,22 +2452,22 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::error("Operator '" + std::string(op) + "' not supported for floating-point constants");
 	}
 
- // --- Unsigned integer path ---
- // When either operand is stored as unsigned long long, use unsigned
- // arithmetic and comparison.  The other operand is converted to
- // unsigned long long via static_cast (reinterpreting negative signed
- // values as large unsigned values), matching C++ usual arithmetic
- // conversions when the unsigned type is at least as wide as the signed type.
+	// --- Unsigned integer path ---
+	// When either operand is stored as unsigned long long, use unsigned
+	// arithmetic and comparison.  The other operand is converted to
+	// unsigned long long via static_cast (reinterpreting negative signed
+	// values as large unsigned values), matching C++ usual arithmetic
+	// conversions when the unsigned type is at least as wide as the signed type.
 	if (either_is_uint) {
-	// Read each side preserving its full bit pattern using as_uint_raw()
-	// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
+		// Read each side preserving its full bit pattern using as_uint_raw()
+		// to avoid the signed round-trip in as_int() for values above LLONG_MAX.
 		const unsigned long long lv = lhs.as_uint_raw();
 		const unsigned long long rv = rhs.as_uint_raw();
 
-	// Propagate the exact result type (usual arithmetic conversions) so that
-	// (a) subsequent shift-count validation uses the correct operand width,
-	// and (b) unsigned arithmetic wraps at the declared type's width rather
-	// than at the evaluator's internal 64-bit storage width.
+		// Propagate the exact result type (usual arithmetic conversions) so that
+		// (a) subsequent shift-count validation uses the correct operand width,
+		// and (b) unsigned arithmetic wraps at the declared type's width rather
+		// than at the evaluator's internal 64-bit storage width.
 		const auto result_type = get_binary_arithmetic_result_type(lhs, rhs);
 
 		const auto make_arith = [&](unsigned long long val) -> EvalResult {
@@ -2533,13 +2533,13 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::error("Operator '" + std::string(op) + "' not supported for unsigned constants");
 	}
 
- // --- Signed integer path (default) ---
+	// --- Signed integer path (default) ---
 	long long lhs_val = lhs.as_int();
 	long long rhs_val = rhs.as_int();
 
- // Propagate the exact result type so that subsequent shift-count validation
- // uses the correct operand width (e.g. (a + b) << 33 is rejected when a, b
- // are int).
+	// Propagate the exact result type so that subsequent shift-count validation
+	// uses the correct operand width (e.g. (a + b) << 33 is rejected when a, b
+	// are int).
 	const auto signed_result_type = get_binary_arithmetic_result_type(lhs, rhs);
 
 	const auto make_signed = [&](long long val) -> EvalResult {
@@ -2550,7 +2550,7 @@ EvalResult Evaluator::apply_binary_op(
 		return result;
 	};
 
- // Handle arithmetic operators with overflow checking
+	// Handle arithmetic operators with overflow checking
 	if (op == "+") {
 		if (auto result = safe_add(lhs_val, rhs_val)) {
 			return make_signed(*result);
@@ -2573,7 +2573,7 @@ EvalResult Evaluator::apply_binary_op(
 		if (rhs_val == 0) {
 			return EvalResult::error("Division by zero in constant expression");
 		}
-	// Check for overflow in division (only happens with LLONG_MIN / -1)
+		// Check for overflow in division (only happens with LLONG_MIN / -1)
 		if (lhs_val == LLONG_MIN && rhs_val == -1) {
 			return EvalResult::error("Signed integer overflow in constant expression");
 		}
@@ -2585,7 +2585,7 @@ EvalResult Evaluator::apply_binary_op(
 		return make_signed(lhs_val % rhs_val);
 	}
 
- // Handle bitwise operators
+	// Handle bitwise operators
 	else if (op == "&") {
 		return make_signed(lhs_val & rhs_val);
 	} else if (op == "|") {
@@ -2608,7 +2608,7 @@ EvalResult Evaluator::apply_binary_op(
 		}
 	}
 
- // Handle comparison operators for signed integers
+	// Handle comparison operators for signed integers
 	if (op == "==") {
 		return EvalResult::from_bool(lhs_val == rhs_val);
 	} else if (op == "!=") {
@@ -2627,14 +2627,14 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::from_bool(lhs.as_bool() || rhs.as_bool());
 	}
 
- // Unsupported operator
+	// Unsupported operator
 	return EvalResult::error("Operator '" + std::string(op) + "' not supported in constant expressions");
 }
 
 EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view op) {
- // Handle unary operators on constexpr pointers.
- // A valid constexpr pointer (pointer_to_var.isValid()) is always non-null (truthy).
- // Address-of (&) and dereference (*) are handled before apply_unary_op is called.
+	// Handle unary operators on constexpr pointers.
+	// A valid constexpr pointer (pointer_to_var.isValid()) is always non-null (truthy).
+	// Address-of (&) and dereference (*) are handled before apply_unary_op is called.
 	if (operand.pointer_to_var.isValid()) {
 		if (op == "!") {
 			return EvalResult::from_bool(false); // !non_null_ptr is false
@@ -2644,7 +2644,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 
 	const bool operand_is_uint = operand.is_uint();
 
- // Helper: build an unsigned result masked to the operand's declared type width.
+	// Helper: build an unsigned result masked to the operand's declared type width.
 	const auto make_uint = [&](unsigned long long raw) {
 		EvalResult result = EvalResult::from_uint(apply_uint_type_mask(raw, operand.exact_type));
 		if (operand.exact_type.has_value()) {
@@ -2653,7 +2653,7 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 		return result;
 	};
 
- // Helper: build a signed result and propagate exact_type.
+	// Helper: build a signed result and propagate exact_type.
 	const auto make_sint = [&](long long val) {
 		EvalResult result = EvalResult::from_int(val);
 		if (operand.exact_type.has_value()) {
@@ -2670,42 +2670,42 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 		}
 		return make_sint(~operand.as_int());
 	} else if (op == "-") {
-	// Unary minus - negate the value
+		// Unary minus - negate the value
 		if (std::holds_alternative<double>(operand.value)) {
 			return EvalResult::from_double(-operand.as_double());
 		}
 		if (operand_is_uint) {
-	// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
+			// Unary minus on unsigned: wraps at declared type width (e.g. -(1u) == UINT_MAX)
 			return make_uint(static_cast<unsigned long long>(0) - operand.as_uint_raw());
 		}
-	// Check for overflow: negating LLONG_MIN overflows
+		// Check for overflow: negating LLONG_MIN overflows
 		const long long val = operand.as_int();
 		if (val == LLONG_MIN) {
 			return EvalResult::error("Signed integer overflow in unary minus");
 		}
 		return make_sint(-val);
 	} else if (op == "+") {
-	// Unary plus - no-op, just return the value
+		// Unary plus - no-op, just return the value
 		return operand;
 	}
 
- // Unsupported operator
+	// Unsupported operator
 	return EvalResult::error("Unary operator '" + std::string(op) + "' not supported in constant expressions");
 }
 
 // Evaluate qualified identifier (e.g., Namespace::var or Template<T>::member)
 EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context) {
- // Look up the qualified name in the symbol table
+	// Look up the qualified name in the symbol table
 	if (!context.symbols) {
 		return EvalResult::error("Cannot evaluate qualified identifier: no symbol table provided");
 	}
 
- // Try to look up the qualified name
+	// Try to look up the qualified name
 	auto symbol_opt = context.symbols->lookup_qualified(qualified_id.qualifiedIdentifier());
 	if (!symbol_opt.has_value()) {
-	// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
-	// This handles cases like is_pointer_impl<int*>::value where value is a static member
-	// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
+		// PHASE 3 FIX: If not found in symbol table, try looking up as struct static member
+		// This handles cases like is_pointer_impl<int*>::value where value is a static member
+		// Also handles type aliases like `using my_true = integral_constant<bool, true>; my_true::value`
 		NamespaceHandle ns_handle = qualified_id.namespace_handle();
 		StringHandle struct_handle;
 
@@ -2721,8 +2721,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 		}
 
-	// If we still don't have a struct name, derive it from the qualified identifier.
-	// Example: "std::is_integral<int>::value" -> "std::is_integral<int>"
+		// If we still don't have a struct name, derive it from the qualified identifier.
+		// Example: "std::is_integral<int>::value" -> "std::is_integral<int>"
 		if (!struct_handle.isValid()) {
 			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(ns_handle);
 			if (!ns_name.empty()) {
@@ -2738,12 +2738,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				FLASH_LOG(ConstExpr, Debug, "Looking up struct '", StringTable::getStringView(struct_handle), "' for member '", qualified_id.name(), "'");
 			}
 
-	// Look up the struct in getTypesByNameMap()
+			// Look up the struct in getTypesByNameMap()
 			auto struct_type_it = getTypesByNameMap().find(struct_handle);
 
-	// If not found with the full qualified name (e.g., "std::is_integral$hash"),
-	// try without the namespace prefix (e.g., "is_integral$hash") since template
-	// instantiations are often registered with just the short name
+			// If not found with the full qualified name (e.g., "std::is_integral$hash"),
+			// try without the namespace prefix (e.g., "is_integral$hash") since template
+			// instantiations are often registered with just the short name
 			if (struct_type_it == getTypesByNameMap().end()) {
 				std::string_view full_name = StringTable::getStringView(struct_handle);
 				size_t last_colon = full_name.rfind("::");
@@ -2757,8 +2757,8 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				}
 			}
 
-	// If not found directly, this might be a type alias
-	// Type aliases are registered with their alias name pointing to the underlying type
+			// If not found directly, this might be a type alias
+			// Type aliases are registered with their alias name pointing to the underlying type
 			const StructTypeInfo* struct_info = nullptr;
 			const TypeInfo* resolved_type_info = nullptr;
 
@@ -2770,17 +2770,17 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", type_index=", type_info->type_index_, ", hasStructInfo=", (type_info->getStructInfo() != nullptr));
 				}
 
-	// Follow the type alias chain until we find a struct with actual StructTypeInfo
-	// Type aliases may have isStruct()=true but getStructInfo()=null
-	// Limit iterations to prevent infinite loops from cycles
+				// Follow the type alias chain until we find a struct with actual StructTypeInfo
+				// Type aliases may have isStruct()=true but getStructInfo()=null
+				// Limit iterations to prevent infinite loops from cycles
 				constexpr size_t MAX_ALIAS_CHAIN_DEPTH = 100;
 				size_t alias_depth = 0;
 				while (type_info && alias_depth < MAX_ALIAS_CHAIN_DEPTH) {
-		// Check if we already have StructInfo - if so, we're done
+					// Check if we already have StructInfo - if so, we're done
 					if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
 						break;
 					}
-		// Follow the type_index_ to find the underlying type
+					// Follow the type_index_ to find the underlying type
 					const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
 					if (!underlying)
 						break;
@@ -2800,7 +2800,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 			}
 
 			if (struct_info) {
-	// Look for static member recursively (checks base classes too)
+				// Look for static member recursively (checks base classes too)
 				StringHandle member_handle = StringTable::getOrInternStringHandle(qualified_id.name());
 				if (IS_FLASH_LOG_ENABLED(ConstExpr, Debug)) {
 					FLASH_LOG(ConstExpr, Debug, "Static lookup in struct '", StringTable::getStringView(struct_handle), "', bases=", struct_info->base_classes.size());
@@ -2959,7 +2959,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						return std::nullopt;
 					}
 
-		// Convert the stored value based on the template argument type
+					// Convert the stored value based on the template argument type
 					if (value_arg.category() == TypeCategory::Bool) {
 						return EvalResult::from_bool(value_arg.intValue() != 0);
 					}
@@ -2976,7 +2976,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							  ", owner: ", (owner_struct != nullptr));
 				}
 
-	// Fallback: synthesize integral_constant::value from template arguments when static member isn't registered
+				// Fallback: synthesize integral_constant::value from template arguments when static member isn't registered
 				const StringHandle value_handle = StringTable::getOrInternStringHandle("value");
 				if (!static_member && member_handle == value_handle) {
 					if (resolved_type_info) {
@@ -3005,16 +3005,16 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(),
 							  ", has_initializer: ", static_member->initializer.has_value());
 
-		// Always try to trigger lazy instantiation for static members.
-		// The member might have an initializer from template parsing that
-		// still contains unsubstituted template parameters (like _R1::num).
-		// The lazy system will substitute them and update the initializer.
-		// If the member is not in the lazy registry, this is a fast no-op.
+					// Always try to trigger lazy instantiation for static members.
+					// The member might have an initializer from template parsing that
+					// still contains unsubstituted template parameters (like _R1::num).
+					// The lazy system will substitute them and update the initializer.
+					// If the member is not in the lazy registry, this is a fast no-op.
 					if (context.parser != nullptr) {
 						bool did_lazy = context.parser->instantiateLazyStaticMember(
 							owner_struct->name, member_handle);
 						if (did_lazy) {
-		// Re-lookup the static member after instantiation
+							// Re-lookup the static member after instantiation
 							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
 							if (relookup_result.first && relookup_result.first->initializer.has_value()) {
 								FLASH_LOG(ConstExpr, Debug, "After lazy instantiation, evaluating initializer");
@@ -3023,40 +3023,40 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						}
 					}
 
-		// Found a static member - evaluate its initializer if available
-		// Note: Even if not marked const, we can evaluate constexpr initializers
+					// Found a static member - evaluate its initializer if available
+					// Note: Even if not marked const, we can evaluate constexpr initializers
 					if (static_member->initializer.has_value()) {
 						FLASH_LOG(ConstExpr, Debug, "Evaluating static member initializer");
 					}
 
-		// If not constexpr or no initializer, return default value based on type
+					// If not constexpr or no initializer, return default value based on type
 					FLASH_LOG(ConstExpr, Debug, "Returning default value for type: ", static_cast<int>(static_member->memberType()));
 					return evaluate_static_member_initializer_or_default(*static_member, context);
 				}
 			}
 		}
 
-	// Not found in symbol table or as struct static member
-	// Check if this looks like a template instantiation with dependent arguments
-	// Pattern: __template_name__DependentArg::member
-	// Work with string_view to avoid unnecessary copies
+		// Not found in symbol table or as struct static member
+		// Check if this looks like a template instantiation with dependent arguments
+		// Pattern: __template_name__DependentArg::member
+		// Work with string_view to avoid unnecessary copies
 		std::string_view ns_name = gNamespaceRegistry.getQualifiedName(qualified_id.namespace_handle());
 		std::string_view member_name = qualified_id.name();
 
-	// Check if the namespace part looks like a template instantiation (contains template argument separator)
-	// Template names with arguments get mangled as template_name_arg1_arg2...
-	// If any argument is a template parameter (starts with _ often), it's template-dependent
-	// BUT: Don't treat names like "is_integral_int" as dependent - "int" is a concrete type!
-	// Only treat as dependent if it contains identifiers that START with underscore (like _Tp, _Up)
-	// or have double underscores (like __type_parameter)
+		// Check if the namespace part looks like a template instantiation (contains template argument separator)
+		// Template names with arguments get mangled as template_name_arg1_arg2...
+		// If any argument is a template parameter (starts with _ often), it's template-dependent
+		// BUT: Don't treat names like "is_integral_int" as dependent - "int" is a concrete type!
+		// Only treat as dependent if it contains identifiers that START with underscore (like _Tp, _Up)
+		// or have double underscores (like __type_parameter)
 		bool looks_dependent = false;
 		if (!ns_name.empty() && ns_name.find('_') != std::string_view::npos) {
-	// Check if any component looks like a template parameter (starts with _ or __)
-	// Split by underscore and check each part
+			// Check if any component looks like a template parameter (starts with _ or __)
+			// Split by underscore and check each part
 			for (size_t i = 0; i < ns_name.size();) {
 				if (ns_name[i] == '_') {
-		// Found underscore - check if next char is also underscore or uppercase
-		// Template parameters often look like: _Tp, _Up, _T, __type, etc.
+					// Found underscore - check if next char is also underscore or uppercase
+					// Template parameters often look like: _Tp, _Up, _T, __type, etc.
 					if (i + 1 < ns_name.size()) {
 						char next = ns_name[i + 1];
 						if (next == '_' || std::isupper(static_cast<unsigned char>(next))) {
@@ -3070,20 +3070,20 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		}
 
 		if (looks_dependent && context.parser != nullptr) {
-	// This might be a template instantiation with dependent arguments
-	// Treat it as template-dependent
+			// This might be a template instantiation with dependent arguments
+			// Treat it as template-dependent
 			return EvalResult::error("Template instantiation with dependent arguments in constant expression: " +
 										 std::string(ns_name) + "::" + std::string(member_name),
 									 EvalErrorType::TemplateDependentExpression);
 		}
 
-	// Not found in symbol table or as struct static member
+		// Not found in symbol table or as struct static member
 		return EvalResult::error("Undefined qualified identifier in constant expression: " + qualified_id.full_name());
 	}
 
 	const ASTNode& symbol_node = *symbol_opt;
 
- // Check if it's a variable declaration (constexpr)
+	// Check if it's a variable declaration (constexpr)
 	if (symbol_node.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
 		if (!var_decl.is_constexpr()) {
@@ -3097,7 +3097,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 		return evaluate(initializer.value(), context);
 	}
 
- // Could be other types like enum constants - add support as needed
+	// Could be other types like enum constants - add support as needed
 	return EvalResult::error("Qualified identifier is not a constant expression: " + qualified_id.full_name());
 }
 
@@ -3164,12 +3164,12 @@ EvalResult Evaluator::evaluate_arrow_member_from_pointer_var(
 // Evaluate member access (e.g., obj.member or struct_type::static_member)
 // Also supports nested member access (e.g., obj.inner.value)
 EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context) {
- // Get the object expression (e.g., 'p1' in 'p1.x')
+	// Get the object expression (e.g., 'p1' in 'p1.x')
 	const ASTNode& object_expr = member_access.object();
 	std::string_view member_name = member_access.member_name();
 
- // Handle arrow access (ptr->member): evaluate the pointer expression to get the
- // pointed-to variable name, then perform member access on that variable.
+	// Handle arrow access (ptr->member): evaluate the pointer expression to get the
+	// pointed-to variable name, then perform member access on that variable.
 	if (member_access.is_arrow()) {
 		auto ptr_result = evaluate(object_expr, context);
 		if (!ptr_result.success())
@@ -3178,9 +3178,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			return EvalResult::error("Arrow member access (->): object must be a constexpr pointer in constant expressions");
 		}
 		std::string_view pointed_name = StringTable::getStringView(ptr_result.pointer_to_var);
-	// Try to dereference the element (handles both offset==0 for array pointers like &arr[0]
-	// and non-zero offsets like (ptr + 1)->member).  This path is tried first so that a
-	// pointer into a struct array is resolved to the correct element regardless of offset.
+		// Try to dereference the element (handles both offset==0 for array pointers like &arr[0]
+		// and non-zero offsets like (ptr + 1)->member).  This path is tried first so that a
+		// pointer into a struct array is resolved to the correct element regardless of offset.
 		auto elem_result = dereference_constexpr_pointer(pointed_name, context, ptr_result.pointer_offset);
 		if (elem_result.success()) {
 			auto it = elem_result.object_member_bindings.find(member_name);
@@ -3188,8 +3188,8 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				return it->second;
 			}
 		}
-	// For a plain (non-array) struct pointer at offset 0, fall back to the standard resolver
-	// which handles constructor-initializer-list member extraction.
+		// For a plain (non-array) struct pointer at offset 0, fall back to the standard resolver
+		// which handles constructor-initializer-list member extraction.
 		if (ptr_result.pointer_offset == 0) {
 			return evaluate_arrow_member_from_pointer_var(pointed_name, member_name, context, /*check_static=*/true);
 		}
@@ -3197,21 +3197,21 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 								 "' not found on array element at offset " + std::to_string(ptr_result.pointer_offset));
 	}
 
- // Check if this is a nested member access (e.g., obj.inner.value)
+	// Check if this is a nested member access (e.g., obj.inner.value)
 	if (object_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
 		if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr_node)) {
-	// Nested member access - first get the intermediate struct initializer
+			// Nested member access - first get the intermediate struct initializer
 			const MemberAccessNode& inner_access = *member_access_ptr;
 			return evaluate_nested_member_access(inner_access, member_name, context);
 		}
 	}
 
- // For constexpr struct member access, we need to handle the case where:
- // - The object is an identifier referencing a constexpr variable
- // - The variable is initialized with a ConstructorCallNode
- // - We need to find the constructor declaration and its member initializer list
- // - Extract the member value from the initializer expression
+	// For constexpr struct member access, we need to handle the case where:
+	// - The object is an identifier referencing a constexpr variable
+	// - The variable is initialized with a ConstructorCallNode
+	// - We need to find the constructor declaration and its member initializer list
+	// - Extract the member value from the initializer expression
 
 	const IdentifierNode* object_identifier = tryGetIdentifier(object_expr);
 
@@ -3219,12 +3219,12 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	if (var_name.empty()) {
 		if (object_expr.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
-	// Check for ArraySubscriptNode
+			// Check for ArraySubscriptNode
 			if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_node)) {
-	// Array subscript on struct - evaluate array element then access member
+				// Array subscript on struct - evaluate array element then access member
 				return evaluate_array_subscript_member_access(*array_subscript, member_name, context);
 			}
-	// Check for FunctionCallNode - evaluate the return type and access static member
+			// Check for FunctionCallNode - evaluate the return type and access static member
 			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
 				const FunctionCallNode& func_call = *function_call;
 				return evaluate_function_call_member_access(func_call, member_name, context);
@@ -3264,9 +3264,9 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	const VariableDeclarationNode* var_decl = resolved_object.var_decl;
 	TypeIndex var_type_index = resolved_object.declared_type_index;
 
- // Before checking if the variable is constexpr, check if we're accessing a static member
- // Static members can be accessed through any instance (even non-constexpr)
- // because they don't depend on the instance
+	// Before checking if the variable is constexpr, check if we're accessing a static member
+	// Static members can be accessed through any instance (even non-constexpr)
+	// because they don't depend on the instance
 
 	if (var_decl) {
 		const DeclarationNode& var_declaration = var_decl->declaration();
@@ -3279,21 +3279,21 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				const StructTypeInfo* struct_info = var_type_info->getStructInfo();
 
 				if (struct_info) {
-		// Look for static member
+					// Look for static member
 					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
 
 					if (static_member && owner_struct) {
 						FLASH_LOG(ConstExpr, Debug, "Accessing static member through instance: ", member_name);
 
-		// Found a static member - evaluate its initializer if available
+						// Found a static member - evaluate its initializer if available
 						return evaluate_static_member_initializer_or_default(*static_member, context);
 					}
 				}
 			}
 		}
 
-	// If not a static member access, check if it's a constexpr variable
+		// If not a static member access, check if it's a constexpr variable
 		if (!var_decl->is_constexpr()) {
 			return EvalResult::error("Variable in member access must be constexpr: " + std::string(var_name));
 		}
@@ -3416,9 +3416,9 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(object_initializer);
 	if (!ctor_call_ptr) {
-	// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
-	// The initializer may be an ASTNode holding a FunctionCallNode directly,
-	// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
+		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
+		// The initializer may be an ASTNode holding a FunctionCallNode directly,
+		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
 		bool is_func_call = initializer.is<FunctionCallNode>() || initializer.is<MemberFunctionCallNode>();
 		if (!is_func_call && initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr = initializer.as<ExpressionNode>();
@@ -3439,9 +3439,9 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 				return func_result;
 			}
 		}
-	// Fallback: evaluate the initializer directly.  This handles ternary operators,
-	// parenthesised expressions, and any other expression that yields a struct value
-	// (e.g., `constexpr Pt p = (true ? Pt{3,7} : Pt{1,2})`).
+		// Fallback: evaluate the initializer directly.  This handles ternary operators,
+		// parenthesised expressions, and any other expression that yields a struct value
+		// (e.g., `constexpr Pt p = (true ? Pt{3,7} : Pt{1,2})`).
 		{
 			static const std::unordered_map<std::string_view, EvalResult> empty_bindings;
 			const std::unordered_map<std::string_view, EvalResult>& eval_bindings =
@@ -3649,24 +3649,24 @@ EvalResult Evaluator::evaluate_nested_member_access(
 	std::string_view final_member_name,
 	EvaluationContext& context) {
 
- // First, we need to get the base object and the chain of member accesses
- // For obj.inner.value:
- // - inner_access.object() is 'obj' (identifier)
- // - inner_access.member_name() is 'inner'
- // - final_member_name is 'value'
+	// First, we need to get the base object and the chain of member accesses
+	// For obj.inner.value:
+	// - inner_access.object() is 'obj' (identifier)
+	// - inner_access.member_name() is 'inner'
+	// - final_member_name is 'value'
 
 	const ASTNode& base_obj_expr = inner_access.object();
 	std::string_view intermediate_member = inner_access.member_name();
 
- // Get the base variable name
+	// Get the base variable name
 	std::string_view base_var_name;
 
- // Handle deeper nesting recursively
+	// Handle deeper nesting recursively
 	if (base_obj_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = base_obj_expr.as<ExpressionNode>();
 		if (std::holds_alternative<MemberAccessNode>(expr_node)) {
-	// Even deeper nesting - this requires more complex logic
-	// For now, we support up to one level of nesting
+			// Even deeper nesting - this requires more complex logic
+			// For now, we support up to one level of nesting
 			return EvalResult::error("Deeply nested member access (more than 2 levels) not yet supported");
 		}
 	}
@@ -4214,13 +4214,13 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const FunctionCallNode& func_call,
 	std::string_view member_name,
 	EvaluationContext& context) {
- // Get the function declaration to determine return type
+	// Get the function declaration to determine return type
 	const DeclarationNode& func_decl_node = func_call.function_declaration();
- // Convert member_name to StringHandle once for efficient comparison
+	// Convert member_name to StringHandle once for efficient comparison
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 
- // Prefer the declaration already attached to the FunctionCallNode.
- // This preserves member-vs-global resolution decisions that were already made by the parser.
+	// Prefer the declaration already attached to the FunctionCallNode.
+	// This preserves member-vs-global resolution decisions that were already made by the parser.
 	const ASTNode& type_node = func_decl_node.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Function return type is not a TypeSpecifierNode");
@@ -4228,12 +4228,12 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 
 	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
 
- // Get the type name - this should be a struct/class type
+	// Get the type name - this should be a struct/class type
 	if (!is_struct_type(return_type.category())) {
 		return EvalResult::error("Function return type is not a struct - cannot access member");
 	}
 
- // Get the struct type name
+	// Get the struct type name
 	TypeIndex type_index = return_type.type_index();
 	const TypeInfo* type_info = tryGetTypeInfo(type_index);
 	if (!type_info) {
@@ -4245,25 +4245,25 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 		return EvalResult::error("Return type is not a struct");
 	}
 
- // Use the helper function to look up and evaluate the static member
+	// Use the helper function to look up and evaluate the static member
 	return evaluate_static_member_from_struct(struct_info, *type_info, member_name_handle, member_name, context);
 }
 
 // Evaluate constexpr member function call (e.g., p.sum() in constexpr context)
 EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context) {
- // Check recursion depth
+	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
 		return EvalResult::error("Constexpr recursion depth limit exceeded in member function call");
 	}
 
- // Get the object being called on
+	// Get the object being called on
 	const ASTNode& object_expr = member_func_call.object();
 
- // Get the function name from the placeholder FunctionDeclarationNode
+	// Get the function name from the placeholder FunctionDeclarationNode
 	const FunctionDeclarationNode& placeholder_func = member_func_call.function_declaration();
 	std::string_view func_name = placeholder_func.decl_node().identifier_token().value();
 
- // For lambda calls (operator()), we need special handling
+	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = (func_name == "operator()");
 
 	if (is_operator_call) {
@@ -4310,7 +4310,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 
- // First, we need to get the struct type from the object to look up the actual function
+	// First, we need to get the struct type from the object to look up the actual function
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 
@@ -4355,13 +4355,13 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		}
 	}
 
- // Check if this is a lambda call (operator() on a lambda object)
+	// Check if this is a lambda call (operator() on a lambda object)
 	if (is_operator_call) {
 		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(*initializer);
 		if (lambda) {
 			return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
 		}
-	// Brace-initialized or ConstructorCallNode-initialized callable: delegate to evaluate_callable_object
+		// Brace-initialized or ConstructorCallNode-initialized callable: delegate to evaluate_callable_object
 		if (initializer->has_value() && ((*initializer)->is<InitializerListNode>() || extract_constructor_call(*initializer))) {
 			if (!var_decl) {
 				return EvalResult::error("Callable object is not a variable");
@@ -4375,9 +4375,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 
- // Resolve the struct type info. For ConstructorCallNode initializers we get it from
- // the constructor's type node; for brace-initialized (InitializerListNode) objects we
- // resolve it from the variable's declared type instead.
+	// Resolve the struct type info. For ConstructorCallNode initializers we get it from
+	// the constructor's type node; for brace-initialized (InitializerListNode) objects we
+	// resolve it from the variable's declared type instead.
 	const StructTypeInfo* struct_info = nullptr;
 	TypeIndex type_index{0};
 
@@ -4402,7 +4402,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			}
 		}
 	} else {
-	// Brace-initialized object: resolve type from the declared object type.
+		// Brace-initialized object: resolve type from the declared object type.
 		const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index);
 		if (!declared_type_info) {
 			return EvalResult::error("Brace-initialized object has invalid type in member function call");
@@ -4415,7 +4415,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		return EvalResult::error("Type is not a struct in member function call");
 	}
 
- // Look up the actual member function in the struct's type info
+	// Look up the actual member function in the struct's type info
 	const auto& arguments = member_func_call.arguments();
 	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 	auto member_function_match = find_member_function_candidate(
@@ -4435,18 +4435,18 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
 
- // Check if it's a constexpr or consteval function
+	// Check if it's a constexpr or consteval function
 	if (!actual_func->is_constexpr() && !actual_func->is_consteval()) {
 		return EvalResult::error("Member function must be constexpr or consteval: " + std::string(func_name));
 	}
 
- // Get the function body
+	// Get the function body
 	const auto& definition = actual_func->get_definition();
 	if (!definition.has_value()) {
 		return EvalResult::error("Constexpr member function has no body: " + std::string(func_name));
 	}
 
- // Extract member values from the object for 'this' access
+	// Extract member values from the object for 'this' access
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
 
 	auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
@@ -4454,7 +4454,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		return member_extraction_result;
 	}
 
- // Evaluate function arguments and add to bindings
+	// Evaluate function arguments and add to bindings
 	const auto& parameters = actual_func->parameter_nodes();
 	auto bind_result = bind_evaluated_arguments(
 		parameters,
@@ -4493,7 +4493,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	auto saved_struct_type_index = context.struct_type_index;
 	context.struct_info = struct_info;
 	context.struct_type_index = type_index;
- // Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
+	// Set return_type_info so that aggregate-initializer returns (return {x, y}) work correctly.
 	const TypeInfo* saved_return_type_info = context.return_type_info;
 	context.return_type_info = nullptr;
 	if (actual_func->decl_node().type_node().is<TypeSpecifierNode>()) {
@@ -4503,10 +4503,10 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			context.return_type_info = return_type_info;
 	}
 
- // Increase recursion depth
+	// Increase recursion depth
 	context.current_depth++;
 
- // Evaluate the function body
+	// Evaluate the function body
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
 		member_bindings,
@@ -4567,7 +4567,7 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		return EvalResult::error("Constructor call type is not a struct/class");
 	}
 
- // Delegate to the shared helper for the find→bind→materialize sequence.
+	// Delegate to the shared helper for the find→bind→materialize sequence.
 	auto ctor_result = try_materialize_struct_from_ctor_args(
 		struct_info, type_index, ctor_call.arguments(), context, outer_bindings);
 	if (ctor_result.has_value()) {
@@ -4577,10 +4577,10 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		return std::move(*ctor_result);
 	}
 
- // No matching constructor found - try aggregate initialization if arguments are provided.
- // This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
+	// No matching constructor found - try aggregate initialization if arguments are provided.
+	// This handles cases like Pt{3, 7} where Pt is an aggregate with no user-defined constructors.
 	if (ctor_call.arguments().size() > 0) {
-	// Convert arguments to InitializerListNode for aggregate initialization
+		// Convert arguments to InitializerListNode for aggregate initialization
 		InitializerListNode init_list;
 		for (size_t i = 0; i < ctor_call.arguments().size(); ++i) {
 			const auto& arg = ctor_call.arguments()[i];
@@ -4620,7 +4620,7 @@ EvalResult Evaluator::materialize_array_value(
 				element_result = EvalResult::error("Array element type is not a struct");
 			}
 		} else if (element.is<InitializerListNode>()) {
-	// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
+			// Nested array element (e.g., each row of int[2][3]): recurse with same element type.
 			element_result = materialize_array_value(
 				element_type_index,
 				element.as<InitializerListNode>(),
@@ -4688,9 +4688,9 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 
 	const auto& dims = type_spec.array_dimensions();
 	if (dims.size() <= 1) {
-	// Single-dimension or unspecified: delegate to the base overload.
+		// Single-dimension or unspecified: delegate to the base overload.
 		auto base_result = materialize_array_value(type_spec.type_index(), init_list, context, bindings);
-	// If the declared dimension is known and larger than the init-list, zero-fill the tail.
+		// If the declared dimension is known and larger than the init-list, zero-fill the tail.
 		if (base_result.success() && dims.size() == 1 && dims[0] > 0 && base_result.is_array) {
 			size_t declared_size = dims[0];
 			TypeCategory elem_type = type_spec.type();
@@ -4710,31 +4710,31 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 				if (!base_result.array_values.empty() && !isFloatingPointType(elem_type)) {
 					base_result.array_values.push_back(0LL);
 				}
-	// Note: for floating-point arrays, array_values is NOT extended here because
-	// materialize_array_value already populates it via as_int() truncation for float
-	// elements, so its size may be less than array_elements.size() after zero-fill.
-	// This is a pre-existing inconsistency; array subscript access checks
-	// array_elements first and is unaffected.
+				// Note: for floating-point arrays, array_values is NOT extended here because
+				// materialize_array_value already populates it via as_int() truncation for float
+				// elements, so its size may be less than array_elements.size() after zero-fill.
+				// This is a pre-existing inconsistency; array subscript access checks
+				// array_elements first and is unaffected.
 				base_result.array_elements.push_back(std::move(zero_elem));
 			}
 		}
 		return base_result;
 	}
 
- // Multi-dimensional array (e.g., int[2][3]).
- // dims[0]    = outer element count (number of rows)
- // dims[1..N] = inner dimensions (size of each row)
+	// Multi-dimensional array (e.g., int[2][3]).
+	// dims[0]    = outer element count (number of rows)
+	// dims[1..N] = inner dimensions (size of each row)
 	size_t outer_size = dims[0];
 	std::vector<size_t> inner_dims(dims.begin() + 1, dims.end());
 
- // Build a TypeSpecifierNode for the inner (element) type.
+	// Build a TypeSpecifierNode for the inner (element) type.
 	TypeSpecifierNode inner_type_spec = type_spec;
 	inner_type_spec.set_array_dimensions(inner_dims);
 
- // Check if the init_list is "fully flat" — non-empty and all elements are scalars
- // (no nested InitializerListNode).
- // Per C++20 dcl.init.aggr, a fully-flat list distributes scalars sequentially across inner
- // dimensions (brace-elision): e.g. int[2][3] = {1,2,3,4,5,6} → {{1,2,3},{4,5,6}}.
+	// Check if the init_list is "fully flat" — non-empty and all elements are scalars
+	// (no nested InitializerListNode).
+	// Per C++20 dcl.init.aggr, a fully-flat list distributes scalars sequentially across inner
+	// dimensions (brace-elision): e.g. int[2][3] = {1,2,3,4,5,6} → {{1,2,3},{4,5,6}}.
 	bool is_fully_flat = false;
 	if (init_list.size() > 0) {
 		is_fully_flat = true;
@@ -4750,7 +4750,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 	elements.reserve(outer_size);
 
 	if (is_fully_flat) {
-	// Compute the number of scalar elements each inner array consumes.
+		// Compute the number of scalar elements each inner array consumes.
 		size_t inner_size = 1;
 		for (size_t d : inner_dims)
 			inner_size *= d;
@@ -4759,10 +4759,10 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 		for (size_t i = 0; i < outer_size; ++i) {
 			EvalResult elem;
 			if (scalar_cursor >= init_list.size()) {
-	// No more scalars: zero-initialise.
+				// No more scalars: zero-initialise.
 				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
 			} else {
-	// Build a sub-init-list consuming up to inner_size scalars from the flat list.
+				// Build a sub-init-list consuming up to inner_size scalars from the flat list.
 				InitializerListNode sub_init;
 				for (size_t j = 0; j < inner_size && scalar_cursor < init_list.size(); ++j, ++scalar_cursor) {
 					sub_init.add_initializer(init_list.initializers()[scalar_cursor]);
@@ -4780,13 +4780,13 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 			if (i < init_list.size()) {
 				const ASTNode& initializer = init_list.initializers()[i];
 				if (initializer.is<InitializerListNode>()) {
-		// Nested brace-init list for inner array ({…} form).
+					// Nested brace-init list for inner array ({…} form).
 					elem = materialize_array_value_with_spec(
 						inner_type_spec,
 						initializer.as<InitializerListNode>(),
 						context, bindings);
 				} else {
-		// Single scalar in an otherwise mixed list: seed first element of inner array.
+					// Single scalar in an otherwise mixed list: seed first element of inner array.
 					EvalResult scalar_result = bindings
 												   ? evaluate_expression_with_bindings_const(initializer, *bindings, context)
 												   : evaluate(initializer, context);
@@ -4804,7 +4804,7 @@ EvalResult Evaluator::materialize_array_value_with_spec(
 					}
 				}
 			} else {
-	// Missing initializer: zero-initialise the entire inner array.
+				// Missing initializer: zero-initialise the entire inner array.
 				elem = make_zero_array_for_dims(inner_dims, type_spec.type());
 			}
 			if (!elem.success()) {
@@ -4854,16 +4854,16 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 	std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	const std::unordered_map<std::string_view, EvalResult>* evaluation_bindings) {
- // Bind members covered by the initializer list.
+	// Bind members covered by the initializer list.
 	for (size_t mi = 0; mi < struct_info->members.size() && mi < init_list.size(); ++mi) {
 		std::string_view mname;
 		const StructMember* member_info = nullptr;
 		if (init_list.is_designated(mi)) {
-	// Designated initializer: use the member name from the designator
+			// Designated initializer: use the member name from the designator
 			mname = StringTable::getStringView(init_list.member_name(mi));
 			member_info = struct_info->findMember(mname);
 		} else {
-	// Positional initializer: use the struct member at this index
+			// Positional initializer: use the struct member at this index
 			mname = StringTable::getStringView(struct_info->members[mi].getName());
 			member_info = &struct_info->members[mi];
 		}
@@ -4878,7 +4878,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 				(is_struct_type(member_info->type_index.category())) &&
 				member_type_info != nullptr;
 			if (member_info->is_array && initializer.is<InitializerListNode>()) {
-	// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
+				// Nested InitializerListNode for array member (e.g., `return {{1,2,3}}`)
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				val = Evaluator::materialize_array_value(
 					member_info->type_index,
@@ -4886,8 +4886,8 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 					context,
 					evaluation_bindings);
 			} else if (is_struct_brace_init) {
-	// Nested InitializerListNode for a struct member — use aggregate materializer
-	// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
+				// Nested InitializerListNode for a struct member — use aggregate materializer
+				// so that nested struct init (e.g. Outer{{40}}) works with or without bindings.
 				const InitializerListNode& member_init_list = initializer.as<InitializerListNode>();
 				if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo()) {
 					val = Evaluator::materialize_aggregate_object_value(
@@ -4920,7 +4920,7 @@ EvalResult Evaluator::bind_members_from_initializer_list(
 			return val;
 		bindings[mname] = val;
 	}
- // Apply default member initializers for remaining members.
+	// Apply default member initializers for remaining members.
 	for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
 		const auto& member = struct_info->members[mi];
 		std::string_view mname = StringTable::getStringView(member.getName());
@@ -4942,8 +4942,8 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
 
- // Returns a type-correct zero EvalResult for a given element type.
- // Floating-point types get 0.0, unsigned types get 0u, signed/bool get 0.
+	// Returns a type-correct zero EvalResult for a given element type.
+	// Floating-point types get 0.0, unsigned types get 0u, signed/bool get 0.
 	auto make_zero_element = [](TypeCategory element_type) -> EvalResult {
 		if (isFloatingPointType(element_type)) {
 			return EvalResult::from_double(0.0);
@@ -4955,8 +4955,8 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 	};
 
 	for (const auto& mem_init : ctor_decl.member_initializers()) {
-	// Handle multi-arg brace-init (e.g., arr{a, b, c}) stored as an InitializerListNode.
-	// This is used for array members and aggregate struct members.
+		// Handle multi-arg brace-init (e.g., arr{a, b, c}) stored as an InitializerListNode.
+		// This is used for array members and aggregate struct members.
 		if (mem_init.initializer_expr.is<InitializerListNode>()) {
 			const InitializerListNode& init_list = mem_init.initializer_expr.as<InitializerListNode>();
 			const StructMember* member_info = struct_info ? struct_info->findMember(mem_init.member_name) : nullptr;
@@ -4968,14 +4968,14 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 			if (member_info->is_array) {
 				member_result = materialize_array_value(
 					member_info->type_index, init_list, context, &ctor_param_bindings);
-	// C++ aggregate init: zero-fill remaining elements up to the declared array size
-	// using a type-correct zero for each native type.
+				// C++ aggregate init: zero-fill remaining elements up to the declared array size
+				// using a type-correct zero for each native type.
 				if (member_result.success() && !member_info->array_dimensions.empty()) {
 					size_t declared_size = member_info->array_dimensions[0];
 					while (member_result.array_elements.size() < declared_size) {
 						member_result.array_elements.push_back(make_zero_element(member_info->memberType()));
 					}
-		// Only extend array_values (legacy int64_t fallback) for integer types.
+					// Only extend array_values (legacy int64_t fallback) for integer types.
 					if (!member_result.array_values.empty() && !isFloatingPointType(member_info->memberType())) {
 						while (member_result.array_values.size() < declared_size) {
 							member_result.array_values.push_back(0);
@@ -4991,7 +4991,7 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 					member_result = EvalResult::error("Member struct type not found for brace-init");
 				}
 			} else if (init_list.size() == 0) {
-	// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
+				// Empty brace-init on scalar member (e.g., int x{}): value-initialize to zero.
 				member_result = make_zero_element(member_info->memberType());
 			} else {
 				return EvalResult::error("Brace-init list used on non-array, non-struct member '" +
@@ -5007,9 +5007,9 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 		if (!member_result.success()) {
 			return member_result;
 		}
-	// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
-	// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
-	// C++ requires: arr[0] = val, arr[1..n-1] = zero-initialized for the element type.
+		// Handle single-element brace-init for array members (e.g., arr{val} for int arr[3]).
+		// The parser stores arr{val} as a scalar (init_args[0]) because there is only one arg.
+		// C++ requires: arr[0] = val, arr[1..n-1] = zero-initialized for the element type.
 		if (struct_info && !member_result.is_array) {
 			if (const StructMember* member_info = struct_info->findMember(mem_init.member_name)) {
 				if (member_info->is_array) {
@@ -5021,9 +5021,9 @@ EvalResult Evaluator::bind_members_from_constructor_initializers(
 					for (size_t i = 1; i < array_size; ++i) {
 						array_r.array_elements.push_back(make_zero_element(member_info->memberType()));
 					}
-		// Do not populate array_values for floating-point elements since array_values
-		// is int64_t and cannot represent doubles without truncation. array_elements
-		// is the authoritative source and is always checked first during subscript.
+					// Do not populate array_values for floating-point elements since array_values
+					// is int64_t and cannot represent doubles without truncation. array_elements
+					// is the authoritative source and is always checked first during subscript.
 					if (!isFloatingPointType(member_info->memberType())) {
 						for (size_t i = 0; i < array_size; ++i) {
 							array_r.array_values.push_back(
@@ -5184,7 +5184,7 @@ EvalResult Evaluator::extract_object_members(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context) {
 
- // Get the object variable name
+	// Get the object variable name
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
 
@@ -5217,7 +5217,7 @@ EvalResult Evaluator::extract_object_members(
 		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
 	}
 
- // Handle brace-initialized objects (aggregate init): extract member values by position.
+	// Handle brace-initialized objects (aggregate init): extract member values by position.
 	if ((*initializer)->is<InitializerListNode>()) {
 		const TypeInfo* declared_type_info = tryGetTypeInfo(declared_type_index);
 		if (!declared_type_info) {
@@ -5237,7 +5237,7 @@ EvalResult Evaluator::extract_object_members(
 
 	const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 
- // Get the struct type info
+	// Get the struct type info
 	const ASTNode& type_node = ctor_call.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Constructor call without valid type specifier");
@@ -5269,14 +5269,14 @@ EvalResult Evaluator::extract_object_members(
 
 	const auto& ctor_args = ctor_call.arguments();
 
- // Find the matching constructor
+	// Find the matching constructor
 	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
 
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
 	}
 
- // Build parameter bindings for the constructor
+	// Build parameter bindings for the constructor
 	std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 	const auto& params = matching_ctor->parameter_nodes();
 	auto bind_result = bind_evaluated_arguments(
@@ -5302,12 +5302,12 @@ EvalResult Evaluator::extract_object_members(
 		return member_bind_result;
 	}
 
-	return EvalResult::from_bool(true); // Success
+	return EvalResult::from_bool(true);	// Success
 }
 
 // Evaluate array subscript (e.g., arr[0] or obj.data[1] or ptr[i])
 EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context) {
- // First, evaluate the index expression to get the constant index
+	// First, evaluate the index expression to get the constant index
 	auto index_result = evaluate(subscript.index_expr(), context);
 	if (!index_result.success()) {
 		return index_result;
@@ -5318,13 +5318,13 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		return EvalResult::error("Negative array index in constant expression");
 	}
 
- // Get the array expression - this could be:
- // 1. A member access (e.g., obj.data)
- // 2. An identifier (e.g., arr or ptr)
- // 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
+	// Get the array expression - this could be:
+	// 1. A member access (e.g., obj.data)
+	// 2. An identifier (e.g., arr or ptr)
+	// 3. A pointer expression (e.g., (ptr + 1)[i] → *(ptr + 1 + i))
 	const ASTNode& array_expr = subscript.array_expr();
 
- // Check if it's a member access (e.g., obj.data[0])
+	// Check if it's a member access (e.g., obj.data[0])
 	if (array_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr = array_expr.as<ExpressionNode>();
 		if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
@@ -5334,7 +5334,7 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			if (identifier_is_array_var(*identifier_ptr, context)) {
 				return evaluate_variable_array_subscript(*identifier_ptr, static_cast<size_t>(index), context);
 			}
-	// Identifier is a pointer variable or local binding — fall through to pointer path.
+			// Identifier is a pointer variable or local binding — fall through to pointer path.
 		}
 	}
 	if (array_expr.is<IdentifierNode>()) {
@@ -5342,10 +5342,10 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 		if (identifier_is_array_var(id, context)) {
 			return evaluate_variable_array_subscript(id, static_cast<size_t>(index), context);
 		}
-	// Identifier is a pointer variable or local binding — fall through to pointer path.
+		// Identifier is a pointer variable or local binding — fall through to pointer path.
 	}
 
- // Try evaluating the array expression — if it yields a pointer, treat ptr[i] as *(ptr + i).
+	// Try evaluating the array expression — if it yields a pointer, treat ptr[i] as *(ptr + i).
 	auto arr_result = evaluate(array_expr, context);
 	if (arr_result.success() && arr_result.pointer_to_var.isValid()) {
 		int64_t effective_offset = arr_result.pointer_offset + index;
@@ -5353,8 +5353,8 @@ EvalResult Evaluator::evaluate_array_subscript(const ArraySubscriptNode& subscri
 			StringTable::getStringView(arr_result.pointer_to_var),
 			context, effective_offset);
 	}
- // Handle inline array results (e.g., string literal evaluated directly, or
- // constexpr const char* whose initializer evaluates to a string-char array).
+	// Handle inline array results (e.g., string literal evaluated directly, or
+	// constexpr const char* whose initializer evaluates to a string-char array).
 	if (arr_result.success() && arr_result.is_array && !arr_result.array_elements.empty()) {
 		if (static_cast<size_t>(index) >= arr_result.array_elements.size()) {
 			return EvalResult::error("Array index out of bounds in constant expression");
@@ -5472,7 +5472,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (index >= elements.size()) {
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
 		}
-	// Handle nested array row (multi-dimensional array element is an InitializerListNode).
+		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
 			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context, nullptr);
@@ -5529,7 +5529,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		return EvalResult::error("Constexpr array has no initializer");
 	}
 
- // The initializer should be an InitializerListNode for arrays
+	// The initializer should be an InitializerListNode for arrays
 	if (initializer->is<InitializerListNode>()) {
 		const InitializerListNode& init_list = initializer->as<InitializerListNode>();
 		const auto& elements = init_list.initializers();
@@ -5538,7 +5538,7 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			return EvalResult::error("Array index " + std::to_string(index) + " out of bounds (size " + std::to_string(elements.size()) + ")");
 		}
 
-	// Handle nested array row (multi-dimensional array element is an InitializerListNode).
+		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
@@ -5566,14 +5566,14 @@ bool Evaluator::isFundamentalType(TypeCategory type) {
 
 // Evaluate type trait expressions (e.g., __is_void(int), __is_constant_evaluated())
 EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
- // Handle __is_constant_evaluated() specially - it returns true during constexpr evaluation
+	// Handle __is_constant_evaluated() specially - it returns true during constexpr evaluation
 	if (trait_expr.kind() == TypeTraitKind::IsConstantEvaluated) {
-	// When evaluated in constexpr context, this always returns true
+		// When evaluated in constexpr context, this always returns true
 		return EvalResult::from_bool(true);
 	}
 
- // For other type traits, we need to evaluate them based on the type
- // Most type traits can be evaluated at compile time
+	// For other type traits, we need to evaluate them based on the type
+	// Most type traits can be evaluated at compile time
 	if (!trait_expr.has_type()) {
 		return EvalResult::error("Type trait requires a type argument");
 	}
@@ -5591,7 +5591,7 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 
 	bool result = false;
 
- // Evaluate the type trait based on its kind
+	// Evaluate the type trait based on its kind
 	switch (trait_expr.kind()) {
 	case TypeTraitKind::IsVoid:
 		result = (type_cat == TypeCategory::Void && !is_reference && pointer_depth == 0);
@@ -5685,47 +5685,47 @@ EvalResult Evaluator::evaluate_type_trait(const TypeTraitExprNode& trait_expr) {
 		break;
 
 	case TypeTraitKind::IsAggregate:
-	// Arrays are aggregates
+			// Arrays are aggregates
 		result = type_spec.is_array() & !is_reference & (pointer_depth == 0);
-	// For struct types, we need runtime type info, so fall through to default
+			// For struct types, we need runtime type info, so fall through to default
 		break;
 
 	case TypeTraitKind::IsCompleteOrUnbounded:
-	// __is_complete_or_unbounded evaluates to true if either:
-	// 1. T is a complete type, or
-	// 2. T is an unbounded array type (e.g. int[])
-	// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
+			// __is_complete_or_unbounded evaluates to true if either:
+			// 1. T is a complete type, or
+			// 2. T is an unbounded array type (e.g. int[])
+			// Returns false for: void, incomplete class types, bounded arrays with incomplete elements
 
-	// Check for void - always incomplete
+			// Check for void - always incomplete
 		if (type_cat == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 			return EvalResult::from_bool(false);
 		}
 
-	// Check for unbounded array - always returns true
+			// Check for unbounded array - always returns true
 		if (type_spec.is_array() && type_spec.array_size() == 0) {
 			return EvalResult::from_bool(true);
 		}
 
-	// Check for incomplete class/struct types
-	// A type is incomplete if it's a struct/class with no StructTypeInfo
+			// Check for incomplete class/struct types
+			// A type is incomplete if it's a struct/class with no StructTypeInfo
 		if (is_struct_type(type_cat) &&
 			pointer_depth == 0 && !is_reference) {
 			TypeIndex type_idx = type_spec.type_index();
 			if (type_idx.is_valid()) {
 				const TypeInfo& type_info = getTypeInfo(type_idx);
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
-		// If no struct_info, the type is incomplete
+					// If no struct_info, the type is incomplete
 				if (!struct_info) {
 					return EvalResult::from_bool(false);
 				}
 			}
 		}
 
-	// All other types are considered complete
+			// All other types are considered complete
 		return EvalResult::from_bool(true);
 
-	// Add more type traits as needed
-	// For now, other type traits return false during constexpr evaluation
+		// Add more type traits as needed
+		// For now, other type traits return false during constexpr evaluation
 	default:
 		result = false;
 		break;

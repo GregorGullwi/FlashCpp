@@ -2,7 +2,7 @@
 
 #include "AstNodeTypes.h"
 #include "TemplateRegistry.h"  // For gTemplateRegistry
-#include "TypeTraitEvaluator.h" // For evaluateTypeTrait
+#include "TypeTraitEvaluator.h"	// For evaluateTypeTrait
 #include "TemplateInstantiationHelper.h"	 // For shared template instantiation utilities
 #include "IROperandHelpers.h"  // For isCompoundAssignmentOp / kCompoundOpTable
 #include "StringBuilder.h"  // For StringBuilder (heap key construction)
@@ -12,7 +12,7 @@
 #include <string>
 #include <variant>
 #include <climits>  // For LLONG_MAX, LLONG_MIN
-#include <charconv> // For std::from_chars
+#include <charconv>	// For std::from_chars
 
 // Forward declarations
 class SymbolTable;
@@ -54,25 +54,25 @@ namespace ConstExpr {
 
 // Error type classification for constexpr evaluation failures
 enum class EvalErrorType {
-	None,	  // No error (success)
+	None,						// No error (success)
 	TemplateDependentExpression, // Error due to template-dependent expression
 	NotConstantExpression,	   // Expression is not a constant expression
-	Other	  // Other types of errors
+	Other						// Other types of errors
 };
 
 // Result of constant expression evaluation
 struct EvalResult {
 	std::variant<
-		bool,	  // Boolean constant
-		long long,	   // Signed integer constant
-		unsigned long long,	// Unsigned integer constant
-		double	   // Floating-point constant
+		bool,					// Boolean constant
+		long long,			   // Signed integer constant
+		unsigned long long,		// Unsigned integer constant
+		double				   // Floating-point constant
 		>
 		value;
 	std::string error_message;
 	EvalErrorType error_type = EvalErrorType::None;
 
- // Array support for local arrays in constexpr functions
+	// Array support for local arrays in constexpr functions
 	bool is_array = false;
 	std::vector<EvalResult> array_elements;
 	std::vector<int64_t> array_values;
@@ -82,27 +82,27 @@ struct EvalResult {
 	std::optional<TypeSpecifierNode> exact_type;
 	TypeIndex object_type_index{};
 	std::unordered_map<std::string_view, EvalResult> object_member_bindings;
- // Constexpr pointer support: when valid, this result represents a pointer
- // to a named constexpr variable (produced by the address-of operator &identifier).
- // Uses StringHandle (lightweight 32-bit integer) instead of std::string to avoid
- // heap allocation overhead on every EvalResult copy.
+	// Constexpr pointer support: when valid, this result represents a pointer
+	// to a named constexpr variable (produced by the address-of operator &identifier).
+	// Uses StringHandle (lightweight 32-bit integer) instead of std::string to avoid
+	// heap allocation overhead on every EvalResult copy.
 	StringHandle pointer_to_var;
- // Element offset from the base variable for pointer arithmetic.
- // When pointer_to_var is valid and pointer_offset != 0, this pointer refers to
- // element [pointer_offset] of the array variable named by pointer_to_var
- // (e.g. &arr[2] yields pointer_to_var="arr", pointer_offset=2).
+	// Element offset from the base variable for pointer arithmetic.
+	// When pointer_to_var is valid and pointer_offset != 0, this pointer refers to
+	// element [pointer_offset] of the array variable named by pointer_to_var
+	// (e.g. &arr[2] yields pointer_to_var="arr", pointer_offset=2).
 	int64_t pointer_offset = 0;
- // When is_array is true and this handle is valid, it records the binding-map key
- // that this array was loaded from. Enables array-to-pointer decay for the pattern
- // `return data + N;` inside a constexpr member function where `data` is a member array.
+	// When is_array is true and this handle is valid, it records the binding-map key
+	// that this array was loaded from. Enables array-to-pointer decay for the pattern
+	// `return data + N;` inside a constexpr member function where `data` is a member array.
 	StringHandle array_origin_var;
 
- // Check if evaluation was successful
+	// Check if evaluation was successful
 	bool success() const {
 		return error_type == EvalErrorType::None;
 	}
 
- // Convenience constructors
+	// Convenience constructors
 	static EvalResult from_bool(bool val) {
 		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
@@ -131,14 +131,14 @@ struct EvalResult {
 		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
- // Create a pointer-to-variable result (for address-of operator on constexpr variables).
- // offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
+	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
+	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
 		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}};
 		return r;
 	}
 
- // Overload that accepts an already-interned StringHandle directly (avoids double interning).
+	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
 	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
 		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}};
 		return r;
@@ -149,18 +149,18 @@ struct EvalResult {
 		return *this;
 	}
 
- // Convenience helpers for common operations
+	// Convenience helpers for common operations
 	bool as_bool() const {
 		if (!success())
 			return false;
 
-	// A valid non-null constexpr pointer is truthy (matches C++ semantics for if(ptr)).
-	// pointer_to_var.isValid() is true when the StringHandle holds an interned variable
-	// name (i.e., the pointer was produced by &identifier and points to a known variable).
+		// A valid non-null constexpr pointer is truthy (matches C++ semantics for if(ptr)).
+		// pointer_to_var.isValid() is true when the StringHandle holds an interned variable
+		// name (i.e., the pointer was produced by &identifier and points to a known variable).
 		if (pointer_to_var.isValid())
 			return true;
 
-	// Any non-zero value is true
+		// Any non-zero value is true
 		if (const auto* b_val = std::get_if<bool>(&value)) {
 			return *b_val;
 		} else if (const auto* ll_val = std::get_if<long long>(&value)) {
@@ -189,18 +189,18 @@ struct EvalResult {
 		return 0;
 	}
 
- // Returns true when the stored variant holds an unsigned long long.
- // Prefer this over std::holds_alternative<unsigned long long>(value)
- // for consistency with the rest of the helpers.
+	// Returns true when the stored variant holds an unsigned long long.
+	// Prefer this over std::holds_alternative<unsigned long long>(value)
+	// for consistency with the rest of the helpers.
 	bool is_uint() const {
 		return std::get_if<unsigned long long>(&value) != nullptr;
 	}
 
- // Extracts the raw unsigned bit pattern without a signed round-trip.
- // When the value is already unsigned long long it is returned directly,
- // avoiding the sign-extension that as_int() would introduce for values
- // above LLONG_MAX.  For all other types the result is a zero-extending
- // reinterpretation (same as static_cast<unsigned long long>(as_int())).
+	// Extracts the raw unsigned bit pattern without a signed round-trip.
+	// When the value is already unsigned long long it is returned directly,
+	// avoiding the sign-extension that as_int() would introduce for values
+	// above LLONG_MAX.  For all other types the result is a zero-extending
+	// reinterpretation (same as static_cast<unsigned long long>(as_int())).
 	unsigned long long as_uint_raw() const {
 		if (const auto* ull_val = std::get_if<unsigned long long>(&value)) {
 			return *ull_val;
@@ -234,9 +234,9 @@ struct EvalResult {
 // Storage duration for variable declarations
 enum class StorageDuration {
 	Automatic,	   // Local variables (automatic storage)
-	Static,	// Static locals, static members
-	Thread,	// thread_local variables
-	Global	   // Global/namespace scope variables
+	Static,		// Static locals, static members
+	Thread,		// thread_local variables
+	Global		   // Global/namespace scope variables
 };
 
 // Tracks variables declared in a single block scope so that the block
@@ -248,49 +248,49 @@ enum class StorageDuration {
 // (e.g. `sum += i` inside a loop body) are NOT reverted — only declarations
 // trigger the cleanup logic.
 struct BlockScopeTracker {
- // Names declared in this block scope (in declaration order).
- // Most scopes declare 0–3 variables; InlineVector avoids heap allocation
- // for the common case.
+	// Names declared in this block scope (in declaration order).
+	// Most scopes declare 0–3 variables; InlineVector avoids heap allocation
+	// for the common case.
 	InlineVector<std::string_view, 4> declared_names;
- // For each name that shadowed an existing binding, the saved outer value.
+	// For each name that shadowed an existing binding, the saved outer value.
 	std::unordered_map<std::string_view, EvalResult> saved_shadows;
 
- // Called by the VariableDeclarationNode handler before writing the
- // new binding into the flat map.  Pass the current bindings so that
- // shadowing can be detected and the old value saved.
+	// Called by the VariableDeclarationNode handler before writing the
+	// new binding into the flat map.  Pass the current bindings so that
+	// shadowing can be detected and the old value saved.
 	void on_declare(std::string_view name,
 					const std::unordered_map<std::string_view, EvalResult>& bindings) {
-	// Only track the first declaration of this name in this scope.
-	// Subsequent re-declarations (e.g. loop body without braces across
-	// iterations) must not overwrite the original shadow decision:
-	// if the name was brand-new on the first call, it should still be
-	// erased (not restored) at cleanup.
+		// Only track the first declaration of this name in this scope.
+		// Subsequent re-declarations (e.g. loop body without braces across
+		// iterations) must not overwrite the original shadow decision:
+		// if the name was brand-new on the first call, it should still be
+		// erased (not restored) at cleanup.
 		if (saved_shadows.find(name) != saved_shadows.end()) {
-			return; // Already tracked with a saved shadow — first decision wins.
+			return;	// Already tracked with a saved shadow — first decision wins.
 		}
 		if (std::find(declared_names.begin(), declared_names.end(), name) != declared_names.end()) {
-			return; // Already declared in this scope as a new variable.
+			return;	// Already declared in this scope as a new variable.
 		}
 		declared_names.push_back(name);
 		auto it = bindings.find(name);
 		if (it != bindings.end()) {
-	// This declaration shadows an outer-scope binding — save the
-	// original value so the block exit can restore it.
+			// This declaration shadows an outer-scope binding — save the
+			// original value so the block exit can restore it.
 			saved_shadows.emplace(name, it->second);
 		}
 	}
 
- // Called at block exit: remove new declarations and restore shadows.
- // The method is const with respect to the tracker's own state; it only
- // modifies the external bindings map passed by reference.
+	// Called at block exit: remove new declarations and restore shadows.
+	// The method is const with respect to the tracker's own state; it only
+	// modifies the external bindings map passed by reference.
 	void cleanup(std::unordered_map<std::string_view, EvalResult>& bindings) const {
 		for (const auto& name : declared_names) {
 			auto shadow_it = saved_shadows.find(name);
 			if (shadow_it != saved_shadows.end()) {
-	// Restore the pre-block (outer) binding value.
+				// Restore the pre-block (outer) binding value.
 				bindings[name] = shadow_it->second;
 			} else {
-	// Brand-new variable — remove it so it does not leak.
+				// Brand-new variable — remove it so it does not leak.
 				bindings.erase(name);
 			}
 		}
@@ -318,85 +318,85 @@ struct BlockScopeGuard {
 		context_current_scope = outer_scope;
 	}
 
- // Non-copyable, non-movable.
+	// Non-copyable, non-movable.
 	BlockScopeGuard(const BlockScopeGuard&) = delete;
 	BlockScopeGuard& operator=(const BlockScopeGuard&) = delete;
 };
 
 // Context for evaluation - provides access to compile-time information
 struct EvaluationContext {
- // Symbol table for looking up constexpr variables/functions (required)
+	// Symbol table for looking up constexpr variables/functions (required)
 	const SymbolTable* symbols;
 
- // Global symbol table for looking up global variables (optional)
+	// Global symbol table for looking up global variables (optional)
 	const SymbolTable* global_symbols = nullptr;
 
- // Type information for sizeof, alignof, etc. (future use)
+	// Type information for sizeof, alignof, etc. (future use)
 	const TypeInfo* type_info = nullptr;
 
- // Storage duration of the variable being evaluated (for constinit validation)
+	// Storage duration of the variable being evaluated (for constinit validation)
 	StorageDuration storage_duration = StorageDuration::Automatic;
 
- // Whether we're evaluating for constinit (requires static/thread storage duration)
+	// Whether we're evaluating for constinit (requires static/thread storage duration)
 	bool is_constinit = false;
 
- // Complexity limits to prevent infinite loops during evaluation
+	// Complexity limits to prevent infinite loops during evaluation
 	size_t step_count = 0;
 	size_t max_steps = 1000000;
 
- // Maximum recursion depth for constexpr functions
+	// Maximum recursion depth for constexpr functions
 	size_t max_recursion_depth = 512;
 
- // Track current recursion depth
+	// Track current recursion depth
 	size_t current_depth = 0;
 
- // Struct being parsed (for looking up static members in static_assert within struct)
+	// Struct being parsed (for looking up static members in static_assert within struct)
 	const StructDeclarationNode* struct_node = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
- // Cached type index for the current struct (parallel to struct_info; avoids O(n) search in gTypeInfo).
+	// Cached type index for the current struct (parallel to struct_info; avoids O(n) search in gTypeInfo).
 	TypeIndex struct_type_index{};
 	std::unordered_map<std::string_view, EvalResult>* local_bindings = nullptr;
 
- // Pointer to the innermost active block scope tracker (null at top level).
- // Each BlockScopeGuard saves/restores this so that nested blocks each get
- // their own tracker.
+	// Pointer to the innermost active block scope tracker (null at top level).
+	// Each BlockScopeGuard saves/restores this so that nested blocks each get
+	// their own tracker.
 	BlockScopeTracker* current_scope = nullptr;
 
- // Returns the map that variable declarations should be written to (and
- // that BlockScopeGuard / on_declare should target).  When local_bindings
- // is set (e.g. constructor body evaluation), declarations go there;
- // otherwise they go to the regular bindings map passed by the caller.
+	// Returns the map that variable declarations should be written to (and
+	// that BlockScopeGuard / on_declare should target).  When local_bindings
+	// is set (e.g. constructor body evaluation), declarations go there;
+	// otherwise they go to the regular bindings map passed by the caller.
 	std::unordered_map<std::string_view, EvalResult>& resolve_declaration_bindings(
 		std::unordered_map<std::string_view, EvalResult>& bindings) {
 		return local_bindings ? *local_bindings : bindings;
 	}
 
- // Template parameter names and arguments for evaluating template-dependent expressions
- // (e.g., sizeof(T) inside a template member function)
+	// Template parameter names and arguments for evaluating template-dependent expressions
+	// (e.g., sizeof(T) inside a template member function)
 	std::vector<std::string_view> template_param_names;
 	std::vector<TemplateTypeArg> template_args;
 
- // Parser pointer for template instantiation (optional)
+	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
 
- // Return type of the constexpr function currently being evaluated.
- // Set by evaluate_function_call_with_bindings so that aggregate initializer
- // return expressions (e.g., return {0, 0} in a struct-returning function)
- // can be mapped to the correct struct member names.
+	// Return type of the constexpr function currently being evaluated.
+	// Set by evaluate_function_call_with_bindings so that aggregate initializer
+	// return expressions (e.g., return {0, 0} in a struct-returning function)
+	// can be mapped to the correct struct member names.
 	const TypeInfo* return_type_info = nullptr;
 
- // When true, short-circuit evaluation for && and || is disabled.
- // Set by try_evaluate_constant_expression to prevent false positive results
- // during template-argument disambiguation (where a truthy LHS of `||` would
- // cause the speculative parse to succeed, incorrectly treating `<` as a
- // template-argument-list opener).
+	// When true, short-circuit evaluation for && and || is disabled.
+	// Set by try_evaluate_constant_expression to prevent false positive results
+	// during template-argument disambiguation (where a truthy LHS of `||` would
+	// cause the speculative parse to succeed, incorrectly treating `<` as a
+	// template-argument-list opener).
 	bool is_speculative = false;
 
- // Constexpr heap: tracks objects dynamically allocated with `new` inside a
- // constant expression (C++20 [expr.const]/p5).  Each entry maps a synthetic
- // key (e.g. "@new_0") to the allocated value and a freed flag.
- // `delete ptr` marks the corresponding entry freed; at the end of a
- // well-formed constant expression all allocations must have been freed.
+	// Constexpr heap: tracks objects dynamically allocated with `new` inside a
+	// constant expression (C++20 [expr.const]/p5).  Each entry maps a synthetic
+	// key (e.g. "@new_0") to the allocated value and a freed flag.
+	// `delete ptr` marks the corresponding entry freed; at the end of a
+	// well-formed constant expression all allocations must have been freed.
 	struct ConstexprHeapEntry {
 		EvalResult value;
 		bool freed = false;
@@ -405,15 +405,15 @@ struct EvaluationContext {
 	std::unordered_map<StringHandle, ConstexprHeapEntry, StringHash, StringEqual> constexpr_heap;
 	size_t next_heap_id = 0;
 
- // Allocate a fresh synthetic heap key, intern it, and return its StringHandle.
+	// Allocate a fresh synthetic heap key, intern it, and return its StringHandle.
 	StringHandle alloc_heap_slot() {
 		return StringTable::getOrInternStringHandle(
 			StringBuilder().append("@new_"sv).append(static_cast<uint64_t>(next_heap_id++)).commit());
 	}
 
- // Returns true iff any allocation that was made with `new` during this
- // constant expression evaluation has not yet been freed with `delete`.
- // Per C++20 [expr.const]/p5 this makes the expression ill-formed.
+	// Returns true iff any allocation that was made with `new` during this
+	// constant expression evaluation has not yet been freed with `delete`.
+	// Per C++20 [expr.const]/p5 this makes the expression ill-formed.
 	bool has_unfreed_heap_allocations() const {
 		for (const auto& [key, entry] : constexpr_heap) {
 			if (!entry.freed)
@@ -422,7 +422,7 @@ struct EvaluationContext {
 		return false;
 	}
 
- // Constructor requires symbol table to prevent missing it
+	// Constructor requires symbol table to prevent missing it
 	explicit EvaluationContext(const SymbolTable& symbol_table)
 		: symbols(&symbol_table) {}
 };
@@ -432,14 +432,14 @@ class Evaluator {
 public:
 	static EvalResult evaluate(const ASTNode& expr_node, EvaluationContext& context);
 
- // Operator evaluation helpers (also used by TemplateInstantiationHelper)
+	// Operator evaluation helpers (also used by TemplateInstantiationHelper)
 	static EvalResult apply_binary_op(
 		const EvalResult& lhs, const EvalResult& rhs, std::string_view op,
 		EvaluationContext* context = nullptr,
 		const std::unordered_map<std::string_view, EvalResult>* bindings = nullptr);
 	static EvalResult apply_unary_op(const EvalResult& operand, std::string_view op);
 
- // Qualified/member access evaluation
+	// Qualified/member access evaluation
 	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
 	static EvalResult evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context);
@@ -472,8 +472,8 @@ public:
 		const ASTNode& object_expr,
 		std::unordered_map<std::string_view, EvalResult>& member_bindings,
 		EvaluationContext& context);
- // Shared helper: bind struct members from an InitializerListNode (aggregate init)
- // and apply default member initializers for any members not covered by the list.
+	// Shared helper: bind struct members from an InitializerListNode (aggregate init)
+	// and apply default member initializers for any members not covered by the list.
 	static EvalResult materialize_aggregate_object_value(
 		const StructTypeInfo* struct_info,
 		TypeIndex type_index,
@@ -489,10 +489,10 @@ public:
 		const InitializerListNode& init_list,
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* bindings);
-	// Variant that accepts the full TypeSpecifierNode so that multi-dimensional arrays
-	// (e.g., int[2][3]) can be materialised with proper inner-dimension sizes even when
-	// the initializer list is shorter than the outer dimension (zero-padding) or contains
-	// plain scalar initialisers that should initialise a nested row.
+		// Variant that accepts the full TypeSpecifierNode so that multi-dimensional arrays
+		// (e.g., int[2][3]) can be materialised with proper inner-dimension sizes even when
+		// the initializer list is shorter than the outer dimension (zero-padding) or contains
+		// plain scalar initialisers that should initialise a nested row.
 	static EvalResult materialize_array_value_with_spec(
 		const TypeSpecifierNode& type_spec,
 		const InitializerListNode& init_list,
@@ -524,11 +524,11 @@ public:
 		std::unordered_map<std::string_view, EvalResult>& ctor_param_bindings,
 		std::string_view member_name,
 		EvaluationContext& context);
-	// Attempt to materialize a struct object by finding and invoking a matching
-	// user-defined constructor with the given arguments.  Returns std::nullopt when
-	// no matching constructor exists (caller may fall back to aggregate init).
-	// Returns an EvalResult (success or error) when a constructor candidate was found
-	// and materialization was attempted.
+		// Attempt to materialize a struct object by finding and invoking a matching
+		// user-defined constructor with the given arguments.  Returns std::nullopt when
+		// no matching constructor exists (caller may fall back to aggregate init).
+		// Returns an EvalResult (success or error) when a constructor candidate was found
+		// and materialization was attempted.
 	static std::optional<EvalResult> try_materialize_struct_from_ctor_args(
 		const StructTypeInfo* struct_info,
 		TypeIndex type_index,
@@ -546,7 +546,7 @@ public:
 	static bool isArithmeticType(TypeCategory type);
 	static bool isFundamentalType(TypeCategory type);
 
- // Helper struct to hold a ConstructorCallNode reference and its type info
+	// Helper struct to hold a ConstructorCallNode reference and its type info
 	struct StructObjectInfo {
 		const ConstructorCallNode* ctor_call;
 		const StructTypeInfo* struct_info;
@@ -599,27 +599,27 @@ private:
 		ConstexprEvaluable,
 	};
 
- // Internal evaluation methods for different node types
+	// Internal evaluation methods for different node types
 	static EvalResult evaluate_numeric_literal(const NumericLiteralNode& literal);
 	static EvalResult evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
 											   std::string_view op, EvaluationContext& context);
 	static EvalResult evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
 											  EvaluationContext& context);
- // Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
- // When offset != 0, the variable must be an array and element [offset] is returned.
+	// Dereference a constexpr pointer: look up the named variable in the symbol table and evaluate it.
+	// When offset != 0, the variable must be an array and element [offset] is returned.
 	static EvalResult dereference_constexpr_pointer(std::string_view var_name, EvaluationContext& context, int64_t offset = 0);
- // Dereference a pointer result against local bindings first, then the symbol table.
- // Handles scalars (offset == 0) and arrays (any offset).
+	// Dereference a pointer result against local bindings first, then the symbol table.
+	// Handles scalars (offset == 0) and arrays (any offset).
 	static EvalResult deref_pointer_with_bindings(
 		const EvalResult& ptr, const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
- // Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
- // pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
- // evaluates it.  If check_static is true, also handles access to static struct members.
+	// Shared helper for arrow member access (ptr->member) where pointed_name is the name of the
+	// pointed-to constexpr variable.  Resolves the variable, extracts the requested member, and
+	// evaluates it.  If check_static is true, also handles access to static struct members.
 	static EvalResult evaluate_arrow_member_from_pointer_var(
 		std::string_view pointed_name, std::string_view member_name,
 		EvaluationContext& context, bool check_static = false);
- // get_typespec_size_bytes: unified via getTypeSpecSizeBits (AstNodeTypes_DeclNodes.h)
+	// get_typespec_size_bytes: unified via getTypeSpecSizeBits (AstNodeTypes_DeclNodes.h)
 	static size_t get_typespec_size_bytes(const TypeSpecifierNode& type_spec) {
 		return static_cast<size_t>(getTypeSpecSizeBits(type_spec)) / 8;
 	}
@@ -646,8 +646,8 @@ private:
 		const LambdaExpressionNode& lambda,
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
- // Extract ConstructorCallNode from an initializer, handling direct storage and
- // ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
+	// Extract ConstructorCallNode from an initializer, handling direct storage and
+	// ExpressionNode-wrapping (e.g., Add() parsed as ExpressionNode(ConstructorCallNode(...))).
 	static const ConstructorCallNode* extract_constructor_call(const std::optional<ASTNode>& initializer);
 	static EvalResult evaluate_lambda_captures(
 		const std::vector<LambdaCaptureNode>& captures,
@@ -716,7 +716,7 @@ private:
 		std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context);
 
- // Expression evaluation with variable bindings (for constexpr function bodies)
+	// Expression evaluation with variable bindings (for constexpr function bodies)
 	static EvalResult evaluate_expression_with_bindings(
 		const ASTNode& expr_node,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -736,8 +736,8 @@ private:
 		const IdentifierNode* identifier,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
- // Returns true if the identifier resolves to a declared array variable (not a pointer).
- // Used by evaluate_array_subscript to route array and pointer subscripts correctly.
+	// Returns true if the identifier resolves to a declared array variable (not a pointer).
+	// Used by evaluate_array_subscript to route array and pointer subscripts correctly.
 	static bool identifier_is_array_var(const IdentifierNode& id, EvaluationContext& context);
 	static std::optional<ASTNode> lookup_function_symbol(
 		const FunctionCallNode& func_call,
@@ -776,12 +776,12 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
 		std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
- // Call a 0-argument named constexpr member function on an already-evaluated object
- // EvalResult (one with object_type_index and object_member_bindings populated).
- // For template instantiations whose member-function stubs lack a body, this helper
- // automatically falls back to the base template's StructTypeInfo to find the function
- // definition. Template parameter bindings are saved and restored around the call.
- // Returns the return value of the member function, or an error EvalResult on failure.
+	// Call a 0-argument named constexpr member function on an already-evaluated object
+	// EvalResult (one with object_type_index and object_member_bindings populated).
+	// For template instantiations whose member-function stubs lack a body, this helper
+	// automatically falls back to the base template's StructTypeInfo to find the function
+	// definition. Template parameter bindings are saved and restored around the call.
+	// Returns the return value of the member function, or an error EvalResult on failure.
 	static EvalResult call_constexpr_member_fn_on_object(
 		const EvalResult& object,
 		std::string_view func_name,
@@ -836,10 +836,10 @@ private:
 		EvaluationContext& context,
 		const std::unordered_map<std::string_view, EvalResult>* outer_bindings = nullptr);
 
- // Type comparison helpers — shared across Core and Members TUs.
- // Compares two TypeSpecifierNodes ignoring cv-qualifiers (and optionally
- // reference qualifiers), checking type(), type_index(), pointer_depth(),
- // array_dimensions(), member class, and function signatures.
+	// Type comparison helpers — shared across Core and Members TUs.
+	// Compares two TypeSpecifierNodes ignoring cv-qualifiers (and optionally
+	// reference qualifiers), checking type(), type_index(), pointer_depth(),
+	// array_dimensions(), member class, and function signatures.
 	static bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs);
 
  // Phase C: Materialize an EvalResult from pre-packed constant bytes.
@@ -849,22 +849,22 @@ private:
 		const std::vector<char>& bytes,
 		TypeIndex type_index);
 
- // Try to obtain the source expression's type from an already-evaluated
- // result (exact_type) or by asking the parser for the AST node's type.
+	// Try to obtain the source expression's type from an already-evaluated
+	// result (exact_type) or by asking the parser for the AST node's type.
 	static std::optional<TypeSpecifierNode> tryGetExpressionType(
 		const EvalResult& result,
 		const ASTNode& expr,
 		EvaluationContext& context);
 
- // Convert an already-evaluated EvalResult to a different target type
- // (Bool/Int/Uint/Float).  Returns an error for unsupported target types
- // (e.g. Struct).  Shared across Core and Members TUs.
+	// Convert an already-evaluated EvalResult to a different target type
+	// (Bool/Int/Uint/Float).  Returns an error for unsupported target types
+	// (e.g. Struct).  Shared across Core and Members TUs.
 	static EvalResult convertEvalResultToTargetType(
 		const TypeSpecifierNode& target_type,
 		const EvalResult& expr_result,
 		const char* invalidTypeErrorStr);
 
- // Safe arithmetic with overflow detection
+	// Safe arithmetic with overflow detection
 	static std::optional<long long> safe_add(long long a, long long b);
 	static std::optional<long long> safe_sub(long long a, long long b);
 	static std::optional<long long> safe_mul(long long a, long long b);
@@ -880,13 +880,13 @@ private:
 // Note: For empty packs, C++17 defines identity values for &&, ||, + and * only.
 //       For &, |, ^ with empty packs, this returns nullopt (ill-formed per C++17).
 inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, const std::vector<int64_t>& pack_values) {
- // Handle empty packs according to C++17 fold expression semantics
- // Empty packs have identity values for some operators:
- // - (... && pack) with empty pack -> true (1)
- // - (... || pack) with empty pack -> false (0)
- // - (... + pack) with empty pack -> 0
- // - (... * pack) with empty pack -> 1
- // - Other operators with empty pack are ill-formed
+	// Handle empty packs according to C++17 fold expression semantics
+	// Empty packs have identity values for some operators:
+	// - (... && pack) with empty pack -> true (1)
+	// - (... || pack) with empty pack -> false (0)
+	// - (... + pack) with empty pack -> 0
+	// - (... * pack) with empty pack -> 1
+	// - Other operators with empty pack are ill-formed
 	if (pack_values.empty()) {
 		if (op == "&&")
 			return 1;  // true
@@ -896,21 +896,21 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, cons
 			return 0;
 		if (op == "*")
 			return 1;
-	// &, |, ^ with empty pack is ill-formed
+		// &, |, ^ with empty pack is ill-formed
 		return std::nullopt;
 	}
 
 	std::optional<int64_t> result;
 
 	if (op == "&&") {
-		result = 1; // Start with true
+		result = 1;	// Start with true
 		for (int64_t v : pack_values) {
 			result = (*result != 0 && v != 0) ? 1 : 0;
 			if (*result == 0)
 				break;  // Short-circuit: stop on first false
 		}
 	} else if (op == "||") {
-		result = 0; // Start with false
+		result = 0;	// Start with false
 		for (int64_t v : pack_values) {
 			result = (*result != 0 || v != 0) ? 1 : 0;
 			if (*result != 0)
@@ -942,7 +942,7 @@ inline std::optional<int64_t> evaluate_fold_expression(std::string_view op, cons
 			*result ^= pack_values[i];
 		}
 	}
- // Unsupported operator returns nullopt (result stays unset)
+	// Unsupported operator returns nullopt (result stays unset)
 
 	return result;
 }
