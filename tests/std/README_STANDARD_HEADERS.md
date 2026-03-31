@@ -287,13 +287,10 @@ This README is primarily GCC/Clang-oriented; the following is a dedicated MSVC s
 
 | Test file | Status | Time | First concrete failure |
 |---|---:|---:|---|
-| `test_std_type_traits.cpp` | ❌ | ~352ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
-| `test_std_utility.cpp` | ❌ | ~347ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
-| `test_std_any.cpp` | ❌ | ~1047ms | `corecrt_wstring.h:144:8: error: Expected identifier token` |
-| `test_std_algorithm.cpp` | ❌ | ~1183ms | `yvals.h:366:30: error: Expected type name after 'struct', 'class', or 'union'` |
-| `test_std_limits.cpp` | ❌ | ~490ms | `corecrt_wstdio.h:309:40: error: No matching function for call to '__stdio_common_vfwprintf'` |
-| `test_std_chrono.cpp` | ❌ | ~2456ms | parser failure in MSVC/UCRT include chain |
-| `test_std_iostream.cpp` | ❌ | ~1657ms | parser failure in MSVC/UCRT include chain |
+| `test_std_compare_ret42.cpp` | ✅ | ~74ms | compiled |
+| `test_std_algorithm.cpp` | ❌ | ~2653ms | `type_traits:1824:87: error: Expected ';' after alias template declaration` |
+| `test_std_iostream.cpp` | ❌ | ~3957ms | `type_traits:1824:87: error: Expected ';' after alias template declaration` |
+| `test_std_vector.cpp` | ❌ | ~3074ms | `corecrt_wstdio.h:309:40: error: No matching function for call to '__stdio_common_vfwprintf'` |
 
 #### Newly fixed blockers (MSVC-focused)
 
@@ -307,8 +304,28 @@ This README is primarily GCC/Clang-oriented; the following is a dedicated MSVC s
 	- This prevents zero-size `auto` parameters from reaching codegen.
 	- Regression test: `tests/test_constrained_auto_u64_codegen_ret1.cpp`.
 
+3. **Leading global-scope qualified template calls inside `noexcept(...)`**
+	- The `::qualified::name<T>(...)` primary-expression path now parses explicit template arguments the same way as the ordinary qualified-identifier path.
+	- This unblocked the MSVC STL `type_traits` pattern `noexcept(_STD _Fake_copy_init<_To>(_STD declval<_From>()))` and moved `<algorithm>` / `<iostream>` past the earlier parse stop.
+	- Regression test: `tests/test_noexcept_global_qualified_template_call_ret0.cpp`.
+
+4. **Boolean NTTP literals in variable template partial-specialization patterns**
+	- Top-level variable template partial specializations now accept `true` / `false` literal arguments instead of only numeric literals.
+	- This unblocked the MSVC STL `type_traits` partial specialization `_Is_nothrow_convertible_v<_From, _To, false, _IsVoid>`.
+	- Regression test: `tests/test_variable_template_bool_partial_specialization_ret0.cpp`.
+
 #### Current top MSVC blockers after this round
 
-1. **SAL macro parse path around `_When_`/annotation expansion** (e.g., `corecrt_wstring.h:144`).
-2. **UCRT formatted I/O wrapper call resolution** (e.g., `__stdio_common_vfwprintf` call shape in `corecrt_wstdio.h`).
-3. **MSVC STL front-end parse compatibility in `yvals.h` include path** (seen from `<algorithm>`).
+1. **Alias-template-result member template access after alias resolution**
+	- `typename alias_t<...>::template nested_alias<Args...>` still fails after the outer alias resolves to a concrete type.
+	- Current concrete failure: `type_traits:1824:87: error: Expected ';' after alias template declaration`
+	- Affects at least `<algorithm>` and `<iostream>` through `_Select_invoke_traits<_Callable, _Args...>::template _Is_invocable_r<_Rx>`.
+
+2. **UCRT formatted I/O wrapper call resolution**
+	- The real UCRT declarations in `corecrt_wstdio.h` still fail overload matching for `__stdio_common_vfwprintf(_CRT_INTERNAL_LOCAL_PRINTF_OPTIONS, _Stream, _Format, _Locale, _ArgList)`.
+	- A stripped-down local repro compiles, so this looks specific to the fully annotated UCRT declaration/macro path rather than the basic call shape.
+	- Affects at least `<vector>` in the current Windows sweep, and likely other headers that drag in the same `stdio` wrapper chain.
+
+3. **Template argument mismatch noise around MSVC invoke-traits**
+	- During the same `type_traits` parse, FlashCpp still logs template argument count mismatches before hitting the hard alias-template failure.
+	- These logs are not the first stopping error anymore, but they suggest more MSVC STL template matching cleanup is still needed after the alias-template-result issue is fixed.

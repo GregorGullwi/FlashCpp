@@ -969,6 +969,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 		// - Non-global namespace -> looks in specified namespace
 		identifierType = lookup_symbol_qualified(qual_id.namespace_handle(), qual_id.name());
 
+		std::optional<std::vector<TemplateTypeArg>> template_args;
+		std::vector<ASTNode> template_arg_nodes;
+		if (current_token_.value() == "<") {
+			std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
+			std::string_view member_name = qual_id.name();
+			auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
+			auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_name);
+			auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
+			auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_name);
+			auto member_alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
+			auto full_alias_template_opt = gTemplateRegistry.lookup_alias_template(qualified_name);
+
+			bool is_known_template = member_template_opt.has_value() || full_template_opt.has_value() ||
+			                         member_var_template_opt.has_value() || full_var_template_opt.has_value() ||
+			                         member_alias_template_opt.has_value() || full_alias_template_opt.has_value();
+
+			if (is_known_template || context != ExpressionContext::TemplateTypeArg) {
+				template_args = parse_explicit_template_arguments(&template_arg_nodes);
+			}
+		}
+
 		// Check if followed by '(' for function call
 		if (current_token_.value() == "(") {
 			advance(); // consume '('
@@ -988,20 +1009,35 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-			// If not found and we're not in extern "C", try template instantiation
-			if (!identifierType && current_linkage_ != Linkage::C) {
-				// Build qualified template name (e.g., "::move" or "::std::move")
+			// If not found (or explicit template arguments were provided) and we're not in extern "C",
+			// try template instantiation. The global-scope `::ns::func<T>(...)` path must support the
+			// same explicit-template parsing as the regular qualified-identifier path.
+			if (current_linkage_ != Linkage::C) {
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, qual_id.name());
-				
-				// Apply lvalue reference for forwarding deduction on arg_types
-				std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
-				
-				// Try to instantiate the qualified template function
-				if (!arg_types.empty()) {
-					std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+
+				if (template_args.has_value() && !template_args->empty()) {
+					auto template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
+					if (!template_inst.has_value()) {
+						template_inst = try_instantiate_template_explicit(qual_id.name(), *template_args);
+					}
 					if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
 						identifierType = *template_inst;
-						FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						FLASH_LOG(Parser, Debug, "Successfully instantiated explicit qualified template: ", qualified_name);
+					}
+				}
+
+				if ((!identifierType || identifierType->is<TemplateFunctionDeclarationNode>()) &&
+				    (!template_args.has_value() || template_args->empty())) {
+					// Apply lvalue reference for forwarding deduction on arg_types
+					std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
+
+					// Try to instantiate the qualified template function
+					if (!arg_types.empty()) {
+						std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
+						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
+							identifierType = *template_inst;
+							FLASH_LOG(Parser, Debug, "Successfully instantiated qualified template: ", qualified_name);
+						}
 					}
 				}
 			}
@@ -1030,12 +1066,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 			// Create function call node with the qualified identifier
 			auto function_call_node = emplace_node<ExpressionNode>(
 				FunctionCallNode(*decl_ptr, std::move(args), qual_id.identifier_token()));
+			FunctionCallNode& function_call = std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>());
+			if (template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty()) {
+				function_call.set_template_arguments(std::move(template_arg_nodes));
+			}
+			function_call.set_qualified_name(buildQualifiedNameFromStrings(namespaces, qual_id.name()));
 			// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 			if (identifierType->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 				FLASH_LOG(Parser, Debug, "Qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
 				if (func_decl.has_mangled_name()) {
-					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+					function_call.set_mangled_name(func_decl.mangled_name());
 					FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode: {}", func_decl.mangled_name());
 				}
 			}
