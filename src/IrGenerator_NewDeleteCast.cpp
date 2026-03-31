@@ -913,8 +913,8 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		}
 	}
 
-	// For numeric conversions, we might need to generate a conversion instruction
-	// For now, just change the type metadata (works for most cases)
+		// For numeric conversions, we might need to generate a conversion instruction
+		// For now, just change the type metadata (works for most cases)
 	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 }
 
