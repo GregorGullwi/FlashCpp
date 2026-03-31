@@ -2125,6 +2125,71 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 		}
 
+		// Built-in three-way comparison for primitive types (C++20 [expr.spaceship])
+		// For integral types: returns std::strong_ordering
+		// For floating-point types: returns std::partial_ordering
+		if (op == "<=>" && lhsCat != TypeCategory::Struct && rhsCat != TypeCategory::Struct) {
+			const bool is_float = is_floating_point_type(lhsCat) || is_floating_point_type(rhsCat);
+			const char* ordering_name = is_float ? "std::partial_ordering" : "std::strong_ordering";
+			const StringHandle ordering_handle = StringTable::getOrInternStringHandle(ordering_name);
+			const TypeInfo* ordering_type = findTypeByName(ordering_handle);
+
+			if (ordering_type) {
+				const int ordering_size = static_cast<int>(ordering_type->struct_info_
+					? ordering_type->struct_info_->total_size * 8 : 8);
+
+				// Compute three-way result: (a > b) - (a < b) → -1, 0, or 1
+				TempVar gt_temp = var_counter.next();
+				TempVar lt_temp = var_counter.next();
+				TempVar result_temp = var_counter.next();
+
+				if (is_float) {
+					BinaryOp gt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = gt_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(gt_op), binaryOperatorNode.get_token()));
+
+					BinaryOp lt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = lt_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(lt_op), binaryOperatorNode.get_token()));
+				} else {
+					bool is_unsigned = is_unsigned_integer_type(lhsCat) || is_unsigned_integer_type(rhsCat);
+					IrOpcode gt_opcode = is_unsigned ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
+					IrOpcode lt_opcode = is_unsigned ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
+
+					BinaryOp gt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = gt_temp,
+					};
+					ir_.addInstruction(IrInstruction(gt_opcode, std::move(gt_op), binaryOperatorNode.get_token()));
+
+					BinaryOp lt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = lt_temp,
+					};
+					ir_.addInstruction(IrInstruction(lt_opcode, std::move(lt_op), binaryOperatorNode.get_token()));
+				}
+
+				// result = gt - lt (gives -1, 0, or 1 as signed char — the _M_value layout)
+				BinaryOp sub_op{
+					.lhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, gt_temp),
+					.rhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, lt_temp),
+					.result = result_temp,
+				};
+				ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
+
+				return makeExprResult(ordering_type->type_index_, SizeInBits{ordering_size},
+				                      IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+			}
+		}
+
 		// If we get here, operator<=> is not defined or not found
 		if (can_try_spaceship_rewrite) {
 			throw CompileError("Operator" + std::string(op) + " not defined for operand types");

@@ -2455,6 +2455,37 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
+				// Three-way comparison (<=>) returns a comparison category type
+				if (op == "<=>") {
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
+					if (lhs_id && rhs_id) {
+						const CanonicalTypeDesc& l = type_context_.get(lhs_id);
+						const CanonicalTypeDesc& r = type_context_.get(rhs_id);
+						// For struct types, the result type depends on the user-defined operator<=>.
+						// For built-in types, C++20 [expr.spaceship]:
+						//   - integral types → std::strong_ordering
+						//   - floating-point types → std::partial_ordering
+						//   - bool → std::strong_ordering
+						if (l.category() != TypeCategory::Struct && r.category() != TypeCategory::Struct) {
+							const char* ordering_name = nullptr;
+							if (is_floating_point_type(l.category()) || is_floating_point_type(r.category())) {
+								ordering_name = "std::partial_ordering";
+							} else {
+								ordering_name = "std::strong_ordering";
+							}
+							const StringHandle name_handle = StringTable::getOrInternStringHandle(ordering_name);
+							const TypeInfo* ordering_type = findTypeByName(name_handle);
+							if (ordering_type) {
+								CanonicalTypeDesc desc;
+								desc.type_index = ordering_type->type_index_;
+								return type_context_.intern(desc);
+							}
+						}
+					}
+					// Fallback: if ordering types not found, return unknown
+					return {};
+				}
 				// Comparison and logical operators always produce bool
 				if (op == "==" || op == "!=" || op == "<" || op == ">" ||
 					op == "<=" || op == ">=" || op == "&&" || op == "||") {
