@@ -1852,6 +1852,16 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			context,
 			CurrentStructStaticLookupMode::BoundOnly);
 		bool found_bound_static_member = bound_static_initializer.found;
+
+	// Phase C: if the member has pre-materialized constant bytes, use them
+		if (found_bound_static_member && bound_static_initializer.static_member &&
+			bound_static_initializer.static_member->normalized_init.has_value() &&
+			bound_static_initializer.static_member->normalized_init->isConstant()) {
+			return materializeFromConstantBytes(
+				bound_static_initializer.static_member->normalized_init->constant_bytes,
+				bound_static_initializer.static_member->type_index);
+		}
+
 		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
 			return evaluate(bound_static_initializer.initializer->value(), context);
 		}
@@ -1877,6 +1887,15 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			context,
 			CurrentStructStaticLookupMode::PreferCurrentStruct);
 		if (preferred_static_initializer.found) {
+	// Phase C: if the member has pre-materialized constant bytes, use them
+			if (preferred_static_initializer.static_member &&
+				preferred_static_initializer.static_member->normalized_init.has_value() &&
+				preferred_static_initializer.static_member->normalized_init->isConstant()) {
+				return materializeFromConstantBytes(
+					preferred_static_initializer.static_member->normalized_init->constant_bytes,
+					preferred_static_initializer.static_member->type_index);
+			}
+
 			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {
 				return evaluate(preferred_static_initializer.initializer->value(), context);
 			}
@@ -4271,5 +4290,65 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 }
 
 // Overload for mutable bindings (used in statements with side effects like assignments)
+
+// Phase C: Extract scalar values from pre-packed constant bytes.
+// For struct types, builds an EvalResult with object_member_bindings.
+// For scalar types, returns a single scalar value.
+EvalResult Evaluator::materializeFromConstantBytes(
+	const std::vector<char>& bytes,
+	TypeIndex type_index) {
+	// Scalar extraction helper
+	auto extractScalar = [&bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
+		if (offset + size > bytes.size()) {
+			return EvalResult::error("NormalizedInitializer: offset out of range");
+		}
+		unsigned long long raw = 0;
+		for (size_t i = 0; i < size && i < 8; ++i) {
+			raw |= static_cast<unsigned long long>(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
+		}
+		if (cat == TypeCategory::Float) {
+			float f;
+			uint32_t bits = static_cast<uint32_t>(raw);
+			std::memcpy(&f, &bits, sizeof(float));
+			return EvalResult::from_double(static_cast<double>(f));
+		}
+		if (cat == TypeCategory::Double || cat == TypeCategory::LongDouble) {
+			double d;
+			std::memcpy(&d, &raw, sizeof(double));
+			return EvalResult::from_double(d);
+		}
+		if (cat == TypeCategory::Bool) {
+			return EvalResult::from_bool(raw != 0);
+		}
+		if (is_signed_integer_type(cat)) {
+			int bit_count = static_cast<int>(size * 8);
+			long long signed_val = static_cast<long long>(raw);
+			if (bit_count < 64 && (raw & (1ULL << (bit_count - 1)))) {
+				signed_val |= ~((1LL << bit_count) - 1);
+			}
+			return EvalResult::from_int(signed_val);
+		}
+		return EvalResult::from_uint(raw);
+	};
+
+	// Struct: populate object_member_bindings from the byte buffer
+	if (is_struct_type(type_index.category())) {
+		const StructTypeInfo* si = tryGetStructTypeInfo(type_index);
+		if (!si) {
+			return EvalResult::error("NormalizedInitializer: struct info not found");
+		}
+		EvalResult result = EvalResult::from_int(0);
+		result.object_type_index = type_index;
+		for (const auto& member : si->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			result.object_member_bindings[member_name] =
+				extractScalar(member.offset, member.size, member.memberType());
+		}
+		return result;
+	}
+
+	// Scalar type
+	return extractScalar(0, bytes.size(), type_index.category());
+}
 
 } // namespace ConstExpr

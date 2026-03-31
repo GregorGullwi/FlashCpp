@@ -1191,7 +1191,7 @@ Evaluator::ResolvedCurrentStructStaticInitializer Evaluator::resolve_current_str
 
 	if (auto static_member_result = resolve_current_struct_static_member(identifier, context, lookup_mode);
 		static_member_result.static_member) {
-		return {&static_member_result.static_member->initializer, true};
+		return {&static_member_result.static_member->initializer, true, static_member_result.static_member};
 	}
 
 	auto member_name_handle = get_current_struct_static_lookup_name_handle(identifier, lookup_mode);

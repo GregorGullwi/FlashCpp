@@ -596,6 +596,23 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 	// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
+
+	// Phase C: if a NormalizedInitializer with pre-packed bytes exists, use it
+	// directly and skip all AST-based classification / evaluation.
+				if (static_member.normalized_init.has_value() && static_member.normalized_init->isConstant()) {
+					op.is_initialized = true;
+					op.init_data = static_member.normalized_init->constant_bytes;
+					FLASH_LOG(Codegen, Debug, "Using pre-materialized NormalizedInitializer for static member '",
+							  qualified_name, "' (", op.init_data.size(), " bytes)");
+				} else if (static_member.normalized_init.has_value() &&
+						   static_member.normalized_init->kind == NormalizedInitializer::Kind::Relocation) {
+					op.is_initialized = true;
+					op.reloc_target = static_member.normalized_init->reloc_target;
+					size_t byte_count = op.size_in_bits.value / 8;
+					op.init_data.resize(byte_count, 0);
+					FLASH_LOG(Codegen, Debug, "Using pre-materialized relocation for static member '", qualified_name, "'");
+				} else {
+	// --- existing AST-based classification (fallback) ---
 				auto zero_initialize = [&]() {
 					size_t byte_count = op.size_in_bits.value / 8;
 					for (size_t i = 0; i < byte_count; ++i) {
@@ -929,6 +946,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 						}
 					}
 				}
+				} // end of else (AST-based fallback) from NormalizedInitializer check
+
+	// Phase C: write-back — record successfully packed bytes into the owning
+	// StructStaticMember so that subsequent constexpr evaluations (e.g.,
+	// "sum = data.a + data.b") can read earlier members from pre-packed bytes.
+				FLASH_LOG(Codegen, Debug, "Phase C write-back check for '", qualified_name,
+						  "': init_data.size()=", op.init_data.size(),
+						  ", has_normalized=", static_member.normalized_init.has_value() ? "yes" : "no");
+				if (!op.init_data.empty() && !static_member.normalized_init.has_value()) {
+					if (StructStaticMember* mutable_member =
+							const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
+						NormalizedInitializer ni;
+						if (op.reloc_target.isValid()) {
+							ni.kind = NormalizedInitializer::Kind::Relocation;
+							ni.reloc_target = op.reloc_target;
+						} else {
+							ni.kind = NormalizedInitializer::Kind::ConstantBytes;
+						}
+						ni.constant_bytes = op.init_data;
+						mutable_member->normalized_init = std::move(ni);
+						FLASH_LOG(Codegen, Debug, "Wrote back NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
+					}
+				}
+
 	// static const/constexpr members with constant initializers go to .rodata (read-only).
 	// constexpr implies const, so this covers both 'static constexpr T val = x' and
 	// 'static const T val = x' (both are compile-time constants when initialized).
