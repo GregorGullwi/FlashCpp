@@ -5,16 +5,16 @@
 typedef short (*ShortCallback)(short);
 
 struct Handler {
-    ShortCallback callback;
+	ShortCallback callback;
 };
 
 short double_it(short x) {
-    return x * 2;
+	return x * 2;
 }
 
 int main() {
-    Handler h;
-    h.callback = double_it;
-    short result = h.callback(21);
-    return result;  // Should be 42
+	Handler h;
+	h.callback = double_it;
+	short result = h.callback(21);
+	return result;  // Should be 42
 }

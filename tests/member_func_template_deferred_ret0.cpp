@@ -3,20 +3,20 @@
 // This pattern is used by std::error_code in <system_error>.
 
 namespace ns {
-    void process() = delete;  // poison pill
+void process() = delete;	 // poison pill
 
-    struct Handler {
-        template<typename T>
-        void handle(T val) {
-            // In a full ADL scenario, this would find ns::process(T)
-            // but since the body is deferred, no error during definition
-        }
+struct Handler {
+	template <typename T>
+	void handle(T val) {
+			// In a full ADL scenario, this would find ns::process(T)
+			// but since the body is deferred, no error during definition
+	}
 
-        int get() const { return 42; }
-    };
-}
+	int get() const { return 42; }
+};
+} // namespace ns
 
 int main() {
-    ns::Handler h;
-    return h.get() == 42 ? 0 : 1;
+	ns::Handler h;
+	return h.get() == 42 ? 0 : 1;
 }

@@ -13,7 +13,7 @@
 #include "StringBuilder.h"
 #include "StringTable.h"
 
-template<typename T1, typename T2>
+template <typename T1, typename T2>
 struct PairHash {
 	size_t operator()(const std::pair<T1, T2>& pair) const {
 		size_t h1 = std::hash<T1>{}(pair.first);
@@ -45,13 +45,13 @@ struct NamespaceEntry {
 };
 
 namespace std {
-	template<>
-	struct hash<NamespaceHandle> {
-		size_t operator()(NamespaceHandle handle) const noexcept {
-			return static_cast<size_t>(handle.index);
-		}
-	};
-}
+template <>
+struct hash<NamespaceHandle> {
+	size_t operator()(NamespaceHandle handle) const noexcept {
+		return static_cast<size_t>(handle.index);
+	}
+};
+} // namespace std
 
 class NamespaceRegistry {
 public:
@@ -108,7 +108,7 @@ public:
 		return new_handle;
 	}
 
-	// Look up a namespace without creating it. Returns invalid handle if not found.
+ // Look up a namespace without creating it. Returns invalid handle if not found.
 	NamespaceHandle lookupNamespace(NamespaceHandle parent_handle, StringHandle name) const {
 		auto key = std::make_pair(parent_handle, name);
 		auto it = namespace_map_.find(key);
@@ -155,17 +155,20 @@ public:
 	}
 
 	std::string_view getQualifiedName(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return "";
+		if (!handle.isValid() || handle.isGlobal())
+			return "";
 		return StringTable::getStringView(getEntry(handle).qualified_name);
 	}
 
 	StringHandle getQualifiedNameHandle(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return StringHandle{};
+		if (!handle.isValid() || handle.isGlobal())
+			return StringHandle{};
 		return getEntry(handle).qualified_name;
 	}
 
 	NamespaceHandle getParent(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return GLOBAL_NAMESPACE;
+		if (!handle.isValid() || handle.isGlobal())
+			return GLOBAL_NAMESPACE;
 		return getEntry(handle).parent;
 	}
 
@@ -219,29 +222,33 @@ public:
 
 		NamespaceHandle current = child;
 		while (current.isValid() && !current.isGlobal()) {
-			if (current == potential_ancestor) return true;
+			if (current == potential_ancestor)
+				return true;
 			current = getParent(current);
 		}
 		return false;
 	}
 
-	// Get the depth of a namespace (0 for global, 1 for top-level, etc.)
+ // Get the depth of a namespace (0 for global, 1 for top-level, etc.)
 	uint8_t getDepth(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return 0;
+		if (!handle.isValid() || handle.isGlobal())
+			return 0;
 		return getEntry(handle).depth;
 	}
 
-	// Get the local name of a namespace (e.g., "filesystem" for "std::filesystem")
+ // Get the local name of a namespace (e.g., "filesystem" for "std::filesystem")
 	std::string_view getName(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return "";
+		if (!handle.isValid() || handle.isGlobal())
+			return "";
 		return StringTable::getStringView(getEntry(handle).name);
 	}
 
-	// Get the root (first-level) namespace component
-	// For "std::chrono::duration", returns handle to "std"
+ // Get the root (first-level) namespace component
+ // For "std::chrono::duration", returns handle to "std"
 	NamespaceHandle getRootNamespace(NamespaceHandle handle) const {
-		if (!handle.isValid() || handle.isGlobal()) return GLOBAL_NAMESPACE;
-		
+		if (!handle.isValid() || handle.isGlobal())
+			return GLOBAL_NAMESPACE;
+
 		NamespaceHandle current = handle;
 		while (current.isValid() && !current.isGlobal()) {
 			NamespaceHandle parent = getParent(current);
@@ -253,23 +260,25 @@ public:
 		return GLOBAL_NAMESPACE;
 	}
 
-	// Get the name of the root namespace component
+ // Get the name of the root namespace component
 	std::string_view getRootNamespaceName(NamespaceHandle handle) const {
 		NamespaceHandle root = getRootNamespace(handle);
 		return getName(root);
 	}
 
-	// Mark a namespace as explicitly declared (via namespace { } block)
+ // Mark a namespace as explicitly declared (via namespace { } block)
 	void markDeclared(NamespaceHandle handle) {
 		if (handle.isValid() && !handle.isGlobal()) {
 			declared_namespaces_.insert(handle);
 		}
 	}
 
-	// Check if a namespace was explicitly declared (not just auto-created during qualified name resolution)
+ // Check if a namespace was explicitly declared (not just auto-created during qualified name resolution)
 	bool isDeclared(NamespaceHandle handle) const {
-		if (!handle.isValid()) return false;
-		if (handle.isGlobal()) return true;
+		if (!handle.isValid())
+			return false;
+		if (handle.isGlobal())
+			return true;
 		return declared_namespaces_.count(handle) > 0;
 	}
 
@@ -284,7 +293,8 @@ private:
 	std::vector<NamespaceEntry> entries_;
 	size_t max_size_reached_ = 0;
 	std::unordered_map<std::pair<NamespaceHandle, StringHandle>, NamespaceHandle,
-		PairHash<NamespaceHandle, StringHandle>> namespace_map_;
+					   PairHash<NamespaceHandle, StringHandle>>
+		namespace_map_;
 	std::unordered_set<NamespaceHandle> declared_namespaces_;
 };
 

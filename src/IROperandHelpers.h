@@ -28,14 +28,14 @@ struct CompoundOpEntry {
 };
 
 inline constexpr std::array<CompoundOpEntry, 10> kCompoundOpTable = {{
-	{"+=",  IrOpcode::Add},
-	{"-=",  IrOpcode::Subtract},
-	{"*=",  IrOpcode::Multiply},
-	{"/=",  IrOpcode::Divide},
-	{"%=",  IrOpcode::Modulo},
-	{"&=",  IrOpcode::BitwiseAnd},
-	{"|=",  IrOpcode::BitwiseOr},
-	{"^=",  IrOpcode::BitwiseXor},
+	{"+=", IrOpcode::Add},
+	{"-=", IrOpcode::Subtract},
+	{"*=", IrOpcode::Multiply},
+	{"/=", IrOpcode::Divide},
+	{"%=", IrOpcode::Modulo},
+	{"&=", IrOpcode::BitwiseAnd},
+	{"|=", IrOpcode::BitwiseOr},
+	{"^=", IrOpcode::BitwiseXor},
 	{"<<=", IrOpcode::ShiftLeft},
 	{">>=", IrOpcode::ShiftRight},
 }};
@@ -44,7 +44,8 @@ inline constexpr std::array<CompoundOpEntry, 10> kCompoundOpTable = {{
 /// or std::nullopt if the string is not a recognized compound-assignment op.
 inline std::optional<IrOpcode> compoundOpToBaseOpcode(std::string_view op) {
 	for (const auto& entry : kCompoundOpTable) {
-		if (entry.op == op) return entry.base_opcode;
+		if (entry.op == op)
+			return entry.base_opcode;
 	}
 	return std::nullopt;
 }
@@ -59,48 +60,48 @@ inline bool isCompoundAssignmentOp(std::string_view op) {
 // IrValue   = std::variant<unsigned long long, double, TempVar, StringHandle>
 // Index mapping: IrOperand[1] -> IrValue[0], IrOperand[2] -> IrValue[1], IrOperand[6] -> IrValue[2], IrOperand[7] -> IrValue[3]
 inline IrValue toIrValue(const IrOperand& operand) {
-	// Map IrOperand variant indices to IrValue variant indices
+ // Map IrOperand variant indices to IrValue variant indices
 	switch (operand.index()) {
-		case 1:  // IrOperand[1] = unsigned long long -> IrValue[0] = unsigned long long
-			assert(std::holds_alternative<unsigned long long>(operand) && "Expected unsigned long long");
-			return std::get<1>(operand);
-		case 2:  // IrOperand[2] = double -> IrValue[1] = double
-			assert(std::holds_alternative<double>(operand) && "Expected double");
-			return std::get<2>(operand);
-		case 6:  // IrOperand[6] = TempVar -> IrValue[2] = TempVar
-			assert(std::holds_alternative<TempVar>(operand) && "Expected TempVar");
-			return std::get<6>(operand);
-		case 7:  // IrOperand[7] = StringHandle -> IrValue[3] = StringHandle
-			assert(std::holds_alternative<StringHandle>(operand) && "Expected StringHandle");
-			return std::get<7>(operand);
-		default:
-			assert(false && "IrOperand does not contain a value type compatible with IrValue");
-			return static_cast<unsigned long long>(0);  // Unreachable, but prevents warning
+	case 1:	// IrOperand[1] = unsigned long long -> IrValue[0] = unsigned long long
+		assert(std::holds_alternative<unsigned long long>(operand) && "Expected unsigned long long");
+		return std::get<1>(operand);
+	case 2:	// IrOperand[2] = double -> IrValue[1] = double
+		assert(std::holds_alternative<double>(operand) && "Expected double");
+		return std::get<2>(operand);
+	case 6:	// IrOperand[6] = TempVar -> IrValue[2] = TempVar
+		assert(std::holds_alternative<TempVar>(operand) && "Expected TempVar");
+		return std::get<6>(operand);
+	case 7:	// IrOperand[7] = StringHandle -> IrValue[3] = StringHandle
+		assert(std::holds_alternative<StringHandle>(operand) && "Expected StringHandle");
+		return std::get<7>(operand);
+	default:
+		assert(false && "IrOperand does not contain a value type compatible with IrValue");
+		return static_cast<unsigned long long>(0);  // Unreachable, but prevents warning
 	}
 }
 
 struct ExprResult {
-	SizeInBits size_in_bits;  // was: int size_in_bits = 0
+	SizeInBits size_in_bits;	 // was: int size_in_bits = 0
 	IrOperand value{};
-	TypeIndex type_index {};
-	PointerDepth pointer_depth;  // was: int pointer_depth = 0
+	TypeIndex type_index{};
+	PointerDepth pointer_depth;	// was: int pointer_depth = 0
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 	ValueStorage storage = ValueStorage::ContainsData;  // must be set explicitly at every construction site
 
-	// Returns the effective runtime representation type.
-	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
-	// and TypedValue are independent structs during the transition period.
-	// Both will be unified when ExprResult's type field is replaced by IrType
-	// (Phase 5).
+ // Returns the effective runtime representation type.
+ // Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
+ // and TypedValue are independent structs during the transition period.
+ // Both will be unified when ExprResult's type field is replaced by IrType
+ // (Phase 5).
 	IrType effectiveIrType() const {
 		if (ir_type != IrType::Void || category() == TypeCategory::Void)
 			return ir_type;
 		return toIrType(category());
 	}
 
-	// The expression's TypeCategory is embedded in type_index.category() so that
-	// the gTypeInfo slot (index) and the expression-level category (e.g. Pointer
-	// vs the pointed-to Struct) are stored together without a separate field.
+ // The expression's TypeCategory is embedded in type_index.category() so that
+ // the gTypeInfo slot (index) and the expression-level category (e.g. Pointer
+ // vs the pointed-to Struct) are stored together without a separate field.
 	TypeCategory category() const { return type_index.category(); }
 	TypeCategory typeEnum() const { return type_index.category(); }
 };
@@ -114,8 +115,7 @@ inline ExprResult makeExprResult(TypeIndex type_index, SizeInBits size_in_bits, 
 		.type_index = type_index,
 		.pointer_depth = pointer_depth,
 		.ir_type = toIrType(type_index.category()),
-		.storage = storage
-	};
+		.storage = storage};
 }
 
 /// Returns a copy of \p tv with the storage discriminator set to \p storage.
@@ -174,7 +174,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	assert(operands.size() >= 3 && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<TypeCategory>(operands[0]) && "Expected operand order [type][size_in_bits][value][metadata]");
 	assert(std::holds_alternative<int>(operands[1]) && "Expected operand order [type][size_in_bits][value][metadata]");
-	
+
 	TypedValue result;
 	const TypeCategory cat = std::get<TypeCategory>(operands[0]);
 	result.ir_type = toIrType(cat);
@@ -183,11 +183,11 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.value = toIrValue(operands[2]);
 	result.type_index = nativeTypeIndex(cat);
 	result.pointer_depth = PointerDepth{};
-	// Optional 4th element: storage discriminator (ValueStorage cast to int)
+ // Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
 		result.storage = static_cast<ValueStorage>(std::get<int>(operands[3]));
 	}
-	
+
 	return result;
 }
 
@@ -212,14 +212,15 @@ inline TypedValue toTypedValue(const ExprResult& result) {
 // ============================================================================
 
 // Helper to get typed payload using std::any
-template<typename T>
+template <typename T>
 inline const T* getTypedPayload(const IrInstruction& inst) {
-	if (!inst.hasTypedPayload()) return nullptr;
+	if (!inst.hasTypedPayload())
+		return nullptr;
 	return std::any_cast<T>(&inst.getTypedPayload());
 }
 
 // Typed constructor implementation
-template<typename PayloadType>
+template <typename PayloadType>
 inline IrInstruction::IrInstruction(IrOpcode opcode, PayloadType&& payload, Token first_token)
 	: opcode_(opcode), operands_(), first_token_(first_token),
 	  typed_payload_(std::forward<PayloadType>(payload)) {

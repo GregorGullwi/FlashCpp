@@ -29,22 +29,23 @@
 #define DEQUE_SIZE_T sizeof(std::deque<std::vector<T>>)
 #endif
 
-template<uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*))>
+template <uint32_t ChunkSize = 64 * 1024 * 1024, uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_ANY + 4 * sizeof(void*))>
 class ChunkedAnyVector {
 public:
 	ChunkedAnyVector()
 #ifdef HAS_MEMORY_RESOURCE
-    : memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-    data(&memory_resource)
+		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
+		  data(&memory_resource)
 #endif
-    {}
+	{
+	}
 
-	template<typename T>
+	template <typename T>
 	T& push_back(T&& value) {
 		return emplace_back<T>(std::forward<T>(value));
 	}
 
-	template<typename T, typename... Args>
+	template <typename T, typename... Args>
 	T& emplace_back(Args&&... args) {
 		std::size_t size = sizeof(T);
 		std::size_t alignment = alignof(T);
@@ -54,9 +55,9 @@ public:
 		auto& chunk = data.back();
 		std::size_t offset = (chunk.size() + alignment - 1) & ~(alignment - 1);
 
-		// Ensure we don't exceed the reserved capacity
+	// Ensure we don't exceed the reserved capacity
 		if (offset + size > chunk.capacity()) {
-			// Start a new chunk if this one can't fit the object
+	// Start a new chunk if this one can't fit the object
 			data.emplace_back().reserve(ChunkSize);
 			auto& new_chunk = data.back();
 			offset = (new_chunk.size() + alignment - 1) & ~(alignment - 1);
@@ -74,7 +75,7 @@ public:
 		return *p;
 	}
 
-	template<typename F>
+	template <typename F>
 	void visit(F&& f) const {
 		for (std::size_t i = 0; i < index_to_pointer.size(); ++i) {
 			void* pointer = index_to_pointer[i];
@@ -86,31 +87,32 @@ public:
 private:
 	std::array<char, InternalBufferSize> internal_buffer;
 #ifdef HAS_MEMORY_RESOURCE
-    std::pmr::monotonic_buffer_resource memory_resource;
-    std::pmr::deque<std::pmr::vector<char>> data;
+	std::pmr::monotonic_buffer_resource memory_resource;
+	std::pmr::deque<std::pmr::vector<char>> data;
 #else
-    std::deque<std::vector<char>> data;
+	std::deque<std::vector<char>> data;
 #endif
 	std::vector<void*> index_to_pointer;
 	std::vector<std::type_index> index_to_type;
 };
 
-template<typename T, uint32_t ChunkSize = static_cast<uint32_t>(sizeof(T) * 4), uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_T) + ChunkSize>
+template <typename T, uint32_t ChunkSize = static_cast<uint32_t>(sizeof(T) * 4), uint32_t InternalBufferSize = static_cast<uint32_t>(DEQUE_SIZE_T) + ChunkSize>
 class ChunkedVector {
 public:
 	ChunkedVector()
 #ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource)
+		  data(&memory_resource)
 #endif
-    {}
+	{
+	}
 
 	ChunkedVector(std::initializer_list<T> init)
 #ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource)
+		  data(&memory_resource)
 #endif
-    {
+	{
 		for (const auto& value : init) {
 			push_back(value);
 		}
@@ -119,11 +121,11 @@ public:
 	ChunkedVector(const ChunkedVector& other)
 #ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(&memory_resource)
+		  data(&memory_resource)
 #endif
-    {
-		// Note: std::deque doesn't have reserve(), but that's okay
-		// It will allocate blocks as needed
+	{
+	// Note: std::deque doesn't have reserve(), but that's okay
+	// It will allocate blocks as needed
 		for (size_t i = 0, e = other.size(); i < e; ++i) {
 			push_back(other[i]);
 		}
@@ -132,17 +134,18 @@ public:
 	ChunkedVector(ChunkedVector&& other) noexcept
 #ifdef HAS_MEMORY_RESOURCE
 		: memory_resource(internal_buffer.data(), internal_buffer.max_size()),
-		data(std::move(other.data), &memory_resource)
+		  data(std::move(other.data), &memory_resource)
 #else
-        : data(std::move(other.data))
+		: data(std::move(other.data))
 #endif
-    {}
+	{
+	}
 
 	ChunkedVector& operator=(const ChunkedVector& other) {
 		if (this != &other) {
 			data.clear();
-			// Note: std::deque doesn't have reserve(), but that's okay
-			// It will allocate blocks as needed
+	// Note: std::deque doesn't have reserve(), but that's okay
+	// It will allocate blocks as needed
 			for (size_t i = 0, e = other.size(); i < e; ++i) {
 				push_back(other[i]);
 			}
@@ -165,7 +168,7 @@ public:
 		return emplace_back(value);
 	}
 
-	template<typename... Args>
+	template <typename... Args>
 	T& emplace_back(Args&&... args) {
 		if (data.empty() || data.back().size() == ChunkSize) {
 			data.emplace_back().reserve(ChunkSize);
@@ -176,27 +179,28 @@ public:
 	}
 
 	T& operator[](std::size_t index) {
-		// Precondition: data must not be empty and index must be valid
+	// Precondition: data must not be empty and index must be valid
 		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
 
-		// O(1) access: calculate chunk and element indices directly
+	// O(1) access: calculate chunk and element indices directly
 		std::size_t chunk_idx = index / ChunkSize;
 		std::size_t elem_idx = index % ChunkSize;
 		return data[chunk_idx][elem_idx];
 	}
 
 	const T& operator[](std::size_t index) const {
-		// Precondition: data must not be empty and index must be valid
+	// Precondition: data must not be empty and index must be valid
 		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
 
-		// O(1) access: calculate chunk and element indices directly
+	// O(1) access: calculate chunk and element indices directly
 		std::size_t chunk_idx = index / ChunkSize;
 		std::size_t elem_idx = index % ChunkSize;
 		return data[chunk_idx][elem_idx];
 	}
 
 	size_t size() const {
-		if (data.size() == 0) return 0;
+		if (data.size() == 0)
+			return 0;
 		return (data.size() - 1) * ChunkSize + data.back().size();
 	}
 
@@ -208,10 +212,10 @@ public:
 		data.clear();
 	}
 
-	// Note: ChunkedVector doesn't provide data() because elements are not contiguous
-	// Use operator[], iterators, or visit() instead
+ // Note: ChunkedVector doesn't provide data() because elements are not contiguous
+ // Use operator[], iterators, or visit() instead
 
-	template<typename Visitor>
+	template <typename Visitor>
 	void visit(Visitor&& visitor) {
 		for (const auto& chunk : data) {
 			for (const auto& element : chunk) {
@@ -220,7 +224,7 @@ public:
 		}
 	}
 
-  template<typename Visitor>
+	template <typename Visitor>
 	void visit(Visitor&& visitor) const {
 		for (const auto& chunk : data) {
 			for (const auto& element : chunk) {
@@ -235,7 +239,7 @@ public:
 	using DataType = std::deque<std::vector<T>>;
 #endif
 
-	template<bool IsConst>
+	template <bool IsConst>
 	class iterator_impl {
 	public:
 		using iterator_category = std::forward_iterator_tag;
@@ -281,7 +285,8 @@ public:
 		bool operator!=(const iterator_impl& other) const { return !(*this == other); }
 
 		bool operator==(std::default_sentinel_t) const {
-			if (!data_) return true;
+			if (!data_)
+				return true;
 			assert(total_chunks_ == data_->size() && "Container modified during iteration");
 			return chunk_idx_ >= total_chunks_ || (chunk_idx_ + 1 == total_chunks_ && elem_idx_ >= chunk_size_);
 		}
@@ -309,7 +314,7 @@ private:
 	std::pmr::monotonic_buffer_resource memory_resource;
 	std::pmr::deque<std::pmr::vector<T>> data;
 #else
-    std::deque<std::vector<T>> data;
+	std::deque<std::vector<T>> data;
 #endif
 };
 

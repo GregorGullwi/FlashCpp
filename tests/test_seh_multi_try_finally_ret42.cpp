@@ -5,23 +5,20 @@ int main() {
 
 	__try {
 		result = result + 10;
-	}
-	__finally {
-		result = result + 5;  // 15
+	} __finally {
+		result = result + 5;	 // 15
 	}
 
 	__try {
 		result = result + 10;
-	}
-	__finally {
-		result = result + 5;  // 30
+	} __finally {
+		result = result + 5;	 // 30
 	}
 
 	__try {
 		result = result + 7;
-	}
-	__finally {
-		result = result + 5;  // 42
+	} __finally {
+		result = result + 5;	 // 42
 	}
 
 	return result;  // expect 42

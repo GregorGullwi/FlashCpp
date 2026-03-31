@@ -5,7 +5,7 @@
 // the constructor body/parameters won't have T replaced with int,
 // causing compile or link errors.
 
-template<typename T>
+template <typename T>
 struct Container {
 	struct Inner {
 		T value;

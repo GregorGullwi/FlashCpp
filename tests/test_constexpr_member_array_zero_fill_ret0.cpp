@@ -42,10 +42,11 @@ static_assert(w.data[2] == 0);
 // 4. Sum to verify zero-fill doesn't produce garbage
 struct Sumable {
 	int arr[4];
-	constexpr Sumable() : arr{1} {}  // Only first element = 1, rest = 0
+	constexpr Sumable() : arr{1} {}	// Only first element = 1, rest = 0
 	constexpr int sum() const {
 		int s = 0;
-		for (int i = 0; i < 4; i++) s += arr[i];
+		for (int i = 0; i < 4; i++)
+			s += arr[i];
 		return s;
 	}
 };

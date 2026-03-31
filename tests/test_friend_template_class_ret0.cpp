@@ -4,13 +4,14 @@
 struct Outer {
 private:
 	int secret;
+
 public:
 	Outer() : secret(42) {}
-	template<typename T>
+	template <typename T>
 	friend struct Accessor;
 };
 
-template<typename T>
+template <typename T>
 struct Accessor {
 	int get(const Outer& o) { return o.secret; }
 };

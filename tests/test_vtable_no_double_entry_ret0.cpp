@@ -3,16 +3,16 @@
 // exactly once, not be duplicated.
 
 struct Base {
-    virtual int compute() { return 10; }
-    virtual ~Base() {}
+	virtual int compute() { return 10; }
+	virtual ~Base() {}
 };
 
 struct Derived : Base {
-    int compute() override { return 20; }
+	int compute() override { return 20; }
 };
 
 int main() {
-    Derived d;
-    // Call through direct object (avoids virtual dispatch complexity)
-    return d.compute() - 20;  // 0
+	Derived d;
+	// Call through direct object (avoids virtual dispatch complexity)
+	return d.compute() - 20;	 // 0
 }

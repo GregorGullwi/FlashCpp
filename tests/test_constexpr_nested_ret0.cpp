@@ -2,13 +2,13 @@
 // Tests obj.inner.value style access
 
 struct Inner {
-    int value;
-    constexpr Inner(int v) : value(v) {}
+	int value;
+	constexpr Inner(int v) : value(v) {}
 };
 
 struct Outer {
-    Inner inner;
-    constexpr Outer(int v) : inner(v) {}
+	Inner inner;
+	constexpr Outer(int v) : inner(v) {}
 };
 
 // Test basic nested member access
@@ -28,5 +28,5 @@ static_assert(obj3.inner.value == 50, "Nested member access with expression argu
 // Use a workaround with computed values or separate structs
 
 int main() {
-    return 0;
+	return 0;
 }

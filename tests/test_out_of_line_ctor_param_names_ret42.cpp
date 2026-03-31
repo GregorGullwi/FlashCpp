@@ -3,14 +3,14 @@
 // The member initializer list should use the definition's parameter names
 
 struct Test {
-    int value;
-    Test(int x);  // Declaration uses "x"
+	int value;
+	Test(int x);	 // Declaration uses "x"
 };
 
 Test::Test(int y) : value(y) {  // Definition uses "y", initializer uses "y"
 }
 
 int main() {
-    Test t(42);
-    return t.value;  // Should return 42
+	Test t(42);
+	return t.value;	// Should return 42
 }

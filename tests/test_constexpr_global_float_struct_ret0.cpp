@@ -16,7 +16,7 @@ struct Vec2d {
 };
 
 struct Mixed {
-	int   i;
+	int i;
 	float f;
 	double d;
 	constexpr Mixed(int a, float b, double c) : i(a), f(b), d(c) {}
@@ -35,12 +35,19 @@ static_assert(gm.f == 2.5f);
 static_assert(gm.d == 1.125);
 
 int main() {
-	if (gvf.x != 1.5f) return 1;
-	if (gvf.y != -2.25f) return 2;
-	if (gvd.x != 3.14) return 3;
-	if (gvd.y != -0.5) return 4;
-	if (gm.i != 7) return 5;
-	if (gm.f != 2.5f) return 6;
-	if (gm.d != 1.125) return 7;
+	if (gvf.x != 1.5f)
+		return 1;
+	if (gvf.y != -2.25f)
+		return 2;
+	if (gvd.x != 3.14)
+		return 3;
+	if (gvd.y != -0.5)
+		return 4;
+	if (gm.i != 7)
+		return 5;
+	if (gm.f != 2.5f)
+		return 6;
+	if (gm.d != 1.125)
+		return 7;
 	return 0;
 }

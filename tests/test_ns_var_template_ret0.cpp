@@ -3,22 +3,22 @@
 // from within function templates in the same namespace.
 
 namespace ns {
-    template<typename _Tp>
-    inline constexpr bool is_simple_v = true;
-    
-    // Use the variable template inside a function template
-    template<typename T>
-    constexpr bool test() {
-        return is_simple_v<T>;
-    }
+template <typename _Tp>
+inline constexpr bool is_simple_v = true;
+
+	// Use the variable template inside a function template
+template <typename T>
+constexpr bool test() {
+	return is_simple_v<T>;
 }
+} // namespace ns
 
 int main() {
-    // Direct use from outside namespace
-    bool r1 = ns::is_simple_v<int>;
-    
-    // Use through function template
-    bool r2 = ns::test<int>();
-    
-    return (r1 && r2) ? 0 : 1;
+	// Direct use from outside namespace
+	bool r1 = ns::is_simple_v<int>;
+
+	// Use through function template
+	bool r2 = ns::test<int>();
+
+	return (r1 && r2) ? 0 : 1;
 }

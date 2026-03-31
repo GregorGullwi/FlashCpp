@@ -9,39 +9,39 @@ struct Throwing {
 
 struct Normal {
 	int value;
-	~Normal() {}  // implicitly noexcept(true)
+	~Normal() {}	 // implicitly noexcept(true)
 };
 
 struct ExplicitNoexcept {
 	int value;
-	~ExplicitNoexcept() noexcept {}  // explicitly noexcept(true)
+	~ExplicitNoexcept() noexcept {}	// explicitly noexcept(true)
 };
 
 struct DefaultDtor {
 	int value;
-	// No user-defined destructor — implicitly noexcept(true)
+ // No user-defined destructor — implicitly noexcept(true)
 };
 
 int main() {
 	int result = 0;
 
-	// Normal should be nothrow destructible
+ // Normal should be nothrow destructible
 	if (!__is_nothrow_destructible(Normal))
 		result |= 1;
 
-	// Throwing should NOT be nothrow destructible
+ // Throwing should NOT be nothrow destructible
 	if (__is_nothrow_destructible(Throwing))
 		result |= 2;
 
-	// ExplicitNoexcept should be nothrow destructible
+ // ExplicitNoexcept should be nothrow destructible
 	if (!__is_nothrow_destructible(ExplicitNoexcept))
 		result |= 4;
 
-	// DefaultDtor should be nothrow destructible
+ // DefaultDtor should be nothrow destructible
 	if (!__is_nothrow_destructible(DefaultDtor))
 		result |= 8;
 
-	// Scalar types should be nothrow destructible
+ // Scalar types should be nothrow destructible
 	if (!__is_nothrow_destructible(int))
 		result |= 16;
 

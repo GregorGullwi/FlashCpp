@@ -3,16 +3,16 @@
 // Anonymous union members are now properly added to the parent struct member lookup
 
 struct MyStruct {
-    int type;
-    union {
-        int i;
-        float f;
-    };
+	int type;
+	union {
+		int i;
+		float f;
+	};
 };
 
 int main() {
-    MyStruct s;
-    s.type = 1;
-    s.i = 42;  // This now works correctly
-    return s.i == 42 ? 0 : 1;
+	MyStruct s;
+	s.type = 1;
+	s.i = 42;  // This now works correctly
+	return s.i == 42 ? 0 : 1;
 }

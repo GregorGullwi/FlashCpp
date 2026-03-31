@@ -4,7 +4,7 @@
 // member body that references a dependent name can be parsed).
 // Expected return: 0
 
-template<typename T>
+template <typename T>
 struct Wrapper {
 	static const int tag = 1;  // forces deferred body replay
 	using value_type = T;

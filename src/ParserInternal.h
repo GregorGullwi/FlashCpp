@@ -24,8 +24,7 @@ inline constexpr CallingConventionMapping calling_convention_map[] = {
 	{"_fastcall", CallingConvention::Fastcall},
 	{"__vectorcall", CallingConvention::Vectorcall},
 	{"__thiscall", CallingConvention::Thiscall},
-	{"__clrcall", CallingConvention::Clrcall}
-};
+	{"__clrcall", CallingConvention::Clrcall}};
 
 struct MemberSizeAndAlignment {
 	size_t size;
@@ -44,29 +43,25 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 void collectLambdaCaptureCandidates(
 	const ASTNode& node,
 	std::unordered_set<StringHandle>& capture_candidates,
-	bool& uses_implicit_this_capture
-);
+	bool& uses_implicit_this_capture);
 void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names);
 
 void registerTypeParamsInScope(
 	const InlineVector<StringHandle, 4>& param_names,
 	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
-	bool preserve_ref_qualifier = false
-);
+	bool preserve_ref_qualifier = false);
 
 void registerTypeParamsInScope(
 	const std::vector<ASTNode>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
-);
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
 
 void registerOuterBindingInScope(
 	const OuterTemplateBinding& outer_binding,
 	FlashCpp::TemplateParameterScope& scope,
-	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr
-);
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
 
 bool is_known_type_trait_name(std::string_view name);
 

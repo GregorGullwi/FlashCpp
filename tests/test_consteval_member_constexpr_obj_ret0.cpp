@@ -16,12 +16,12 @@ struct Counter {
 
 int main() {
 	constexpr Point p{3, 4};
-	constexpr int s = p.sum();        // 3 + 4 == 7
+	constexpr int s = p.sum();		   // 3 + 4 == 7
 	constexpr int ss = p.scaled_sum(2); // (3 + 4) * 2 == 14
 
 	constexpr Counter c{5};
 	constexpr int d = c.doubled();   // 5 * 2 == 10
 
-	// s + ss + d == 7 + 14 + 10 == 31, return 31 - 31 == 0
+ // s + ss + d == 7 + 14 + 10 == 31, return 31 - 31 == 0
 	return s + ss + d - 31;
 }

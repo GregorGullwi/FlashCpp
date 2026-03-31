@@ -60,7 +60,7 @@ constexpr unsigned char loop_wrap() {
 	for (int i = 0; i < 10; i++) {
 		sum += 50;  // each += wraps at 8 bits
 	}
-	return sum;  // 500 & 0xFF = 244
+	return sum;	// 500 & 0xFF = 244
 }
 
 static_assert(uchar_add_wrap() == 44);

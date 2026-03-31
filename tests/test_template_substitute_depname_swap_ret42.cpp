@@ -1,14 +1,14 @@
-template<typename A, typename B>
+template <typename A, typename B>
 struct bool_wrap {
 	static constexpr bool value = false;
 };
 
-template<>
+template <>
 struct bool_wrap<char, int> {
 	static constexpr bool value = true;
 };
 
-template<typename X, typename Y>
+template <typename X, typename Y>
 struct chooser : bool_wrap<Y, X> {};
 
 int main() {

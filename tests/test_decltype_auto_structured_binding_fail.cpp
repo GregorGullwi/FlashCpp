@@ -8,6 +8,6 @@ struct Pair {
 
 int main() {
 	Pair p{1, 2};
-	decltype(auto) [a, b] = p;
+	decltype(auto)[a, b] = p;
 	return a + b;
 }

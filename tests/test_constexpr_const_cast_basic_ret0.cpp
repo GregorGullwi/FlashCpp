@@ -32,7 +32,8 @@ constexpr int read_via_mutable_ref_cast() {
 // Reference-based const_cast on struct: const T& -> T&
 constexpr int read_struct_via_ref_cast() {
 	return const_cast<ConstexprConstCastPoint&>(
-		static_cast<const ConstexprConstCastPoint&>(point)).x;
+			   static_cast<const ConstexprConstCastPoint&>(point))
+		.x;
 }
 
 static_assert(read_through_const_cast_ptr() == 42);

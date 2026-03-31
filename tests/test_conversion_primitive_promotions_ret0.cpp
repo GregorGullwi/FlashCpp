@@ -19,16 +19,20 @@ int pickFloating(long double value) {
 
 int main() {
 	short s = 7;
-	if (pickIntegral(s) != 7) return 1;
+	if (pickIntegral(s) != 7)
+		return 1;
 
 	bool flag = true;
-	if (pickIntegral(flag) != 1) return 2;
+	if (pickIntegral(flag) != 1)
+		return 2;
 
 	char c = 'A';
-	if (pickIntegral(c) != 65) return 3;
+	if (pickIntegral(c) != 65)
+		return 3;
 
 	float f = 4.5f;
-	if (pickFloating(f) != 9) return 4;
+	if (pickFloating(f) != 9)
+		return 4;
 
 	return 0;
 }

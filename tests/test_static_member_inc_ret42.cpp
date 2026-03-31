@@ -3,18 +3,17 @@
 // function generated GlobalStore for the wrong StringHandle.
 
 struct Counter {
-    static int count;
+	static int count;
 
-    static void incrementTwice() {
-        count++;
-        count += 1;
-    }
+	static void incrementTwice() {
+		count++;
+		count += 1;
+	}
 };
 
 int Counter::count = 40;
 
 int main() {
-    Counter::incrementTwice();
-    return Counter::count;
+	Counter::incrementTwice();
+	return Counter::count;
 }
-

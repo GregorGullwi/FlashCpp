@@ -17,7 +17,7 @@ typedef long my_long;
 my_long identity_long(my_long x) { return x; }
 
 int main() {
-	my_int  a = 3;
+	my_int a = 3;
 	my_long b = identity_long(a);  // my_int → my_long: UserDefined guard fires, no crash
 	return (int)(b - 3);
 }

@@ -19,76 +19,76 @@
 // A very small container-like template used for testing.
 // It does NOT allocate: it just stores a pointer to an external object.
 // This keeps codegen trivial and focused on template behavior.
-template<typename T>
+template <typename T>
 struct SimpleVector {
-    T* data_;
-    int size_;
+	T* data_;
+	int size_;
 
-    SimpleVector()
-        : data_(nullptr),
-          size_(0) {
-    }
+	SimpleVector()
+		: data_(nullptr),
+		  size_(0) {
+	}
 
-    // Set as a single-element "view" pointing at v.
-    void set_single(const T& value) {
-        // For test purposes, alias the input; lifetime is controlled in the tests.
-        data_ = &const_cast<T&>(value);
-        size_ = 1;
-    }
+	// Set as a single-element "view" pointing at v.
+	void set_single(const T& value) {
+		// For test purposes, alias the input; lifetime is controlled in the tests.
+		data_ = &const_cast<T&>(value);
+		size_ = 1;
+	}
 
-    T& front() {
-        return *data_;
-    }
+	T& front() {
+		return *data_;
+	}
 
-    const T& front() const {
-        return *data_;
-    }
+	const T& front() const {
+		return *data_;
+	}
 
-    int size() const {
-        return size_;
-    }
+	int size() const {
+		return size_;
+	}
 };
 
 // Primary template that takes a template-template parameter and uses it
 // in a static member template function.
-template<template<typename> class Container>
+template <template <typename> class Container>
 struct Wrapper {
-    template<typename T>
-    static T get_first(const T& v) {
-        Container<T> c;
-        c.set_single(v);
-        return c.front();
-    }
+	template <typename T>
+	static T get_first(const T& v) {
+		Container<T> c;
+		c.set_single(v);
+		return c.front();
+	}
 };
 
 // Variant that has state and uses the Container in a member template.
-template<template<typename> class Container>
+template <template <typename> class Container>
 struct WrapperWithMember {
-    int factor;
+	int factor;
 
-    WrapperWithMember()
-        : factor(1) {
-    }
+	WrapperWithMember()
+		: factor(1) {
+	}
 
-    template<typename T>
-    T multiply_first(const T& v) const {
-        Container<T> c;
-        c.set_single(static_cast<T>(v * static_cast<T>(factor)));
-        return c.front();
-    }
+	template <typename T>
+	T multiply_first(const T& v) const {
+		Container<T> c;
+		c.set_single(static_cast<T>(v * static_cast<T>(factor)));
+		return c.front();
+	}
 };
 
 TEST_CASE("TemplateTemplateParameter: basic Wrapper with SimpleVector") {
-    int value = 42;
-    int result = Wrapper<SimpleVector>::get_first(value);
-    CHECK(result == 42);
+	int value = 42;
+	int result = Wrapper<SimpleVector>::get_first(value);
+	CHECK(result == 42);
 }
 
 TEST_CASE("TemplateTemplateParameter: WrapperWithMember using SimpleVector") {
-    WrapperWithMember<SimpleVector> w;
-    w.factor = 3;
+	WrapperWithMember<SimpleVector> w;
+	w.factor = 3;
 
-    int value = 7;
-    int result = w.multiply_first(value);
-    CHECK(result == 21);
+	int value = 7;
+	int result = w.multiply_first(value);
+	CHECK(result == 21);
 }

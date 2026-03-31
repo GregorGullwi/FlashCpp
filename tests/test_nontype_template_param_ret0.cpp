@@ -1,9 +1,9 @@
-template<int N>
+template <int N>
 struct Array {
-    int data[N];
+	int data[N];
 };
 
 int main() {
-    Array<5> arr;
-    return 0;
+	Array<5> arr;
+	return 0;
 }

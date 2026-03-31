@@ -2,13 +2,13 @@
 // This tests the fix for qualified static member function calls in constexpr context
 
 struct Calculator {
-    static constexpr int add(int a, int b) {
-        return a + b;
-    }
-    
-    static constexpr int multiply(int a, int b) {
-        return a * b;
-    }
+	static constexpr int add(int a, int b) {
+		return a + b;
+	}
+
+	static constexpr int multiply(int a, int b) {
+		return a * b;
+	}
 };
 
 // Test static_assert with static member function
@@ -23,5 +23,5 @@ static_assert(result1 == 30, "result1 should be 30");
 static_assert(result2 == 12, "result2 should be 12");
 
 int main() {
-    return result1 + result2;  // Should return 42
+	return result1 + result2;  // Should return 42
 }

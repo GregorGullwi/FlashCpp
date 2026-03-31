@@ -5,11 +5,11 @@
 // Binary literals (0b/0B prefix) are a C++14 feature and must be supported in C++20.
 
 int main() {
-    int bin1 = 0b1010;      // Should be 10
-    int bin2 = 0b11111111;  // Should be 255
-    int bin3 = 0B0;         // Should be 0
+	int bin1 = 0b1010;	   // Should be 10
+	int bin2 = 0b11111111;  // Should be 255
+	int bin3 = 0B0;			// Should be 0
 
-    return (bin1 == 10) && (bin2 == 255) && (bin3 == 0) ? 0 : 1;
+	return (bin1 == 10) && (bin2 == 255) && (bin3 == 0) ? 0 : 1;
 }
 
 // Expected behavior (with clang++/g++):

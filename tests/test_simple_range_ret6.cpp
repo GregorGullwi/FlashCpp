@@ -17,10 +17,10 @@ int main() {
 	c.data[0] = 1;
 	c.data[1] = 2;
 	c.data[2] = 3;
-	
+
 	int sum = 0;
 	for (int x : c) {
 		sum += x;
 	}
-	return sum;  // Should be 6
+	return sum;	// Should be 6
 }

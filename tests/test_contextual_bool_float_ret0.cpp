@@ -7,31 +7,31 @@ int main() {
 	float f = 1.5f;
 	float fzero = 0.0f;
 
-	// if: nonzero double is true
+ // if: nonzero double is true
 	if (d) {
-		// ok
+	// ok
 	} else {
 		return 1;
 	}
 
-	// if: zero double is false
+ // if: zero double is false
 	if (dzero) {
 		return 2;
 	}
 
-	// if: nonzero float is true
+ // if: nonzero float is true
 	if (f) {
-		// ok
+	// ok
 	} else {
 		return 3;
 	}
 
-	// if: zero float is false
+ // if: zero float is false
 	if (fzero) {
 		return 4;
 	}
 
-	// ternary with float condition
+ // ternary with float condition
 	int result = f ? 10 : 20;
 	if (result != 10) {
 		return 5;
@@ -41,7 +41,7 @@ int main() {
 		return 6;
 	}
 
-	// while with double condition
+ // while with double condition
 	double countdown = 2.0;
 	int loops = 0;
 	while (countdown) {

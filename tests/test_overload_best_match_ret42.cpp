@@ -6,6 +6,6 @@ int pick(int x, int y) { return x + y; }
 int pick(int x, int y, int z) { return x + y + z; }
 
 int main() {
-    // Must call pick(int,int) — returns 40+2 = 42
-    return pick(40, 2);
+	// Must call pick(int,int) — returns 40+2 = 42
+	return pick(40, 2);
 }

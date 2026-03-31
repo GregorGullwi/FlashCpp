@@ -3,17 +3,17 @@
 
 // Declare puts in an extern "C" block
 extern "C" {
-    int puts(const char* str);
+int puts(const char* str);
 }
 
-// Also test namespace with extern "C++" 
+// Also test namespace with extern "C++"
 namespace std {
-    extern "C++" {
-        inline int test_func() { return 42; }
-    }
+extern "C++" {
+inline int test_func() { return 42; }
 }
+} // namespace std
 
 int main() {
-    puts("Hello from FlashCpp with extern C!");
-    return std::test_func();
+	puts("Hello from FlashCpp with extern C!");
+	return std::test_func();
 }

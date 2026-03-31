@@ -17,8 +17,8 @@ struct Counter {
 		int first_result = first();
 		int second_result = second();
 
-		// Original value should remain unchanged for [*this] captures
-		return value + first_result + second_result;  // 10 + 22 + 52 = 84
+	// Original value should remain unchanged for [*this] captures
+		return value + first_result + second_result;	 // 10 + 22 + 52 = 84
 	}
 };
 

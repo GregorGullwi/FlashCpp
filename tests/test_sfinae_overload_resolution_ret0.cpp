@@ -3,57 +3,57 @@
 // This tests that SFINAE patterns work correctly with different function names
 
 // enable_if
-template<bool B, typename T = void>
+template <bool B, typename T = void>
 struct enable_if {};
 
-template<typename T>
+template <typename T>
 struct enable_if<true, T> {
-    using type = T;
+	using type = T;
 };
 
 // Type traits
-template<typename T>
+template <typename T>
 struct is_int {
-    static constexpr bool value = false;
+	static constexpr bool value = false;
 };
 
-template<>
+template <>
 struct is_int<int> {
-    static constexpr bool value = true;
+	static constexpr bool value = true;
 };
 
-template<typename T>
+template <typename T>
 struct is_double {
-    static constexpr bool value = false;
+	static constexpr bool value = false;
 };
 
-template<>
+template <>
 struct is_double<double> {
-    static constexpr bool value = true;
+	static constexpr bool value = true;
 };
 
 // Test: Two different function names using SFINAE
 // Note: Overloading with the same name doesn't work yet
-template<typename T>
+template <typename T>
 typename enable_if<is_int<T>::value, int>::type
 process_int_type(T val) {
-    return val + 100;
+	return val + 100;
 }
 
-template<typename T>
+template <typename T>
 typename enable_if<is_double<T>::value, int>::type
 process_double_type(T) {
-    return 200;
+	return 200;
 }
 
 // Expected return: 0
 int main() {
-    // Test with different function names
-    int result1 = process_int_type(42);      // Should call int version: 42 + 100 = 142
-    int result2 = process_double_type(3.14); // Should call double version: 200
-    
-    int total = result1 + result2;
-    // Expected: 142 + 200 = 342
-    
-    return (total == 342) ? 0 : 1;
+	// Test with different function names
+	int result1 = process_int_type(42);		// Should call int version: 42 + 100 = 142
+	int result2 = process_double_type(3.14); // Should call double version: 200
+
+	int total = result1 + result2;
+	// Expected: 142 + 200 = 342
+
+	return (total == 342) ? 0 : 1;
 }

@@ -6,11 +6,10 @@ struct B {
 };
 
 struct A {
-	B b2 = B{ .a = 2 };
+	B b2 = B{.a = 2};
 };
 
 int main() {
 	A obj;
-	return obj.b2.a;  // Should return 2
+	return obj.b2.a;	 // Should return 2
 }
-

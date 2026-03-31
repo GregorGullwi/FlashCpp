@@ -72,59 +72,61 @@ inline bool xmm_needs_rex(X64Register xmm_reg) {
  * @param xmm_src Source XMM register
  * @return An OpCodeWithSize struct containing the instruction bytes
  */
-inline OpCodeWithSize generateSSEInstructionWithPrefix(uint8_t prefix, uint8_t opcode1, uint8_t opcode2, 
-                                                        X64Register xmm_dst, X64Register xmm_src) {
+inline OpCodeWithSize generateSSEInstructionWithPrefix(uint8_t prefix, uint8_t opcode1, uint8_t opcode2,
+													   X64Register xmm_dst, X64Register xmm_src) {
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 	uint8_t* ptr = result.op_codes.data();
-	
+
 	uint8_t dst_index = xmm_modrm_bits(xmm_dst);
 	uint8_t src_index = xmm_modrm_bits(xmm_src);
-	
+
 	bool needs_rex = (dst_index >= 8) || (src_index >= 8);
-	
-	// Emit prefix byte if present (comes before REX)
+
+ // Emit prefix byte if present (comes before REX)
 	if (prefix != 0) {
 		*ptr++ = prefix;
 		result.size_in_bytes++;
 	}
-	
-	// REX prefix comes after any prefix but before opcode bytes
+
+ // REX prefix comes after any prefix but before opcode bytes
 	if (needs_rex) {
 		uint8_t rex = REX_BASE;
-		if (dst_index >= 8) rex |= 0x04;  // REX.R
-		if (src_index >= 8) rex |= 0x01;  // REX.B
+		if (dst_index >= 8)
+			rex |= 0x04;	 // REX.R
+		if (src_index >= 8)
+			rex |= 0x01;	 // REX.B
 		*ptr++ = rex;
 		result.size_in_bytes++;
 	}
-	
-	// Emit opcode bytes
+
+ // Emit opcode bytes
 	*ptr++ = opcode1;
 	result.size_in_bytes++;
 	*ptr++ = opcode2;
 	result.size_in_bytes++;
-	
-	// ModR/M byte: 11 reg r/m (register-to-register mode)
+
+ // ModR/M byte: 11 reg r/m (register-to-register mode)
 	uint8_t modrm = 0xC0 + ((dst_index & 0x07) << 3) + (src_index & 0x07);
 	*ptr++ = modrm;
 	result.size_in_bytes++;
-	
+
 	return result;
 }
 
 // Convenience wrappers for backward compatibility
-inline OpCodeWithSize generateSSEInstruction(uint8_t prefix1, uint8_t opcode1, uint8_t opcode2, 
-                                              X64Register xmm_dst, X64Register xmm_src) {
+inline OpCodeWithSize generateSSEInstruction(uint8_t prefix1, uint8_t opcode1, uint8_t opcode2,
+											 X64Register xmm_dst, X64Register xmm_src) {
 	return generateSSEInstructionWithPrefix(prefix1, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t opcode2, 
-                                                      X64Register xmm_dst, X64Register xmm_src) {
+inline OpCodeWithSize generateSSEInstructionNoPrefix(uint8_t opcode1, uint8_t opcode2,
+													 X64Register xmm_dst, X64Register xmm_src) {
 	return generateSSEInstructionWithPrefix(0, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
-inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opcode2, 
-                                                    X64Register xmm_dst, X64Register xmm_src) {
+inline OpCodeWithSize generateSSEInstructionDouble(uint8_t opcode1, uint8_t opcode2,
+												   X64Register xmm_dst, X64Register xmm_src) {
 	return generateSSEInstructionWithPrefix(0x66, opcode1, opcode2, xmm_dst, xmm_src);
 }
 
@@ -146,35 +148,35 @@ inline OpCodeWithSize generatePtrMovFromFrame(X64Register destinationRegister, i
 	OpCodeWithSize result;
 	result.size_in_bytes = 0; // Initialize count to 0
 
-	// Use a pointer to fill the array sequentially.
+ // Use a pointer to fill the array sequentially.
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// --- REX Prefix (0x40 | W | R | X | B) ---
+ // --- REX Prefix (0x40 | W | R | X | B) ---
 	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
 
-	// If destination register is R8-R15 (enum values >= 8), set REX.R bit.
+ // If destination register is R8-R15 (enum values >= 8), set REX.R bit.
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 2); // Set R bit (0b0100)
 	}
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// --- Opcode for MOV r64, r/m64 ---
+ // --- Opcode for MOV r64, r/m64 ---
 	*current_byte_ptr++ = 0x8B;
 	result.size_in_bytes++;
 
-	// --- ModR/M byte (Mod | Reg | R/M) ---
+ // --- ModR/M byte (Mod | Reg | R/M) ---
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
 	uint8_t mod_field = calcModField(offset);
 
-	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+ // RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -196,9 +198,9 @@ inline OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, in
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// For 32-bit operations, we may need REX prefix only if using R8-R15
+ // For 32-bit operations, we may need REX prefix only if using R8-R15
 	bool needs_rex = static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8);
-	
+
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX prefix (no W bit for 32-bit)
 		rex_prefix |= (1 << 2); // Set R bit for R8-R15
@@ -206,11 +208,11 @@ inline OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, in
 		result.size_in_bytes++;
 	}
 
-	// Opcode for MOV r32, r/m32
+ // Opcode for MOV r32, r/m32
 	*current_byte_ptr++ = 0x8B;
 	result.size_in_bytes++;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 
 	uint8_t mod_field = calcModField(offset);
@@ -219,7 +221,7 @@ inline OpCodeWithSize generateMovFromFrame32(X64Register destinationRegister, in
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -265,19 +267,19 @@ inline OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, 
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix only if using R8-R15
+ // REX prefix only if using R8-R15
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		uint8_t rex_prefix = 0x40 | (1 << 2); // REX + REX.R
 		*current_byte_ptr++ = rex_prefix;
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F B7 for MOVZX r32, r/m16
+ // Opcode: 0F B7 for MOVZX r32, r/m16
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xB7;
 	result.size_in_bytes += 2;
 
-	// ModR/M and displacement
+ // ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -285,7 +287,7 @@ inline OpCodeWithSize generateMovzxFromFrame16(X64Register destinationRegister, 
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -305,19 +307,19 @@ inline OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, i
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix only if using R8-R15
+ // REX prefix only if using R8-R15
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		uint8_t rex_prefix = 0x40 | (1 << 2); // REX + REX.R
 		*current_byte_ptr++ = rex_prefix;
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F B6 for MOVZX r32, r/m8
+ // Opcode: 0F B6 for MOVZX r32, r/m8
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xB6;
 	result.size_in_bytes += 2;
 
-	// ModR/M and displacement
+ // ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -325,7 +327,7 @@ inline OpCodeWithSize generateMovzxFromFrame8(X64Register destinationRegister, i
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -346,7 +348,7 @@ inline OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegist
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX.W prefix for 64-bit sign extension
+ // REX.W prefix for 64-bit sign extension
 	uint8_t rex_prefix = 0x48; // REX.W
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= 0x04; // REX.R for R8-R15
@@ -354,12 +356,12 @@ inline OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegist
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// Opcode: 0F BE for MOVSX r64, r/m8
+ // Opcode: 0F BE for MOVSX r64, r/m8
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xBE;
 	result.size_in_bytes += 2;
 
-	// ModR/M and displacement
+ // ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -367,7 +369,7 @@ inline OpCodeWithSize generateMovsxFromFrame_8to64(X64Register destinationRegist
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -388,7 +390,7 @@ inline OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegis
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX.W prefix for 64-bit sign extension
+ // REX.W prefix for 64-bit sign extension
 	uint8_t rex_prefix = 0x48; // REX.W
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= 0x04; // REX.R for R8-R15
@@ -396,12 +398,12 @@ inline OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegis
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// Opcode: 0F BF for MOVSX r64, r/m16
+ // Opcode: 0F BF for MOVSX r64, r/m16
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xBF;
 	result.size_in_bytes += 2;
 
-	// ModR/M and displacement
+ // ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -409,7 +411,7 @@ inline OpCodeWithSize generateMovsxFromFrame_16to64(X64Register destinationRegis
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -430,7 +432,7 @@ inline OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegi
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX.W prefix for 64-bit sign extension
+ // REX.W prefix for 64-bit sign extension
 	uint8_t rex_prefix = 0x48; // REX.W
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= 0x04; // REX.R for R8-R15
@@ -438,11 +440,11 @@ inline OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegi
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// Opcode: 63 for MOVSXD r64, r/m32
+ // Opcode: 63 for MOVSXD r64, r/m32
 	*current_byte_ptr++ = 0x63;
 	result.size_in_bytes++;
 
-	// ModR/M and displacement
+ // ModR/M and displacement
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -450,7 +452,7 @@ inline OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegi
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -466,7 +468,7 @@ inline OpCodeWithSize generateMovsxdFromFrame_32to64(X64Register destinationRegi
  * @param size_in_bits The size of the value in bits.
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
- inline OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
+inline OpCodeWithSize generateMovFromFrameBySize(X64Register destinationRegister, int32_t offset, int size_in_bits) {
 	if (size_in_bits == 8) {
 		return generateMovzxFromFrame8(destinationRegister, offset);
 	} else if (size_in_bits == 16) {
@@ -493,15 +495,15 @@ inline OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register ba
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix for 64-bit operation
+ // REX prefix for 64-bit operation
 	uint8_t rex_prefix = 0x48; // REX.W
 
-	// Set REX.R if dest_reg is R8-R15
+ // Set REX.R if dest_reg is R8-R15
 	if (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 2); // REX.R
 	}
 
-	// Set REX.B if base_reg is R8-R15
+ // Set REX.B if base_reg is R8-R15
 	if (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 0); // REX.B
 	}
@@ -509,11 +511,11 @@ inline OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register ba
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// Opcode: MOV r64, r/m64
+ // Opcode: MOV r64, r/m64
 	*current_byte_ptr++ = 0x8B;
 	result.size_in_bytes++;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 
@@ -530,7 +532,7 @@ inline OpCodeWithSize generateMovFromMemory(X64Register dest_reg, X64Register ba
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	// Add displacement if needed
+ // Add displacement if needed
 	if (offset != 0 || base_bits == 0x05) { // RBP/R13 always need displacement
 		if (offset >= -128 && offset <= 127) {
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
@@ -563,9 +565,9 @@ inline OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register 
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix only if using R8-R15
+ // REX prefix only if using R8-R15
 	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
-	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+					 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
 
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX (no W bit for 32-bit)
@@ -579,11 +581,11 @@ inline OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register 
 		result.size_in_bytes++;
 	}
 
-	// Opcode: MOV r32, r/m32
+ // Opcode: MOV r32, r/m32
 	*current_byte_ptr++ = 0x8B;
 	result.size_in_bytes++;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 
@@ -600,7 +602,7 @@ inline OpCodeWithSize generateMovFromMemory32(X64Register dest_reg, X64Register 
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	if (offset != 0 || base_bits == 0x05) {
 		if (offset >= -128 && offset <= 127) {
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
@@ -632,9 +634,9 @@ inline OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register 
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix only if using R8-R15
+ // REX prefix only if using R8-R15
 	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
-	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+					 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
 
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX
@@ -648,12 +650,12 @@ inline OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register 
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F B7 for MOVZX r32, r/m16
+ // Opcode: 0F B7 for MOVZX r32, r/m16
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xB7;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 
@@ -670,7 +672,7 @@ inline OpCodeWithSize generateMovFromMemory16(X64Register dest_reg, X64Register 
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	// Add displacement if needed
+ // Add displacement if needed
 	if (offset != 0 || base_bits == 0x05) {
 		if (offset >= -128 && offset <= 127) {
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
@@ -702,9 +704,9 @@ inline OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register b
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix only if using R8-R15
+ // REX prefix only if using R8-R15
 	bool needs_rex = (static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8)) ||
-	                 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
+					 (static_cast<uint8_t>(base_reg) >= static_cast<uint8_t>(X64Register::R8));
 
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX
@@ -718,12 +720,12 @@ inline OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register b
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F B6 for MOVZX r32, r/m8
+ // Opcode: 0F B6 for MOVZX r32, r/m8
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0xB6;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t dest_bits = static_cast<uint8_t>(dest_reg) & 0x07;
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 
@@ -740,7 +742,7 @@ inline OpCodeWithSize generateMovFromMemory8(X64Register dest_reg, X64Register b
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
 
-	// Add displacement if needed
+ // Add displacement if needed
 	if (offset != 0 || base_bits == 0x05) {
 		if (offset >= -128 && offset <= 127) {
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
@@ -785,43 +787,45 @@ inline OpCodeWithSize generateFloatMovFromMemory(X64Register destinationRegister
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// Prefix: F3 for movss (float), F2 for movsd (double)
+ // Prefix: F3 for movss (float), F2 for movsd (double)
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
-	// Check if we need REX prefix
+ // Check if we need REX prefix
 	uint8_t xmm_reg = xmm_modrm_bits(destinationRegister);
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(base_reg) >= 8);
-	
+
 	if (need_rex) {
 		uint8_t rex = 0x40;
-		if (xmm_reg >= 8) rex |= 0x04;  // REX.R for XMM8-15
-		if (static_cast<uint8_t>(base_reg) >= 8) rex |= 0x01;  // REX.B for R8-R15
+		if (xmm_reg >= 8)
+			rex |= 0x04;	 // REX.R for XMM8-15
+		if (static_cast<uint8_t>(base_reg) >= 8)
+			rex |= 0x01;	 // REX.B for R8-R15
 		*current_byte_ptr++ = rex;
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F 10 for movss/movsd xmm, [mem]
+ // Opcode: 0F 10 for movss/movsd xmm, [mem]
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x10;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte - encode [base_reg + offset]
+ // ModR/M byte - encode [base_reg + offset]
 	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
-		// Mod=00, no displacement (except for RBP/R13 which need at least disp8)
+	// Mod=00, no displacement (except for RBP/R13 which need at least disp8)
 		uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | base_bits;
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 	} else if (offset >= -128 && offset <= 127) {
-		// 8-bit displacement
-		uint8_t modrm = 0x40 | ((xmm_reg & 0x07) << 3) | base_bits;  // Mod=01
+	// 8-bit displacement
+		uint8_t modrm = 0x40 | ((xmm_reg & 0x07) << 3) | base_bits;	// Mod=01
 		*current_byte_ptr++ = modrm;
 		*current_byte_ptr++ = static_cast<uint8_t>(offset);
 		result.size_in_bytes += 2;
 	} else {
-		// 32-bit displacement
-		uint8_t modrm = 0x80 | ((xmm_reg & 0x07) << 3) | base_bits;  // Mod=10
+	// 32-bit displacement
+		uint8_t modrm = 0x80 | ((xmm_reg & 0x07) << 3) | base_bits;	// Mod=10
 		*current_byte_ptr++ = modrm;
 		result.size_in_bytes++;
 
@@ -840,24 +844,24 @@ inline OpCodeWithSize generateFloatMovFromFrame(X64Register destinationRegister,
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// Prefix: F3 for movss (float), F2 for movsd (double)
+ // Prefix: F3 for movss (float), F2 for movsd (double)
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
-	// Check if we need REX prefix for XMM8-XMM15
+ // Check if we need REX prefix for XMM8-XMM15
 	uint8_t xmm_reg = xmm_modrm_bits(destinationRegister);
 	if (xmm_reg >= 8) {
-		// REX.R - extends ModR/M reg field for XMM8-XMM15
-		*current_byte_ptr++ = 0x44;  // REX.R
+	// REX.R - extends ModR/M reg field for XMM8-XMM15
+		*current_byte_ptr++ = 0x44;	// REX.R
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F 10 for movss/movsd xmm, [mem]
+ // Opcode: 0F 10 for movss/movsd xmm, [mem]
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x10;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte - use only low 3 bits of xmm register
+ // ModR/M byte - use only low 3 bits of xmm register
 	uint8_t mod_field = calcModField(offset);
 	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
 	*current_byte_ptr++ = modrm;
@@ -884,24 +888,24 @@ inline OpCodeWithSize generateFloatMovToFrame(X64Register sourceRegister, int32_
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// Prefix: F3 for movss (float), F2 for movsd (double)
+ // Prefix: F3 for movss (float), F2 for movsd (double)
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
-	// Check if we need REX prefix for XMM8-XMM15
+ // Check if we need REX prefix for XMM8-XMM15
 	uint8_t xmm_reg = xmm_modrm_bits(sourceRegister);
 	if (xmm_reg >= 8) {
-		// REX.R - extends ModR/M reg field for XMM8-XMM15
-		*current_byte_ptr++ = 0x44;  // REX.R
+	// REX.R - extends ModR/M reg field for XMM8-XMM15
+		*current_byte_ptr++ = 0x44;	// REX.R
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F 11 for movss/movsd [mem], xmm - store variant
+ // Opcode: 0F 11 for movss/movsd [mem], xmm - store variant
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x11;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte - use only low 3 bits of xmm register
+ // ModR/M byte - use only low 3 bits of xmm register
 	uint8_t mod_field = calcModField(offset);
 	uint8_t modrm = (mod_field << 6) | ((xmm_reg & 0x07) << 3) | 0x05; // Reg=XMM, R/M=101 (RBP)
 	*current_byte_ptr++ = modrm;
@@ -928,29 +932,31 @@ inline OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Re
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// Prefix: F3 for movss (float), F2 for movsd (double)
+ // Prefix: F3 for movss (float), F2 for movsd (double)
 	*current_byte_ptr++ = is_float ? 0xF3 : 0xF2;
 	result.size_in_bytes++;
 
-	// Check if we need REX prefix
+ // Check if we need REX prefix
 	uint8_t xmm_reg = xmm_modrm_bits(sourceRegister);
 	uint8_t ptr_reg_bits = static_cast<uint8_t>(ptr_reg) & 0x07;
 	bool need_rex = (xmm_reg >= 8) || (static_cast<uint8_t>(ptr_reg) >= 8);
-	
+
 	if (need_rex) {
 		uint8_t rex = 0x40;
-		if (xmm_reg >= 8) rex |= 0x04;  // REX.R for XMM8-15
-		if (static_cast<uint8_t>(ptr_reg) >= 8) rex |= 0x01;  // REX.B for R8-R15
+		if (xmm_reg >= 8)
+			rex |= 0x04;	 // REX.R for XMM8-15
+		if (static_cast<uint8_t>(ptr_reg) >= 8)
+			rex |= 0x01;	 // REX.B for R8-R15
 		*current_byte_ptr++ = rex;
 		result.size_in_bytes++;
 	}
 
-	// Opcode: 0F 11 for movss/movsd [mem], xmm
+ // Opcode: 0F 11 for movss/movsd [mem], xmm
 	*current_byte_ptr++ = 0x0F;
 	*current_byte_ptr++ = 0x11;
 	result.size_in_bytes += 2;
 
-	// ModR/M byte: 00 xmm ptr_reg (indirect addressing, no displacement)
+ // ModR/M byte: 00 xmm ptr_reg (indirect addressing, no displacement)
 	uint8_t modrm = 0x00 | ((xmm_reg & 0x07) << 3) | ptr_reg_bits;
 	*current_byte_ptr++ = modrm;
 	result.size_in_bytes++;
@@ -973,41 +979,41 @@ inline OpCodeWithSize generateFloatMovToMemory(X64Register sourceRegister, X64Re
  *         of `uint8_t` and the actual number of bytes generated.
  */
 inline OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t offset) {
-	// Assert that this is a general-purpose register, not an XMM register
-	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
-	       "generatePtrMovToFrame called with XMM register - use generateFloatMovToFrame instead");
-	
+ // Assert that this is a general-purpose register, not an XMM register
+	assert(static_cast<uint8_t>(sourceRegister) < 16 &&
+		   "generatePtrMovToFrame called with XMM register - use generateFloatMovToFrame instead");
+
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// --- REX Prefix (0x40 | W | R | X | B) ---
+ // --- REX Prefix (0x40 | W | R | X | B) ---
 	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
 
-	// If source register (Reg field) is R8-R15, set REX.R bit.
+ // If source register (Reg field) is R8-R15, set REX.R bit.
 	if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 2); // Set R bit (0b0100)
 	}
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// --- Opcode for MOV r/m64, r64 ---
+ // --- Opcode for MOV r/m64, r64 ---
 	*current_byte_ptr++ = 0x89;
 	result.size_in_bytes++;
 
-	// --- ModR/M byte (Mod | Reg | R/M) ---
+ // --- ModR/M byte (Mod | Reg | R/M) ---
 	uint8_t modrm_byte;
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
 	uint8_t mod_field = calcModField(offset);
 
-	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+ // RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -1025,18 +1031,18 @@ inline OpCodeWithSize generatePtrMovToFrame(X64Register sourceRegister, int32_t 
  * @return OpCodeWithSize containing the generated opcodes and their size.
  */
 inline OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t offset) {
-	// Assert that this is a general-purpose register, not an XMM register
-	assert(static_cast<uint8_t>(sourceRegister) < 16 && 
-	       "generateMovToFrame32 called with XMM register - use generateFloatMovToFrame instead");
-	
+ // Assert that this is a general-purpose register, not an XMM register
+	assert(static_cast<uint8_t>(sourceRegister) < 16 &&
+		   "generateMovToFrame32 called with XMM register - use generateFloatMovToFrame instead");
+
 	OpCodeWithSize result;
 	result.size_in_bytes = 0;
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// For 32-bit operations, we may need REX prefix only if using R8-R15
+ // For 32-bit operations, we may need REX prefix only if using R8-R15
 	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8);
-	
+
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX prefix (no W bit for 32-bit)
 		rex_prefix |= (1 << 2); // Set R bit for R8-R15
@@ -1044,21 +1050,21 @@ inline OpCodeWithSize generateMovToFrame32(X64Register sourceRegister, int32_t o
 		result.size_in_bytes++;
 	}
 
-	// --- Opcode for MOV r/m32, r32 ---
+ // --- Opcode for MOV r/m32, r32 ---
 	*current_byte_ptr++ = 0x89;
 	result.size_in_bytes++;
 
-	// --- ModR/M byte (Mod | Reg | R/M) ---
+ // --- ModR/M byte (Mod | Reg | R/M) ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 
 	uint8_t mod_field = calcModField(offset);
 
-	// RBP encoding is 0x05, no SIB needed for RBP-relative addressing
+ // RBP encoding is 0x05, no SIB needed for RBP-relative addressing
 	uint8_t modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x05; // 0x05 for RBP
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -1078,11 +1084,11 @@ inline OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t of
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// REX prefix needed for R8-R15, or to access low byte (instead of high byte) of RSP, RBP, RSI, RDI
+ // REX prefix needed for R8-R15, or to access low byte (instead of high byte) of RSP, RBP, RSI, RDI
 	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8) ||
-	                 sourceRegister == X64Register::RSP || sourceRegister == X64Register::RBP ||
-	                 sourceRegister == X64Register::RSI || sourceRegister == X64Register::RDI;
-	
+					 sourceRegister == X64Register::RSP || sourceRegister == X64Register::RBP ||
+					 sourceRegister == X64Register::RSI || sourceRegister == X64Register::RDI;
+
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX
 		if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
@@ -1092,11 +1098,11 @@ inline OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t of
 		result.size_in_bytes++;
 	}
 
-	// Opcode: MOV r/m8, r8
+ // Opcode: MOV r/m8, r8
 	*current_byte_ptr++ = 0x88;
 	result.size_in_bytes++;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -1104,7 +1110,7 @@ inline OpCodeWithSize generateMovToFrame8(X64Register sourceRegister, int32_t of
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -1124,13 +1130,13 @@ inline OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t o
 	result.size_in_bytes = 0;
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// 16-bit operand size prefix
+ // 16-bit operand size prefix
 	*current_byte_ptr++ = 0x66;
 	result.size_in_bytes++;
 
-	// REX prefix may be needed for R8-R15
+ // REX prefix may be needed for R8-R15
 	bool needs_rex = static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8);
-	
+
 	if (needs_rex) {
 		uint8_t rex_prefix = 0x40; // Base REX
 		rex_prefix |= (1 << 2); // Set R bit for R8-R15
@@ -1138,11 +1144,11 @@ inline OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t o
 		result.size_in_bytes++;
 	}
 
-	// Opcode: MOV r/m16, r16
+ // Opcode: MOV r/m16, r16
 	*current_byte_ptr++ = 0x89;
 	result.size_in_bytes++;
 
-	// ModR/M byte
+ // ModR/M byte
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 	uint8_t mod_field = calcModField(offset);
 
@@ -1150,7 +1156,7 @@ inline OpCodeWithSize generateMovToFrame16(X64Register sourceRegister, int32_t o
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// Displacement
+ // Displacement
 	encodeDisplacement(current_byte_ptr, result.size_in_bytes, offset, mod_field);
 
 	return result;
@@ -1189,21 +1195,21 @@ inline OpCodeWithSize generateMovToFrameBySize(X64Register sourceRegister, int32
  * @param immediate The 32-bit signed immediate value.
  */
 inline void emitAddRegImm32(std::vector<uint8_t>& textSectionData, X64Register reg, int32_t immediate) {
-	// REX.W prefix, with REX.B if register is R8-R15
+ // REX.W prefix, with REX.B if register is R8-R15
 	uint8_t rex = 0x48; // REX.W
 	if (static_cast<uint8_t>(reg) >= 8) {
 		rex |= 0x01; // REX.B
 	}
 	textSectionData.push_back(rex);
-	
-	// Opcode: 81 /0 (ADD r/m64, imm32)
+
+ // Opcode: 81 /0 (ADD r/m64, imm32)
 	textSectionData.push_back(0x81);
-	
-	// ModR/M: 11 (mod=direct register) | 000 (opcode extension /0) | reg (r/m)
+
+ // ModR/M: 11 (mod=direct register) | 000 (opcode extension /0) | reg (r/m)
 	uint8_t modrm = 0xC0 | (static_cast<uint8_t>(reg) & 0x7);
 	textSectionData.push_back(modrm);
-	
-	// 32-bit immediate (little-endian)
+
+ // 32-bit immediate (little-endian)
 	textSectionData.push_back(static_cast<uint8_t>(immediate & 0xFF));
 	textSectionData.push_back(static_cast<uint8_t>((immediate >> 8) & 0xFF));
 	textSectionData.push_back(static_cast<uint8_t>((immediate >> 16) & 0xFF));
@@ -1217,10 +1223,10 @@ inline OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offse
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// --- REX Prefix (0x40 | W | R | X | B) ---
+ // --- REX Prefix (0x40 | W | R | X | B) ---
 	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
 
-	// If source register (Reg field) is R8-R15, set REX.R bit.
+ // If source register (Reg field) is R8-R15, set REX.R bit.
 	if (static_cast<uint8_t>(sourceRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 2); // Set R bit (0b0100)
 	}
@@ -1228,35 +1234,35 @@ inline OpCodeWithSize generateMovToRsp(X64Register sourceRegister, int32_t offse
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// --- Opcode ---
+ // --- Opcode ---
 	*current_byte_ptr++ = 0x89; // MOV r/m64, r64
 	result.size_in_bytes++;
 
-	// --- ModR/M Byte ---
+ // --- ModR/M Byte ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 	uint8_t modrm_byte;
 
-	// For RSP-relative addressing with displacement
+ // For RSP-relative addressing with displacement
 	uint8_t mod_field = (offset == 0) ? 0x00 : ((offset >= -128 && offset <= 127) ? 0x01 : 0x02);
 
-	// RSP encoding is 0x04, requires SIB byte
+ // RSP encoding is 0x04, requires SIB byte
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for RSP (requires SIB)
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB Byte (required for RSP) ---
-	// Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
+ // --- SIB Byte (required for RSP) ---
+ // Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
 	*current_byte_ptr++ = 0x24; // SIB: scale=00, index=100, base=100 (RSP)
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	if (offset != 0) {
 		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
+	// 8-bit signed displacement
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
 			result.size_in_bytes++;
 		} else {
-			// 32-bit signed displacement
+	// 32-bit signed displacement
 			for (int i = 0; i < 4; ++i) {
 				*current_byte_ptr++ = static_cast<uint8_t>((offset >> (8 * i)) & 0xFF);
 				result.size_in_bytes++;
@@ -1274,36 +1280,36 @@ inline OpCodeWithSize generateMovToRsp32(X64Register sourceRegister, int32_t off
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// NO REX prefix for 32-bit operations (unlike 64-bit version)
-	// --- Opcode ---
+ // NO REX prefix for 32-bit operations (unlike 64-bit version)
+ // --- Opcode ---
 	*current_byte_ptr++ = 0x89; // MOV r/m32, r32
 	result.size_in_bytes++;
 
-	// --- ModR/M Byte ---
+ // --- ModR/M Byte ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(sourceRegister) & 0x07;
 	uint8_t modrm_byte;
 
-	// For RSP-relative addressing with displacement
+ // For RSP-relative addressing with displacement
 	uint8_t mod_field = (offset == 0) ? 0x00 : ((offset >= -128 && offset <= 127) ? 0x01 : 0x02);
 
-	// RSP encoding is 0x04, requires SIB byte
+ // RSP encoding is 0x04, requires SIB byte
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for RSP (requires SIB)
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB Byte (required for RSP) ---
-	// Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
+ // --- SIB Byte (required for RSP) ---
+ // Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
 	*current_byte_ptr++ = 0x24; // SIB: scale=00, index=100, base=100 (RSP)
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	if (offset != 0) {
 		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
+	// 8-bit signed displacement
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
 			result.size_in_bytes++;
 		} else {
-			// 32-bit signed displacement
+	// 32-bit signed displacement
 			for (int i = 0; i < 4; ++i) {
 				*current_byte_ptr++ = static_cast<uint8_t>((offset >> (8 * i)) & 0xFF);
 				result.size_in_bytes++;
@@ -1321,36 +1327,36 @@ inline OpCodeWithSize generateMovFromRsp32(X64Register destinationRegister, int3
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// NO REX prefix for 32-bit operations (unlike 64-bit version)
-	// --- Opcode ---
+ // NO REX prefix for 32-bit operations (unlike 64-bit version)
+ // --- Opcode ---
 	*current_byte_ptr++ = 0x8B; // MOV r32, r/m32
 	result.size_in_bytes++;
 
-	// --- ModR/M Byte ---
+ // --- ModR/M Byte ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t modrm_byte;
 
-	// For RSP-relative addressing with displacement
+ // For RSP-relative addressing with displacement
 	uint8_t mod_field = (offset == 0) ? 0x00 : ((offset >= -128 && offset <= 127) ? 0x01 : 0x02);
 
-	// RSP encoding is 0x04, requires SIB byte
+ // RSP encoding is 0x04, requires SIB byte
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for RSP (requires SIB)
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB Byte (required for RSP) ---
-	// Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
+ // --- SIB Byte (required for RSP) ---
+ // Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
 	*current_byte_ptr++ = 0x24; // SIB: scale=00, index=100, base=100 (RSP)
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	if (offset != 0) {
 		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
+	// 8-bit signed displacement
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
 			result.size_in_bytes++;
 		} else {
-			// 32-bit signed displacement
+	// 32-bit signed displacement
 			for (int i = 0; i < 4; ++i) {
 				*current_byte_ptr++ = static_cast<uint8_t>((offset >> (8 * i)) & 0xFF);
 				result.size_in_bytes++;
@@ -1368,10 +1374,10 @@ inline OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_
 
 	uint8_t* current_byte_ptr = result.op_codes.data();
 
-	// --- REX Prefix (0x40 | W | R | X | B) ---
+ // --- REX Prefix (0x40 | W | R | X | B) ---
 	uint8_t rex_prefix = 0x48; // Base: REX.W = 0100_1000b
 
-	// If destination register is R8-R15 (enum values >= 8), set REX.R bit.
+ // If destination register is R8-R15 (enum values >= 8), set REX.R bit.
 	if (static_cast<uint8_t>(destinationRegister) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex_prefix |= (1 << 2); // Set R bit (0b0100)
 	}
@@ -1379,35 +1385,35 @@ inline OpCodeWithSize generateMovFromRsp(X64Register destinationRegister, int32_
 	*current_byte_ptr++ = rex_prefix;
 	result.size_in_bytes++;
 
-	// --- Opcode ---
+ // --- Opcode ---
 	*current_byte_ptr++ = 0x8B; // MOV r64, r/m64
 	result.size_in_bytes++;
 
-	// --- ModR/M Byte ---
+ // --- ModR/M Byte ---
 	uint8_t reg_encoding_lower_3_bits = static_cast<uint8_t>(destinationRegister) & 0x07;
 	uint8_t modrm_byte;
 
-	// For RSP-relative addressing with displacement
+ // For RSP-relative addressing with displacement
 	uint8_t mod_field = (offset == 0) ? 0x00 : ((offset >= -128 && offset <= 127) ? 0x01 : 0x02);
 
-	// RSP encoding is 0x04, requires SIB byte
+ // RSP encoding is 0x04, requires SIB byte
 	modrm_byte = (mod_field << 6) | (reg_encoding_lower_3_bits << 3) | 0x04; // 0x04 for RSP (requires SIB)
 	*current_byte_ptr++ = modrm_byte;
 	result.size_in_bytes++;
 
-	// --- SIB Byte (required for RSP) ---
-	// Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
+ // --- SIB Byte (required for RSP) ---
+ // Scale=00 (no scale), Index=100 (no index), Base=100 (RSP)
 	*current_byte_ptr++ = 0x24; // SIB: scale=00, index=100, base=100 (RSP)
 	result.size_in_bytes++;
 
-	// --- Displacement ---
+ // --- Displacement ---
 	if (offset != 0) {
 		if (offset >= -128 && offset <= 127) {
-			// 8-bit signed displacement
+	// 8-bit signed displacement
 			*current_byte_ptr++ = static_cast<uint8_t>(offset);
 			result.size_in_bytes++;
 		} else {
-			// 32-bit signed displacement
+	// 32-bit signed displacement
 			for (int i = 0; i < 4; ++i) {
 				*current_byte_ptr++ = static_cast<uint8_t>((offset >> (8 * i)) & 0xFF);
 				result.size_in_bytes++;

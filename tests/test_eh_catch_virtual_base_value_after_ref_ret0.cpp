@@ -24,16 +24,19 @@ int main() {
 	try {
 		throw Derived{};
 	} catch (VBase& v) {
-		if (v.vb != 17) return 1;
+		if (v.vb != 17)
+			return 1;
 		caught_ref = true;
 	}
-	if (!caught_ref) return 2;
+	if (!caught_ref)
+		return 2;
 
 	bool caught_value = false;
 	try {
 		throw Derived{};
 	} catch (VBase v) {
-		if (v.vb != 17) return 3;
+		if (v.vb != 17)
+			return 3;
 		caught_value = true;
 	}
 	return caught_value ? 0 : 4;

@@ -23,16 +23,16 @@ int main() {
 
 	g_dtor_count = 0;
 
-	// Each iteration creates a by-value Wrapper from *__begin.
-	// The Wrapper must be destroyed at the end of each iteration
-	// (3 iterations -> 3 destructor calls).
+ // Each iteration creates a by-value Wrapper from *__begin.
+ // The Wrapper must be destroyed at the end of each iteration
+ // (3 iterations -> 3 destructor calls).
 	for (Wrapper w : arr) {
 		if (w.value < 0) {
 			return 99;
 		}
 	}
 
-	// Expected: 3 destructor calls (one per iteration)
-	// Bug: 0 destructor calls (exitScope() never called for loop var scope)
+ // Expected: 3 destructor calls (one per iteration)
+ // Bug: 0 destructor calls (exitScope() never called for loop var scope)
 	return (g_dtor_count == 3) ? 0 : 1;
 }

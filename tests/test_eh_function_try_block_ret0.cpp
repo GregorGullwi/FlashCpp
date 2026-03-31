@@ -9,9 +9,9 @@ struct Guard {
 };
 
 // Free function: function-try-block
-int safe_divide(int a, int b)
-try {
-	if (b == 0) throw 42;
+int safe_divide(int a, int b) try {
+	if (b == 0)
+		throw 42;
 	return a / b;
 } catch (int e) {
 	return -e;
@@ -22,9 +22,9 @@ struct Calculator {
 	int value;
 	Calculator() : value(0) {}
 
-	void set(int v)
-	try {
-		if (v < 0) throw v;
+	void set(int v) try {
+		if (v < 0)
+			throw v;
 		value = v;
 	} catch (int e) {
 		value = -e;
@@ -32,8 +32,7 @@ struct Calculator {
 };
 
 // Stack unwinding still happens inside function-try-block
-int unwinding_test()
-try {
+int unwinding_test() try {
 	Guard g;
 	throw 99;
 } catch (int) {
@@ -41,24 +40,29 @@ try {
 }
 
 int main() {
-	// Free function: normal path
-	if (safe_divide(10, 2) != 5) return 1;
+ // Free function: normal path
+	if (safe_divide(10, 2) != 5)
+		return 1;
 
-	// Free function: exception path
-	if (safe_divide(10, 0) != -42) return 2;
+ // Free function: exception path
+	if (safe_divide(10, 0) != -42)
+		return 2;
 
-	// Inline member function: normal path
+ // Inline member function: normal path
 	Calculator c;
 	c.set(7);
-	if (c.value != 7) return 3;
+	if (c.value != 7)
+		return 3;
 
-	// Inline member function: exception path
+ // Inline member function: exception path
 	c.set(-3);
-	if (c.value != 3) return 4;
+	if (c.value != 3)
+		return 4;
 
-	// Stack unwinding in function-try-block
+ // Stack unwinding in function-try-block
 	int r = unwinding_test();
-	if (r != 1) return 5;
+	if (r != 1)
+		return 5;
 
 	return 0;
 }

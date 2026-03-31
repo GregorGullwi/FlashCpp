@@ -13,10 +13,10 @@ int accumulate_as_long(long a, long b) { return (int)(a + b); }
 int widen_and_negate(long x) { return (int)(-x); }
 
 int main() {
-	// int → long argument annotation: annotation must pick the right DeclarationNode
-	int r1 = accumulate_as_long(20, 22);  // 20 (int) → 20L, 22 (int) → 22L → 42
+ // int → long argument annotation: annotation must pick the right DeclarationNode
+	int r1 = accumulate_as_long(20, 22);	 // 20 (int) → 20L, 22 (int) → 22L → 42
 
-	// Explicit cast result used as argument
+ // Explicit cast result used as argument
 	int r2 = widen_and_negate(-7);  // -7 (int) → -7L → negate → 7
 
 	return (r1 - 42) + (r2 - 7);

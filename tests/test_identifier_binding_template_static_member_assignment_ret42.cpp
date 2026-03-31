@@ -1,4 +1,4 @@
-template<typename T>
+template <typename T>
 struct Counter {
 	static int count;
 
@@ -9,7 +9,7 @@ struct Counter {
 	}
 };
 
-template<typename T>
+template <typename T>
 int Counter<T>::count = 0;
 
 int main() {

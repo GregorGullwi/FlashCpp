@@ -11,26 +11,26 @@ struct MyTag {};
 // Test that operator new/delete NAMES can be parsed
 // Using inline placement new syntax - no external dependencies
 inline void* operator new(size_t, void* ptr, MyTag) noexcept {
-    return ptr;  // Simple placement - just return the pointer
+	return ptr;	// Simple placement - just return the pointer
 }
 
 inline void operator delete(void*, void*, MyTag) noexcept {
-    // No-op for placement delete
+	// No-op for placement delete
 }
 
 // Array versions
 inline void* operator new[](size_t, void* ptr, MyTag) noexcept {
-    return ptr;
+	return ptr;
 }
 
 inline void operator delete[](void*, void*, MyTag) noexcept {
-    // No-op
+	// No-op
 }
 
 int main() {
-    // Use the custom placement new/delete defined above via ::operator syntax
-    unsigned char buffer[sizeof(double)];
-    void* p = ::operator new(sizeof(double), buffer, MyTag{});
-    ::operator delete(p, buffer, MyTag{});
-    return sizeof(double);
+	// Use the custom placement new/delete defined above via ::operator syntax
+	unsigned char buffer[sizeof(double)];
+	void* p = ::operator new(sizeof(double), buffer, MyTag{});
+	::operator delete(p, buffer, MyTag{});
+	return sizeof(double);
 }

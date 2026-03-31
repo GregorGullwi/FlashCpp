@@ -37,7 +37,9 @@ static_assert(fromConstexprParamLongLong(42) == 2);
 
 int main() {
 	return (fromConstexprLocalInt() == 1 &&
-		fromConstexprAutoInt() == 1 &&
-		fromConstexprParamInt(42) == 1 &&
-		fromConstexprParamLongLong(42) == 2) ? 0 : 1;
+			fromConstexprAutoInt() == 1 &&
+			fromConstexprParamInt(42) == 1 &&
+			fromConstexprParamLongLong(42) == 2)
+			   ? 0
+			   : 1;
 }

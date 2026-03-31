@@ -11,21 +11,21 @@ const wchar_t* find_const(const wchar_t* s, wchar_t c) { return s; }
 wchar_t* find_nonconst(wchar_t* s, wchar_t c) { return s; }
 
 int test_ref_to_value(const wchar_t_alias& ref) {
-    // Reference of alias type should match value parameter
-    wchar_t val = ref;
-    return val;
+	// Reference of alias type should match value parameter
+	wchar_t val = ref;
+	return val;
 }
 
 int main() {
-    wchar_t buf[4] = {L'A', L'B', L'C', 0};
-    const wchar_t_alias* p = buf;
-    wchar_t_alias ch = L'B';
+	wchar_t buf[4] = {L'A', L'B', L'C', 0};
+	const wchar_t_alias* p = buf;
+	wchar_t_alias ch = L'B';
 
-    // Test: const alias pointer should match const wchar_t* overload
-    const wchar_t* result = find_const(p, ch);
+	// Test: const alias pointer should match const wchar_t* overload
+	const wchar_t* result = find_const(p, ch);
 
-    // Test: reference-to-value with alias type
-    int val = test_ref_to_value(ch);
+	// Test: reference-to-value with alias type
+	int val = test_ref_to_value(ch);
 
-    return 42;
+	return 42;
 }

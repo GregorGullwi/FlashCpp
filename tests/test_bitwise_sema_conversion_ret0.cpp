@@ -3,7 +3,7 @@
 int main() {
 	short a = 5;
 	int b = 3;
-	// C++20 [expr.bit.and]: usual arithmetic conversions promote short to int
+ // C++20 [expr.bit.and]: usual arithmetic conversions promote short to int
 	int c = a & b;  // 5 & 3 = 1
 	int d = a | b;  // 5 | 3 = 7
 	int e = a ^ b;  // 5 ^ 3 = 6

@@ -10,4 +10,3 @@ int main() {
 	Test t;
 	return t.x + t.y;  // Should return 30
 }
-

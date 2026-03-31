@@ -1,399 +1,387 @@
 ﻿#include "Parser.h"
 #include "IrGenerator.h"
 
-	LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
-		LambdaInfo info;
-		info.lambda_id = lambda.lambda_id();
+LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
+	LambdaInfo info;
+	info.lambda_id = lambda.lambda_id();
 
-		info.closure_type_name = StringBuilder()
-				.append("__lambda_")
-				.append(static_cast<int64_t>(lambda.lambda_id()))
-				.commit();
+	info.closure_type_name = StringBuilder()
+								 .append("__lambda_")
+								 .append(static_cast<int64_t>(lambda.lambda_id()))
+								 .commit();
 
-		info.operator_call_name = StringBuilder()
-				.append(info.closure_type_name)
-				.append("_operator_call")
-				.commit();
+	info.operator_call_name = StringBuilder()
+								  .append(info.closure_type_name)
+								  .append("_operator_call")
+								  .commit();
 
-		info.invoke_name = StringBuilder()
-				.append(info.closure_type_name)
-				.append("_invoke")
-				.commit();
+	info.invoke_name = StringBuilder()
+						   .append(info.closure_type_name)
+						   .append("_invoke")
+						   .commit();
 
-		info.conversion_op_name = StringBuilder()
-				.append(info.closure_type_name)
-				.append("_conversion")
-				.commit();
+	info.conversion_op_name = StringBuilder()
+								  .append(info.closure_type_name)
+								  .append("_conversion")
+								  .commit();
 
-		info.lambda_token = lambda.lambda_token();
-		info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
-		if (current_struct_name_.isValid()) {
-			auto type_it = getTypesByNameMap().find(current_struct_name_);
-			if (type_it != getTypesByNameMap().end()) {
-				info.enclosing_struct_type_index = type_it->second->type_index_;
-			}
-		} else if (const TypeInfo* enclosing_type = tryGetTypeInfo(current_lambda_context_.enclosing_struct_type_index)) {
-			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
-			info.enclosing_struct_name = StringTable::getStringView(enclosing_type->name());
+	info.lambda_token = lambda.lambda_token();
+	info.enclosing_struct_name = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : std::string_view();
+	if (current_struct_name_.isValid()) {
+		auto type_it = getTypesByNameMap().find(current_struct_name_);
+		if (type_it != getTypesByNameMap().end()) {
+			info.enclosing_struct_type_index = type_it->second->type_index_;
 		}
-
-		info.lambda_body = lambda.body();
-		info.captures = lambda.captures();
-		info.is_mutable = lambda.is_mutable();
-		if (lambda.has_outer_template_bindings()) {
-			info.outer_template_param_names = lambda.outer_template_param_names();
-			info.outer_template_args = lambda.outer_template_args();
-		}
-
-		for (const auto& capture : lambda.captures()) {
-			if (capture.is_capture_all()) {
-				continue;
-			}
-			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-				capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
-				capture.has_initializer()) {
-				continue;
-			}
-
-			std::string_view var_name = capture.identifier_name();
-			std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
-
-			if (var_symbol.has_value()) {
-				info.captured_var_decls.push_back(*var_symbol);
-			} else if (current_lambda_context_.isActive()) {
-				StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
-				auto capture_type_it = current_lambda_context_.capture_types.find(var_name_handle);
-				if (current_lambda_context_.captures.count(var_name_handle) > 0 &&
-					capture_type_it != current_lambda_context_.capture_types.end()) {
-					ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(capture_type_it->second);
-					DeclarationNode& synthetic_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(type_node, capture.identifier_token());
-					info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
-				} else {
-					throw CompileError(std::string(StringBuilder()
-						.append("Lambda capture variable not found in scope: '")
-						.append(var_name)
-						.append("'")
-						.commit()));
-				}
-			} else {
-				throw CompileError(std::string(StringBuilder()
-					.append("Lambda capture variable not found in scope: '")
-					.append(var_name)
-					.append("'")
-					.commit()));
-			}
-		}
-
-		info.return_type_index = nativeTypeIndex(TypeCategory::Void);
-		info.return_size = 0;
-		info.returns_reference = false;
-		if (lambda.return_type().has_value()) {
-			const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
-			info.return_type_index = ret_type_node.type_index();
-			info.return_size = ret_type_node.size_in_bits();
-			info.returns_reference = ret_type_node.is_reference();
-			if (info.returns_reference) {
-				info.return_size = 64;
-			}
-		}
-
-		size_t param_index = 0;
-		for (const auto& param : lambda.parameters()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-				if (isPlaceholderAutoType(param_type.type())) {
-					info.is_generic = true;
-					info.auto_param_indices.push_back(param_index);
-				}
-
-				info.parameters.emplace_back(
-					param_type.type(),
-					param_type.size_in_bits(),
-					static_cast<int>(param_type.pointer_levels().size()),
-					std::string(param_decl.identifier_token().value())
-				);
-				info.parameter_nodes.push_back(param);
-			}
-			param_index++;
-		}
-
-		collected_lambdas_.push_back(std::move(info));
-		return collected_lambdas_.back();
+	} else if (const TypeInfo* enclosing_type = tryGetTypeInfo(current_lambda_context_.enclosing_struct_type_index)) {
+		info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
+		info.enclosing_struct_name = StringTable::getStringView(enclosing_type->name());
 	}
 
-	ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
-		// Collect lambda information for deferred generation
-		// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
-		// If target_var_name is provided, use it as the closure variable name (for variable declarations)
-		// Otherwise, create a temporary __closure_N variable
+	info.lambda_body = lambda.body();
+	info.captures = lambda.captures();
+	info.is_mutable = lambda.is_mutable();
+	if (lambda.has_outer_template_bindings()) {
+		info.outer_template_param_names = lambda.outer_template_param_names();
+		info.outer_template_args = lambda.outer_template_args();
+	}
 
-		LambdaInfo lambda_info = collectLambdaForDeferredGeneration(lambda);
-
-		// Look up the closure type (registered during parsing)
-		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
-		if (type_it == getTypesByNameMap().end()) {
-			// Error: closure type not found
-			TempVar dummy = var_counter.next();
-			return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{dummy}, PointerDepth{}, ValueStorage::ContainsData);
+	for (const auto& capture : lambda.captures()) {
+		if (capture.is_capture_all()) {
+			continue;
+		}
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis ||
+			capture.has_initializer()) {
+			continue;
 		}
 
-		const TypeInfo* closure_type = type_it->second;
+		std::string_view var_name = capture.identifier_name();
+		std::optional<ASTNode> var_symbol = symbol_table.lookup(var_name);
 
-		// Use target variable name if provided, otherwise create a temporary closure variable
-		std::string_view closure_var_name;
-		if (!target_var_name.empty()) {
-			// Use the target variable name directly
-			// We MUST emit VariableDecl here before any MemberStore operations
-			closure_var_name = target_var_name;
-
-			// Declare the closure variable with the target name
-			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
-			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
-			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
-			lambda_decl_op.custom_alignment = 0;
-			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
-			lambda_decl_op.is_array = false;
-			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+		if (var_symbol.has_value()) {
+			info.captured_var_decls.push_back(*var_symbol);
+		} else if (current_lambda_context_.isActive()) {
+			StringHandle var_name_handle = StringTable::getOrInternStringHandle(var_name);
+			auto capture_type_it = current_lambda_context_.capture_types.find(var_name_handle);
+			if (current_lambda_context_.captures.count(var_name_handle) > 0 &&
+				capture_type_it != current_lambda_context_.capture_types.end()) {
+				ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(capture_type_it->second);
+				DeclarationNode& synthetic_decl = gChunkedAnyStorage.emplace_back<DeclarationNode>(type_node, capture.identifier_token());
+				info.captured_var_decls.push_back(ASTNode::emplace_node<DeclarationNode>(synthetic_decl));
+			} else {
+				throw CompileError(std::string(StringBuilder()
+												   .append("Lambda capture variable not found in scope: '")
+												   .append(var_name)
+												   .append("'")
+												   .commit()));
+			}
 		} else {
-			// Create a temporary closure variable name
-			closure_var_name = StringBuilder()
-				.append("__closure_")
-				.append(static_cast<int64_t>(lambda_info.lambda_id))
-				.commit();
-
-			// Declare the closure variable
-			VariableDeclOp lambda_decl_op;
-			lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
-			lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
-			lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
-			lambda_decl_op.custom_alignment = 0;
-			lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
-			lambda_decl_op.is_array = false;
-			ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+			throw CompileError(std::string(StringBuilder()
+											   .append("Lambda capture variable not found in scope: '")
+											   .append(var_name)
+											   .append("'")
+											   .commit()));
 		}
+	}
 
-		// Now initialize captured members
-		// The key insight: we need to generate the initialization code that will be
-		// executed during IR conversion, after the variable has been added to scope
-		if (!lambda_info.captures.empty()) {
-			const StructTypeInfo* struct_info = closure_type->getStructInfo();
-			if (struct_info) {
-				size_t capture_index = 0;
-				for (const auto& capture : lambda_info.captures) {
-					if (capture.is_capture_all()) {
-						continue;
+	info.return_type_index = nativeTypeIndex(TypeCategory::Void);
+	info.return_size = 0;
+	info.returns_reference = false;
+	if (lambda.return_type().has_value()) {
+		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
+		info.return_type_index = ret_type_node.type_index();
+		info.return_size = ret_type_node.size_in_bits();
+		info.returns_reference = ret_type_node.is_reference();
+		if (info.returns_reference) {
+			info.return_size = 64;
+		}
+	}
+
+	size_t param_index = 0;
+	for (const auto& param : lambda.parameters()) {
+		if (param.is<DeclarationNode>()) {
+			const auto& param_decl = param.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			if (isPlaceholderAutoType(param_type.type())) {
+				info.is_generic = true;
+				info.auto_param_indices.push_back(param_index);
+			}
+
+			info.parameters.emplace_back(
+				param_type.type(),
+				param_type.size_in_bits(),
+				static_cast<int>(param_type.pointer_levels().size()),
+				std::string(param_decl.identifier_token().value()));
+			info.parameter_nodes.push_back(param);
+		}
+		param_index++;
+	}
+
+	collected_lambdas_.push_back(std::move(info));
+	return collected_lambdas_.back();
+}
+
+ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambda, std::string_view target_var_name) {
+	// Collect lambda information for deferred generation
+	// Following Clang's approach: generate closure class, operator(), __invoke, and conversion operator
+	// If target_var_name is provided, use it as the closure variable name (for variable declarations)
+	// Otherwise, create a temporary __closure_N variable
+
+	LambdaInfo lambda_info = collectLambdaForDeferredGeneration(lambda);
+
+	// Look up the closure type (registered during parsing)
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
+	if (type_it == getTypesByNameMap().end()) {
+	// Error: closure type not found
+		TempVar dummy = var_counter.next();
+		return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{dummy}, PointerDepth{}, ValueStorage::ContainsData);
+	}
+
+	const TypeInfo* closure_type = type_it->second;
+
+	// Use target variable name if provided, otherwise create a temporary closure variable
+	std::string_view closure_var_name;
+	if (!target_var_name.empty()) {
+	// Use the target variable name directly
+	// We MUST emit VariableDecl here before any MemberStore operations
+		closure_var_name = target_var_name;
+
+	// Declare the closure variable with the target name
+		VariableDeclOp lambda_decl_op;
+		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
+		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
+		lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
+		lambda_decl_op.custom_alignment = 0;
+		lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
+		lambda_decl_op.is_array = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+	} else {
+	// Create a temporary closure variable name
+		closure_var_name = StringBuilder()
+							   .append("__closure_")
+							   .append(static_cast<int64_t>(lambda_info.lambda_id))
+							   .commit();
+
+	// Declare the closure variable
+		VariableDeclOp lambda_decl_op;
+		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
+		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->total_size * 8)};
+		lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
+		lambda_decl_op.custom_alignment = 0;
+		lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
+		lambda_decl_op.is_array = false;
+		ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(lambda_decl_op), lambda.lambda_token()));
+	}
+
+	// Now initialize captured members
+	// The key insight: we need to generate the initialization code that will be
+	// executed during IR conversion, after the variable has been added to scope
+	if (!lambda_info.captures.empty()) {
+		const StructTypeInfo* struct_info = closure_type->getStructInfo();
+		if (struct_info) {
+			size_t capture_index = 0;
+			for (const auto& capture : lambda_info.captures) {
+				if (capture.is_capture_all()) {
+					continue;
+				}
+
+		// Handle [this] capture - stores pointer to enclosing object
+				if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
+					const StructMember* member = struct_info->findMember("__this");
+					if (member) {
+		// Store the enclosing 'this' pointer in the closure
+		// Use the 'this' variable name to properly resolve to the member function's this parameter
+						MemberStoreOp store_this;
+						store_this.value.setType(TypeCategory::Void);
+						store_this.value.ir_type = IrType::Void;
+						store_this.value.size_in_bits = SizeInBits{64};
+						store_this.value.value = StringTable::getOrInternStringHandle("this");
+						store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+						store_this.member_name = StringTable::getOrInternStringHandle("__this");
+						store_this.offset = static_cast<int>(member->offset);
+						store_this.ref_qualifier = CVReferenceQualifier::None;
+						store_this.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_this), lambda.lambda_token()));
 					}
+					continue;
+				}
 
-					// Handle [this] capture - stores pointer to enclosing object
-					if (capture.kind() == LambdaCaptureNode::CaptureKind::This) {
-						const StructMember* member = struct_info->findMember("__this");
-						if (member) {
-							// Store the enclosing 'this' pointer in the closure
-							// Use the 'this' variable name to properly resolve to the member function's this parameter
-							MemberStoreOp store_this;
-							store_this.value.setType(TypeCategory::Void);
-							store_this.value.ir_type = IrType::Void;
-							store_this.value.size_in_bits = SizeInBits{64};
-							store_this.value.value = StringTable::getOrInternStringHandle("this");
-							store_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-							store_this.member_name = StringTable::getOrInternStringHandle("__this");
-							store_this.offset = static_cast<int>(member->offset);
-							store_this.ref_qualifier = CVReferenceQualifier::None;
-							store_this.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_this), lambda.lambda_token()));
-						}
-						continue;
-					}
+		// Handle [*this] capture - stores copy of entire enclosing object
+				if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+		// For [*this], we need to copy the entire object into the closure
+		// The closure should have a member named "__copy_this" of the enclosing struct type
+					const StructMember* member = struct_info->findMember("__copy_this");
+					if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
+		// Copy each member of the enclosing struct into __copy_this
+						const TypeInfo* enclosing_type = tryGetTypeInfo(lambda_info.enclosing_struct_type_index);
+						if (enclosing_type && enclosing_type->getStructInfo()) {
+							const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
+							int copy_base_offset = static_cast<int>(member->offset);
 
-					// Handle [*this] capture - stores copy of entire enclosing object
-					if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
-						// For [*this], we need to copy the entire object into the closure
-						// The closure should have a member named "__copy_this" of the enclosing struct type
-						const StructMember* member = struct_info->findMember("__copy_this");
-						if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
-							// Copy each member of the enclosing struct into __copy_this
-							const TypeInfo* enclosing_type = tryGetTypeInfo(lambda_info.enclosing_struct_type_index);
-							if (enclosing_type && enclosing_type->getStructInfo()) {
-								const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
-								int copy_base_offset = static_cast<int>(member->offset);
+							for (const auto& enclosing_member : enclosing_struct->members) {
+			// Load from original 'this'
+								TempVar loaded_value = var_counter.next();
+								MemberLoadOp load_op;
+								load_op.result.value = loaded_value;
+								load_op.result.setType(enclosing_member.type_index.category());
+								load_op.result.ir_type = toIrType(enclosing_member.memberType());
+								load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
+								load_op.object = StringTable::getOrInternStringHandle("this");
+								load_op.member_name = enclosing_member.getName();
+								load_op.offset = static_cast<int>(enclosing_member.offset);
+								load_op.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+								load_op.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
 
-								for (const auto& enclosing_member : enclosing_struct->members) {
-									// Load from original 'this'
-									TempVar loaded_value = var_counter.next();
-									MemberLoadOp load_op;
-									load_op.result.value = loaded_value;
-									load_op.result.setType(enclosing_member.type_index.category());
-									load_op.result.ir_type = toIrType(enclosing_member.memberType());
-									load_op.result.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
-									load_op.object = StringTable::getOrInternStringHandle("this");
-									load_op.member_name = enclosing_member.getName();
-									load_op.offset = static_cast<int>(enclosing_member.offset);
-									load_op.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-									load_op.struct_type_info = nullptr;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), lambda.lambda_token()));
-
-									// Store into closure->__copy_this at the appropriate offset
-									MemberStoreOp store_copy_this;
-									store_copy_this.value.setType(enclosing_member.type_index.category());
-									store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
-									store_copy_this.value.value = loaded_value;
-									store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
-									store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
-									store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
-									store_copy_this.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-									store_copy_this.struct_type_info = nullptr;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
-								}
+			// Store into closure->__copy_this at the appropriate offset
+								MemberStoreOp store_copy_this;
+								store_copy_this.value.setType(enclosing_member.type_index.category());
+								store_copy_this.value.size_in_bits = SizeInBits{static_cast<int>(enclosing_member.size * 8)};
+								store_copy_this.value.value = loaded_value;
+								store_copy_this.object = StringTable::getOrInternStringHandle(closure_var_name);
+								store_copy_this.member_name = StringTable::getOrInternStringHandle("__copy_this");
+								store_copy_this.offset = copy_base_offset + static_cast<int>(enclosing_member.offset);
+								store_copy_this.ref_qualifier = ((enclosing_member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((enclosing_member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+								store_copy_this.struct_type_info = nullptr;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(store_copy_this), lambda.lambda_token()));
 							}
 						}
-						continue;
 					}
+					continue;
+				}
 
-					std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
-					StringHandle var_name_str = StringTable::getOrInternStringHandle(var_name);  // Single conversion for both uses below
-					const StructMember* member = struct_info->findMember(var_name);
+				std::string_view var_name = capture.identifier_name();  // Already a persistent string_view from AST
+				StringHandle var_name_str = StringTable::getOrInternStringHandle(var_name);	// Single conversion for both uses below
+				const StructMember* member = struct_info->findMember(var_name);
 
-					if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
-						// Check if this variable is a captured variable from an enclosing lambda
-						bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
-						current_lambda_context_.captures.count(var_name_str) > 0;
+				if (member && (capture.has_initializer() || capture_index < lambda_info.captured_var_decls.size())) {
+		// Check if this variable is a captured variable from an enclosing lambda
+					bool is_captured_from_enclosing = current_lambda_context_.isActive() &&
+													  current_lambda_context_.captures.count(var_name_str) > 0;
 
-						// Handle init-captures
-						if (capture.has_initializer()) {
-							// Init-capture: evaluate the initializer expression and store it
-							const ASTNode& init_node = *capture.initializer();
-							ExprResult init_result = visitExpressionNode(init_node.as<ExpressionNode>());
+		// Handle init-captures
+					if (capture.has_initializer()) {
+		// Init-capture: evaluate the initializer expression and store it
+						const ASTNode& init_node = *capture.initializer();
+						ExprResult init_result = visitExpressionNode(init_node.as<ExpressionNode>());
 
-							IrOperand init_value = init_result.value;
+						IrOperand init_value = init_result.value;
 
-							// For init-capture by reference [&y = x], we need to store the address of x
-							if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-								// Get the type info from the init result
-								TypeCategory init_type = init_result.typeEnum();
-								int init_size = init_result.size_in_bits.value;
+		// For init-capture by reference [&y = x], we need to store the address of x
+						if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+		// Get the type info from the init result
+							TypeCategory init_type = init_result.typeEnum();
+							int init_size = init_result.size_in_bits.value;
 
-								// Generate AddressOf for the initializer
-								TempVar addr_temp = var_counter.next();
-								AddressOfOp addr_op;
-								addr_op.result = addr_temp;
-								addr_op.operand.setType(init_type);
-								addr_op.operand.ir_type = toIrType(init_type);
-								addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
-								addr_op.operand.pointer_depth = PointerDepth{};
+		// Generate AddressOf for the initializer
+							TempVar addr_temp = var_counter.next();
+							AddressOfOp addr_op;
+							addr_op.result = addr_temp;
+							addr_op.operand.setType(init_type);
+							addr_op.operand.ir_type = toIrType(init_type);
+							addr_op.operand.size_in_bits = SizeInBits{static_cast<int>(init_size)};
+							addr_op.operand.pointer_depth = PointerDepth{};
 
-								if (const auto* string_ptr = std::get_if<StringHandle>(&init_value)) {
-									addr_op.operand.value = *string_ptr;
-								} else if (const auto* temp_var = std::get_if<TempVar>(&init_value)) {
-									addr_op.operand.value = *temp_var;
-								} else {
-									// For other types, skip
-									continue;
-								}
-
-								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
-
-								// Store the address in the closure member
-								MemberStoreOp member_store;
-								member_store.value.setType(init_type);
-								member_store.value.size_in_bits = SizeInBits{64}; // pointer size
-								member_store.value.value = addr_temp;
-								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
-								member_store.member_name = member->getName();
-								member_store.offset = static_cast<int>(member->offset);
-								member_store.ref_qualifier = CVReferenceQualifier::LValueReference;
-								member_store.struct_type_info = nullptr;
-								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+							if (const auto* string_ptr = std::get_if<StringHandle>(&init_value)) {
+								addr_op.operand.value = *string_ptr;
+							} else if (const auto* temp_var = std::get_if<TempVar>(&init_value)) {
+								addr_op.operand.value = *temp_var;
 							} else {
-								// Init-capture by value [x = expr] - store the value directly
-								MemberStoreOp member_store;
-								member_store.value.setType(member->type_index.category());
-								member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
-
-								// Convert IrOperand to IrValue
-								if (const auto* temp_var_ptr = std::get_if<TempVar>(&init_value)) {
-									member_store.value.value = *temp_var_ptr;
-								} else if (const auto* int_val = std::get_if<int>(&init_value)) {
-									member_store.value.value = static_cast<unsigned long long>(*int_val);
-								} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_value)) {
-									member_store.value.value = *ull_val;
-								} else if (const auto* d_val = std::get_if<double>(&init_value)) {
-									member_store.value.value = *d_val;
-								} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
-									member_store.value.value = *string;
-								} else {
-									// For other types, skip this capture
-									continue;
-								}
-
-								member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
-								member_store.member_name = member->getName();
-								member_store.offset = static_cast<int>(member->offset);
-								member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-								member_store.struct_type_info = nullptr;
-								ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
-							}
-
-							// Init-captures do not consume an entry from captured_var_decls.
-							continue;
-						} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-							// By-reference: store the address of the variable
-							// Get the original variable type from captured_var_decls
-							const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
-							const DeclarationNode* decl = get_decl_from_symbol(var_decl);
-							if (!decl) {
-								capture_index++;
+			// For other types, skip
 								continue;
 							}
-							const auto& orig_type = decl->type_node().as<TypeSpecifierNode>();
 
-							TempVar addr_temp = var_counter.next();
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 
-							if (is_captured_from_enclosing) {
-								// Variable is captured from enclosing lambda - need to get address from this->x
-								auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
-								bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
-								enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+		// Store the address in the closure member
+							MemberStoreOp member_store;
+							member_store.value.setType(init_type);
+							member_store.value.size_in_bits = SizeInBits{64}; // pointer size
+							member_store.value.value = addr_temp;
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+							member_store.member_name = member->getName();
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.ref_qualifier = CVReferenceQualifier::LValueReference;
+							member_store.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+						} else {
+		// Init-capture by value [x = expr] - store the value directly
+							MemberStoreOp member_store;
+							member_store.value.setType(member->type_index.category());
+							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
 
-								if (enclosing_is_ref) {
-									// Enclosing captured by reference - it already holds a pointer, just copy it
-									MemberLoadOp member_load;
-									member_load.result.value = addr_temp;
-									member_load.result.setType(orig_type.category());
-									member_load.result.size_in_bits = SizeInBits{64};
-									member_load.object = StringTable::getOrInternStringHandle("this");
-									member_load.member_name = StringTable::getOrInternStringHandle(var_name);
+		// Convert IrOperand to IrValue
+							if (const auto* temp_var_ptr = std::get_if<TempVar>(&init_value)) {
+								member_store.value.value = *temp_var_ptr;
+							} else if (const auto* int_val = std::get_if<int>(&init_value)) {
+								member_store.value.value = static_cast<unsigned long long>(*int_val);
+							} else if (const auto* ull_val = std::get_if<unsigned long long>(&init_value)) {
+								member_store.value.value = *ull_val;
+							} else if (const auto* d_val = std::get_if<double>(&init_value)) {
+								member_store.value.value = *d_val;
+							} else if (const auto* string = std::get_if<StringHandle>(&init_value)) {
+								member_store.value.value = *string;
+							} else {
+			// For other types, skip this capture
+								continue;
+							}
 
-									int enclosing_offset = -1;
-									auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-									if (enclosing_type_it != getTypesByNameMap().end()) {
-										const TypeInfo* enclosing_type = enclosing_type_it->second;
-										if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-											const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
-											if (enclosing_member) {
-												enclosing_offset = static_cast<int>(enclosing_member->offset);
-											}
+							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+							member_store.member_name = member->getName();
+							member_store.offset = static_cast<int>(member->offset);
+							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+							member_store.struct_type_info = nullptr;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+						}
+
+		// Init-captures do not consume an entry from captured_var_decls.
+						continue;
+					} else if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+		// By-reference: store the address of the variable
+		// Get the original variable type from captured_var_decls
+						const ASTNode& var_decl = lambda_info.captured_var_decls[capture_index];
+						const DeclarationNode* decl = get_decl_from_symbol(var_decl);
+						if (!decl) {
+							capture_index++;
+							continue;
+						}
+						const auto& orig_type = decl->type_node().as<TypeSpecifierNode>();
+
+						TempVar addr_temp = var_counter.next();
+
+						if (is_captured_from_enclosing) {
+		// Variable is captured from enclosing lambda - need to get address from this->x
+							auto enclosing_kind_it = current_lambda_context_.capture_kinds.find(var_name_str);
+							bool enclosing_is_ref = (enclosing_kind_it != current_lambda_context_.capture_kinds.end() &&
+													 enclosing_kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+
+							if (enclosing_is_ref) {
+			// Enclosing captured by reference - it already holds a pointer, just copy it
+								MemberLoadOp member_load;
+								member_load.result.value = addr_temp;
+								member_load.result.setType(orig_type.category());
+								member_load.result.size_in_bits = SizeInBits{64};
+								member_load.object = StringTable::getOrInternStringHandle("this");
+								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
+
+								int enclosing_offset = -1;
+								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+								if (enclosing_type_it != getTypesByNameMap().end()) {
+									const TypeInfo* enclosing_type = enclosing_type_it->second;
+									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+										const StructMember* enclosing_member = enclosing_struct->findMember(var_name);
+										if (enclosing_member) {
+											enclosing_offset = static_cast<int>(enclosing_member->offset);
 										}
 									}
-									member_load.offset = enclosing_offset;
-									member_load.struct_type_info = nullptr;
-									member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
-									ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
-								} else {
-									// Enclosing captured by value - need to get address of this->x
-									AddressOfOp addr_op;
-									addr_op.result = addr_temp;
-									addr_op.operand.setType(orig_type.category());
-									addr_op.operand.ir_type = toIrType(orig_type.type());
-									addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
-									addr_op.operand.pointer_depth = PointerDepth{};
-									addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
-									ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 								}
+								member_load.offset = enclosing_offset;
+								member_load.struct_type_info = nullptr;
+								member_load.ref_qualifier = CVReferenceQualifier::LValueReference;
+								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
 							} else {
-								// Regular variable - generate AddressOf directly
+			// Enclosing captured by value - need to get address of this->x
 								AddressOfOp addr_op;
 								addr_op.result = addr_temp;
 								addr_op.operand.setType(orig_type.category());
@@ -403,504 +391,511 @@
 								addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 							}
-
-							// Store the address in the closure member
-							MemberStoreOp member_store;
-							member_store.value.setType(member->type_index.category());
-							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
-							member_store.value.value = addr_temp;
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
-							member_store.member_name = member->getName();
-							member_store.offset = static_cast<int>(member->offset);
-							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-							member_store.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 						} else {
-							// By-value: copy the value
-							MemberStoreOp member_store;
-							member_store.value.setType(member->type_index.category());
-							member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
-
-							if (is_captured_from_enclosing) {
-								// Variable is captured from enclosing lambda - load it via member access first
-								TempVar loaded_value = var_counter.next();
-								MemberLoadOp member_load;
-								member_load.result.value = loaded_value;
-								member_load.result.setType(member->type_index.category());
-								member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
-								member_load.object = StringTable::getOrInternStringHandle("this");
-								member_load.member_name = StringTable::getOrInternStringHandle(var_name);
-
-								int enclosing_offset = -1;
-								auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
-								if (enclosing_type_it != getTypesByNameMap().end()) {
-									const TypeInfo* enclosing_type = enclosing_type_it->second;
-									if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
-										const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
-										if (enclosing_member) {
-											enclosing_offset = static_cast<int>(enclosing_member->offset);
-										}
-									}
-								}
-								member_load.offset = enclosing_offset;
-								member_load.struct_type_info = nullptr;
-								member_load.ref_qualifier = CVReferenceQualifier::None;
-								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
-
-								member_store.value.value = loaded_value;
-							} else {
-								// Regular variable - use directly
-								member_store.value.value = StringTable::getOrInternStringHandle(var_name);
-							}
-
-							member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
-							member_store.member_name = member->getName();
-							member_store.offset = static_cast<int>(member->offset);
-							member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-							member_store.struct_type_info = nullptr;
-							ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+		// Regular variable - generate AddressOf directly
+							AddressOfOp addr_op;
+							addr_op.result = addr_temp;
+							addr_op.operand.setType(orig_type.category());
+							addr_op.operand.ir_type = toIrType(orig_type.type());
+							addr_op.operand.size_in_bits = SizeInBits{orig_type.size_in_bits()};
+							addr_op.operand.pointer_depth = PointerDepth{};
+							addr_op.operand.value = StringTable::getOrInternStringHandle(var_name);
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), lambda.lambda_token()));
 						}
 
-						capture_index++;
+		// Store the address in the closure member
+						MemberStoreOp member_store;
+						member_store.value.setType(member->type_index.category());
+						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+						member_store.value.value = addr_temp;
+						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+						member_store.member_name = member->getName();
+						member_store.offset = static_cast<int>(member->offset);
+						member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_store.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
+					} else {
+		// By-value: copy the value
+						MemberStoreOp member_store;
+						member_store.value.setType(member->type_index.category());
+						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+
+						if (is_captured_from_enclosing) {
+		// Variable is captured from enclosing lambda - load it via member access first
+							TempVar loaded_value = var_counter.next();
+							MemberLoadOp member_load;
+							member_load.result.value = loaded_value;
+							member_load.result.setType(member->type_index.category());
+							member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)};
+							member_load.object = StringTable::getOrInternStringHandle("this");
+							member_load.member_name = StringTable::getOrInternStringHandle(var_name);
+
+							int enclosing_offset = -1;
+							auto enclosing_type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
+							if (enclosing_type_it != getTypesByNameMap().end()) {
+								const TypeInfo* enclosing_type = enclosing_type_it->second;
+								if (const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo()) {
+									const StructMember* enclosing_member = enclosing_struct->findMember(var_name_str);
+									if (enclosing_member) {
+										enclosing_offset = static_cast<int>(enclosing_member->offset);
+									}
+								}
+							}
+							member_load.offset = enclosing_offset;
+							member_load.struct_type_info = nullptr;
+							member_load.ref_qualifier = CVReferenceQualifier::None;
+							ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), lambda.lambda_token()));
+
+							member_store.value.value = loaded_value;
+						} else {
+		// Regular variable - use directly
+							member_store.value.value = StringTable::getOrInternStringHandle(var_name);
+						}
+
+						member_store.object = StringTable::getOrInternStringHandle(closure_var_name);
+						member_store.member_name = member->getName();
+						member_store.offset = static_cast<int>(member->offset);
+						member_store.ref_qualifier = ((member->is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member->is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						member_store.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), lambda.lambda_token()));
 					}
+
+					capture_index++;
 				}
-			}
-		}
-
-		// Return the closure variable representing the lambda
-		// Format: {type, size, value, type_index}
-		// - type: Type::Struct (the closure is a struct)
-		// - size: size of the closure in bits
-		// - value: closure_var_name (the allocated closure variable)
-		// - type_index: the type index for the closure struct
-		int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
-		TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
-		return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
-	}
-
-	void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
-		// Following Clang's approach, we generate:
-		// 1. operator() - member function with lambda body
-		// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
-		// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
-
-		// Generate operator() member function
-		generateLambdaOperatorCallFunction(lambda_info);
-
-		// Generate __invoke static function only for non-capturing lambdas
-		// Capturing lambdas can't be converted to function pointers
-		if (lambda_info.captures.empty()) {
-			generateLambdaInvokeFunction(lambda_info);
-		}
-
-		// CRITICAL FIX: Add operator() to the closure struct's member_functions list
-		// This allows member function calls to find the correct declaration for mangling
-		// Without this, lambda calls generate incorrect mangled names
-		if (lambda_info.closure_type_name.empty()) {
-			return;  // No closure type, can't add member functions
-		}
-		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
-		if (type_it != getTypesByNameMap().end()) {
-			TypeInfo* closure_type = type_it->second;
-			StructTypeInfo* struct_info = closure_type->getStructInfo();
-			if (struct_info) {
-				// Create a FunctionDeclarationNode for operator()
-				// We need this so member function calls can generate the correct mangled name
-				TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
-					lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
-				ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
-
-				Token operator_token = lambda_info.lambda_token;  // Use lambda token as placeholder
-				DeclarationNode& decl_node = gChunkedAnyStorage.emplace_back<DeclarationNode>(return_type_ast, operator_token);
-
-				FunctionDeclarationNode& func_decl = gChunkedAnyStorage.emplace_back<FunctionDeclarationNode>(decl_node);
-
-				// C++20: Lambda operator() is implicitly constexpr if it satisfies constexpr requirements
-				// Mark it as constexpr so the ConstExprEvaluator can evaluate lambda calls at compile time
-				func_decl.set_is_constexpr(true);
-
-				// Add parameters to the function declaration
-				const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
-					? lambda_info.parameter_nodes
-					: lambda_info.resolved_param_nodes;
-				for (const auto& param_node : param_nodes) {
-					func_decl.add_parameter_node(param_node);
-				}
-
-				ASTNode func_decl_ast(&func_decl);
-
-				// Create StructMemberFunction and add to struct
-				StructMemberFunction member_func(
-					StringTable::getOrInternStringHandle("operator()"),
-					func_decl_ast,
-					AccessSpecifier::Public,
-					false,  // is_constructor
-					false,  // is_destructor
-					OverloadableOperator::Call
-				);
-				member_func.cv_qualifier = CVQualifier::None;  // Mutable lambdas have non-const operator()
-				member_func.is_virtual = false;
-				member_func.is_pure_virtual = false;
-				member_func.is_override = false;
-				member_func.is_final = false;
-				member_func.vtable_index = 0;
-
-				struct_info->member_functions.push_back(std::move(member_func));
 			}
 		}
 	}
 
-	void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
-		// Generate function declaration for operator()
-		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
-		func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);  // Phase 4: Variant needs explicit type
-		func_decl_op.return_type_index = lambda_info.return_type_index;
-		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
-		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
-		func_decl_op.linkage = Linkage::None;  // C++ linkage
-		func_decl_op.is_variadic = false;
+	// Return the closure variable representing the lambda
+	// Format: {type, size, value, type_index}
+	// - type: Type::Struct (the closure is a struct)
+	// - size: size of the closure in bits
+	// - value: closure_var_name (the allocated closure variable)
+	// - type_index: the type index for the closure struct
+	int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->total_size * 8);
+	TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
+	return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
+}
 
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Only non-pointer, non-reference struct returns need this
-		bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returns_reference);
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
-		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
+void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
+	// Following Clang's approach, we generate:
+	// 1. operator() - member function with lambda body
+	// 2. __invoke - static function that can be used as function pointer (only for non-capturing lambdas)
+	// 3. conversion operator - returns pointer to __invoke (only for non-capturing lambdas)
 
-		// Track hidden return parameter flag for current function context
-		current_function_has_hidden_return_param_ = needs_hidden_return_param;
+	// Generate operator() member function
+	generateLambdaOperatorCallFunction(lambda_info);
 
-		if (returns_struct_by_value) {
-			if (needs_hidden_return_param) {
-				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Lambda operator() {} returns struct by value (size={} bits) - will use hidden return parameter (RVO/NRVO)",
-					lambda_info.closure_type_name, lambda_info.return_size);
+	// Generate __invoke static function only for non-capturing lambdas
+	// Capturing lambdas can't be converted to function pointers
+	if (lambda_info.captures.empty()) {
+		generateLambdaInvokeFunction(lambda_info);
+	}
+
+	// CRITICAL FIX: Add operator() to the closure struct's member_functions list
+	// This allows member function calls to find the correct declaration for mangling
+	// Without this, lambda calls generate incorrect mangled names
+	if (lambda_info.closure_type_name.empty()) {
+		return;	// No closure type, can't add member functions
+	}
+	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(lambda_info.closure_type_name));
+	if (type_it != getTypesByNameMap().end()) {
+		TypeInfo* closure_type = type_it->second;
+		StructTypeInfo* struct_info = closure_type->getStructInfo();
+		if (struct_info) {
+	// Create a FunctionDeclarationNode for operator()
+	// We need this so member function calls can generate the correct mangled name
+			TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()),
+											   lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+			ASTNode return_type_ast = ASTNode::emplace_node<TypeSpecifierNode>(return_type_node);
+
+			Token operator_token = lambda_info.lambda_token;	 // Use lambda token as placeholder
+			DeclarationNode& decl_node = gChunkedAnyStorage.emplace_back<DeclarationNode>(return_type_ast, operator_token);
+
+			FunctionDeclarationNode& func_decl = gChunkedAnyStorage.emplace_back<FunctionDeclarationNode>(decl_node);
+
+	// C++20: Lambda operator() is implicitly constexpr if it satisfies constexpr requirements
+	// Mark it as constexpr so the ConstExprEvaluator can evaluate lambda calls at compile time
+			func_decl.set_is_constexpr(true);
+
+	// Add parameters to the function declaration
+			const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+										  ? lambda_info.parameter_nodes
+										  : lambda_info.resolved_param_nodes;
+			for (const auto& param_node : param_nodes) {
+				func_decl.add_parameter_node(param_node);
+			}
+
+			ASTNode func_decl_ast(&func_decl);
+
+	// Create StructMemberFunction and add to struct
+			StructMemberFunction member_func(
+				StringTable::getOrInternStringHandle("operator()"),
+				func_decl_ast,
+				AccessSpecifier::Public,
+				false,  // is_constructor
+				false,  // is_destructor
+				OverloadableOperator::Call);
+			member_func.cv_qualifier = CVQualifier::None;  // Mutable lambdas have non-const operator()
+			member_func.is_virtual = false;
+			member_func.is_pure_virtual = false;
+			member_func.is_override = false;
+			member_func.is_final = false;
+			member_func.vtable_index = 0;
+
+			struct_info->member_functions.push_back(std::move(member_func));
+		}
+	}
+}
+
+void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
+	// Generate function declaration for operator()
+	FunctionDeclOp func_decl_op;
+	func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
+	func_decl_op.struct_name = StringTable::getOrInternStringHandle(lambda_info.closure_type_name);	// Phase 4: Variant needs explicit type
+	func_decl_op.return_type_index = lambda_info.return_type_index;
+	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+	func_decl_op.return_pointer_depth = PointerDepth{};	// pointer depth
+	func_decl_op.linkage = Linkage::None;  // C++ linkage
+	func_decl_op.is_variadic = false;
+
+	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+	// Only non-pointer, non-reference struct returns need this
+	bool returns_struct_by_value = returnsStructByValue(lambda_info.returnType(), 0, lambda_info.returns_reference);
+	bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
+
+	// Track hidden return parameter flag for current function context
+	current_function_has_hidden_return_param_ = needs_hidden_return_param;
+
+	if (returns_struct_by_value) {
+		if (needs_hidden_return_param) {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+							 "Lambda operator() {} returns struct by value (size={} bits) - will use hidden return parameter (RVO/NRVO)",
+							 lambda_info.closure_type_name, lambda_info.return_size);
+		} else {
+			FLASH_LOG_FORMAT(Codegen, Debug,
+							 "Lambda operator() {} returns small struct by value (size={} bits) - will return in RAX",
+							 lambda_info.closure_type_name, lambda_info.return_size);
+		}
+	}
+
+	// Build TypeSpecifierNode for return type (with proper type_index if struct)
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+
+	// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
+	std::vector<TypeSpecifierNode> param_types;
+	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+								  ? lambda_info.parameter_nodes
+								  : lambda_info.resolved_param_nodes;
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			if (isPlaceholderAutoType(param_type.type())) {
+				throw InternalError("Unresolved generic lambda parameter reached operator() mangling");
+			}
+
+	// Use the parameter type as-is, preserving all reference flags.
+			param_types.push_back(param_type);
+		}
+	}
+
+	// Generate mangled name using the same function as regular member functions
+	std::string_view mangled = generateMangledNameForCall(
+		"operator()",
+		return_type_node,
+		param_types,
+		false,  // not variadic
+		lambda_info.closure_type_name,
+		{},		// namespace_path
+		!lambda_info.is_mutable	// const operator() unless mutable lambda
+	);
+	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+
+	// Add parameters - use parameter_nodes to get complete type information
+	size_t lambda_unnamed_param_counter = 0;
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			FunctionParam func_param;
+
+	// Handle empty parameter names
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				func_param.name = StringTable::getOrInternStringHandle(
+					StringBuilder().append("__param_").append(lambda_unnamed_param_counter++).commit());
 			} else {
-				FLASH_LOG_FORMAT(Codegen, Debug,
-					"Lambda operator() {} returns small struct by value (size={} bits) - will return in RAX",
-					lambda_info.closure_type_name, lambda_info.return_size);
+				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
-		}
 
-		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 
-		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
-		std::vector<TypeSpecifierNode> param_types;
-		const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
-			? lambda_info.parameter_nodes
-			: lambda_info.resolved_param_nodes;
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-				if (isPlaceholderAutoType(param_type.type())) {
-					throw InternalError("Unresolved generic lambda parameter reached operator() mangling");
-				}
-
-				// Use the parameter type as-is, preserving all reference flags.
-				param_types.push_back(param_type);
+			if (isPlaceholderAutoType(param_type.type())) {
+				throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
 			}
+			func_param.type_index = param_type.type_index();
+			func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
+			func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+			func_param.cv_qualifier = param_type.cv_qualifier();
+			func_decl_op.parameters.push_back(func_param);
 		}
-
-		// Generate mangled name using the same function as regular member functions
-		std::string_view mangled = generateMangledNameForCall(
-			"operator()",
-			return_type_node,
-			param_types,
-			false,  // not variadic
-			lambda_info.closure_type_name,
-			{},     // namespace_path
-			!lambda_info.is_mutable  // const operator() unless mutable lambda
-		);
-		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-
-		// Add parameters - use parameter_nodes to get complete type information
-		size_t lambda_unnamed_param_counter = 0;
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-				FunctionParam func_param;
-
-				// Handle empty parameter names
-				std::string_view param_name = param_decl.identifier_token().value();
-				if (param_name.empty()) {
-					func_param.name = StringTable::getOrInternStringHandle(
-						StringBuilder().append("__param_").append(lambda_unnamed_param_counter++).commit());
-				} else {
-					func_param.name = StringTable::getOrInternStringHandle(param_name);
-				}
-
-				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
-
-				if (isPlaceholderAutoType(param_type.type())) {
-					throw InternalError("Unresolved generic lambda parameter reached operator() lowering");
-				}
-				func_param.type_index = param_type.type_index();
-				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
-				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				func_param.cv_qualifier = param_type.cv_qualifier();
-				func_decl_op.parameters.push_back(func_param);
-			}
-		}
-
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
-		symbol_table.enter_scope(ScopeType::Function);
-
-		// Reset the temporary variable counter for each new function
-		// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
-		// TempVar(1) is reserved for 'this', so we start at TempVar(2).
-		var_counter = TempVar(2);
-
-		// Clear global TempVar metadata to prevent stale data from bleeding into this function
-		GlobalTempVarMetadataStorage::instance().clear();
-
-		// Set current function return type and size for type checking in return statements
-		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_index_ = lambda_info.return_type_index;
-		current_function_return_size_ = lambda_info.return_size;
-		current_function_returns_reference_ = lambda_info.returns_reference;
-
-		// Set lambda context for captured variable access
-		pushLambdaContext(lambda_info);
-
-		// Add lambda parameters to symbol table as function parameters (operator() context).
-		// Instantiation-time semantic normalization has already rewritten generic
-		// lambda placeholder parameters to their deduced concrete declarations.
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
-			}
-		}
-
-		// Add captured variables to symbol table
-		// These will be accessed through member access (this->x)
-		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
-
-		// Generate the lambda body
-		bool has_return_statement = false;
-		if (lambda_info.lambda_body.is<BlockNode>()) {
-			const auto& body = lambda_info.lambda_body.as<BlockNode>();
-			body.get_statements().visit([&](const ASTNode& stmt) {
-				visit(stmt);
-				if (stmt.is<ReturnStatementNode>()) {
-					has_return_statement = true;
-				}
-			});
-		}
-
-		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
-			ReturnOp ret_op;  // No return value for void
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
-		}
-
-		// Restore outer lambda context (if any)
-		popLambdaContext();
-
-		symbol_table.exit_scope();
-
-		// Note: Nested lambdas collected during body generation will be processed
-		// by the main generateCollectedLambdas() loop - no recursive call needed here
 	}
 
-	void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
-		// Generate function declaration for __invoke
-		FunctionDeclOp func_decl_op;
-		func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);  // Variant needs explicit type
-		func_decl_op.struct_name = StringHandle();  // no struct name (static function)
-		func_decl_op.return_type_index = lambda_info.return_type_index;
-		func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
-		func_decl_op.return_pointer_depth = PointerDepth{};  // pointer depth
-		func_decl_op.linkage = Linkage::None;  // C++ linkage
-		func_decl_op.is_variadic = false;
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
+	symbol_table.enter_scope(ScopeType::Function);
 
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
-		bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
-		func_decl_op.has_hidden_return_param = needs_hidden_return_param;
+	// Reset the temporary variable counter for each new function
+	// TempVar is 1-based (TempVar() starts at 1). For member functions (operator()),
+	// TempVar(1) is reserved for 'this', so we start at TempVar(2).
+	var_counter = TempVar(2);
 
-		// Track hidden return parameter flag for current function context
-		current_function_has_hidden_return_param_ = needs_hidden_return_param;
+	// Clear global TempVar metadata to prevent stale data from bleeding into this function
+	GlobalTempVarMetadataStorage::instance().clear();
 
-		// Build TypeSpecifierNode for return type (with proper type_index if struct)
-		TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+	// Set current function return type and size for type checking in return statements
+	// This is critical for lambdas returning other lambdas or structs
+	current_function_return_type_index_ = lambda_info.return_type_index;
+	current_function_return_size_ = lambda_info.return_size;
+	current_function_returns_reference_ = lambda_info.returns_reference;
 
-		// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
-		std::vector<TypeSpecifierNode> param_types;
-		const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
-			? lambda_info.parameter_nodes
-			: lambda_info.resolved_param_nodes;
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+	// Set lambda context for captured variable access
+	pushLambdaContext(lambda_info);
 
-				if (isPlaceholderAutoType(param_type.type())) {
-					throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
-				}
-				param_types.push_back(param_type);
-			}
+	// Add lambda parameters to symbol table as function parameters (operator() context).
+	// Instantiation-time semantic normalization has already rewritten generic
+	// lambda placeholder parameters to their deduced concrete declarations.
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			symbol_table.insert(param_decl.identifier_token().value(), param_node);
 		}
-
-		// Generate mangled name for the __invoke function (free function, not member)
-		std::string_view mangled = generateMangledNameForCall(
-			lambda_info.invoke_name,
-			return_type_node,
-			param_types,
-			false,  // not variadic
-			"",     // not a member function
-			{},     // namespace_path
-			false   // free function, never const
-		);
-		func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
-
-		// Add parameters - use parameter_nodes to get complete type information
-		size_t invoke_unnamed_param_counter = 0;
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-
-				FunctionParam func_param;
-
-				// Handle empty parameter names
-				std::string_view param_name = param_decl.identifier_token().value();
-				if (param_name.empty()) {
-					func_param.name = StringTable::getOrInternStringHandle(
-						StringBuilder().append("__param_").append(invoke_unnamed_param_counter++).commit());
-				} else {
-					func_param.name = StringTable::getOrInternStringHandle(param_name);
-				}
-
-				func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
-
-				if (isPlaceholderAutoType(param_type.type())) {
-					throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");
-				}
-				func_param.type_index = param_type.type_index();
-				func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
-				func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-				func_param.cv_qualifier = param_type.cv_qualifier();
-				func_decl_op.parameters.push_back(func_param);
-			}
-		}
-
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
-		symbol_table.enter_scope(ScopeType::Function);
-
-		// Reset the temporary variable counter for each new function
-		// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
-		// so TempVar() starts at 1 which is the first available slot.
-		var_counter = TempVar();
-
-		// Set current function return type and size for type checking in return statements
-		// This is critical for lambdas returning other lambdas or structs
-		current_function_return_type_index_ = lambda_info.return_type_index;
-		current_function_return_size_ = lambda_info.return_size;
-		current_function_returns_reference_ = lambda_info.returns_reference;
-
-		// Add lambda parameters to symbol table as function parameters (__invoke context).
-		// Instantiation-time semantic normalization has already rewritten generic
-		// lambda placeholder parameters to their deduced concrete declarations.
-		for (const auto& param_node : param_nodes) {
-			if (param_node.is<DeclarationNode>()) {
-				const auto& param_decl = param_node.as<DeclarationNode>();
-				symbol_table.insert(param_decl.identifier_token().value(), param_node);
-			}
-		}
-
-		// Add captured variables to symbol table
-		addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
-
-		// Push lambda context so that recursive calls via auto&& parameters work correctly
-		// This allows the auto-typed callable handling in generateFunctionCallIr to detect
-		// that we're inside a lambda and generate the correct operator() call
-		pushLambdaContext(lambda_info);
-
-		// Generate the lambda body
-		bool has_return_statement = false;
-		if (lambda_info.lambda_body.is<BlockNode>()) {
-			const auto& body = lambda_info.lambda_body.as<BlockNode>();
-			body.get_statements().visit([&](const ASTNode& stmt) {
-				visit(stmt);
-				if (stmt.is<ReturnStatementNode>()) {
-					has_return_statement = true;
-				}
-			});
-		}
-
-		// Add implicit return for void lambdas (matching regular function behavior)
-		if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
-			ReturnOp ret_op;  // No return value for void
-			ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
-		}
-
-		// Restore outer lambda context
-		popLambdaContext();
-
-		symbol_table.exit_scope();
 	}
 
-	void AstToIr::addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-	const std::vector<ASTNode>& captured_var_decls) {
-		// Add captured variables to the symbol table
-		// We use the stored declarations from when the lambda was created
-		size_t capture_index = 0;
-		for (const auto& capture : captures) {
-			if (capture.is_capture_all()) {
-				// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
-				// If we see one here, it means the parser didn't expand it (shouldn't happen)
-				continue;
+	// Add captured variables to symbol table
+	// These will be accessed through member access (this->x)
+	addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
+
+	// Generate the lambda body
+	bool has_return_statement = false;
+	if (lambda_info.lambda_body.is<BlockNode>()) {
+		const auto& body = lambda_info.lambda_body.as<BlockNode>();
+		body.get_statements().visit([&](const ASTNode& stmt) {
+			visit(stmt);
+			if (stmt.is<ReturnStatementNode>()) {
+				has_return_statement = true;
+			}
+		});
+	}
+
+	// Add implicit return for void lambdas (matching regular function behavior)
+	if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
+		ReturnOp ret_op;	 // No return value for void
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
+	}
+
+	// Restore outer lambda context (if any)
+	popLambdaContext();
+
+	symbol_table.exit_scope();
+
+	// Note: Nested lambdas collected during body generation will be processed
+	// by the main generateCollectedLambdas() loop - no recursive call needed here
+}
+
+void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
+	// Generate function declaration for __invoke
+	FunctionDeclOp func_decl_op;
+	func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);	// Variant needs explicit type
+	func_decl_op.struct_name = StringHandle();  // no struct name (static function)
+	func_decl_op.return_type_index = lambda_info.return_type_index;
+	func_decl_op.return_size_in_bits = SizeInBits{lambda_info.return_size};
+	func_decl_op.return_pointer_depth = PointerDepth{};	// pointer depth
+	func_decl_op.linkage = Linkage::None;  // C++ linkage
+	func_decl_op.is_variadic = false;
+
+	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+	// Detect if lambda returns struct by value (needs hidden return parameter for RVO/NRVO)
+	bool needs_hidden_return_param = needsHiddenReturnParam(lambda_info.returnType(), 0, lambda_info.returns_reference, lambda_info.return_size, context_->isLLP64());
+	func_decl_op.has_hidden_return_param = needs_hidden_return_param;
+
+	// Track hidden return parameter flag for current function context
+	current_function_has_hidden_return_param_ = needs_hidden_return_param;
+
+	// Build TypeSpecifierNode for return type (with proper type_index if struct)
+	TypeSpecifierNode return_type_node(lambda_info.return_type_index.withCategory(lambda_info.returnType()), lambda_info.return_size, lambda_info.lambda_token, CVQualifier::None, ReferenceQualifier::None);
+
+	// Build TypeSpecifierNodes for parameters using parameter_nodes to preserve type_index
+	std::vector<TypeSpecifierNode> param_types;
+	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
+								  ? lambda_info.parameter_nodes
+								  : lambda_info.resolved_param_nodes;
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			if (isPlaceholderAutoType(param_type.type())) {
+				throw InternalError("Unresolved generic lambda parameter reached __invoke mangling");
+			}
+			param_types.push_back(param_type);
+		}
+	}
+
+	// Generate mangled name for the __invoke function (free function, not member)
+	std::string_view mangled = generateMangledNameForCall(
+		lambda_info.invoke_name,
+		return_type_node,
+		param_types,
+		false,  // not variadic
+		"",		// not a member function
+		{},		// namespace_path
+		false	  // free function, never const
+	);
+	func_decl_op.mangled_name = StringTable::getOrInternStringHandle(mangled);
+
+	// Add parameters - use parameter_nodes to get complete type information
+	size_t invoke_unnamed_param_counter = 0;
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+
+			FunctionParam func_param;
+
+	// Handle empty parameter names
+			std::string_view param_name = param_decl.identifier_token().value();
+			if (param_name.empty()) {
+				func_param.name = StringTable::getOrInternStringHandle(
+					StringBuilder().append("__param_").append(invoke_unnamed_param_counter++).commit());
+			} else {
+				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
 
-			// Skip [this] and [*this] captures - they don't have variable declarations
-			if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
+			func_param.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
+
+			if (isPlaceholderAutoType(param_type.type())) {
+				throw InternalError("Unresolved generic lambda parameter reached __invoke lowering");
+			}
+			func_param.type_index = param_type.type_index();
+			func_param.size_in_bits = SizeInBits{param_type.size_in_bits()};
+			func_param.ref_qualifier = ((param_type.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((param_type.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+			func_param.cv_qualifier = param_type.cv_qualifier();
+			func_decl_op.parameters.push_back(func_param);
+		}
+	}
+
+	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), lambda_info.lambda_token));
+	symbol_table.enter_scope(ScopeType::Function);
+
+	// Reset the temporary variable counter for each new function
+	// TempVar is 1-based. For static functions (like __invoke), no 'this' pointer,
+	// so TempVar() starts at 1 which is the first available slot.
+	var_counter = TempVar();
+
+	// Set current function return type and size for type checking in return statements
+	// This is critical for lambdas returning other lambdas or structs
+	current_function_return_type_index_ = lambda_info.return_type_index;
+	current_function_return_size_ = lambda_info.return_size;
+	current_function_returns_reference_ = lambda_info.returns_reference;
+
+	// Add lambda parameters to symbol table as function parameters (__invoke context).
+	// Instantiation-time semantic normalization has already rewritten generic
+	// lambda placeholder parameters to their deduced concrete declarations.
+	for (const auto& param_node : param_nodes) {
+		if (param_node.is<DeclarationNode>()) {
+			const auto& param_decl = param_node.as<DeclarationNode>();
+			symbol_table.insert(param_decl.identifier_token().value(), param_node);
+		}
+	}
+
+	// Add captured variables to symbol table
+	addCapturedVariablesToSymbolTable(lambda_info.captures, lambda_info.captured_var_decls);
+
+	// Push lambda context so that recursive calls via auto&& parameters work correctly
+	// This allows the auto-typed callable handling in generateFunctionCallIr to detect
+	// that we're inside a lambda and generate the correct operator() call
+	pushLambdaContext(lambda_info);
+
+	// Generate the lambda body
+	bool has_return_statement = false;
+	if (lambda_info.lambda_body.is<BlockNode>()) {
+		const auto& body = lambda_info.lambda_body.as<BlockNode>();
+		body.get_statements().visit([&](const ASTNode& stmt) {
+			visit(stmt);
+			if (stmt.is<ReturnStatementNode>()) {
+				has_return_statement = true;
+			}
+		});
+	}
+
+	// Add implicit return for void lambdas (matching regular function behavior)
+	if (!has_return_statement && lambda_info.return_type_index.category() == TypeCategory::Void) {
+		ReturnOp ret_op;	 // No return value for void
+		ir_.addInstruction(IrInstruction(IrOpcode::Return, std::move(ret_op), lambda_info.lambda_token));
+	}
+
+	// Restore outer lambda context
+	popLambdaContext();
+
+	symbol_table.exit_scope();
+}
+
+void AstToIr::addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
+												const std::vector<ASTNode>& captured_var_decls) {
+	// Add captured variables to the symbol table
+	// We use the stored declarations from when the lambda was created
+	size_t capture_index = 0;
+	for (const auto& capture : captures) {
+		if (capture.is_capture_all()) {
+	// Capture-all ([=] or [&]) should have been expanded by the parser into explicit captures
+	// If we see one here, it means the parser didn't expand it (shouldn't happen)
+			continue;
+		}
+
+	// Skip [this] and [*this] captures - they don't have variable declarations
+		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
 			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
-				continue;
-			}
-
-			// Skip init-captures: [x = expr] defines a new variable, doesn't capture existing one
-			// These are handled separately by reading from the closure member
-			if (capture.has_initializer()) {
-				continue;
-			}
-
-			if (capture_index >= captured_var_decls.size()) {
-				std::cerr << "Error: Mismatch between captures and captured variable declarations\n";
-				break;
-			}
-
-			// Get the stored variable declaration
-			const ASTNode& var_decl = captured_var_decls[capture_index];
-			std::string_view var_name = capture.identifier_name();
-
-			// Add the captured variable to the current scope
-			// For by-value captures, we create a copy
-			// For by-reference captures, we use the original
-			symbol_table.insert(var_name, var_decl);
-
-			capture_index++;
+			continue;
 		}
+
+	// Skip init-captures: [x = expr] defines a new variable, doesn't capture existing one
+	// These are handled separately by reading from the closure member
+		if (capture.has_initializer()) {
+			continue;
+		}
+
+		if (capture_index >= captured_var_decls.size()) {
+			std::cerr << "Error: Mismatch between captures and captured variable declarations\n";
+			break;
+		}
+
+	// Get the stored variable declaration
+		const ASTNode& var_decl = captured_var_decls[capture_index];
+		std::string_view var_name = capture.identifier_name();
+
+	// Add the captured variable to the current scope
+	// For by-value captures, we create a copy
+	// For by-reference captures, we use the original
+		symbol_table.insert(var_name, var_decl);
+
+		capture_index++;
 	}
-
-
-
+}
 
 // Helper to generate FunctionAddress IR for a lambda's __invoke function
 // Returns the TempVar holding the function pointer address
 TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode& lambda) {
 	std::string_view invoke_name = StringBuilder()
-		.append(lambda.generate_lambda_name())
-		.append("_invoke")
-		.commit();
+									   .append(lambda.generate_lambda_name())
+									   .append("_invoke")
+									   .commit();
 
-	// Compute the mangled name for the __invoke function
-	// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
+ // Compute the mangled name for the __invoke function
+ // Per C++20 §7.5.5.1, a lambda with no return statements deduces void
 	TypeCategory return_type = TypeCategory::Void;
 	int return_size = 0;
 	if (lambda.return_type().has_value()) {
@@ -910,7 +905,7 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 	}
 	TypeSpecifierNode return_type_node(return_type, TypeQualifier::None, return_size, lambda.lambda_token(), CVQualifier::None);
 
-	// Build parameter types
+ // Build parameter types
 	std::vector<TypeSpecifierNode> param_type_nodes;
 	for (const auto& param : lambda.parameters()) {
 		if (param.is<DeclarationNode>()) {
@@ -920,11 +915,11 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 		}
 	}
 
-	// Generate mangled name
+ // Generate mangled name
 	std::string_view mangled = generateMangledNameForCall(
 		invoke_name, return_type_node, param_type_nodes, false, "", {}, false);
 
-	// Generate FunctionAddress instruction to get the address
+ // Generate FunctionAddress instruction to get the address
 	TempVar func_addr_var = var_counter.next();
 	FunctionAddressOp op;
 	op.result.setType(TypeCategory::FunctionPointer);
@@ -937,8 +932,6 @@ TempVar AstToIr::generateLambdaInvokeFunctionAddress(const LambdaExpressionNode&
 
 	return func_addr_var;
 }
-
-
 
 // ========== Lambda Capture Helper Functions ==========
 
@@ -954,7 +947,6 @@ const StructTypeInfo* AstToIr::getCurrentClosureStruct() const {
 	return it->second->getStructInfo();
 }
 
-
 // Check if we're in a lambda with [*this] capture
 bool AstToIr::isInCopyThisLambda() const {
 	if (!current_lambda_context_.isActive()) {
@@ -969,8 +961,6 @@ bool AstToIr::isInCopyThisLambda() const {
 	return false;
 }
 
-
-
 // Get the offset of a member in the current lambda closure struct
 // Returns 0 if not found or not in a lambda context
 int AstToIr::getClosureMemberOffset(std::string_view member_name) const {
@@ -981,8 +971,6 @@ int AstToIr::getClosureMemberOffset(std::string_view member_name) const {
 	}
 	return 0;
 }
-
-
 
 // Emit IR to load __copy_this from current lambda closure into a TempVar.
 // Returns the TempVar holding the copied object, or std::nullopt if not applicable.
@@ -1013,20 +1001,18 @@ std::optional<TempVar> AstToIr::emitLoadCopyThis(const Token& token) {
 	load_op.struct_type_info = nullptr;
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_op), token));
 
-	// Mark this temp var as an lvalue pointing to %this.__copy_this
-	// This allows subsequent member accesses and stores to properly chain offsets
+ // Mark this temp var as an lvalue pointing to %this.__copy_this
+ // This allows subsequent member accesses and stores to properly chain offsets
 	LValueInfo lvalue_info(
 		LValueInfo::Kind::Member,
 		StringTable::getOrInternStringHandle("this"),
-		static_cast<int>(copy_this_member->offset)
-	);
+		static_cast<int>(copy_this_member->offset));
 	lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
-	lvalue_info.is_pointer_to_member = true;  // Treat closure 'this' as a pointer
+	lvalue_info.is_pointer_to_member = true;	 // Treat closure 'this' as a pointer
 	setTempVarMetadata(copy_this_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
 	return copy_this_temp;
 }
-
 
 // Manage lambda context push/pop for nested lambdas
 void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
@@ -1047,7 +1033,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 		current_lambda_context_.captures.insert(var_name);
 		current_lambda_context_.capture_kinds[var_name] = capture.kind();
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-		capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 			current_lambda_context_.captures.insert(StringTable::getOrInternStringHandle("this"sv));
 			current_lambda_context_.capture_kinds[StringTable::getOrInternStringHandle("this"sv)] = capture.kind();
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
@@ -1056,11 +1042,11 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 				current_lambda_context_.has_this_pointer = true;
 			}
 		} else if (capture.has_initializer()) {
-			// Init-capture: infer type from initializer expression or closure struct member
-			// For init-capture by reference [&y = x], look up x's type
+	// Init-capture: infer type from initializer expression or closure struct member
+	// For init-capture by reference [&y = x], look up x's type
 			const ASTNode& init_node = *capture.initializer();
 			if (const IdentifierNode* init_id_ptr = tryGetIdentifier(init_node)) {
-				// Simple identifier like [&y = x] - look up x's type
+	// Simple identifier like [&y = x] - look up x's type
 				std::optional<ASTNode> init_symbol = symbol_table.lookup(init_id_ptr->name());
 				if (init_symbol.has_value()) {
 					const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol);
@@ -1069,7 +1055,7 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 					}
 				}
 			}
-			// If type still not set, try to get it from closure struct member
+	// If type still not set, try to get it from closure struct member
 			if (current_lambda_context_.capture_types.find(var_name) == current_lambda_context_.capture_types.end()) {
 				auto type_it = getTypesByNameMap().find(current_lambda_context_.closure_type);
 				if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
@@ -1077,10 +1063,10 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 					if (struct_info) {
 						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
 						if (member) {
-							// Create a TypeSpecifierNode from the member type
+		// Create a TypeSpecifierNode from the member type
 							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, static_cast<int>(member->size * 8), Token{}, CVQualifier::None);
 							if (member->type_index.isStruct()) {
-								// Need to set type_index for struct types
+		// Need to set type_index for struct types
 								member_type = TypeSpecifierNode(member->type_index.withCategory(member->memberType()), static_cast<int>(member->size * 8), Token(), CVQualifier::None, ReferenceQualifier::None);
 							}
 							current_lambda_context_.capture_types[var_name] = member_type;
@@ -1107,8 +1093,6 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 	}
 }
 
-
-
 void AstToIr::popLambdaContext() {
 	if (lambda_context_stack_.empty()) {
 		current_lambda_context_ = {};
@@ -1117,8 +1101,6 @@ void AstToIr::popLambdaContext() {
 	current_lambda_context_ = lambda_context_stack_.back();
 	lambda_context_stack_.pop_back();
 }
-
-
 
 // Emit IR to load __this pointer from current lambda closure into a TempVar.
 // Returns the TempVar holding the this pointer, or std::nullopt if not applicable.
@@ -1145,8 +1127,6 @@ std::optional<TempVar> AstToIr::emitLoadThisPointer(const Token& token) {
 	return this_ptr;
 }
 
-
-
 // ========== Auto Type Deduction Helpers ==========
 
 // Try to extract a LambdaExpressionNode from an initializer ASTNode.
@@ -1164,14 +1144,12 @@ const LambdaExpressionNode* AstToIr::extractLambdaFromInitializer(const ASTNode&
 	return nullptr;
 }
 
-
-
 // Deduce the actual closure type from an auto-typed lambda variable.
 // Given a symbol from the symbol table, if it's an auto-typed variable
 // initialized with a lambda, returns the TypeSpecifierNode for the closure struct.
 // Returns std::nullopt if type cannot be deduced.
 std::optional<TypeSpecifierNode> AstToIr::deduceLambdaClosureType(const ASTNode& symbol,
-const Token& fallback_token) const {
+																  const Token& fallback_token) const {
 	if (!symbol.is<VariableDeclarationNode>()) {
 		return std::nullopt;
 	}
@@ -1194,13 +1172,12 @@ const Token& fallback_token) const {
 
 	const TypeInfo* closure_type = type_it->second;
 	int closure_size = closure_type->getStructInfo()
-		? closure_type->getStructInfo()->total_size * 8
-		: 64;
+						   ? closure_type->getStructInfo()->total_size * 8
+						   : 64;
 	return TypeSpecifierNode(
 		closure_type->type_index_.withCategory(TypeCategory::Struct),
 		closure_size,
 		fallback_token,
 		CVQualifier::None,
-		ReferenceQualifier::None
-	);
+		ReferenceQualifier::None);
 }

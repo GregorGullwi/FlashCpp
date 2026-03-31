@@ -3,39 +3,39 @@
 #define XYZ 456
 
 // Test with various separators
-#if ABC&&XYZ          // && should be separator
+#if ABC && XYZ		   // && should be separator
 #endif
-#if ABC||XYZ          // || should be separator  
+#if ABC || XYZ		   // || should be separator
 #endif
-#if ABC+XYZ           // + should be separator
+#if ABC + XYZ			  // + should be separator
 #endif
-#if ABC-XYZ           // - should be separator
+#if ABC - XYZ			  // - should be separator
 #endif
-#if ABC*XYZ           // * should be separator
+#if ABC * XYZ			  // * should be separator
 #endif
-#if ABC/XYZ           // / should be separator
+#if ABC / XYZ			  // / should be separator
 #endif
-#if ABC<XYZ           // < should be separator
+#if ABC < XYZ			  // < should be separator
 #endif
-#if ABC>XYZ           // > should be separator
+#if ABC > XYZ			  // > should be separator
 #endif
-#if ABC==XYZ          // = should be separator
+#if ABC == XYZ		   // = should be separator
 #endif
-#if ABC!=XYZ          // ! should be separator
+#if ABC != XYZ		   // ! should be separator
 #endif
-#if ABC&XYZ           // & should be separator
+#if ABC & XYZ			  // & should be separator
 #endif
-#if ABC|XYZ           // | should be separator
+#if ABC | XYZ			  // | should be separator
 #endif
-#if ABC^XYZ           // ^ should be separator
+#if ABC ^ XYZ			  // ^ should be separator
 #endif
-#if ABC%XYZ           // % should be separator
+#if ABC % XYZ			  // % should be separator
 #endif
-#if (ABC)             // ( ) should be separators
+#if (ABC)			 // ( ) should be separators
 #endif
-#if ABC,XYZ           // , should be separator (in macro args)
+#if ABC, XYZ			 // , should be separator (in macro args)
 #endif
 
 int main() {
-    return 0;
+	return 0;
 }

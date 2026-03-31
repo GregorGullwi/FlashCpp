@@ -11,12 +11,16 @@ struct Tracker {
 int main() {
 	Tracker source(10);
 	Tracker copied(source);
-	if (!copied.copied) return 1;
-	if (copied.id != 10) return 2;
+	if (!copied.copied)
+		return 1;
+	if (copied.id != 10)
+		return 2;
 
 	Tracker moved(static_cast<Tracker&&>(source));
-	if (!moved.moved) return 3;
-	if (moved.id != 10) return 4;
+	if (!moved.moved)
+		return 3;
+	if (moved.id != 10)
+		return 4;
 
 	return 0;
 }

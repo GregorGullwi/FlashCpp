@@ -2,13 +2,13 @@
 // enclosing class namespace during lookup (no hardcoded std:: fallback).
 
 namespace custom_ns {
-template<typename... Elements>
+template <typename... Elements>
 struct Holder {
 	static constexpr int size() {
 		return static_cast<int>(sizeof...(Elements));
 	}
 };
-}
+} // namespace custom_ns
 
 int main() {
 	int size = custom_ns::Holder<int, float, double>::size();

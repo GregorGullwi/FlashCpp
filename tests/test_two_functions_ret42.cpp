@@ -1,9 +1,8 @@
 int helper() {
-    return 42;
+	return 42;
 }
 
 int main() {
-    int x = helper();
-    return x;
+	int x = helper();
+	return x;
 }
-

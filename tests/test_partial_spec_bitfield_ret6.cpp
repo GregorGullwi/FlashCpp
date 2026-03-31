@@ -1,9 +1,9 @@
-template<typename T>
+template <typename T>
 struct S {
 	int value;
 };
 
-template<typename T>
+template <typename T>
 struct S<T*> {
 	int a : 3;
 	int b;

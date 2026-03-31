@@ -4,22 +4,21 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
 
-	// Consume 'template' keyword
+ // Consume 'template' keyword
 	if (!consume("template"_tok)) {
 		return ParseResult::error("Expected 'template' keyword", peek_info());
 	}
 
-	// Expect '<' to start template parameter list
+ // Expect '<' to start template parameter list
 	if (peek() != "<"_tok) {
 		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
 
-	// Parse template parameter list
+ // Parse template parameter list
 	InlineVector<ASTNode, 4> template_params;
 	InlineVector<StringHandle, 4> template_param_names;
 
@@ -28,13 +27,13 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 		return param_list_result;
 	}
 
-	// Expect '>' to close template parameter list
+ // Expect '>' to close template parameter list
 	if (peek() != ">"_tok) {
 		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
 
-	// Extract parameter names and register type parameters in one pass
+ // Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
 	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -47,40 +46,39 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 			}
 		}
 	}
-	
-	// Set template parameter context for parsing the requires clause
+
+ // Set template parameter context for parsing the requires clause
 	FlashCpp::ScopedState guard_param_names(current_template_param_names_);
 	current_template_param_names_ = template_param_names;
 	FlashCpp::TemplateDepthGuard guard_parsing_body(parsing_template_depth_);
 
-	// Handle optional requires clause
-	// Pattern: template<typename T> requires Constraint using Alias = T;
+ // Handle optional requires clause
+ // Pattern: template<typename T> requires Constraint using Alias = T;
 	std::optional<ASTNode> requires_clause;
 	if (peek() == "requires"_tok) {
 		Token requires_token = peek_info();
 		advance(); // consume 'requires'
-		
-		// Parse the constraint expression
+
+	// Parse the constraint expression
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (constraint_result.is_error()) {
 			return constraint_result;
 		}
-		
-		// Create RequiresClauseNode
+
+	// Create RequiresClauseNode
 		requires_clause = emplace_node<RequiresClauseNode>(
 			*constraint_result.node(),
-			requires_token
-		);
-		
+			requires_token);
+
 		FLASH_LOG(Parser, Debug, "Parsed requires clause for member template alias");
 	}
 
-	// Expect 'using' keyword
+ // Expect 'using' keyword
 	if (!consume("using"_tok)) {
 		return ParseResult::error("Expected 'using' keyword in member template alias", peek_info());
 	}
 
-	// Parse alias name
+ // Parse alias name
 	if (!peek().is_identifier()) {
 		return ParseResult::error("Expected alias name after 'using' in member template alias", current_token_);
 	}
@@ -88,43 +86,42 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	std::string_view alias_name = alias_name_token.value();
 	advance();
 
-	// Expect '='
+ // Expect '='
 	if (peek() != "="_tok) {
 		return ParseResult::error("Expected '=' after alias name in member template alias", current_token_);
 	}
 	advance(); // consume '='
 
-	// Parse the target type
+ // Parse the target type
 	ParseResult type_result = parse_type_specifier();
 	if (type_result.is_error()) {
 		return type_result;
 	}
 
-	// Get the TypeSpecifierNode and check for pointer/reference modifiers
+ // Get the TypeSpecifierNode and check for pointer/reference modifiers
 	TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 	consume_pointer_ref_modifiers(type_spec);
 
-	// Expect semicolon
+ // Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after member template alias declaration", current_token_);
 	}
 
-	// Create TemplateAliasNode
+ // Create TemplateAliasNode
 	auto alias_node = emplace_node<TemplateAliasNode>(
 		std::move(template_params),
 		std::move(template_param_names),
 		StringTable::getOrInternStringHandle(alias_name),
-		type_result.node().value()
-	);
+		type_result.node().value());
 
-	// Register the alias template with qualified name (ClassName::AliasName)
+ // Register the alias template with qualified name (ClassName::AliasName)
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(
 		StringBuilder().append(struct_node.name()).append("::").append(alias_name));
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 
-	// template_scope automatically cleans up template parameters when it goes out of scope
+ // template_scope automatically cleans up template parameters when it goes out of scope
 
 	return saved_position.success();
 }
@@ -132,27 +129,27 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 // Parse member struct/class template: template<typename T> struct Name { ... };
 ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct_node, [[maybe_unused]] AccessSpecifier access) {
 	ScopedTokenPosition saved_position(*this);
-	
-	// Consume 'template' keyword
+
+ // Consume 'template' keyword
 	if (!consume("template"_tok)) {
 		return ParseResult::error("Expected 'template' keyword", peek_info());
 	}
-	
-	// Parse template parameter list
+
+ // Parse template parameter list
 	if (peek() != "<"_tok) {
 		return ParseResult::error("Expected '<' after 'template' keyword", current_token_);
 	}
 	advance(); // consume '<'
-	
+
 	InlineVector<ASTNode, 4> template_params;
 	InlineVector<std::string_view, 4> template_param_names;
-	
+
 	auto param_list_result = parse_template_parameter_list(template_params);
 	if (param_list_result.is_error()) {
 		return param_list_result;
 	}
-	
-	// Extract parameter names and register type parameters in one pass
+
+ // Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
 	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
@@ -165,17 +162,17 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 			}
 		}
 	}
-	
-	// Expect '>'
+
+ // Expect '>'
 	if (peek() != ">"_tok) {
 		return ParseResult::error("Expected '>' after template parameter list", current_token_);
 	}
 	advance(); // consume '>'
-	
-	// Parse storage class specifiers (static, constexpr, inline, etc.)
+
+ // Parse storage class specifiers (static, constexpr, inline, etc.)
 	bool is_constexpr = false;
 	StorageClass storage_class = StorageClass::None;
-	
+
 	while (peek().is_keyword()) {
 		auto kw = peek();
 		if (kw == "constexpr"_tok) {
@@ -190,80 +187,76 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 			break; // Not a storage class specifier
 		}
 	}
-	
-	// Parse the type
+
+ // Parse the type
 	auto type_result = parse_type_specifier();
 	if (type_result.is_error()) {
 		return type_result;
 	}
-	
-	// Parse variable name
+
+ // Parse variable name
 	if (!peek().is_identifier()) {
 		return ParseResult::error("Expected variable name in member variable template", current_token_);
 	}
 	Token var_name_token = peek_info();
 	std::string_view var_name = var_name_token.value();
 	advance();
-	
-	// Handle variable template partial specialization: name<args> = expr;
+
+ // Handle variable template partial specialization: name<args> = expr;
 	[[maybe_unused]] bool is_partial_specialization = false;
 	if (peek() == "<"_tok) {
 		is_partial_specialization = true;
-		// Skip the template specialization arguments
+	// Skip the template specialization arguments
 		skip_template_arguments();
 	}
-	
-	// Create DeclarationNode
+
+ // Create DeclarationNode
 	auto decl_node = emplace_node<DeclarationNode>(
 		type_result.node().value(),
-		var_name_token
-	);
-	
-	// Parse initializer (required for member variable templates)
+		var_name_token);
+
+ // Parse initializer (required for member variable templates)
 	std::optional<ASTNode> init_expr;
 	if (peek() == "="_tok) {
 		advance(); // consume '='
-		
-		// Parse the initializer expression
+
+	// Parse the initializer expression
 		auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (init_result.is_error()) {
 			return init_result;
 		}
 		init_expr = init_result.node();
 	}
-	
-	// Expect semicolon
+
+ // Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after member variable template declaration", current_token_);
 	}
-	
-	// Create VariableDeclarationNode
+
+ // Create VariableDeclarationNode
 	auto var_decl_node = emplace_node<VariableDeclarationNode>(
 		decl_node,
 		init_expr,
-		storage_class
-	);
-	
-	// Set constexpr flag if present
+		storage_class);
+
+ // Set constexpr flag if present
 	var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(is_constexpr);
-	
-	// Create TemplateVariableDeclarationNode
+
+ // Create TemplateVariableDeclarationNode
 	auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
 		std::move(template_params),
-		var_decl_node
-	);
-	
-	// Build qualified name for registration
+		var_decl_node);
+
+ // Build qualified name for registration
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(
-		StringBuilder().append(StringTable::getStringView(struct_node.name()))
-		               .append("::"sv).append(var_name));
-	
-	// Register in template registry
+		StringBuilder().append(StringTable::getStringView(struct_node.name())).append("::"sv).append(var_name));
+
+ // Register in template registry
 	gTemplateRegistry.registerVariableTemplate(var_name_token.handle(), template_var_node);
 	gTemplateRegistry.registerVariableTemplate(qualified_name, template_var_node);
-	
+
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member variable template: {}", StringTable::getStringView(qualified_name));
-	
+
 	return saved_position.success();
 }
 

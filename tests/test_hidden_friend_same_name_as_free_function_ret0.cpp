@@ -16,7 +16,7 @@ struct Widget {
 int get_value() { return 42; }
 
 int main() {
-	// This should succeed: ordinary lookup finds the free function get_value()
-	// even though a hidden friend named "get_value" exists in Widget.
-	return get_value() - 42;  // 42 - 42 == 0
+ // This should succeed: ordinary lookup finds the free function get_value()
+ // even though a hidden friend named "get_value" exists in Widget.
+	return get_value() - 42;	 // 42 - 42 == 0
 }

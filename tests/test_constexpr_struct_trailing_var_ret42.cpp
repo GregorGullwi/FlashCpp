@@ -8,5 +8,5 @@ struct Val {
 constexpr Val answer = {42};
 
 int main() {
-	return answer.v;  // expect 42
+	return answer.v;	 // expect 42
 }

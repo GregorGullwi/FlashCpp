@@ -6,29 +6,29 @@ int main() {
 	double d = -0.0;
 	float f = -0.0f;
 
-	// !(-0.0) should be true: -0.0 is semantically zero → false → !false = true
+ // !(-0.0) should be true: -0.0 is semantically zero → false → !false = true
 	if (!d) {
-		// ok
+	// ok
 	} else {
 		return 1;
 	}
 
 	if (!f) {
-		// ok
+	// ok
 	} else {
 		return 2;
 	}
 
-	// nonzero float: !(3.14) should be false
+ // nonzero float: !(3.14) should be false
 	double nonzero = 3.14;
 	if (!nonzero) {
 		return 3;
 	}
 
-	// !(0.0) should be true
+ // !(0.0) should be true
 	double zero = 0.0;
 	if (!zero) {
-		// ok
+	// ok
 	} else {
 		return 4;
 	}

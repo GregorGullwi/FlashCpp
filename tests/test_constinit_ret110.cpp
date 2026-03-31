@@ -8,11 +8,11 @@ constexpr int const_val = 100;
 constinit int g_c = const_val;
 
 void test() {
-    // constinit on local static variable
-    static constinit int local_static = 42;
-    
-    // constinit on local variable (should fail compilation if uncommented)
-    // constinit int local_fail = 10; 
+	// constinit on local static variable
+	static constinit int local_static = 42;
+
+	// constinit on local variable (should fail compilation if uncommented)
+	// constinit int local_fail = 10;
 }
 
 // constinit with non-constant initializer (should fail compilation if uncommented)
@@ -20,6 +20,6 @@ void test() {
 // constinit int fail_init = runtime_val;
 
 int main() {
-    test();
-    return g_a + g_c; // Should return 110
+	test();
+	return g_a + g_c; // Should return 110
 }

@@ -9,8 +9,7 @@ int main() {
 		int y = 0;
 		int z = x / y;  // Divide by zero
 		return z;  // Should not reach here
-	}
-	__except(EXCEPTION_EXECUTE_HANDLER) {
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		return 200;
 	}
 }

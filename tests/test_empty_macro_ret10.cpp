@@ -6,5 +6,5 @@ int EMPTY x = 10;
 EMPTY_FUNC(foo)
 
 int main() {
-    return x;
+	return x;
 }

@@ -5,16 +5,15 @@
 #define EXCEPTION_CONTINUE_SEARCH 0
 
 int test_filter_expression(int* ptr) {
-    __try {
-        int value = *ptr;
-        return value;
-    }
-    __except(ptr == 0 ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-        return -1;
-    }
+	__try {
+		int value = *ptr;
+		return value;
+	} __except (ptr == 0 ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		return -1;
+	}
 }
 
 int main() {
-    // -1 as unsigned 32-bit = 0xFFFFFFFF, & 0xFF = 255
-    return test_filter_expression(0);
+	// -1 as unsigned 32-bit = 0xFFFFFFFF, & 0xFF = 255
+	return test_filter_expression(0);
 }

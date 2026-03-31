@@ -9,6 +9,7 @@ short get_short(bool ok) {
 
 int main() {
 	short v = get_short(true);
-	if (v != 5) return 1;
+	if (v != 5)
+		return 1;
 	return 0;
 }

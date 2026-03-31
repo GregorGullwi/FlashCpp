@@ -8,7 +8,8 @@ struct Counter {
 		return;
 	}
 	constexpr void set(int v) {
-		if (v < 0) return;
+		if (v < 0)
+			return;
 		value = v;
 	}
 	constexpr int get() const { return value; }

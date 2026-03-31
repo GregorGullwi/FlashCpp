@@ -25,13 +25,15 @@ int main() {
 	} catch (Left&) {
 		caught_left = true;
 	}
-	if (!caught_left) return 1;
+	if (!caught_left)
+		return 1;
 
 	bool caught_vbase = false;
 	try {
 		throw Derived{};
 	} catch (VBase& v) {
-		if (v.vb != 17) return 2;
+		if (v.vb != 17)
+			return 2;
 		caught_vbase = true;
 	}
 	return caught_vbase ? 0 : 3;

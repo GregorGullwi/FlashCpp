@@ -4,18 +4,18 @@
 
 // Free function taking a function pointer with reference return type
 int call(int& (*func)(int&), int& x) {
-    return 0;
+	return 0;
 }
 
 // Struct with member function taking reference-returning function pointer
 struct Stream {
-    int state;
+	int state;
 
-    int apply(int (*__pf)(int)) {
-        return __pf(state);
-    }
+	int apply(int (*__pf)(int)) {
+		return __pf(state);
+	}
 };
 
 int main() {
-    return 0;
+	return 0;
 }

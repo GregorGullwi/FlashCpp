@@ -1,5 +1,8 @@
 // Regression test: array of aggregate structs initialized with local bindings inside constexpr
-struct Pt { int x; int y; };
+struct Pt {
+	int x;
+	int y;
+};
 
 constexpr int test() {
 	int a = 1, b = 2, c = 3, d = 4;

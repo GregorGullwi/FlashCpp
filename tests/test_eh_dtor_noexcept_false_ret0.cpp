@@ -8,17 +8,17 @@ struct Throwing {
 
 struct Normal {
 	int value;
-	~Normal() {}  // implicitly noexcept(true)
+	~Normal() {}	 // implicitly noexcept(true)
 };
 
 int main() {
 	int result = 0;
 
-	// Throwing destructor should NOT be noexcept
+ // Throwing destructor should NOT be noexcept
 	if (noexcept(Throwing{}.~Throwing()))
 		result |= 1;
 
-	// Normal destructor SHOULD be noexcept
+ // Normal destructor SHOULD be noexcept
 	if (!noexcept(Normal{}.~Normal()))
 		result |= 2;
 

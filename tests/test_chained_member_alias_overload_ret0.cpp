@@ -1,4 +1,4 @@
-template<typename T>
+template <typename T>
 struct AliasChain {
 	using base_type = T;
 	typedef base_type mid_type;
@@ -29,8 +29,10 @@ int main() {
 	AliasChain<int>::final_type scalar = 7;
 	AliasChain<Payload>::final_type payload{42};
 
-	if (selectScalar(scalar) != 7) return 1;
-	if (selectPayload(&payload) != 42) return 2;
+	if (selectScalar(scalar) != 7)
+		return 1;
+	if (selectPayload(&payload) != 42)
+		return 2;
 
 	return 0;
 }

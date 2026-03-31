@@ -1,16 +1,16 @@
 // Template template parameter test with Vector
-template<template<typename> class Container, typename T>
+template <template <typename> class Container, typename T>
 void test_func(Container<T> arg) {
 }
 
-template<typename T>
+template <typename T>
 class Vector {
 public:
-    T data;
+	T data;
 };
 
 int main() {
-    Vector<int> v;
-    v.data = 42;
-    return 0;
+	Vector<int> v;
+	v.data = 42;
+	return 0;
 }

@@ -9,5 +9,5 @@ struct Widget {
 int main() {
 	Widget w;
 	w.value = 7;
-	return get_value(w) - 7;  // ADL finds get_value; 7 - 7 == 0
+	return get_value(w) - 7;	 // ADL finds get_value; 7 - 7 == 0
 }

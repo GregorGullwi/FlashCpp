@@ -9,14 +9,14 @@ void call_void_fp(void (*fp)(int)) {
 }
 
 int main() {
-	// Test 1: unary + on lambda with int return (deduced from return statement)
+ // Test 1: unary + on lambda with int return (deduced from return statement)
 	auto fp = +[](int v) { return v + 1; };
 	int result = call_fp(fp);  // 42
 
-	// Test 2: unary + on void-returning lambda (no return statements => void deduction)
+ // Test 2: unary + on void-returning lambda (no return statements => void deduction)
 	auto vfp = +[](int v) { g_val = v; };
 	call_void_fp(vfp);
-	// g_val should be 10; subtract it so final result stays 42
+ // g_val should be 10; subtract it so final result stays 42
 	result = result + g_val - 10;  // 42 + 10 - 10 = 42
 
 	return result;

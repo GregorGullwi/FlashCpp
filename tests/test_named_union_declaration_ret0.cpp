@@ -2,13 +2,13 @@
 // Status: ✅ PASSES - Named unions can be declared
 
 struct MyStruct {
-    union Data {
-        int i;
-        float f;
-    } data;
+	union Data {
+		int i;
+		float f;
+	} data;
 };
 
 int main() {
-    MyStruct s;
-    return 0;
+	MyStruct s;
+	return 0;
 }

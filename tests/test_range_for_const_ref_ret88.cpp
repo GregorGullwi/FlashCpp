@@ -4,17 +4,17 @@
 
 // Workaround: use non-reference version for now
 int main() {
-    int arr[3] = { 50, 100 };
-    arr[2] = 150;
+	int arr[3] = {50, 100};
+	arr[2] = 150;
 
-    for (int& x : arr) {  // Changed from const int& to int
+	for (int& x : arr) {	 // Changed from const int& to int
 		x *= 2;
-    }
-	
-    int sum = 0;
-    for (const int& y : arr) {
-        sum = sum + y;
-    }
+	}
 
-    return sum % 256; // Expected: 600 (100+200+300); 600 % 256 = 88
+	int sum = 0;
+	for (const int& y : arr) {
+		sum = sum + y;
+	}
+
+	return sum % 256; // Expected: 600 (100+200+300); 600 % 256 = 88
 }

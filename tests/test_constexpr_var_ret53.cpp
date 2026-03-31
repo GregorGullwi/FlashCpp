@@ -20,15 +20,15 @@ static_assert(f == 25, "f should be 25");
 
 // Test overflow detection (should fail compilation if uncommented)
 // constexpr int max_int = 2147483647;
-// constexpr int overflow = max_int + 1; 
+// constexpr int overflow = max_int + 1;
 
 void test() {
-    // Local constexpr variables
-    constexpr int local_a = 100;
-    static_assert(local_a == 100, "local_a should be 100");
+	// Local constexpr variables
+	constexpr int local_a = 100;
+	static_assert(local_a == 100, "local_a should be 100");
 }
 
 int main() {
-    // If all static_asserts pass, return sum of values
-    return a + b + e + f; // 10 + 15 + 3 + 25 = 53
+	// If all static_asserts pass, return sum of values
+	return a + b + e + f; // 10 + 15 + 3 + 25 = 53
 }

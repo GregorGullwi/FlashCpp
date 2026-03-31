@@ -16,15 +16,15 @@
 // Clang confirms: "call to 'process' is ambiguous".
 
 int process(const int* p, int x) {
-return 1;
+	return 1;
 }
 
 int process(int* p, double x) {
-return 2;
+	return 2;
 }
 
 int main() {
-int val = 42;
-int* ptr = &val;
-return process(ptr, 42);
+	int val = 42;
+	int* ptr = &val;
+	return process(ptr, 42);
 }

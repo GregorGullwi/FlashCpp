@@ -11,15 +11,15 @@
 // noexcept(true) is always true regardless of template parameter, so
 // Helper<T>::value should be 1 after substituting T = int through Wrap<int>.
 
-template<typename T, bool B = noexcept(true)>
+template <typename T, bool B = noexcept(true)>
 struct Helper {
 	static const bool value = B;
 };
 
-template<typename T>
+template <typename T>
 struct Wrap : Helper<T> {};
 
 int main() {
-	// noexcept(true) == true, so Wrap<int>::value must be 1
-	return Wrap<int>::value - 1;  // 0 on success
+ // noexcept(true) == true, so Wrap<int>::value must be 1
+	return Wrap<int>::value - 1;	 // 0 on success
 }

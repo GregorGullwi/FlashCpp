@@ -4,7 +4,7 @@
 struct Converter {
 	int result;
 	Converter(short s) {
-		// implicit short -> int promotion in constructor body
+	// implicit short -> int promotion in constructor body
 		result = s + 100;
 	}
 };

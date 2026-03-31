@@ -7,7 +7,8 @@ int addOne(int x) {
 
 int main() {
 	short s = 42;
-	// 's' is 16-bit on the stack.  The call must promote it to 32-bit int.
-	if (addOne(s) != 43) return 1;
+ // 's' is 16-bit on the stack.  The call must promote it to 32-bit int.
+	if (addOne(s) != 43)
+		return 1;
 	return 0;
 }

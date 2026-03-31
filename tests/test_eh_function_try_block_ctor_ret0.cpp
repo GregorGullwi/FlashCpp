@@ -8,8 +8,7 @@ int g_caught = 0;
 // Inline constructor function-try-block: try before member-initializer list
 struct InlineTryCtor {
 	int x;
-	InlineTryCtor(int v)
-	try : x(v) {
+	InlineTryCtor(int v) try : x(v) {
 		g_ctors++;
 	} catch (int e) {
 		g_caught = e;
@@ -22,23 +21,26 @@ struct OolTryCtor {
 	OolTryCtor(int v);
 };
 
-OolTryCtor::OolTryCtor(int v)
-try : value(v) {
+OolTryCtor::OolTryCtor(int v) try : value(v) {
 	g_ctors++;
 } catch (int e) {
 	g_caught = e;
 }
 
 int main() {
-	// Inline constructor: normal path
+ // Inline constructor: normal path
 	InlineTryCtor a(5);
-	if (a.x != 5) return 1;
-	if (g_ctors != 1) return 2;
+	if (a.x != 5)
+		return 1;
+	if (g_ctors != 1)
+		return 2;
 
-	// Out-of-line constructor: normal path
+ // Out-of-line constructor: normal path
 	OolTryCtor b(7);
-	if (b.value != 7) return 3;
-	if (g_ctors != 2) return 4;
+	if (b.value != 7)
+		return 3;
+	if (g_ctors != 2)
+		return 4;
 
 	return 0;
 }

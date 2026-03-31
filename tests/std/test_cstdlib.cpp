@@ -2,6 +2,6 @@
 #include <cstdlib>
 
 int main() {
-    int value = std::abs(-42);
-    return 0;
+	int value = std::abs(-42);
+	return 0;
 }

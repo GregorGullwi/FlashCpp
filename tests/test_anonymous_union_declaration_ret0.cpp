@@ -2,13 +2,13 @@
 // Status: ✅ PASSES - Anonymous unions can be declared
 
 struct MyStruct {
-    union {
-        int i;
-        float f;
-    };
+	union {
+		int i;
+		float f;
+	};
 };
 
 int main() {
-    MyStruct s;
-    return 0;
+	MyStruct s;
+	return 0;
 }

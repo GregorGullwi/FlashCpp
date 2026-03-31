@@ -9,12 +9,12 @@ int readBox(Box box) {
 	return box.value;
 }
 
-template<int N>
+template <int N>
 int testParenInit() {
 	return readBox(Box(N));
 }
 
-template<int N>
+template <int N>
 int testBraceInit() {
 	return readBox(Box{N});
 }

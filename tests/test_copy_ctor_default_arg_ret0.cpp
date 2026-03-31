@@ -10,7 +10,7 @@ struct Foo {
 
 int main() {
 	Foo a(42);
-	Foo b(a);       // calls Foo(const Foo&, int=0) => val == 42
-	Foo c(a, 8);    // calls Foo(const Foo&, int)   => val == 50
+	Foo b(a);		  // calls Foo(const Foo&, int=0) => val == 42
+	Foo c(a, 8);	 // calls Foo(const Foo&, int)   => val == 50
 	return b.val + c.val - 92;  // 42 + 50 - 92 == 0
 }

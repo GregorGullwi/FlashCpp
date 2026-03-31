@@ -8,9 +8,8 @@ int main() {
 	for (int i = 0; i < 5; i++) {
 		__try {
 			int* p = 0;
-			*p = 42;  // access violation every iteration
-		}
-		__except(EXCEPTION_EXECUTE_HANDLER) {
+			*p = 42;	 // access violation every iteration
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			result = result + 10;  // 10 per iteration = 50
 		}
 	}

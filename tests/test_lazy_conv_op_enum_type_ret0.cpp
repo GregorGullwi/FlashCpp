@@ -6,9 +6,11 @@
 // the lazy registry key, leading to a missing conversion operator at codegen.
 // Expected return: 0
 
-enum Color { Red = 0, Green = 1, Blue = 2 };
+enum Color { Red = 0,
+			 Green = 1,
+			 Blue = 2 };
 
-template<typename T>
+template <typename T>
 struct EnumWrapper {
 	using value_type = T;
 	T val_;
@@ -18,8 +20,9 @@ struct EnumWrapper {
 
 int main() {
 	EnumWrapper<Color> w(Green);
-	Color c = w;  // Should call operator Color() const => Green (1)
-	if (c != Green) return 1;
+	Color c = w;	 // Should call operator Color() const => Green (1)
+	if (c != Green)
+		return 1;
 
 	int x = c;  // Green == 1
 	return x - 1;  // 0 if correct

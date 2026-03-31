@@ -8,11 +8,11 @@
 // for the symbol table fallback lookup.
 
 struct Base {
-    static constexpr int value = 42;
+	static constexpr int value = 42;
 };
 
 struct Derived : Base {
-    // 'value' is inherited from Base — not redefined here.
+	// 'value' is inherited from Base — not redefined here.
 };
 
 constexpr Derived make_derived() { return Derived{}; }
@@ -24,5 +24,5 @@ constexpr Derived make_derived() { return Derived{}; }
 static_assert(Derived::value == 42, "Inherited static member should be 42");
 
 int main() {
-    return Derived::value; // returns 42
+	return Derived::value; // returns 42
 }

@@ -11,12 +11,12 @@
 // The function reads container.data (a T) and returns it, so the return value
 // depends on T being correctly resolved to int.
 
-template<typename T>
+template <typename T>
 struct Box {
 	T data;
 };
 
-template<template<typename> class Container, typename T>
+template <template <typename> class Container, typename T>
 T getValue(Container<T>& c) {
 	return c.data;
 }
@@ -24,5 +24,5 @@ T getValue(Container<T>& c) {
 int main() {
 	Box<int> b;
 	b.data = 42;
-	return getValue(b);  // Container=Box, T=int deduced; returns 42
+	return getValue(b);	// Container=Box, T=int deduced; returns 42
 }

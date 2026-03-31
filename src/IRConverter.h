@@ -49,13 +49,12 @@ static constexpr size_t MAX_MOV_INSTRUCTION_SIZE = 9;
 // REX format: 0100WRXB
 // W = 64-bit operand size, R = ModR/M reg extension, X = SIB index extension, B = ModR/M r/m extension
 static constexpr uint8_t REX_BASE = 0x40;  // REX prefix with no bits set (enables uniform byte regs)
-static constexpr uint8_t REX_B    = 0x41;  // REX.B - extends r/m or base register to R8-R15
-static constexpr uint8_t REX_X    = 0x42;  // REX.X - extends SIB index register
-static constexpr uint8_t REX_R    = 0x44;  // REX.R - extends ModR/M reg field to R8-R15
-static constexpr uint8_t REX_W    = 0x48;  // REX.W - 64-bit operand size
-static constexpr uint8_t REX_WB   = 0x49;  // REX.W + REX.B
-static constexpr uint8_t REX_WR   = 0x4C;  // REX.W + REX.R
-
+static constexpr uint8_t REX_B = 0x41;  // REX.B - extends r/m or base register to R8-R15
+static constexpr uint8_t REX_X = 0x42;  // REX.X - extends SIB index register
+static constexpr uint8_t REX_R = 0x44;  // REX.R - extends ModR/M reg field to R8-R15
+static constexpr uint8_t REX_W = 0x48;  // REX.W - 64-bit operand size
+static constexpr uint8_t REX_WB = 0x49;	// REX.W + REX.B
+static constexpr uint8_t REX_WR = 0x4C;	// REX.W + REX.R
 
 // ============================================================================
 // Shard includes - split from the original monolithic IRConverter.h

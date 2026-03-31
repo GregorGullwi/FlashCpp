@@ -3,7 +3,7 @@ struct Wrap {
 	int value;
 };
 
-template<int N>
+template <int N>
 struct Box {
 	Wrap value = N + 0;
 	int data[N + 0];

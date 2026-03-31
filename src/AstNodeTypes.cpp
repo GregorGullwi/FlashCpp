@@ -21,26 +21,26 @@ private:
 	bool is_active_;
 
 public:
-	// Constructor: check for cycles and register this type
+ // Constructor: check for cycles and register this type
 	explicit RecursionGuard(const StructTypeInfo* type)
-	    : type_(type), is_active_(false) {
-		// Check if we're already resolving this type (cycle detection)
+		: type_(type), is_active_(false) {
+	// Check if we're already resolving this type (cycle detection)
 		if (resolution_stack_.contains(type_)) {
 			return; // Cycle detected, leave is_active_ as false
 		}
 
-		// Check depth limit
+	// Check depth limit
 		if (recursion_depth_ >= MAX_RECURSION_DEPTH) {
 			return; // Depth limit exceeded, leave is_active_ as false
 		}
 
-		// Add this type to the resolution stack
+	// Add this type to the resolution stack
 		resolution_stack_.insert(type_);
 		++recursion_depth_;
 		is_active_ = true;
 	}
 
-	// Destructor: cleanup
+ // Destructor: cleanup
 	~RecursionGuard() {
 		if (is_active_) {
 			resolution_stack_.erase(type_);
@@ -48,10 +48,10 @@ public:
 		}
 	}
 
-	// Check if this guard is active (no cycle/depth limit detected)
+ // Check if this guard is active (no cycle/depth limit detected)
 	bool isActive() const { return is_active_; }
 
-	// Disable copy and move
+ // Disable copy and move
 	RecursionGuard(const RecursionGuard&) = delete;
 	RecursionGuard& operator=(const RecursionGuard&) = delete;
 };
@@ -80,14 +80,14 @@ TypeCreationResult add_user_type(StringHandle name, int type_size_in_bits, Names
 }
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns) {
-	// Check if type already exists (forward declaration case)
+ // Check if type already exists (forward declaration case)
 	auto existing_it = gTypesByName.find(name);
 	if (existing_it != gTypesByName.end()) {
-		// Type already exists - return the existing one
-		// This handles the case where we have a forward declaration followed by a full definition
-		// Update namespace if not yet explicitly set (forward declaration may not have had context).
-		// We check !isValid() (INVALID_HANDLE) which means "not yet assigned", as opposed to
-		// isGlobal() which is a legitimate namespace (index 0) for types at file scope.
+	// Type already exists - return the existing one
+	// This handles the case where we have a forward declaration followed by a full definition
+	// Update namespace if not yet explicitly set (forward declaration may not have had context).
+	// We check !isValid() (INVALID_HANDLE) which means "not yet assigned", as opposed to
+	// isGlobal() which is a legitimate namespace (index 0) for types at file scope.
 		if (!existing_it->second->namespaceHandle().isValid()) {
 			existing_it->second->setNamespaceHandle(ns);
 		}
@@ -166,9 +166,9 @@ const TypeInfo* findNativeType(TypeCategory cat) {
 
 TypeIndex nativeTypeIndex(TypeCategory cat) {
 	const TypeInfo* ti = findNativeType(cat);
-	// For native types, return the real gTypeInfo slot (index >= 1, so is_valid() == true).
-	// For non-native categories (Struct, Enum, UserDefined, …), fall back to TypeIndex{0, cat}
-	// to preserve category information for callers that use .category() on placeholders.
+ // For native types, return the real gTypeInfo slot (index >= 1, so is_valid() == true).
+ // For non-native categories (Struct, Enum, UserDefined, …), fall back to TypeIndex{0, cat}
+ // to preserve category information for callers that use .category() on placeholders.
 	return ti ? ti->type_index_ : TypeIndex{0, cat};
 }
 
@@ -211,16 +211,16 @@ const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap() {
 }
 
 void initialize_native_types() {
-	// Initialize native types if not already done
+ // Initialize native types if not already done
 	if (!gNativeTypes.empty()) {
 		return;
 	}
 
-	// Index 0 is reserved as the null/invalid sentinel — TypeIndex::is_valid() returns
-	// (index_ > 0), so gTypeInfo[0] must not be a real type. All real types start at 1.
+ // Index 0 is reserved as the null/invalid sentinel — TypeIndex::is_valid() returns
+ // (index_ > 0), so gTypeInfo[0] must not be a real type. All real types start at 1.
 	gTypeInfo.emplace_back(StringTable::createStringHandle(""sv), TypeIndex{0, TypeCategory::Invalid}, 0);
 
-	// Add basic native types
+ // Add basic native types
 	auto& void_type = gTypeInfo.emplace_back(StringTable::createStringHandle("void"sv), TypeIndex{gTypeInfo.size(), TypeCategory::Void}, 0);
 	gNativeTypes[TypeCategory::Void] = &void_type;
 
@@ -290,10 +290,10 @@ void initialize_native_types() {
 	auto& member_function_pointer_type = gTypeInfo.emplace_back(StringTable::createStringHandle("member_function_pointer"sv), TypeIndex{gTypeInfo.size(), TypeCategory::MemberFunctionPointer}, get_type_size_bits(TypeCategory::MemberFunctionPointer));
 	gNativeTypes[TypeCategory::MemberFunctionPointer] = &member_function_pointer_type;
 
-	// Register GCC builtin types used by libstdc++ headers
-	// __builtin_va_list is the compiler's internal va_list type (a struct array on x86-64).
-	// We register it as a user-defined type so lookupTypeInCurrentContext finds it,
-	// allowing declarations like '__builtin_va_list args;' to parse correctly.
+ // Register GCC builtin types used by libstdc++ headers
+ // __builtin_va_list is the compiler's internal va_list type (a struct array on x86-64).
+ // We register it as a user-defined type so lookupTypeInCurrentContext finds it,
+ // allowing declarations like '__builtin_va_list args;' to parse correctly.
 	auto va_list_handle = StringTable::createStringHandle("__builtin_va_list"sv);
 	auto& va_list_type_info = gTypeInfo.emplace_back(va_list_handle, TypeIndex{gTypeInfo.size(), TypeCategory::UserDefined}, 64); // Pointer-sized opaque handle
 	gTypesByName.emplace(va_list_handle, &va_list_type_info);
@@ -304,14 +304,14 @@ void initialize_native_types() {
 }
 
 int get_integer_rank(TypeCategory type) {
-	// C++20 integer conversion rank (higher rank = larger type)
-	// [conv.rank] specifies the conversion rank:
-	// - bool has the lowest rank
-	// - signed char/unsigned char have the same rank (less than short)
-	// - short/unsigned short have the same rank (less than int)
-	// - int/unsigned int have the same rank
-	// - long/unsigned long have the same rank
-	// - long long/unsigned long long have the highest standard integer rank
+ // C++20 integer conversion rank (higher rank = larger type)
+ // [conv.rank] specifies the conversion rank:
+ // - bool has the lowest rank
+ // - signed char/unsigned char have the same rank (less than short)
+ // - short/unsigned short have the same rank (less than int)
+ // - int/unsigned int have the same rank
+ // - long/unsigned long have the same rank
+ // - long long/unsigned long long have the highest standard integer rank
 	switch (type) {
 	case TypeCategory::Bool:
 		return 0; // Bool has lowest rank
@@ -337,7 +337,7 @@ int get_integer_rank(TypeCategory type) {
 	case TypeCategory::Char32:
 		return 3; // Same rank as uint_least32_t (int)
 	case TypeCategory::WChar:
-		// wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
+	// wchar_t rank is target-dependent: 16-bit on LLP64/Windows x64 (rank 2), 32-bit on LP64/Unix-like systems (rank 3)
 		return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 3;
 	default:
 		return -1; // Invalid/unknown type
@@ -345,7 +345,7 @@ int get_integer_rank(TypeCategory type) {
 }
 
 int get_floating_point_rank(TypeCategory type) {
-	// Floating-point conversion rank (higher rank = larger type)
+ // Floating-point conversion rank (higher rank = larger type)
 	switch (type) {
 	case TypeCategory::Float:
 		return 1;
@@ -391,10 +391,10 @@ int get_type_size_bits(TypeCategory cat) {
 	case TypeCategory::LongDouble:
 		return 80; // x87 extended precision
 	case TypeCategory::Enum:
-		// Fallback only: when code still carries TypeCategory::Enum but lost the concrete
-		// enum metadata, assume the common default underlying type (int, 32 bits).
-		// This is expected only for still-buggy dependent/template instantiation paths;
-		// normal enum sizing should come from the enum's TypeIndex/type_size_.
+	// Fallback only: when code still carries TypeCategory::Enum but lost the concrete
+	// enum metadata, assume the common default underlying type (int, 32 bits).
+	// This is expected only for still-buggy dependent/template instantiation paths;
+	// normal enum sizing should come from the enum's TypeIndex/type_size_.
 		return 32;
 	case TypeCategory::FunctionPointer:
 	case TypeCategory::MemberFunctionPointer:
@@ -409,7 +409,7 @@ int get_type_size_bits(TypeCategory cat) {
 }
 
 TypeCategory promote_integer_type(TypeCategory type) {
-	// C++ integer promotion rules: bool, char, and short promote to int
+ // C++ integer promotion rules: bool, char, and short promote to int
 	switch (type) {
 	case TypeCategory::Bool:
 	case TypeCategory::Char:
@@ -419,19 +419,19 @@ TypeCategory promote_integer_type(TypeCategory type) {
 		return TypeCategory::Int;
 	case TypeCategory::UnsignedChar:
 	case TypeCategory::UnsignedShort:
-		// If int can represent all values of the original type, promote to int
-		// Otherwise promote to unsigned int (but for char/short, int is always sufficient)
+	// If int can represent all values of the original type, promote to int
+	// Otherwise promote to unsigned int (but for char/short, int is always sufficient)
 		return TypeCategory::Int;
 	case TypeCategory::WChar:
-		// wchar_t promotion is target-dependent:
-		// On Windows (16-bit): promotes to int
-		// On Linux (32-bit): doesn't promote (same size as int)
+	// wchar_t promotion is target-dependent:
+	// On Windows (16-bit): promotes to int
+	// On Linux (32-bit): doesn't promote (same size as int)
 		return (get_wchar_size_bits() < 32) ? TypeCategory::Int : TypeCategory::WChar;
 	case TypeCategory::Char32:
-		// char32_t (32-bit) doesn't promote - same size as int
+	// char32_t (32-bit) doesn't promote - same size as int
 		return TypeCategory::Char32;
 	default:
-		// Types int and larger don't get promoted
+	// Types int and larger don't get promoted
 		return type;
 	}
 }
@@ -469,23 +469,23 @@ static TypeCategory get_unsigned_version(TypeCategory type) {
 // But: signed int (32 bits) CANNOT represent all unsigned int (32 bits) values
 // because max(int) = 2^31-1 < max(uint) = 2^32-1.
 static bool can_represent_all_values(TypeCategory signed_type, TypeCategory unsigned_type) {
-	// Get the bit sizes for comparison
+ // Get the bit sizes for comparison
 	int signed_bits = get_type_size_bits(signed_type);
 	int unsigned_bits = get_type_size_bits(unsigned_type);
 
-	// Strictly greater means all values can be represented
+ // Strictly greater means all values can be represented
 	return signed_bits > unsigned_bits;
 }
 
 TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
-	// C++20 usual arithmetic conversions [conv.arith]
+ // C++20 usual arithmetic conversions [conv.arith]
 
-	// Floating-point types have higher precedence than integer types
+ // Floating-point types have higher precedence than integer types
 	bool left_is_fp = isFloatingPointType(left);
 	bool right_is_fp = isFloatingPointType(right);
 
 	if (left_is_fp && right_is_fp) {
-		// Both floating-point: higher rank wins
+	// Both floating-point: higher rank wins
 		int left_fp_rank = get_floating_point_rank(left);
 		int right_fp_rank = get_floating_point_rank(right);
 		return (left_fp_rank > right_fp_rank) ? left : right;
@@ -499,17 +499,17 @@ TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
 		return right; // Floating-point wins over integer
 	}
 
-	// Both are integer types: apply integer promotions first
-	// This handles bool -> int, char -> int, short -> int, unsigned char/short -> int
+ // Both are integer types: apply integer promotions first
+ // This handles bool -> int, char -> int, short -> int, unsigned char/short -> int
 	left = promote_integer_type(left);
 	right = promote_integer_type(right);
 
-	// After promotion, check if types are the same
+ // After promotion, check if types are the same
 	if (left == right) {
 		return left;
 	}
 
-	// Get signedness and ranks
+ // Get signedness and ranks
 	auto is_unsigned_integer_category = [](TypeCategory type) {
 		switch (type) {
 		case TypeCategory::UnsignedChar:
@@ -532,29 +532,29 @@ TypeCategory get_common_type(TypeCategory left, TypeCategory right) {
 	int left_rank = get_integer_rank(left);
 	int right_rank = get_integer_rank(right);
 
-	// Case 1: Same signedness - higher rank wins
+ // Case 1: Same signedness - higher rank wins
 	if (left_unsigned == right_unsigned) {
 		return (left_rank > right_rank) ? left : right;
 	}
 
-	// Case 2: One is signed, one is unsigned - apply C++20 rules
-	// Identify which is signed and which is unsigned
+ // Case 2: One is signed, one is unsigned - apply C++20 rules
+ // Identify which is signed and which is unsigned
 	TypeCategory signed_type = left_unsigned ? right : left;
 	TypeCategory unsigned_type = left_unsigned ? left : right;
 	int signed_rank = left_unsigned ? right_rank : left_rank;
 	int unsigned_rank = left_unsigned ? left_rank : right_rank;
 
-	// Rule 1: If unsigned type's rank >= signed type's rank, convert to unsigned
+ // Rule 1: If unsigned type's rank >= signed type's rank, convert to unsigned
 	if (unsigned_rank >= signed_rank) {
 		return unsigned_type;
 	}
 
-	// Rule 2: If signed type can represent all values of unsigned type, convert to signed
+ // Rule 2: If signed type can represent all values of unsigned type, convert to signed
 	if (can_represent_all_values(signed_type, unsigned_type)) {
 		return signed_type;
 	}
 
-	// Rule 3: Convert both to unsigned version of the signed type
+ // Rule 3: Convert both to unsigned version of the signed type
 	return get_unsigned_version(signed_type);
 }
 
@@ -575,25 +575,25 @@ static std::string cv_qualifier_to_string(CVQualifier cv) {
 std::string TypeSpecifierNode::getReadableString() const {
 	std::ostringstream oss;
 
-	// Start with base type CV-qualifiers
+ // Start with base type CV-qualifiers
 	std::string base_cv = cv_qualifier_to_string(cv_qualifier_);
 	if (!base_cv.empty()) {
 		oss << base_cv << " ";
 	}
 
-	// Add sign qualifier if present
+ // Add sign qualifier if present
 	if (qualifier_ == TypeQualifier::Unsigned) {
 		oss << "unsigned ";
 	} else if (qualifier_ == TypeQualifier::Signed) {
 		oss << "signed ";
 	}
 
-	// Add base type name
+ // Add base type name
 	std::string_view name = getTypeName(category());
 	if (!name.empty()) {
 		oss << name;
 	} else {
-		// getTypeName returns "" for non-primitive types; provide fallback names
+	// getTypeName returns "" for non-primitive types; provide fallback names
 		switch (category()) {
 		case TypeCategory::UserDefined:
 			oss << "user_defined";
@@ -640,7 +640,7 @@ std::string TypeSpecifierNode::getReadableString() const {
 		}
 	}
 
-	// Add pointer levels
+ // Add pointer levels
 	for (const auto& ptr_level : pointer_levels_) {
 		oss << "*";
 		std::string ptr_cv = cv_qualifier_to_string(ptr_level.cv_qualifier);
@@ -657,18 +657,18 @@ std::string TypeSpecifierNode::getReadableString() const {
 const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 	for (const auto& func : member_functions) {
 		if (func.is_constructor) {
-			// Check if it's a default constructor:
-			// - Either has no parameters, OR
-			// - All parameters have default values
+	// Check if it's a default constructor:
+	// - Either has no parameters, OR
+	// - All parameters have default values
 			const auto& ctor_node = func.function_decl.as<ConstructorDeclarationNode>();
 			const auto& params = ctor_node.parameter_nodes();
 
 			if (params.empty()) {
-				// No parameters - this is a default constructor
+	// No parameters - this is a default constructor
 				return &func;
 			}
 
-			// Check if all parameters have default values
+	// Check if all parameters have default values
 			bool all_params_have_defaults = true;
 			for (const auto& param : params) {
 				if (param.is<DeclarationNode>()) {
@@ -677,14 +677,14 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 						break;
 					}
 				} else {
-					// Parameter is not a DeclarationNode - treat as not having a default
+		// Parameter is not a DeclarationNode - treat as not having a default
 					all_params_have_defaults = false;
 					break;
 				}
 			}
 
 			if (all_params_have_defaults) {
-				// All parameters have defaults - this can be called as a default constructor
+	// All parameters have defaults - this can be called as a default constructor
 				return &func;
 			}
 		}
@@ -693,8 +693,8 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 }
 
 InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByParameterCount(
-    size_t parameter_count,
-    bool skip_implicit) const {
+	size_t parameter_count,
+	bool skip_implicit) const {
 	InlineVector<const StructMemberFunction*, 4> matches;
 	bool hasNonImplicitMatch = false;
 	for (const auto& func : member_functions) {
@@ -718,8 +718,8 @@ InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByPa
 	}
 
 	if (!skip_implicit && hasNonImplicitMatch) {
-		// Prefer user-declared constructors over implicit ones when both
-		// match the same parameter count.
+	// Prefer user-declared constructors over implicit ones when both
+	// match the same parameter count.
 		InlineVector<const StructMemberFunction*, 4> filtered_matches;
 		for (const StructMemberFunction* match : matches) {
 			const auto& ctor_node = match->function_decl.as<ConstructorDeclarationNode>();
@@ -754,10 +754,10 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 	if (const auto* fn = get_function_decl_node(mf.function_decl)) {
 		mf.is_noexcept = fn->is_noexcept();
-		// Auto-derive cv_qualifier from the stored const/volatile member function flags.
-		// All parse and instantiation paths must call set_is_const_member_function() and
-		// set_is_volatile_member_function() on the FunctionDeclarationNode before calling
-		// addMemberFunction / addOperatorOverload.
+	// Auto-derive cv_qualifier from the stored const/volatile member function flags.
+	// All parse and instantiation paths must call set_is_const_member_function() and
+	// set_is_volatile_member_function() on the FunctionDeclarationNode before calling
+	// addMemberFunction / addOperatorOverload.
 		const bool is_c = fn->is_const_member_function();
 		const bool is_v = fn->is_volatile_member_function();
 		if (is_c && is_v)
@@ -786,22 +786,22 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 	if (!own_type_index_.has_value())
 		return false;
-	// Direct match (works for non-template types and properly substituted template params)
+ // Direct match (works for non-template types and properly substituted template params)
 	if (param_type_index == *own_type_index_)
 		return true;
-	// Template instantiation fallback: check if param refers to our base template pattern
+ // Template instantiation fallback: check if param refers to our base template pattern
 	if ((*own_type_index_).index() >= gTypeInfo.size() || param_type_index.index() >= gTypeInfo.size())
 		return false;
 	const TypeInfo& own_info = gTypeInfo[(*own_type_index_).index()];
 	if (!own_info.isTemplateInstantiation())
 		return false;
 	const TypeInfo& param_info = gTypeInfo[param_type_index.index()];
-	// Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
+ // Param is the base template pattern itself (e.g., Wrapper vs Wrapper<int>)
 	if (own_info.baseTemplateName() == param_info.name())
 		return true;
-	// Note: We intentionally do NOT match different instantiations of the same template
-	// (e.g., Wrapper<double> should not match for Wrapper<int>'s own type check).
-	// The base pattern check above handles the unsubstituted case.
+ // Note: We intentionally do NOT match different instantiations of the same template
+ // (e.g., Wrapper<double> should not match for Wrapper<int>'s own type check).
+ // The base pattern check above handles the unsubstituted case.
 	return false;
 }
 
@@ -818,8 +818,8 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 //   2. None of the finders accepted ctors with default arguments
 //      (e.g. Foo(const Foo&, int = 0)).
 const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
-    bool want_move,
-    bool include_implicit) const {
+	bool want_move,
+	bool include_implicit) const {
 	for (const auto& func : member_functions) {
 		if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -835,7 +835,7 @@ const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
 			continue;
 		}
 
-		// Accept ctors where only the first arg is required (rest have defaults).
+	// Accept ctors where only the first arg is required (rest have defaults).
 		size_t min_required = computeMinRequiredArgs(params);
 		if (min_required > 1) {
 			continue;
@@ -875,18 +875,18 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor(bool include_imp
 // Preferred same-type constructor: try move (if not deleted) then copy (if not
 // deleted), with optional implicit-ctor participation.
 const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
-    bool prefer_move,
-    bool include_implicit) const {
+	bool prefer_move,
+	bool include_implicit) const {
 	if (prefer_move && !isMoveConstructorDeleted()) {
 		if (const StructMemberFunction* move_ctor =
-		        findSameTypeConstructorCore(true, include_implicit)) {
+				findSameTypeConstructorCore(true, include_implicit)) {
 			return move_ctor;
 		}
 	}
 
 	if (!isCopyConstructorDeleted()) {
 		if (const StructMemberFunction* copy_ctor =
-		        findSameTypeConstructorCore(false, include_implicit)) {
+				findSameTypeConstructorCore(false, include_implicit)) {
 			return copy_ctor;
 		}
 	}
@@ -896,9 +896,9 @@ const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
 
 namespace {
 bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
-                                          const StructMemberFunction& func,
-                                          bool want_move,
-                                          bool include_implicit) {
+										  const StructMemberFunction& func,
+										  bool want_move,
+										  bool include_implicit) {
 	if (!isAssignOperator(func.operator_kind)) {
 		return false;
 	}
@@ -912,7 +912,7 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 	}
 
 	const OverloadableOperator expected_kind =
-	    want_move ? OverloadableOperator::MoveAssign : OverloadableOperator::CopyAssign;
+		want_move ? OverloadableOperator::MoveAssign : OverloadableOperator::CopyAssign;
 	if (func.operator_kind == expected_kind) {
 		return true;
 	}
@@ -936,8 +936,8 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 
 	const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 	const bool matches_reference = want_move
-	                                   ? param_type.is_rvalue_reference()
-	                                   : param_type.is_lvalue_reference();
+									   ? param_type.is_rvalue_reference()
+									   : param_type.is_lvalue_reference();
 	return matches_reference && param_type.category() == TypeCategory::Struct && struct_info.isOwnTypeIndex(param_type.type_index());
 }
 } // namespace
@@ -963,20 +963,20 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool incl
 // Finalize struct layout with base classes
 // Returns false if semantic errors were detected
 bool StructTypeInfo::finalizeWithBases() {
-	// Step 0: Build vtable first (before layout)
+ // Step 0: Build vtable first (before layout)
 	if (!buildVTable()) {
 		return false; // Semantic error during vtable building
 	}
 
-	// Step 0.1: Build RTTI information (after vtable, before layout)
+ // Step 0.1: Build RTTI information (after vtable, before layout)
 	buildRTTI();
 
 	size_t current_offset = 0;
 	size_t max_alignment = 1;
 
-	// Step 0.5: Add vptr if this struct has virtual functions
-	// Note: If base class has vtable, we inherit its vptr (at offset 0 in base subobject)
-	// Only add vptr if we introduce virtual functions and have no polymorphic base
+ // Step 0.5: Add vptr if this struct has virtual functions
+ // Note: If base class has vtable, we inherit its vptr (at offset 0 in base subobject)
+ // Only add vptr if we introduce virtual functions and have no polymorphic base
 	bool base_has_vtable = false;
 	for (const auto& base : base_classes) {
 		if (base.is_virtual)
@@ -991,14 +991,14 @@ bool StructTypeInfo::finalizeWithBases() {
 		}
 	}
 
-	// If we have virtual functions but no polymorphic base, add vptr
+ // If we have virtual functions but no polymorphic base, add vptr
 	if (has_vtable && !base_has_vtable) {
-		// vptr is at offset 0, size 8 (pointer size on x64)
+	// vptr is at offset 0, size 8 (pointer size on x64)
 		current_offset = 8;
 		max_alignment = 8; // Pointer alignment
 	}
 
-	// Step 1: Layout non-virtual base class subobjects
+ // Step 1: Layout non-virtual base class subobjects
 	for (auto& base : base_classes) {
 		if (base.is_virtual) {
 			continue; // Virtual bases are laid out at the end
@@ -1015,56 +1015,56 @@ bool StructTypeInfo::finalizeWithBases() {
 			continue; // Not a struct type
 		}
 
-		// Align to base class alignment
+	// Align to base class alignment
 		size_t base_alignment = base_info->alignment;
 		current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
 
-		// Store base class offset
+	// Store base class offset
 		base.offset = current_offset;
 
-		// Advance offset by base class size
+	// Advance offset by base class size
 		current_offset += base_info->total_size;
 
-		// Track maximum alignment
+	// Track maximum alignment
 		max_alignment = std::max(max_alignment, base_alignment);
 	}
 
-	// Step 2: Layout derived class members
+ // Step 2: Layout derived class members
 	for (auto& member : members) {
-		// Apply pack alignment if specified
+	// Apply pack alignment if specified
 		size_t effective_alignment = member.alignment;
 		if (pack_alignment > 0 && pack_alignment < member.alignment) {
 			effective_alignment = pack_alignment;
 		}
 
-		// Align to member alignment
+	// Align to member alignment
 		current_offset = (current_offset + effective_alignment - 1) & ~(effective_alignment - 1);
 
-		// Update member offset
+	// Update member offset
 		member.offset = current_offset;
 
-		// Advance offset by member size
+	// Advance offset by member size
 		current_offset += member.size;
 
-		// Track maximum alignment
+	// Track maximum alignment
 		max_alignment = std::max(max_alignment, effective_alignment);
 	}
 
-	// Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
-	// Collect all unique virtual bases (including those from base classes)
+ // Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
+ // Collect all unique virtual bases (including those from base classes)
 	std::vector<BaseClassSpecifier*> all_virtual_bases;
 	std::set<TypeIndex> seen_virtual_bases;
 
-	// Helper function to collect virtual bases recursively
+ // Helper function to collect virtual bases recursively
 	std::function<void(const StructTypeInfo*)> collectVirtualBases = [&](const StructTypeInfo* struct_info) {
 		if (!struct_info)
 			return;
 
-		// Check direct base classes
+	// Check direct base classes
 		for (auto& base : struct_info->base_classes) {
 			if (base.is_virtual && seen_virtual_bases.find(base.type_index) == seen_virtual_bases.end()) {
 				seen_virtual_bases.insert(base.type_index);
-				// Find the corresponding base in our base_classes list
+	// Find the corresponding base in our base_classes list
 				for (auto& our_base : base_classes) {
 					if (our_base.type_index == base.type_index && our_base.is_virtual) {
 						all_virtual_bases.push_back(&our_base);
@@ -1073,7 +1073,7 @@ bool StructTypeInfo::finalizeWithBases() {
 				}
 			}
 
-			// Recursively collect from non-virtual bases
+	// Recursively collect from non-virtual bases
 			if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
 				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
 				const StructTypeInfo* base_info = base_type.getStructInfo();
@@ -1084,7 +1084,7 @@ bool StructTypeInfo::finalizeWithBases() {
 
 	collectVirtualBases(this);
 
-	// Layout virtual bases
+ // Layout virtual bases
 	for (auto* vbase : all_virtual_bases) {
 		if (vbase->type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -1097,26 +1097,26 @@ bool StructTypeInfo::finalizeWithBases() {
 			continue;
 		}
 
-		// Align to base class alignment
+	// Align to base class alignment
 		size_t base_alignment = base_info->alignment;
 		current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
 
-		// Store virtual base class offset
+	// Store virtual base class offset
 		vbase->offset = current_offset;
 
-		// Advance offset by base class size
+	// Advance offset by base class size
 		current_offset += base_info->total_size;
 
-		// Track maximum alignment
+	// Track maximum alignment
 		max_alignment = std::max(max_alignment, base_alignment);
 	}
 
-	// Step 4: Apply custom alignment if specified
+ // Step 4: Apply custom alignment if specified
 	if (custom_alignment > 0) {
 		max_alignment = custom_alignment;
 	}
 
-	// Step 5: Pad to alignment
+ // Step 5: Pad to alignment
 	alignment = max_alignment;
 	total_size = (current_offset + alignment - 1) & ~(alignment - 1);
 
@@ -1128,7 +1128,7 @@ bool StructTypeInfo::finalizeWithBases() {
 bool StructTypeInfo::buildVTable() {
 	bool success = true;
 
-	// Step 1: Copy base class vtable entries (if any)
+ // Step 1: Copy base class vtable entries (if any)
 	bool any_base_potentially_incomplete = has_deferred_base_classes;
 	for (const auto& base : base_classes) {
 		if (base.type_index.index() >= gTypeInfo.size()) {
@@ -1139,7 +1139,7 @@ bool StructTypeInfo::buildVTable() {
 		const StructTypeInfo* base_info = base_type.getStructInfo();
 
 		if (base_info && base_info->has_vtable) {
-			// Copy all base vtable entries
+	// Copy all base vtable entries
 			for (const auto* base_func : base_info->vtable) {
 				if (base_func != nullptr) { // Safety check
 					vtable.push_back(base_func);
@@ -1147,12 +1147,12 @@ bool StructTypeInfo::buildVTable() {
 			}
 			has_vtable = true;
 		} else if (base_info == nullptr) {
-			// Base class type info not yet available. Override checks must be deferred.
+	// Base class type info not yet available. Override checks must be deferred.
 			any_base_potentially_incomplete = true;
 		} else if (!base_info->has_vtable) {
-			// Base class exists but vtable not built. Check if it has virtual functions
-			// that suggest its vtable hasn't been built yet (e.g., template instantiation
-			// whose finalization is deferred).
+	// Base class exists but vtable not built. Check if it has virtual functions
+	// that suggest its vtable hasn't been built yet (e.g., template instantiation
+	// whose finalization is deferred).
 			for (const auto& func : base_info->member_functions) {
 				if (func.is_virtual || func.is_override) {
 					any_base_potentially_incomplete = true;
@@ -1162,30 +1162,30 @@ bool StructTypeInfo::buildVTable() {
 		}
 	}
 
-	// Step 2: Process this class's virtual functions
+ // Step 2: Process this class's virtual functions
 	if (member_functions.empty()) {
 		return true; // No member functions to process
 	}
 
 	for (auto& func : member_functions) {
-		// Skip constructors (they can't be virtual in the vtable sense)
+	// Skip constructors (they can't be virtual in the vtable sense)
 		if (func.is_constructor) {
 			continue;
 		}
 
-		// Skip non-virtual functions
-		// Note: A function with 'override' is implicitly virtual even without 'virtual' keyword
+	// Skip non-virtual functions
+	// Note: A function with 'override' is implicitly virtual even without 'virtual' keyword
 		if (!func.is_virtual && !func.is_override) {
 			continue; // Not a virtual function
 		}
 
-		// Mark struct as having a vtable
+	// Mark struct as having a vtable
 		has_vtable = true;
 
-		// Get function name for matching
+	// Get function name for matching
 		StringHandle func_name = func.getName();
 
-		// Check if this function overrides a base class virtual function
+	// Check if this function overrides a base class virtual function
 		int override_index = -1;
 		const StructMemberFunction* base_func_ptr = nullptr;
 		for (size_t i = 0; i < vtable.size(); ++i) {
@@ -1198,38 +1198,38 @@ bool StructTypeInfo::buildVTable() {
 		}
 
 		if (override_index >= 0) {
-			// Check if base function is final
+	// Check if base function is final
 			if (base_func_ptr && base_func_ptr->is_final) {
-				// Error: attempting to override a final function
+	// Error: attempting to override a final function
 				std::string error_msg = "cannot override final function '" +
-				                        std::string(StringTable::getStringView(func_name)) + "' in class '" +
-				                        std::string(StringTable::getStringView(getName())) + "'";
+										std::string(StringTable::getStringView(func_name)) + "' in class '" +
+										std::string(StringTable::getStringView(getName())) + "'";
 				FLASH_LOG(Parser, Error, error_msg);
 				finalization_error_ = error_msg;
 				success = false;
 			}
 
-			// Override existing vtable entry
+	// Override existing vtable entry
 			vtable[override_index] = &func;
 			func.vtable_index = override_index;
 		} else {
-			// Add new vtable entry
+	// Add new vtable entry
 			func.vtable_index = static_cast<int>(vtable.size());
 			vtable.push_back(&func);
 		}
 
-		// Validate override keyword usage
+	// Validate override keyword usage
 		if (func.is_override && override_index < 0) {
 			if (any_base_potentially_incomplete) {
-				// Base class vtable may be incomplete (template base classes are deferred
-				// during parsing). Defer the check to instantiation time.
+	// Base class vtable may be incomplete (template base classes are deferred
+	// during parsing). Defer the check to instantiation time.
 			} else {
-				// Error: 'override' specified but no base function to override
-				// Enforces [class.virtual]/4: ill-formed if override doesn't match
+	// Error: 'override' specified but no base function to override
+	// Enforces [class.virtual]/4: ill-formed if override doesn't match
 				std::string error_msg = "function '" +
-				                        std::string(StringTable::getStringView(func_name)) +
-				                        "' marked 'override' but does not override any base class function in class '" +
-				                        std::string(StringTable::getStringView(getName())) + "'";
+										std::string(StringTable::getStringView(func_name)) +
+										"' marked 'override' but does not override any base class function in class '" +
+										std::string(StringTable::getStringView(getName())) + "'";
 				FLASH_LOG(Parser, Error, error_msg);
 				finalization_error_ = error_msg;
 				success = false;
@@ -1237,24 +1237,24 @@ bool StructTypeInfo::buildVTable() {
 		}
 	}
 
-	// Update abstract flag after building vtable
+ // Update abstract flag after building vtable
 	updateAbstractFlag();
 
-	// Generate vtable symbol name if this struct has a vtable
+ // Generate vtable symbol name if this struct has a vtable
 	if (has_vtable) {
 		StringBuilder vtable_sb;
 
-		// Use platform-appropriate vtable mangling
+	// Use platform-appropriate vtable mangling
 		if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
-			// Itanium C++ ABI: _ZTV + length + name
-			// e.g., class "Base" -> "_ZTV4Base"
+	// Itanium C++ ABI: _ZTV + length + name
+	// e.g., class "Base" -> "_ZTV4Base"
 			vtable_sb.append("_ZTV");
 			std::string_view name_sv = StringTable::getStringView(getName());
 			vtable_sb.append(static_cast<uint64_t>(name_sv.size()));
 			vtable_sb.append(name_sv);
 		} else {
-			// MSVC: ??_7 + name + @@6B@
-			// e.g., class "Base" -> "??_7Base@@6B@"
+	// MSVC: ??_7 + name + @@6B@
+	// e.g., class "Base" -> "??_7Base@@6B@"
 			vtable_sb.append("??_7");
 			vtable_sb.append(StringTable::getStringView(getName()));
 			vtable_sb.append("@@6B@");
@@ -1270,7 +1270,7 @@ bool StructTypeInfo::buildVTable() {
 void StructTypeInfo::updateAbstractFlag() {
 	is_abstract = false;
 
-	// Check if any function in the vtable is pure virtual
+ // Check if any function in the vtable is pure virtual
 	for (const auto* func : vtable) {
 		if (func && func->is_pure_virtual) {
 			is_abstract = true;
@@ -1281,20 +1281,20 @@ void StructTypeInfo::updateAbstractFlag() {
 
 // Find member recursively through base classes
 std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle member_name) const {
-	// Use RecursionGuard to prevent infinite recursion in variadic template patterns
+ // Use RecursionGuard to prevent infinite recursion in variadic template patterns
 	RecursionGuard guard(this);
 	if (!guard.isActive()) {
 		return std::nullopt; // Cycle or depth limit detected
 	}
 
-	// First, check own members
+ // First, check own members
 	for (const auto& member : members) {
 		if (member.getName() == member_name) {
 			return member;
 		}
 	}
 
-	// Then, check base class members
+ // Then, check base class members
 	for (const auto& base : base_classes) {
 		if (base.type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -1306,7 +1306,7 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 		if (base_info) {
 			auto base_member = base_info->findMemberRecursive(member_name);
 			if (base_member) {
-				// Found in base class - adjust offset by base class offset
+	// Found in base class - adjust offset by base class offset
 				base_member->offset += base.offset;
 				return base_member;
 			}
@@ -1317,20 +1317,20 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 }
 
 std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::findStaticMemberRecursive(StringHandle member_name) const {
-	// Use RecursionGuard to prevent infinite recursion in variadic template patterns
+ // Use RecursionGuard to prevent infinite recursion in variadic template patterns
 	RecursionGuard guard(this);
 	if (!guard.isActive()) {
 		return {nullptr, nullptr}; // Cycle or depth limit detected
 	}
 
-	// First, check own static members
+ // First, check own static members
 	for (const auto& static_member : static_members) {
 		if (static_member.getName() == member_name) {
 			return {&static_member, this};
 		}
 	}
 
-	// Then, check base class static members
+ // Then, check base class static members
 	for (const auto& base : base_classes) {
 		if (base.type_index.index() >= gTypeInfo.size()) {
 			continue;
@@ -1339,7 +1339,7 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 		const TypeInfo* base_type = &gTypeInfo[base.type_index.index()];
 		const StructTypeInfo* base_info = base_type->getStructInfo();
 
-		// Follow typedef/alias chains to find the underlying struct info if needed
+	// Follow typedef/alias chains to find the underlying struct info if needed
 		if (!base_info && base_type->isStruct()) {
 			constexpr size_t MAX_ALIAS_DEPTH = 64;
 			size_t depth = 0;
@@ -1363,7 +1363,7 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 		if (base_info) {
 			auto [base_static_member, owner_struct] = base_info->findStaticMemberRecursive(member_name);
 			if (base_static_member) {
-				// Found in base class - return it with its owner
+	// Found in base class - return it with its owner
 				return {base_static_member, owner_struct};
 			}
 		}
@@ -1374,13 +1374,13 @@ std::pair<const StructStaticMember*, const StructTypeInfo*> StructTypeInfo::find
 
 // Build RTTI information for polymorphic classes
 void StructTypeInfo::buildRTTI() {
-	// Only build RTTI for polymorphic classes (those with vtables)
+ // Only build RTTI for polymorphic classes (those with vtables)
 	if (!has_vtable) {
 		return;
 	}
 
-	// Create RTTI info with MSVC multi-structure format
-	// Use std::deque instead of std::vector to avoid pointer invalidation on resize
+ // Create RTTI info with MSVC multi-structure format
+ // Use std::deque instead of std::vector to avoid pointer invalidation on resize
 	static std::deque<RTTITypeInfo> rtti_storage;
 	static std::vector<MSVCTypeDescriptor*> type_descriptor_storage;
 	static std::deque<MSVCCompleteObjectLocator> col_storage;
@@ -1388,31 +1388,31 @@ void StructTypeInfo::buildRTTI() {
 	static std::vector<MSVCBaseClassArray*> bca_storage;
 	static std::deque<MSVCBaseClassDescriptor> bcd_storage;
 
-	// Create mangled and demangled names
+ // Create mangled and demangled names
 	std::string name_str(StringTable::getStringView(getName()));
 	std::string mangled_name = ".?AV" + name_str + "@@"; // MSVC-style mangling for classes
 
-	// Allocate RTTI info
+ // Allocate RTTI info
 	rtti_storage.emplace_back(mangled_name.c_str(), name_str.c_str(), base_classes.size());
 	rtti_info = &rtti_storage.back();
 
-	// Build ??_R0 - Type Descriptor
-	// Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
+ // Build ??_R0 - Type Descriptor
+ // Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
 	size_t name_len = mangled_name.length() + 1;
 	MSVCTypeDescriptor* type_desc = (MSVCTypeDescriptor*)malloc(sizeof(MSVCTypeDescriptor) + name_len);
 	if (!type_desc) {
-		// Allocation failed - skip RTTI generation for this class
+	// Allocation failed - skip RTTI generation for this class
 		return;
 	}
 	type_desc->vtable = nullptr; // No vtable pointer needed for our purposes
 	type_desc->spare = nullptr;
-	// Use safe string copy
+ // Use safe string copy
 	strncpy(type_desc->name, mangled_name.c_str(), name_len);
 	type_desc->name[name_len - 1] = '\0'; // Ensure null termination
 	type_descriptor_storage.push_back(type_desc);
 	rtti_info->type_descriptor = type_desc;
 
-	// Build legacy base class array for compatibility
+ // Build legacy base class array for compatibility
 	if (!base_classes.empty()) {
 		static std::vector<const RTTITypeInfo*> base_array_storage;
 		size_t base_array_start = base_array_storage.size();
@@ -1436,10 +1436,10 @@ void StructTypeInfo::buildRTTI() {
 		rtti_info->base_types = &base_array_storage[base_array_start];
 	}
 
-	// Build ??_R1 - Base Class Descriptors (one for each base, plus one for self)
+ // Build ??_R1 - Base Class Descriptors (one for each base, plus one for self)
 	[[maybe_unused]] size_t total_bases = base_classes.size() + 1; // +1 for self
 
-	// Self descriptor (always first)
+ // Self descriptor (always first)
 	MSVCBaseClassDescriptor self_bcd;
 	self_bcd.type_descriptor = type_desc;
 	self_bcd.num_contained_bases = static_cast<uint32_t>(base_classes.size());
@@ -1450,7 +1450,7 @@ void StructTypeInfo::buildRTTI() {
 	bcd_storage.push_back(self_bcd);
 	rtti_info->base_descriptors.push_back(&bcd_storage.back());
 
-	// Base class descriptors
+ // Base class descriptors
 	for (size_t i = 0; i < base_classes.size(); ++i) {
 		const auto& base = base_classes[i];
 
@@ -1474,12 +1474,12 @@ void StructTypeInfo::buildRTTI() {
 		}
 	}
 
-	// Build ??_R2 - Base Class Array
-	// Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
+ // Build ??_R2 - Base Class Array
+ // Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
 	MSVCBaseClassArray* bca = (MSVCBaseClassArray*)malloc(
-	    sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*));
+		sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*));
 	if (!bca) {
-		// Allocation failed - skip Base Class Array for this class
+	// Allocation failed - skip Base Class Array for this class
 		rtti_info->bca = nullptr;
 		return;
 	}
@@ -1489,7 +1489,7 @@ void StructTypeInfo::buildRTTI() {
 	bca_storage.push_back(bca);
 	rtti_info->bca = bca;
 
-	// Build ??_R3 - Class Hierarchy Descriptor
+ // Build ??_R3 - Class Hierarchy Descriptor
 	MSVCClassHierarchyDescriptor chd;
 	chd.signature = 0;
 	chd.attributes = 0; // Can be extended for multiple/virtual inheritance flags
@@ -1498,7 +1498,7 @@ void StructTypeInfo::buildRTTI() {
 	chd_storage.push_back(chd);
 	rtti_info->chd = &chd_storage.back();
 
-	// Build ??_R4 - Complete Object Locator
+ // Build ??_R4 - Complete Object Locator
 	MSVCCompleteObjectLocator col;
 	col.signature = 1; // 1 for 64-bit
 	col.offset = 0; // Offset of vtable in complete class (0 for primary base)
@@ -1508,38 +1508,38 @@ void StructTypeInfo::buildRTTI() {
 	col_storage.push_back(col);
 	rtti_info->col = &col_storage.back();
 
-	// ========== Build Itanium C++ ABI RTTI structures ==========
-	// These are used for Linux/Unix targets (ELF format)
+ // ========== Build Itanium C++ ABI RTTI structures ==========
+ // These are used for Linux/Unix targets (ELF format)
 
-	// Storage for Itanium structures (static lifetime - RTTI data persists for program lifetime)
-	// Note: Memory allocated here is intentionally never freed as RTTI must remain valid
-	// throughout the program execution. This is the same pattern as MSVC RTTI above.
-	// Use std::deque instead of std::vector to avoid pointer invalidation on resize
+ // Storage for Itanium structures (static lifetime - RTTI data persists for program lifetime)
+ // Note: Memory allocated here is intentionally never freed as RTTI must remain valid
+ // throughout the program execution. This is the same pattern as MSVC RTTI above.
+ // Use std::deque instead of std::vector to avoid pointer invalidation on resize
 	static std::deque<ItaniumClassTypeInfo> itanium_class_storage;
 	static std::deque<ItaniumSIClassTypeInfo> itanium_si_storage;
 	static std::vector<char*> itanium_vmi_storage; // Variable-sized, use malloc
 	static std::vector<char*> itanium_name_storage;
 
-	// Create Itanium-style mangled name
-	// Itanium uses length-prefixed names: "3Foo" for class Foo
+ // Create Itanium-style mangled name
+ // Itanium uses length-prefixed names: "3Foo" for class Foo
 	std::string_view name_sv = StringTable::getStringView(getName());
 
-	// Calculate required size for "LENGTH" + name + null terminator
+ // Calculate required size for "LENGTH" + name + null terminator
 	size_t length_digits = std::to_string(name_sv.length()).length();
 	size_t itanium_total_size = length_digits + name_sv.length() + 1;
 
-	// Allocate permanent storage for the name string (persists for program lifetime)
+ // Allocate permanent storage for the name string (persists for program lifetime)
 	char* itanium_name = (char*)malloc(itanium_total_size);
 	if (!itanium_name) {
-		// Allocation failed - Itanium RTTI won't be available
+	// Allocation failed - Itanium RTTI won't be available
 		return;
 	}
 
-	// Write length prefix and name directly to buffer
+ // Write length prefix and name directly to buffer
 	int written = snprintf(itanium_name, itanium_total_size, "%zu%.*s",
-	                       name_sv.length(),
-	                       static_cast<int>(name_sv.length()),
-	                       name_sv.data());
+						   name_sv.length(),
+						   static_cast<int>(name_sv.length()),
+						   name_sv.data());
 	if (written < 0 || static_cast<size_t>(written) >= itanium_total_size) {
 		free(itanium_name);
 		return;
@@ -1547,7 +1547,7 @@ void StructTypeInfo::buildRTTI() {
 	itanium_name_storage.push_back(itanium_name);
 
 	if (base_classes.empty()) {
-		// __class_type_info - No base classes
+	// __class_type_info - No base classes
 		ItaniumClassTypeInfo class_ti;
 		class_ti.vtable = nullptr; // Will be set to vtable for __class_type_info at link time
 		class_ti.name = itanium_name;
@@ -1555,12 +1555,12 @@ void StructTypeInfo::buildRTTI() {
 		rtti_info->itanium_type_info = &itanium_class_storage.back();
 		rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo;
 	} else if (base_classes.size() == 1 && !base_classes[0].is_virtual) {
-		// __si_class_type_info - Single, non-virtual base class
+	// __si_class_type_info - Single, non-virtual base class
 		ItaniumSIClassTypeInfo si_ti;
 		si_ti.vtable = nullptr; // Will be set to vtable for __si_class_type_info at link time
 		si_ti.name = itanium_name;
 
-		// Get base class type info
+	// Get base class type info
 		if (base_classes[0].type_index.index() < gTypeInfo.size()) {
 			const TypeInfo& base_type = gTypeInfo[base_classes[0].type_index.index()];
 			const StructTypeInfo* base_info = base_type.getStructInfo();
@@ -1577,13 +1577,13 @@ void StructTypeInfo::buildRTTI() {
 		rtti_info->itanium_type_info = &itanium_si_storage.back();
 		rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::SIClassTypeInfo;
 	} else {
-		// __vmi_class_type_info - Multiple or virtual base classes
+	// __vmi_class_type_info - Multiple or virtual base classes
 		size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) +
-		                  (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
-		// Allocate permanent storage (persists for program lifetime - RTTI data)
+						  (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
+	// Allocate permanent storage (persists for program lifetime - RTTI data)
 		ItaniumVMIClassTypeInfo* vmi_ti = (ItaniumVMIClassTypeInfo*)malloc(vmi_size);
 		if (!vmi_ti) {
-			// Allocation failed
+	// Allocation failed
 			return;
 		}
 
@@ -1591,7 +1591,7 @@ void StructTypeInfo::buildRTTI() {
 		vmi_ti->name = itanium_name;
 		vmi_ti->base_count = static_cast<uint32_t>(base_classes.size());
 
-		// Calculate flags
+	// Calculate flags
 		vmi_ti->flags = 0;
 		[[maybe_unused]] bool has_virtual_bases = false;
 		for (const auto& base : base_classes) {
@@ -1600,16 +1600,16 @@ void StructTypeInfo::buildRTTI() {
 				break;
 			}
 		}
-		// Set diamond flag if multiple inheritance (conservative approach)
+	// Set diamond flag if multiple inheritance (conservative approach)
 		if (base_classes.size() > 1) {
 			vmi_ti->flags |= 0x2; // __diamond_shaped_mask
 		}
 
-		// Fill base class info
+	// Fill base class info
 		for (size_t i = 0; i < base_classes.size(); ++i) {
 			const auto& base = base_classes[i];
 
-			// Get base class type info
+	// Get base class type info
 			void* base_type_info = nullptr;
 			if (base.type_index.index() < gTypeInfo.size()) {
 				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
@@ -1621,12 +1621,12 @@ void StructTypeInfo::buildRTTI() {
 
 			vmi_ti->base_info[i].base_type = base_type_info;
 
-			// Encode offset and flags
+	// Encode offset and flags
 			int64_t offset_flags = static_cast<int64_t>(base.offset) << 8;
 			if (base.is_virtual) {
 				offset_flags |= 0x1; // __virtual_mask
 			}
-			// Assume public inheritance (set bit 1)
+	// Assume public inheritance (set bit 1)
 			offset_flags |= 0x2; // __public_mask
 
 			vmi_ti->base_info[i].offset_flags = offset_flags;

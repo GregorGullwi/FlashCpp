@@ -3,12 +3,12 @@
 // Without the fix, any final_member_name would silently return the scalar value.
 
 struct Inner {
-    int val;
+	int val;
 };
 
 struct Outer {
-    Inner inner;
-    int extra;
+	Inner inner;
+	int extra;
 };
 
 // Brace elision: 20 initializes inner.val (scalar path), 22 initializes extra
@@ -17,5 +17,5 @@ constexpr Outer o = {20, 22};
 constexpr int result = o.inner.val + o.extra;  // 20 + 22 = 42
 
 int main() {
-    return result;
+	return result;
 }

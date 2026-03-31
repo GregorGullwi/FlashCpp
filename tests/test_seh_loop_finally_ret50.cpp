@@ -6,9 +6,8 @@ int main() {
 	for (int i = 0; i < 5; i++) {
 		__try {
 			result = result + 3;
-		}
-		__finally {
-			result = result + 7;  // +10 per iteration total
+		} __finally {
+			result = result + 7;	 // +10 per iteration total
 		}
 	}
 	return result;  // expect 50

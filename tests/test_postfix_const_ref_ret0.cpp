@@ -2,11 +2,11 @@
 struct NonesuchBase {};
 
 struct Nonesuch : NonesuchBase {
-    ~Nonesuch() = delete;
-    Nonesuch(Nonesuch const&) = delete;
-    void operator=(Nonesuch const&) = delete;
+	~Nonesuch() = delete;
+	Nonesuch(Nonesuch const&) = delete;
+	void operator=(Nonesuch const&) = delete;
 };
 
 int main() {
-    return 0;
+	return 0;
 }

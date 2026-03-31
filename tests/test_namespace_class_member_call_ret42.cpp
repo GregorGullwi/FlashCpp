@@ -3,15 +3,15 @@
 // are correctly mangled and linked.
 
 namespace ns {
-    class Test {
-    public:
-        int value;
-        int get_value() const { return value; }
-    };
-}
+class Test {
+public:
+	int value;
+	int get_value() const { return value; }
+};
+} // namespace ns
 
 int main() {
-    ns::Test t;
-    t.value = 42;
-    return t.get_value();  // Should return 42
+	ns::Test t;
+	t.value = 42;
+	return t.get_value();  // Should return 42
 }

@@ -1,13 +1,13 @@
 // Simple nullptr test
 
 int* getNull() {
-    return nullptr;
+	return nullptr;
 }
 
 int main() {
-    int* p = getNull();
-    if (p == nullptr) {
-        return 0;
-    }
-    return 1;
+	int* p = getNull();
+	if (p == nullptr) {
+		return 0;
+	}
+	return 1;
 }

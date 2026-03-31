@@ -13,7 +13,7 @@ Number operator+(const Number& lhs, Offset rhs) {
 	return Number{lhs.value + static_cast<int>(rhs)};
 }
 
-template<typename T>
+template <typename T>
 int apply(T rhs) {
 	Number lhs{2};
 	Number result = lhs + rhs;

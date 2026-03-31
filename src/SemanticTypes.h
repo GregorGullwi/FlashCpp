@@ -10,7 +10,7 @@ class ConstructorDeclarationNode;
 // --- Standard conversion kinds (C++20 [conv]) ---
 
 enum class StandardConversionKind : uint8_t {
-	None,                         // No conversion / identity (used as sentinel in ConversionPlan)
+	None,						 // No conversion / identity (used as sentinel in ConversionPlan)
 	LValueToRValue,
 	ArrayToPointer,
 	FunctionToPointer,
@@ -66,11 +66,11 @@ inline bool hasFlag(SemanticSlotFlags flags, SemanticSlotFlags flag) {
 // Target: ~8 bytes. Compact handle layer into interning tables.
 
 struct SemanticSlot {
-	CanonicalTypeId type_id{};                                    // 4 bytes
-	CastInfoIndex cast_info_index{};                              // 2 bytes
-	ValueCategory value_category = ValueCategory::PRValue;        // 1 byte
-	SemanticSlotFlags flags = SemanticSlotFlags::None;            // 1 byte
-	// Total: 8 bytes
+	CanonicalTypeId type_id{};									// 4 bytes
+	CastInfoIndex cast_info_index{};								 // 2 bytes
+	ValueCategory value_category = ValueCategory::PRValue;		   // 1 byte
+	SemanticSlotFlags flags = SemanticSlotFlags::None;			   // 1 byte
+ // Total: 8 bytes
 
 	bool has_cast() const { return static_cast<bool>(cast_info_index); }
 	bool has_type() const { return static_cast<bool>(type_id); }
@@ -126,7 +126,7 @@ namespace std {
 template <>
 struct hash<CanonicalTypeDesc> {
 	size_t operator()(const CanonicalTypeDesc& d) const noexcept {
-		// Simple hash combiner: h = h * 31 + value
+	// Simple hash combiner: h = h * 31 + value
 		auto combine = [](size_t h, size_t v) -> size_t {
 			return h * 31u + v;
 		};

@@ -1,5 +1,4 @@
-auto safe_value(bool fail)
-try {
+auto safe_value(bool fail) try {
 	if (fail) {
 		throw 7;
 	}

@@ -35,23 +35,23 @@ THE SOFTWARE.
 namespace COFFI {
 
 #if !defined(COFFI_NO_OWN_TYPES) && !defined(COFFI_NO_CSTDINT) && \
-    !defined(COFFI_NO_INTTYPES) && !defined(DOXYGEN)
+	!defined(COFFI_NO_INTTYPES) && !defined(DOXYGEN)
 #include <stdint.h>
 #else
 typedef unsigned char uint8_t;
-typedef signed char   int8_t;
-typedef uint16_t      uint16_t;
-typedef signed short  int16_t;
+typedef signed char int8_t;
+typedef uint16_t uint16_t;
+typedef signed short int16_t;
 #ifdef _MSC_VER
 typedef unsigned __int32 uint32_t;
-typedef signed __int32   int32_t;
+typedef signed __int32 int32_t;
 typedef unsigned __int64 uint64_t;
-typedef signed __int64   int64_t;
+typedef signed __int64 int64_t;
 #else
-typedef unsigned int       uint32_t;
-typedef signed int         int32_t;
+typedef unsigned int uint32_t;
+typedef signed int int32_t;
 typedef unsigned long long uint64_t;
-typedef signed long long   int64_t;
+typedef signed long long int64_t;
 #endif // _MSC_VER
 #endif
 
@@ -64,12 +64,12 @@ typedef signed long long   int64_t;
 
 //! @name Identification index
 //! @{
-#define CI_MAG0    0
-#define CI_MAG1    1
-#define CI_MAG2    0
-#define CI_MAG3    1
-#define CI_MAG4    2
-#define CI_MAG5    3
+#define CI_MAG0 0
+#define CI_MAG1 1
+#define CI_MAG2 0
+#define CI_MAG3 1
+#define CI_MAG4 2
+#define CI_MAG5 3
 #define CI_NIDENT0 2
 #define CI_NIDENT1 4
 
@@ -88,8 +88,8 @@ typedef signed long long   int64_t;
 
 //! @name Magic numbers of optional header
 //! @{
-#define OH_MAGIC_PE32     0x10B //!< PE32 format
-#define OH_MAGIC_PE32ROM  0x107
+#define OH_MAGIC_PE32 0x10B //!< PE32 format
+#define OH_MAGIC_PE32ROM 0x107
 #define OH_MAGIC_PE32PLUS 0x20B //!< PE32+ format
 
 //! @}
@@ -702,361 +702,337 @@ typedef enum coffi_architecture_t {
 //------------------------------------------------------------------------------
 
 //! MS-DOS file header
-struct msdos_header
-{
-    //! 0x4d, 0x5a. This is the "magic number" of an EXE file
-    uint16_t signature;
-    //! @brief The number of bytes in the last block of the program that are actually used.
-    //!
-    //! If this value is zero, that means the entire last block is used (i.e. the effective value is 512)
-    uint16_t bytes_in_last_block;
-    //! @brief Number of blocks in the file that are part of the EXE file.
-    //!
-    //! If [02-03] is non-zero, only that much of the last block is used
-    uint16_t blocks_in_file;
-    //! Number of relocation entries stored after the header. May be zero
-    uint16_t num_relocs;
-    //! @brief Number of paragraphs in the header.
-    //!
-    //! The program's data begins just after the header, and this field can be used to calculate the appropriate file offset.
-    //! The header includes the relocation entries.
-    //! Note that some OSs and/or programs may fail if the header is not a multiple of 512 bytes.
-    uint16_t header_paragraphs;
-    //! @brief Number of paragraphs of additional memory that the program will need.
-    //!
-    //! This is the equivalent of the BSS size in a Unix program.
-    //! The program can't be loaded if there isn't at least this much memory available to it
-    uint16_t min_extra_paragraphs;
-    //! @brief Maximum number of paragraphs of additional memory.
-    //!
-    //! Normally, the OS reserves all the remaining conventional memory for your program, but you can limit it with this field.
-    uint16_t max_extra_paragraphs;
-    //! @brief Relative value of the stack segment.
-    //!
-    //! This value is added to the segment the program was loaded at, and the result is used to initialize the SS register.
-    uint16_t ss;
-    //! Initial value of the SP register.
-    uint16_t sp;
-    //! @brief Word checksum.
-    //!
-    //! If set properly, the 16-bit sum of all words in the file should be zero. Usually, this isn't filled in.
-    uint16_t checksum;
-    //! Initial value of the IP register (entry point).
-    uint16_t ip;
-    //! Initial value of the CS register, relative to the segment the program was loaded at.
-    uint16_t cs;
-    //! Offset of the first relocation item in the file.
-    uint16_t reloc_table_offset;
-    //! Overlay number. Normally zero, meaning that it's the main program.
-    uint16_t overlay_number;
-    uint16_t reserved1[4];
-    uint16_t oem_id;
-    uint16_t oem_info;
-    uint16_t reserved2[10];
-    //! Location of PE format signature.
-    int32_t pe_sign_location;
+struct msdos_header {
+	//! 0x4d, 0x5a. This is the "magic number" of an EXE file
+	uint16_t signature;
+	//! @brief The number of bytes in the last block of the program that are actually used.
+	//!
+	//! If this value is zero, that means the entire last block is used (i.e. the effective value is 512)
+	uint16_t bytes_in_last_block;
+	//! @brief Number of blocks in the file that are part of the EXE file.
+	//!
+	//! If [02-03] is non-zero, only that much of the last block is used
+	uint16_t blocks_in_file;
+	//! Number of relocation entries stored after the header. May be zero
+	uint16_t num_relocs;
+	//! @brief Number of paragraphs in the header.
+	//!
+	//! The program's data begins just after the header, and this field can be used to calculate the appropriate file offset.
+	//! The header includes the relocation entries.
+	//! Note that some OSs and/or programs may fail if the header is not a multiple of 512 bytes.
+	uint16_t header_paragraphs;
+	//! @brief Number of paragraphs of additional memory that the program will need.
+	//!
+	//! This is the equivalent of the BSS size in a Unix program.
+	//! The program can't be loaded if there isn't at least this much memory available to it
+	uint16_t min_extra_paragraphs;
+	//! @brief Maximum number of paragraphs of additional memory.
+	//!
+	//! Normally, the OS reserves all the remaining conventional memory for your program, but you can limit it with this field.
+	uint16_t max_extra_paragraphs;
+	//! @brief Relative value of the stack segment.
+	//!
+	//! This value is added to the segment the program was loaded at, and the result is used to initialize the SS register.
+	uint16_t ss;
+	//! Initial value of the SP register.
+	uint16_t sp;
+	//! @brief Word checksum.
+	//!
+	//! If set properly, the 16-bit sum of all words in the file should be zero. Usually, this isn't filled in.
+	uint16_t checksum;
+	//! Initial value of the IP register (entry point).
+	uint16_t ip;
+	//! Initial value of the CS register, relative to the segment the program was loaded at.
+	uint16_t cs;
+	//! Offset of the first relocation item in the file.
+	uint16_t reloc_table_offset;
+	//! Overlay number. Normally zero, meaning that it's the main program.
+	uint16_t overlay_number;
+	uint16_t reserved1[4];
+	uint16_t oem_id;
+	uint16_t oem_info;
+	uint16_t reserved2[10];
+	//! Location of PE format signature.
+	int32_t pe_sign_location;
 };
 
-struct msdos_header_rel
-{
-    uint16_t offset;
-    uint16_t segment;
+struct msdos_header_rel {
+	uint16_t offset;
+	uint16_t segment;
 };
 
 //------------------------------------------------------------------------------
 // COFF headers
 
 //! PE COFF header
-struct coff_file_header
-{
-    uint16_t machine;         //!< Identifies the type of target machine
-    uint16_t sections_count;  //!< The size of the section table
-    uint32_t time_data_stamp; //!< A C run-time time_t value
-    uint32_t
-        symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
-    uint32_t symbols_count;  //!< The number of entries in the symbol table
-    uint16_t
-        optional_header_size; //!< Which is required for executable files but not for object files.
-    uint16_t flags; //!< The flags that indicate the attributes of the file
+struct coff_file_header {
+	uint16_t machine;		  //!< Identifies the type of target machine
+	uint16_t sections_count;	 //!< The size of the section table
+	uint32_t time_data_stamp; //!< A C run-time time_t value
+	uint32_t
+		symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
+	uint32_t symbols_count;	//!< The number of entries in the symbol table
+	uint16_t
+		optional_header_size; //!< Which is required for executable files but not for object files.
+	uint16_t flags; //!< The flags that indicate the attributes of the file
 };
 
 //! Texas Instruments COFF header
-struct coff_file_header_ti
-{
-    uint16_t version;         //!< Indicates version of COFF file structure
-    uint16_t sections_count;  //!< The size of the section table
-    uint32_t time_data_stamp; //!< A C run-time time_t value
-    uint32_t
-        symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
-    uint32_t symbols_count;  //!< The number of entries in the symbol table
-    uint16_t
-        optional_header_size; //!< Which is required for executable files but not for object files.
-    uint16_t flags; //!< The flags that indicate the attributes of the file
-    uint16_t
-        target_id; //!< Magic number indicates the file can be executed in a specific TI system
+struct coff_file_header_ti {
+	uint16_t version;		  //!< Indicates version of COFF file structure
+	uint16_t sections_count;	 //!< The size of the section table
+	uint32_t time_data_stamp; //!< A C run-time time_t value
+	uint32_t
+		symbol_table_offset; //!< The file offset of the COFF symbol table, or zero if no COFF symbol table is present
+	uint32_t symbols_count;	//!< The number of entries in the symbol table
+	uint16_t
+		optional_header_size; //!< Which is required for executable files but not for object files.
+	uint16_t flags; //!< The flags that indicate the attributes of the file
+	uint16_t
+		target_id; //!< Magic number indicates the file can be executed in a specific TI system
 };
 
 //------------------------------------------------------------------------------
 // COFF optional headers
 
 //! PE32 COFF optional header
-struct coff_optional_header_pe
-{
-    uint16_t magic;                //!< State of the image file identifier
-    uint8_t  major_linker_version; //!< The linker major version number
-    uint8_t  minor_linker_version; //!< The linker minor version number
-    uint32_t code_size;            //!< The sum of all code sections
-    uint32_t
-        initialized_data_size; //!< The sum of all initialized data sections
-    uint32_t
-        uninitialized_data_size; //!< The sum of all uninitialized data sections
-    uint32_t
-        entry_point_address; //!< The address of the entry point relative to the image base
-    uint32_t code_base; //!< base of the beginning-of-code section
-    uint32_t data_base; //!< base of the beginning-of-data section
+struct coff_optional_header_pe {
+	uint16_t magic;				//!< State of the image file identifier
+	uint8_t major_linker_version; //!< The linker major version number
+	uint8_t minor_linker_version; //!< The linker minor version number
+	uint32_t code_size;			//!< The sum of all code sections
+	uint32_t
+		initialized_data_size; //!< The sum of all initialized data sections
+	uint32_t
+		uninitialized_data_size; //!< The sum of all uninitialized data sections
+	uint32_t
+		entry_point_address; //!< The address of the entry point relative to the image base
+	uint32_t code_base; //!< base of the beginning-of-code section
+	uint32_t data_base; //!< base of the beginning-of-data section
 };
 
 //! PE32+ COFF optional header
-struct coff_optional_header_pe_plus
-{
-    uint16_t magic;                //!< State of the image file identifier
-    uint8_t  major_linker_version; //!< The linker major version number
-    uint8_t  minor_linker_version; //!< The linker minor version number
-    uint32_t code_size;            //!< The sum of all code sections
-    uint32_t
-        initialized_data_size; //!< The sum of all initialized data sections
-    uint32_t
-        uninitialized_data_size; //!< The sum of all uninitialized data sections
-    uint32_t
-        entry_point_address; //!< The address of the entry point relative to the image base
-    uint32_t code_base; //!< base of the beginning-of-code section
+struct coff_optional_header_pe_plus {
+	uint16_t magic;				//!< State of the image file identifier
+	uint8_t major_linker_version; //!< The linker major version number
+	uint8_t minor_linker_version; //!< The linker minor version number
+	uint32_t code_size;			//!< The sum of all code sections
+	uint32_t
+		initialized_data_size; //!< The sum of all initialized data sections
+	uint32_t
+		uninitialized_data_size; //!< The sum of all uninitialized data sections
+	uint32_t
+		entry_point_address; //!< The address of the entry point relative to the image base
+	uint32_t code_base; //!< base of the beginning-of-code section
 };
 
 //! Texas Instruments COFF optional header
-struct common_optional_header_ti
-{
-    uint16_t magic;          //!< State of the image file identifier
-    uint16_t linker_version; //!< The linker version number
-    uint32_t code_size;      //!< The sum of all code sections
-    uint32_t
-        initialized_data_size; //!< The sum of all initialized data sections
-    uint32_t
-        uninitialized_data_size; //!< The sum of all uninitialized data sections
-    uint32_t
-        entry_point_address; //!< The address of the entry point relative to the image base
-    uint32_t code_base; //!< The address that is relative to the image
-    uint32_t data_base; //!<
+struct common_optional_header_ti {
+	uint16_t magic;			//!< State of the image file identifier
+	uint16_t linker_version; //!< The linker version number
+	uint32_t code_size;		//!< The sum of all code sections
+	uint32_t
+		initialized_data_size; //!< The sum of all initialized data sections
+	uint32_t
+		uninitialized_data_size; //!< The sum of all uninitialized data sections
+	uint32_t
+		entry_point_address; //!< The address of the entry point relative to the image base
+	uint32_t code_base; //!< The address that is relative to the image
+	uint32_t data_base; //!<
 };
 
 //------------------------------------------------------------------------------
 // Windows NT headers
 
 //! PE32 Windows NT header
-struct win_header_pe
-{
-    uint32_t image_base;
-    uint32_t section_alignment;
-    uint32_t file_alignment;
-    uint16_t major_os_version;
-    uint16_t minor_os_version;
-    uint16_t major_image_version;
-    uint16_t minor_image_version;
-    uint16_t major_subsystem_version;
-    uint16_t minor_subsystem_version;
-    uint32_t win32_version_value;
-    uint32_t image_size;
-    uint32_t headers_size;
-    uint32_t checksum;
-    uint16_t subsystem;
-    uint16_t dll_flags;
-    uint32_t stack_reserve_size;
-    uint32_t stack_commit_size;
-    uint32_t heap_reserve_size;
-    uint32_t heap_commit_size;
-    uint32_t loader_flags;
-    uint32_t number_of_rva_and_sizes;
+struct win_header_pe {
+	uint32_t image_base;
+	uint32_t section_alignment;
+	uint32_t file_alignment;
+	uint16_t major_os_version;
+	uint16_t minor_os_version;
+	uint16_t major_image_version;
+	uint16_t minor_image_version;
+	uint16_t major_subsystem_version;
+	uint16_t minor_subsystem_version;
+	uint32_t win32_version_value;
+	uint32_t image_size;
+	uint32_t headers_size;
+	uint32_t checksum;
+	uint16_t subsystem;
+	uint16_t dll_flags;
+	uint32_t stack_reserve_size;
+	uint32_t stack_commit_size;
+	uint32_t heap_reserve_size;
+	uint32_t heap_commit_size;
+	uint32_t loader_flags;
+	uint32_t number_of_rva_and_sizes;
 };
 
 //! PE32+ Windows NT header
-struct win_header_pe_plus
-{
-    uint64_t image_base;
-    uint32_t section_alignment;
-    uint32_t file_alignment;
-    uint16_t major_os_version;
-    uint16_t minor_os_version;
-    uint16_t major_image_version;
-    uint16_t minor_image_version;
-    uint16_t major_subsystem_version;
-    uint16_t minor_subsystem_version;
-    uint32_t win32_version_value;
-    uint32_t image_size;
-    uint32_t headers_size;
-    uint32_t checksum;
-    uint16_t subsystem;
-    uint16_t dll_flags;
-    uint64_t stack_reserve_size;
-    uint64_t stack_commit_size;
-    uint64_t heap_reserve_size;
-    uint64_t heap_commit_size;
-    uint32_t loader_flags;
-    uint32_t number_of_rva_and_sizes;
+struct win_header_pe_plus {
+	uint64_t image_base;
+	uint32_t section_alignment;
+	uint32_t file_alignment;
+	uint16_t major_os_version;
+	uint16_t minor_os_version;
+	uint16_t major_image_version;
+	uint16_t minor_image_version;
+	uint16_t major_subsystem_version;
+	uint16_t minor_subsystem_version;
+	uint32_t win32_version_value;
+	uint32_t image_size;
+	uint32_t headers_size;
+	uint32_t checksum;
+	uint16_t subsystem;
+	uint16_t dll_flags;
+	uint64_t stack_reserve_size;
+	uint64_t stack_commit_size;
+	uint64_t heap_reserve_size;
+	uint64_t heap_commit_size;
+	uint32_t loader_flags;
+	uint32_t number_of_rva_and_sizes;
 };
 
 //------------------------------------------------------------------------------
 // Symbol records
 
 //! Symbol record
-struct symbol_record
-{
-    char     name[8];
-    uint32_t value;
-    uint16_t section_number;
-    uint16_t type;
-    uint8_t  storage_class;
-    uint8_t  aux_symbols_number;
+struct symbol_record {
+	char name[8];
+	uint32_t value;
+	uint16_t section_number;
+	uint16_t type;
+	uint8_t storage_class;
+	uint8_t aux_symbols_number;
 };
 
 //! Generic auxiliary symbol record, covers any type of auxiliary symbol
-struct auxiliary_symbol_record
-{
-    char value[sizeof(symbol_record)];
+struct auxiliary_symbol_record {
+	char value[sizeof(symbol_record)];
 };
 
 //! PE auxiliary format 1: Function definitions
-struct auxiliary_symbol_record_1
-{
-    uint32_t tag_index;
-    uint32_t total_size;
-    uint32_t pointer_to_linenumber;
-    uint32_t pointer_to_next_function;
-    uint16_t unused;
+struct auxiliary_symbol_record_1 {
+	uint32_t tag_index;
+	uint32_t total_size;
+	uint32_t pointer_to_linenumber;
+	uint32_t pointer_to_next_function;
+	uint16_t unused;
 };
 
 //! PE auxiliary format 2: .bf and .ef symbols
-struct auxiliary_symbol_record_2
-{
-    uint32_t unused0;
-    uint16_t linenumber;
-    uint8_t  unused1[6];
-    uint32_t pointer_to_next_function;
-    uint16_t unused2;
+struct auxiliary_symbol_record_2 {
+	uint32_t unused0;
+	uint16_t linenumber;
+	uint8_t unused1[6];
+	uint32_t pointer_to_next_function;
+	uint16_t unused2;
 };
 
 //! PE auxiliary format 3: Weak externals
-struct auxiliary_symbol_record_3
-{
-    uint32_t tag_index;
-    uint32_t characteristics;
-    uint8_t  unused1[10];
+struct auxiliary_symbol_record_3 {
+	uint32_t tag_index;
+	uint32_t characteristics;
+	uint8_t unused1[10];
 };
 
 //! PE auxiliary format 4: Files
-struct auxiliary_symbol_record_4
-{
-    char file_name[18];
+struct auxiliary_symbol_record_4 {
+	char file_name[18];
 };
 
 //! PE auxiliary format 5: Section definitions
-struct auxiliary_symbol_record_5
-{
-    uint32_t length;
-    uint16_t number_of_relocations;
-    uint16_t number_of_linenumbers;
-    uint32_t check_sum;
-    uint16_t number;
-    uint8_t  selection;
-    uint8_t  unused[3];
+struct auxiliary_symbol_record_5 {
+	uint32_t length;
+	uint16_t number_of_relocations;
+	uint16_t number_of_linenumbers;
+	uint32_t check_sum;
+	uint16_t number;
+	uint8_t selection;
+	uint8_t unused[3];
 };
 
 //------------------------------------------------------------------------------
 //! PE data directory
-struct image_data_directory
-{
-    uint32_t virtual_address;
-    uint32_t size;
+struct image_data_directory {
+	uint32_t virtual_address;
+	uint32_t size;
 };
 
 //------------------------------------------------------------------------------
 // Section headers
 
 //! PE section header
-struct section_header
-{
-    char     name[8];
-    uint32_t virtual_size;
-    uint32_t virtual_address;
-    uint32_t data_size;
-    uint32_t data_offset;
-    uint32_t reloc_offset;
-    uint32_t line_num_offset;
-    uint16_t reloc_count;
-    uint16_t line_num_count;
-    uint32_t flags;
+struct section_header {
+	char name[8];
+	uint32_t virtual_size;
+	uint32_t virtual_address;
+	uint32_t data_size;
+	uint32_t data_offset;
+	uint32_t reloc_offset;
+	uint32_t line_num_offset;
+	uint16_t reloc_count;
+	uint16_t line_num_count;
+	uint32_t flags;
 };
 
 //! Texas Instruments section header
-struct section_header_ti
-{
-    char     name[8];
-    uint32_t physical_address;
-    uint32_t virtual_address;
-    uint32_t data_size;
-    uint32_t data_offset;
-    uint32_t reloc_offset;
-    uint32_t reserved_0;
-    uint32_t reloc_count;
-    uint32_t line_num_count;
-    uint32_t flags;
-    uint16_t reserved_1;
-    uint16_t page_number;
+struct section_header_ti {
+	char name[8];
+	uint32_t physical_address;
+	uint32_t virtual_address;
+	uint32_t data_size;
+	uint32_t data_offset;
+	uint32_t reloc_offset;
+	uint32_t reserved_0;
+	uint32_t reloc_count;
+	uint32_t line_num_count;
+	uint32_t flags;
+	uint16_t reserved_1;
+	uint16_t page_number;
 };
 
 //------------------------------------------------------------------------------
 // Relocation entries
 
 //! PE relocation entry
-struct rel_entry
-{
-    uint32_t virtual_address;
-    uint32_t symbol_table_index;
-    uint16_t type;
+struct rel_entry {
+	uint32_t virtual_address;
+	uint32_t symbol_table_index;
+	uint16_t type;
 };
 
 //! Texas Instruments relocation entry
-struct rel_entry_ti
-{
-    uint32_t virtual_address;
-    uint32_t symbol_table_index;
-    uint16_t reserved;
-    uint16_t type;
+struct rel_entry_ti {
+	uint32_t virtual_address;
+	uint32_t symbol_table_index;
+	uint16_t reserved;
+	uint16_t type;
 };
 
 //! CEVA relocation entry
-struct rel_entry_ceva
-{
-    uint32_t virtual_address;
-    uint32_t symbol_table_index;
-    uint32_t type;
+struct rel_entry_ceva {
+	uint32_t virtual_address;
+	uint32_t symbol_table_index;
+	uint32_t type;
 };
 
 //! Structure capable of storing all the architecture-specific relocation entry structures
-struct rel_entry_generic
-{
-    uint32_t virtual_address;
-    uint32_t symbol_table_index;
-    uint32_t type;
-    uint16_t reserved;
+struct rel_entry_generic {
+	uint32_t virtual_address;
+	uint32_t symbol_table_index;
+	uint32_t type;
+	uint16_t reserved;
 };
 
 //------------------------------------------------------------------------------
 //! Line number structure in a COFF binary file.
-struct line_number
-{
-    //! Symbol table index or virtual address. Whether symbol table index or RVA is used depends on the value of line_number.
-    uint32_t type;
-    //! When nonzero, this field specifies a one-based line number. When zero, the Type field is interpreted as a symbol table index for a function.
-    uint16_t line_number;
+struct line_number {
+	//! Symbol table index or virtual address. Whether symbol table index or RVA is used depends on the value of line_number.
+	uint32_t type;
+	//! When nonzero, this field specifies a one-based line number. When zero, the Type field is interpreted as a symbol table index for a function.
+	uint16_t line_number;
 };
 
 //------------------------------------------------------------------------------
@@ -1065,60 +1041,57 @@ struct line_number
 class symbol;
 
 //! Interface for accessing to the string table
-class string_to_name_provider
-{
-  public:
-    //! @brief Converts an 8-bytes symbol short name into a full name, eventually by looking into the strings table.
-    //!
-    //! @note Symbol short names that reference the string table start with "\x00\x00\x00\x00".
-    virtual std::string string_to_name(const char* str) const = 0;
-    //! @brief Converts an 8-bytes section short name into a full name, eventually by looking into the strings table.
-    //!
-    //! @note Section short names that reference the string table start with "/".
-    virtual std::string section_string_to_name(const char* str) const = 0;
-    //! Converts symbol full name into an 8-bytes short name, eventually creating an entry in the strings table.
-    virtual void name_to_string(std::string_view name, char* str) = 0;
-    //! Converts section full name into an 8-bytes short name, eventually creating an entry in the strings table.
-    virtual void name_to_section_string(std::string_view name, char* str) = 0;
+class string_to_name_provider {
+public:
+	//! @brief Converts an 8-bytes symbol short name into a full name, eventually by looking into the strings table.
+	//!
+	//! @note Symbol short names that reference the string table start with "\x00\x00\x00\x00".
+	virtual std::string string_to_name(const char* str) const = 0;
+	//! @brief Converts an 8-bytes section short name into a full name, eventually by looking into the strings table.
+	//!
+	//! @note Section short names that reference the string table start with "/".
+	virtual std::string section_string_to_name(const char* str) const = 0;
+	//! Converts symbol full name into an 8-bytes short name, eventually creating an entry in the strings table.
+	virtual void name_to_string(std::string_view name, char* str) = 0;
+	//! Converts section full name into an 8-bytes short name, eventually creating an entry in the strings table.
+	virtual void name_to_section_string(std::string_view name, char* str) = 0;
 };
 
 //------------------------------------------------------------------------------
 //! Interface for accessing to the symbol table
-class symbol_provider
-{
-  public:
-    //! Gets a symbol from its index.
-    virtual const symbol* get_symbol(uint32_t index) const = 0;
-    //! Gets a symbol from its index.
-    virtual symbol* get_symbol(uint32_t index) = 0;
-    //! Gets a symbol from its name.
-    virtual const symbol* get_symbol(std::string_view name) const = 0;
-    //! Gets a symbol from its name.
-    virtual symbol* get_symbol(std::string_view name) = 0;
-    //! @brief Adds a symbol in the table.
-    //!
-    //! Eventually creates an entry in the strings table for the symbol name.
-    virtual symbol* add_symbol(std::string_view name) = 0;
+class symbol_provider {
+public:
+	//! Gets a symbol from its index.
+	virtual const symbol* get_symbol(uint32_t index) const = 0;
+	//! Gets a symbol from its index.
+	virtual symbol* get_symbol(uint32_t index) = 0;
+	//! Gets a symbol from its name.
+	virtual const symbol* get_symbol(std::string_view name) const = 0;
+	//! Gets a symbol from its name.
+	virtual symbol* get_symbol(std::string_view name) = 0;
+	//! @brief Adds a symbol in the table.
+	//!
+	//! Eventually creates an entry in the strings table for the symbol name.
+	virtual symbol* add_symbol(std::string_view name) = 0;
 };
 
 //------------------------------------------------------------------------------
 //! @brief Interface for architecture information
 //!
 //! This interface is implemented by the coffi class.
-class architecture_provider
-{
-  public:
-    //! @brief Returns the coffi object architecture.
-    //!
-    //! @return #COFFI_ARCHITECTURE_NONE if the coffi object is not initialized, or in case of unrecognized architecture when loading a file.
-    virtual coffi_architecture_t get_architecture() const = 0;
+class architecture_provider {
+public:
+	//! @brief Returns the coffi object architecture.
+	//!
+	//! @return #COFFI_ARCHITECTURE_NONE if the coffi object is not initialized, or in case of unrecognized architecture when loading a file.
+	virtual coffi_architecture_t get_architecture() const = 0;
 
-    //! @brief Returns the character type size in bytes.
-    //!
-    //! Auto-detects the addressable unit: are the addresses in bytes or 2-bytes words?
-    //! <br>Some targets have 2-bytes characters, this changes how offsets are computed in the file.
-    //! @return 1 in most cases (characters are 1 byte), 2 for some specific targets (TMS320 C2000 for example).
-    virtual int get_addressable_unit() const = 0;
+	//! @brief Returns the character type size in bytes.
+	//!
+	//! Auto-detects the addressable unit: are the addresses in bytes or 2-bytes words?
+	//! <br>Some targets have 2-bytes characters, this changes how offsets are computed in the file.
+	//! @return 1 in most cases (characters are 1 byte), 2 for some specific targets (TMS320 C2000 for example).
+	virtual int get_addressable_unit() const = 0;
 };
 
 //------------------------------------------------------------------------------
@@ -1131,19 +1104,18 @@ class sections;
 //! @brief Interface that gives the headers and sections.
 //!
 //! This interface is implemented by the coffi class.
-class sections_provider : public virtual architecture_provider
-{
-  public:
-    //! Returns the MS-DOS header.
-    virtual const dos_header* get_msdos_header() const = 0;
-    //! Returns the COFF file header.
-    virtual const coff_header* get_header() const = 0;
-    //! Returns the COFF optional header.
-    virtual const optional_header* get_optional_header() const = 0;
-    //! Returns the Windows NT header.
-    virtual const win_header* get_win_header() const = 0;
-    //! Returns the sections.
-    virtual const sections& get_sections() const = 0;
+class sections_provider : public virtual architecture_provider {
+public:
+	//! Returns the MS-DOS header.
+	virtual const dos_header* get_msdos_header() const = 0;
+	//! Returns the COFF file header.
+	virtual const coff_header* get_header() const = 0;
+	//! Returns the COFF optional header.
+	virtual const optional_header* get_optional_header() const = 0;
+	//! Returns the Windows NT header.
+	virtual const win_header* get_win_header() const = 0;
+	//! Returns the sections.
+	virtual const sections& get_sections() const = 0;
 };
 
 } // namespace COFFI

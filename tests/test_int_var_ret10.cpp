@@ -1,11 +1,10 @@
 // Simple int variable test
 int test_int_var() {
-    int x = 42;
-    int y = 10;
-    return y;
+	int x = 42;
+	int y = 10;
+	return y;
 }
 
-
 int main() {
-    return test_int_var();
+	return test_int_var();
 }

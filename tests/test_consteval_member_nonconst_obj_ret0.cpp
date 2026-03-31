@@ -11,6 +11,6 @@ struct Calc {
 };
 
 int main() {
-	Calc c;                  // non-constexpr local
+	Calc c;				  // non-constexpr local
 	return c.triple(14) - 42; // 14*3 - 42 == 0
 }

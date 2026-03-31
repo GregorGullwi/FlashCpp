@@ -2,7 +2,7 @@
 struct Point {
 	int x;
 	int y;
-	int getSum() const;  // Declaration: const member function
+	int getSum() const;	// Declaration: const member function
 };
 
 // Definition: non-const (MISMATCH)

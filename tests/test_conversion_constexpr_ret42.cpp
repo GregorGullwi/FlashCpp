@@ -2,8 +2,8 @@
 // Testing conversion operator returning a literal value
 
 struct IntWrapper {
-	constexpr operator int() const noexcept { 
-		return 42; 
+	constexpr operator int() const noexcept {
+		return 42;
 	}
 };
 

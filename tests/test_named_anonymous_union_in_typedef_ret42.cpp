@@ -4,17 +4,16 @@
 
 typedef struct
 {
-  int __count;
-  union
-  {
-    unsigned int __wch;
-    char __wchb[4];
-  } __value;
+	int __count;
+	union {
+		unsigned int __wch;
+		char __wchb[4];
+	} __value;
 } __mbstate_t;
 
 int main() {
-    __mbstate_t state;
-    state.__count = 0;
-    state.__value.__wch = 42;
-    return state.__value.__wch;
+	__mbstate_t state;
+	state.__count = 0;
+	state.__value.__wch = 42;
+	return state.__value.__wch;
 }

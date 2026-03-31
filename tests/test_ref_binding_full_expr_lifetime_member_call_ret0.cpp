@@ -21,7 +21,9 @@ struct Sink {
 int main() {
 	Sink sink;
 	int result = sink.use(Watch(4));
-	if (result != 401) return 1;
-	if (g_stage != 11) return 2;
+	if (result != 401)
+		return 1;
+	if (g_stage != 11)
+		return 2;
 	return 0;
 }

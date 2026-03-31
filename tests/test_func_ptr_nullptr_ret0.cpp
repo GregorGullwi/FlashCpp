@@ -1,14 +1,14 @@
 // Test nullptr with function pointer member
 
-template<typename T>
+template <typename T>
 struct Calculator;
 
-template<typename T>
+template <typename T>
 struct Calculator<T*> {
-    int (*operation)(int, int) = nullptr;
+	int (*operation)(int, int) = nullptr;
 };
 
 int main() {
-    Calculator<int*> calc;
-    return 0;
+	Calculator<int*> calc;
+	return 0;
 }

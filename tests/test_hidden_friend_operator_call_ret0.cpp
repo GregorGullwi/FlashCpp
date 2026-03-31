@@ -15,13 +15,16 @@ int main() {
 	a.value = 3;
 	Widget b;
 	b.value = 4;
-	// ADL should find operator+ because a and b are of type Widget
-	int sum = a + b;  // 3 + 4 == 7
-	if (sum != 7) return 1;
-	// ADL should find operator== because a and b are of type Widget
+ // ADL should find operator+ because a and b are of type Widget
+	int sum = a + b;	 // 3 + 4 == 7
+	if (sum != 7)
+		return 1;
+ // ADL should find operator== because a and b are of type Widget
 	Widget c;
 	c.value = 3;
-	if (!(a == c)) return 2;  // a.value == c.value == 3
-	if (a == b) return 3;     // a.value != b.value
+	if (!(a == c))
+		return 2;  // a.value == c.value == 3
+	if (a == b)
+		return 3;	  // a.value != b.value
 	return 0;
 }

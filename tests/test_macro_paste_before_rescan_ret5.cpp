@@ -1,8 +1,8 @@
 // Test: ## token-pasting must happen before rescanning (C standard 6.10.3.3)
-// When a macro body contains ## and the result of pasting creates a new 
+// When a macro body contains ## and the result of pasting creates a new
 // identifier, that identifier should be available for further macro expansion.
 
-#define PASTE(a, b) a ## b
+#define PASTE(a, b) a##b
 #define INDIRECT_PASTE(a, b) PASTE(a, b)
 
 // INDIRECT_PASTE should:
@@ -15,5 +15,5 @@
 int get_five() { return 5; }
 
 int main() {
-    return INDIRECT_PASTE(get, _five)();
+	return INDIRECT_PASTE(get, _five)();
 }

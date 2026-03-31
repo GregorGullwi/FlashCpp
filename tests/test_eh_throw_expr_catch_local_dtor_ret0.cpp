@@ -43,13 +43,17 @@ int main() {
 		throwFromCatch();
 		return 1;
 	} catch (Payload& caught) {
-		if (caught.value != 7) catch_result = 2;
-		// Inside the handler the original catch-local objects are already gone,
-		// but the exception object itself is still alive until the handler exits.
-		if (g_cleanup != 101) catch_result = 3;
+		if (caught.value != 7)
+			catch_result = 2;
+	// Inside the handler the original catch-local objects are already gone,
+	// but the exception object itself is still alive until the handler exits.
+		if (g_cleanup != 101)
+			catch_result = 3;
 	}
 
-	if (catch_result != 0) return catch_result;
-	if (g_cleanup != 102) return 4;
+	if (catch_result != 0)
+		return catch_result;
+	if (g_cleanup != 102)
+		return 4;
 	return 0;
 }

@@ -3,23 +3,23 @@
 // C++20 requires maximal munch: >> should be split into > > when closing nested templates
 
 namespace ns {
-    template<typename T>
-    struct Inner {
-        T value;
-    };
-    
-    template<typename T>
-    struct Outer {
-        T inner;
-    };
-}
+template <typename T>
+struct Inner {
+	T value;
+};
+
+template <typename T>
+struct Outer {
+	T inner;
+};
+} // namespace ns
 
 int main() {
-    // Test: Namespace-qualified nested template instantiation with >> splitting
-    // This validates that >> is correctly split into > > during template argument parsing
-    // The key test is that this line compiles without treating >> as a right-shift operator
-    ns::Outer<ns::Inner<int>> nested = {};
-    
-    // The test passes if compilation succeeds with >> splitting
-    return 42;
+	// Test: Namespace-qualified nested template instantiation with >> splitting
+	// This validates that >> is correctly split into > > during template argument parsing
+	// The key test is that this line compiles without treating >> as a right-shift operator
+	ns::Outer<ns::Inner<int>> nested = {};
+
+	// The test passes if compilation succeeds with >> splitting
+	return 42;
 }

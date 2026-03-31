@@ -8,17 +8,17 @@ extern "C" int printf(const char*, ...);
 
 // Overloaded functions to observe which gets called
 void test_func(int& x) {
-    printf("test_func(int&) - lvalue ref\n");
+	printf("test_func(int&) - lvalue ref\n");
 }
 
 void test_func(int&& x) {
-    printf("test_func(int&&) - rvalue ref\n");
+	printf("test_func(int&&) - rvalue ref\n");
 }
 
 int main() {
-    printf("=== Test 1: Direct overload calls ===\n");
-    int x = 42;
-    test_func(x);  // Should print "lvalue ref"
-    
-    return 0;
+	printf("=== Test 1: Direct overload calls ===\n");
+	int x = 42;
+	test_func(x);  // Should print "lvalue ref"
+
+	return 0;
 }

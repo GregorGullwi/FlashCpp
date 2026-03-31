@@ -1,7 +1,7 @@
 // Test: trailing return type on out-of-line template member function definition
 // Pattern: auto ClassName<T>::method(params) -> RetType { ... }
 
-template<typename T>
+template <typename T>
 struct Container {
 	using iterator = T*;
 	using const_iterator = const T*;
@@ -11,17 +11,17 @@ struct Container {
 	const_iterator cbegin() const;
 };
 
-template<typename T>
+template <typename T>
 auto Container<T>::begin() -> iterator {
 	return nullptr;
 }
 
-template<typename T>
+template <typename T>
 auto Container<T>::end() -> iterator {
 	return nullptr;
 }
 
-template<typename T>
+template <typename T>
 auto Container<T>::cbegin() const -> const_iterator {
 	return nullptr;
 }

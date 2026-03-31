@@ -12,13 +12,13 @@ namespace FlashCpp {
 // Specifies the context in which a declaration appears, which affects
 // what forms are legal and how they're interpreted
 enum class DeclarationContext {
-	Auto,           // Infer from current scope
-	TopLevel,       // Global/namespace scope
-	BlockScope,     // Inside function body
-	ClassMember,    // Inside class/struct
-	ForInit,        // for(HERE; ...; ...)
-	IfInit,         // if(HERE; condition)
-	SwitchInit,     // switch(HERE; condition)
+	Auto,		   // Infer from current scope
+	TopLevel,		  // Global/namespace scope
+	BlockScope,		// Inside function body
+	ClassMember,	 // Inside class/struct
+	ForInit,		 // for(HERE; ...; ...)
+	IfInit,			// if(HERE; condition)
+	SwitchInit,		// switch(HERE; condition)
 };
 
 // Result of parsing a parameter list
@@ -29,28 +29,28 @@ struct ParsedParameterList {
 
 // Context flags for parsing function call arguments
 struct FunctionArgumentContext {
-	bool handle_pack_expansion = true;    // Whether to handle ... after arguments
-	bool collect_types = false;           // Whether to collect argument types for template deduction
-	bool expand_simple_packs = false;     // Whether to expand simple pack identifiers
-	std::string_view callee_name = {};    // Function name being called (for brace-init-list arg type inference)
-		const FunctionDeclarationNode* callee_decl = nullptr;  // Resolved callee (used for member-call brace-init-list arg inference)
+	bool handle_pack_expansion = true;	   // Whether to handle ... after arguments
+	bool collect_types = false;			// Whether to collect argument types for template deduction
+	bool expand_simple_packs = false;	  // Whether to expand simple pack identifiers
+	std::string_view callee_name = {};	   // Function name being called (for brace-init-list arg type inference)
+	const FunctionDeclarationNode* callee_decl = nullptr;  // Resolved callee (used for member-call brace-init-list arg inference)
 };
 
 // Result of parsing function call arguments
 struct ParsedFunctionArguments {
-	ChunkedVector<ASTNode> args;                       // The parsed arguments
-	std::vector<TypeSpecifierNode> arg_types;          // Optional: argument types (for template deduction)
-	bool success = false;                              // Whether parsing succeeded
-	std::string error_message;                         // Error message if parsing failed
-	std::optional<Token> error_token;                  // Token where error occurred
-	
+	ChunkedVector<ASTNode> args;						 // The parsed arguments
+	std::vector<TypeSpecifierNode> arg_types;		  // Optional: argument types (for template deduction)
+	bool success = false;							  // Whether parsing succeeded
+	std::string error_message;						   // Error message if parsing failed
+	std::optional<Token> error_token;				  // Token where error occurred
+
 	static ParsedFunctionArguments make_success(ChunkedVector<ASTNode>&& arguments) {
 		ParsedFunctionArguments result;
 		result.args = std::move(arguments);
 		result.success = true;
 		return result;
 	}
-	
+
 	static ParsedFunctionArguments make_success(ChunkedVector<ASTNode>&& arguments, std::vector<TypeSpecifierNode>&& types) {
 		ParsedFunctionArguments result;
 		result.args = std::move(arguments);
@@ -58,7 +58,7 @@ struct ParsedFunctionArguments {
 		result.success = true;
 		return result;
 	}
-	
+
 	static ParsedFunctionArguments make_error(const std::string& msg, Token token) {
 		ParsedFunctionArguments result;
 		result.success = false;
@@ -70,14 +70,14 @@ struct ParsedFunctionArguments {
 
 // Unified representation of what kind of function we're parsing
 enum class FunctionKind {
-	Free,           // Global or namespace-scope function
-	Member,         // Non-static member function
-	StaticMember,   // Static member function
-	Constructor,    // Constructor
-	Destructor,     // Destructor
-	Operator,       // Operator overload (can be member or free)
-	Conversion,     // Conversion operator (operator int())
-	Lambda          // Lambda expression (future)
+	Free,		   // Global or namespace-scope function
+	Member,			// Non-static member function
+	StaticMember,	  // Static member function
+	Constructor,	 // Constructor
+	Destructor,		// Destructor
+	Operator,		  // Operator overload (can be member or free)
+	Conversion,		// Conversion operator (operator int())
+	Lambda		   // Lambda expression (future)
 };
 
 // CV and ref qualifiers for member functions
@@ -94,9 +94,9 @@ struct MemberQualifiers {
 // Specifier for mutually exclusive function definition modifiers (= 0, = default, = delete)
 enum class DefinitionSpecifier : uint8_t {
 	None,
-	PureVirtual,  // = 0
-	Defaulted,    // = default
-	Deleted,      // = delete
+	PureVirtual,	 // = 0
+	Defaulted,	   // = default
+	Deleted,		 // = delete
 };
 
 // Function specifiers (can appear after parameters)
@@ -107,8 +107,8 @@ struct FunctionSpecifiers {
 	DefinitionSpecifier definition = DefinitionSpecifier::None;
 	bool is_noexcept = false;
 	std::optional<ASTNode> noexcept_expr;  // For noexcept(expr)
-	bool is_implicit = false;      // Compiler-generated (implicit copy ctor, operator=, etc.)
-	std::optional<std::string_view> asm_symbol_name;  // GNU asm label suffix: __asm("symbol")
+	bool is_implicit = false;	  // Compiler-generated (implicit copy ctor, operator=, etc.)
+	std::optional<std::string_view> asm_symbol_name;	 // GNU asm label suffix: __asm("symbol")
 
 	bool is_pure_virtual() const { return definition == DefinitionSpecifier::PureVirtual; }
 	bool is_defaulted() const { return definition == DefinitionSpecifier::Defaulted; }
@@ -118,12 +118,12 @@ struct FunctionSpecifiers {
 // Leading specifiers on struct/class members (before the declaration)
 // Used for constructors, conversion operators, and member functions
 enum MemberLeadingSpecifiers : uint8_t {
-	MLS_None      = 0,
+	MLS_None = 0,
 	MLS_Constexpr = 1 << 0,
 	MLS_Consteval = 1 << 1,
-	MLS_Inline    = 1 << 2,
-	MLS_Explicit  = 1 << 3,
-	MLS_Virtual   = 1 << 4,
+	MLS_Inline = 1 << 2,
+	MLS_Explicit = 1 << 3,
+	MLS_Virtual = 1 << 4,
 };
 inline MemberLeadingSpecifiers operator|(MemberLeadingSpecifiers a, MemberLeadingSpecifiers b) {
 	return static_cast<MemberLeadingSpecifiers>(static_cast<uint8_t>(a) | static_cast<uint8_t>(b));
@@ -159,19 +159,19 @@ struct StorageSpecifiers {
 // Used by both parse_declaration_or_function_definition() and parse_variable_declaration()
 // Combines attributes, storage class, and constexpr/constinit/consteval specifiers
 struct DeclarationSpecifiers {
-	// Storage class specifier (static, extern, register, mutable)
+ // Storage class specifier (static, extern, register, mutable)
 	StorageClass storage_class = StorageClass::None;
-	
-	// Constexpr/consteval/constinit specifiers (mutually exclusive)
+
+ // Constexpr/consteval/constinit specifiers (mutually exclusive)
 	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
-	
-	// Inline specifier
+
+ // Inline specifier
 	bool is_inline = false;
-	
-	// Linkage info (from __declspec or extern "C")
+
+ // Linkage info (from __declspec or extern "C")
 	Linkage linkage = Linkage::None;
-	
-	// Calling convention (from __cdecl, __stdcall, etc.)
+
+ // Calling convention (from __cdecl, __stdcall, etc.)
 	CallingConvention calling_convention = CallingConvention::Default;
 
 	bool is_constexpr() const { return constexpr_spec == ConstexprSpecifier::Constexpr; }
@@ -182,10 +182,10 @@ struct DeclarationSpecifiers {
 // Context for parsing a function (where it lives)
 struct FunctionParsingContext {
 	FunctionKind kind = FunctionKind::Free;
-	std::string_view parent_struct_name;      // For members
-	size_t parent_struct_type_index = 0;      // Type index of parent struct
+	std::string_view parent_struct_name;		 // For members
+	size_t parent_struct_type_index = 0;		 // Type index of parent struct
 	StructDeclarationNode* parent_struct = nullptr;
-	bool is_out_of_line = false;              // A::f defined outside class
+	bool is_out_of_line = false;				 // A::f defined outside class
 	std::vector<std::string_view> template_params;  // Enclosing template params
 	AccessSpecifier access = AccessSpecifier::Public;
 };
@@ -198,33 +198,33 @@ struct ParsedFunctionHeader {
 	MemberQualifiers member_quals;
 	FunctionSpecifiers specifiers;
 	StorageSpecifiers storage;
-	std::vector<ASTNode> template_params;       // If function template
-	std::optional<ASTNode> requires_clause;     // C++20 requires
+	std::vector<ASTNode> template_params;		  // If function template
+	std::optional<ASTNode> requires_clause;		// C++20 requires
 	std::optional<ASTNode> trailing_return_type;
 };
 
 // Result of signature validation (Phase 7)
 enum class SignatureMismatch {
-	None,                        // Signatures match
-	ParameterCount,              // Different number of parameters
-	ParameterType,               // Parameter types don't match
-	ParameterCVQualifier,        // Pointer/reference CV qualifiers don't match
-	ParameterPointerLevel,       // Pointer level CV qualifiers don't match
-	ReturnType,                  // Return types don't match
-	InternalError                // Could not extract type information
+	None,						// Signatures match
+	ParameterCount,				// Different number of parameters
+	ParameterType,			   // Parameter types don't match
+	ParameterCVQualifier,		  // Pointer/reference CV qualifiers don't match
+	ParameterPointerLevel,	   // Pointer level CV qualifiers don't match
+	ReturnType,				  // Return types don't match
+	InternalError				  // Could not extract type information
 };
 
 struct SignatureValidationResult {
 	SignatureMismatch mismatch = SignatureMismatch::None;
-	size_t parameter_index = 0;  // Which parameter failed (1-based), if applicable
+	size_t parameter_index = 0;	// Which parameter failed (1-based), if applicable
 	std::string error_message;   // Detailed error message
 
 	bool is_match() const { return mismatch == SignatureMismatch::None; }
-	
+
 	static SignatureValidationResult success() {
 		return SignatureValidationResult{SignatureMismatch::None, 0, ""};
 	}
-	
+
 	static SignatureValidationResult error(SignatureMismatch m, size_t param_idx = 0, std::string msg = "") {
 		return SignatureValidationResult{m, param_idx, std::move(msg)};
 	}

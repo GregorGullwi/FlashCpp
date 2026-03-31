@@ -7,21 +7,23 @@
 //
 // Return value is 0 on success.
 namespace ns {
-	struct Container {
-		typedef enum { Ok, Fail } Status;
-	};
+struct Container {
+	typedef enum { Ok,
+				   Fail } Status;
+};
 
-	// Function taking the typedef'd enum by its struct-qualified name.
-	// This exercises the "Container::Status" lookup in gTypesByName.
-	int check(Container::Status s) {
-		if (s == Container::Ok) return 0;
-		return 1;
-	}
+ // Function taking the typedef'd enum by its struct-qualified name.
+ // This exercises the "Container::Status" lookup in gTypesByName.
+int check(Container::Status s) {
+	if (s == Container::Ok)
+		return 0;
+	return 1;
 }
+} // namespace ns
 
 int main() {
-	// Fully qualified access from outside namespace:
-	// requires "ns::Container::Status" to be registered in gTypesByName.
+ // Fully qualified access from outside namespace:
+ // requires "ns::Container::Status" to be registered in gTypesByName.
 	ns::Container::Status s = ns::Container::Ok;
 	return ns::check(s);
 }

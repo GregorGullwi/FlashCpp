@@ -20,7 +20,7 @@ struct A {
 	int value;
 	A(int v) : value(v) {}
 
-	// Member operator+ that takes int (NOT B)
+ // Member operator+ that takes int (NOT B)
 	A operator+(int rhs) {
 		return A(value + rhs);
 	}

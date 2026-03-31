@@ -15,16 +15,16 @@
 
 double capture_and_return() {
 	int x = 7;
-	// Lambda captures x (int, visible in sema scope stack).
-	// Return type is auto-deduced as int — no conversion should happen.
-	// With the bug, sema annotates this return with int→double.
+ // Lambda captures x (int, visible in sema scope stack).
+ // Return type is auto-deduced as int — no conversion should happen.
+ // With the bug, sema annotates this return with int→double.
 	auto lam = [x]() { return x; };
-	int r = lam();          // r should be 7
-	return (double)r;       // explicit conversion in the enclosing function
+	int r = lam();		   // r should be 7
+	return (double)r;		  // explicit conversion in the enclosing function
 }
 
 int main() {
 	double v = capture_and_return();
 	int check = (int)v;
-	return check - 7;       // expected: 0
+	return check - 7;		  // expected: 0
 }

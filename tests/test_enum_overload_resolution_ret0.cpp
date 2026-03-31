@@ -3,7 +3,9 @@
 // Per C++20 [over.ics.rank], exact match (enum->enum) is preferred
 // over promotion (enum->int).
 
-enum Color { Red = 1, Green = 2, Blue = 3 };
+enum Color { Red = 1,
+			 Green = 2,
+			 Blue = 3 };
 
 int overloaded(int) { return 1; }
 int overloaded(Color) { return 2; }

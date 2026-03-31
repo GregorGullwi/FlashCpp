@@ -1,5 +1,6 @@
 struct Container {
-	enum Status { Ok = 3, Fail = 9 };
+	enum Status { Ok = 3,
+				  Fail = 9 };
 	using AliasStatus = Status;
 };
 

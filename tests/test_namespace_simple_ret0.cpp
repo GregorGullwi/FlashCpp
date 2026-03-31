@@ -5,18 +5,17 @@
 // 3. Generate correct code for namespaced functions
 
 namespace A {
-    int print(int value) {
-        return value;
-    }
-
-    namespace B {
-        int func() {
-            return 42;
-        }
-    }
+int print(int value) {
+	return value;
 }
+
+namespace B {
+int func() {
+	return 42;
+}
+} // namespace B
+} // namespace A
 
 int main() {
-    return 0;
+	return 0;
 }
-

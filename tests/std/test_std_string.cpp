@@ -2,8 +2,8 @@
 #include <string>
 
 int main() {
-    std::string str = "Hello";
-    std::string str2 = str + " World";
-    
-    return str.empty() ? 1 : 0;
+	std::string str = "Hello";
+	std::string str2 = str + " World";
+
+	return str.empty() ? 1 : 0;
 }

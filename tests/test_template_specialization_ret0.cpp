@@ -5,19 +5,19 @@
 // Explicit template specialization (template<>) should override the primary
 // template for the specified type.
 
-template<typename T>
+template <typename T>
 T identity(T val) {
-    return val;
+	return val;
 }
 
-template<>
+template <>
 int identity<int>(int val) {
-    return val + 1;  // Specialized version adds 1
+	return val + 1;	// Specialized version adds 1
 }
 
 int main() {
-    int result = identity(5);  // Should use specialization, return 6
-    return result == 6 ? 0 : 1;
+	int result = identity(5);  // Should use specialization, return 6
+	return result == 6 ? 0 : 1;
 }
 
 // Expected behavior (with clang++/g++):

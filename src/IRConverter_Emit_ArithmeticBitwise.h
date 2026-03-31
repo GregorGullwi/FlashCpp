@@ -16,21 +16,22 @@
  */
 inline void emitMultiplyRCXByElementSize(std::vector<uint8_t>& textSectionData, int element_size_bytes) {
 	if (element_size_bytes == 1) {
-		// No multiplication needed - index is already in bytes
+	// No multiplication needed - index is already in bytes
 		return;
 	} else if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
-		// Use bit shift for powers of 2: SHL RCX, shift_amount
-		int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+	// Use bit shift for powers of 2: SHL RCX, shift_amount
+		int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2
+																					 : 3;
 		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
 		textSectionData.push_back(0xC1); // SHL r/m64, imm8
 		textSectionData.push_back(0xE1); // ModR/M: RCX (11 100 001)
 		textSectionData.push_back(static_cast<uint8_t>(shift_amount)); // Shift amount
 	} else {
-		// General case: IMUL RCX, RCX, element_size_bytes
+	// General case: IMUL RCX, RCX, element_size_bytes
 		textSectionData.push_back(0x48); // REX.W prefix for 64-bit operation
 		textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
 		textSectionData.push_back(0xC9); // ModR/M: RCX, RCX (11 001 001)
-		// Little-endian 32-bit immediate
+	// Little-endian 32-bit immediate
 		uint32_t size_u32 = static_cast<uint32_t>(element_size_bytes);
 		textSectionData.push_back(size_u32 & 0xFF);
 		textSectionData.push_back((size_u32 >> 8) & 0xFF);
@@ -57,22 +58,25 @@ inline void emitMultiplyRegByElementSize(std::vector<uint8_t>& textSectionData, 
 	if (element_size_bytes == 1) {
 		return; // No multiplication needed
 	}
-	
+
 	uint8_t reg_bits = static_cast<uint8_t>(reg) & 0x07;
 	bool reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
-	
+
 	if (element_size_bytes == 2 || element_size_bytes == 4 || element_size_bytes == 8) {
-		int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2 : 3;
+		int shift_amount = (element_size_bytes == 2) ? 1 : (element_size_bytes == 4) ? 2
+																					 : 3;
 		uint8_t rex = 0x48; // REX.W
-		if (reg_extended) rex |= 0x01; // B bit
+		if (reg_extended)
+			rex |= 0x01; // B bit
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0xC1); // SHL r/m64, imm8
 		textSectionData.push_back(0xE0 | reg_bits); // ModR/M: mod=11, reg=100 (SHL), r/m=reg
 		textSectionData.push_back(static_cast<uint8_t>(shift_amount));
 	} else {
-		// IMUL reg, reg, imm32
+	// IMUL reg, reg, imm32
 		uint8_t rex = 0x48;
-		if (reg_extended) rex |= 0x05; // R and B bits (same register for src and dest)
+		if (reg_extended)
+			rex |= 0x05; // R and B bits (same register for src and dest)
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
 		textSectionData.push_back(0xC0 | (reg_bits << 3) | reg_bits); // ModR/M: mod=11, reg, r/m
@@ -112,8 +116,8 @@ inline void emitAddRegs(std::vector<uint8_t>& textSectionData, X64Register dest_
 	uint8_t src_bits = static_cast<uint8_t>(src_reg) & 0x07;
 	bool dest_extended = static_cast<uint8_t>(dest_reg) >= static_cast<uint8_t>(X64Register::R8);
 	bool src_extended = static_cast<uint8_t>(src_reg) >= static_cast<uint8_t>(X64Register::R8);
-	
-	// REX.W with branchless R and B bits
+
+ // REX.W with branchless R and B bits
 	uint8_t rex = 0x48 | (static_cast<uint8_t>(src_extended) << 2) | static_cast<uint8_t>(dest_extended);
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x01); // ADD r/m64, r64
@@ -128,25 +132,26 @@ inline void emitAddRegs(std::vector<uint8_t>& textSectionData, X64Register dest_
  * @param imm The immediate value to add (32-bit)
  */
 inline void emitAddImmToReg(std::vector<uint8_t>& textSectionData, X64Register reg, int64_t imm) {
-	if (imm == 0) return; // No-op
-	
+	if (imm == 0)
+		return; // No-op
+
 	uint8_t reg_bits = static_cast<uint8_t>(reg) & 0x07;
 	uint8_t reg_extended = static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8);
-	
-	// REX.W with branchless B bit
+
+ // REX.W with branchless B bit
 	uint8_t rex = 0x48 | reg_extended;
 	textSectionData.push_back(rex);
-	
-	// Branchless opcode selection using array
-	// RAX: just 0x05 (1 byte), others: 0x81, 0xC0|reg_bits (2 bytes)
+
+ // Branchless opcode selection using array
+ // RAX: just 0x05 (1 byte), others: 0x81, 0xC0|reg_bits (2 bytes)
 	bool is_rax = (reg == X64Register::RAX);
-	// For RAX: opcodes = {0x05}, size=1
-	// For others: opcodes = {0x81, 0xC0|reg_bits}, size=2
-	uint8_t opcodes[2] = { 0x81, static_cast<uint8_t>(0xC0 | reg_bits) };
+ // For RAX: opcodes = {0x05}, size=1
+ // For others: opcodes = {0x81, 0xC0|reg_bits}, size=2
+	uint8_t opcodes[2] = {0x81, static_cast<uint8_t>(0xC0 | reg_bits)};
 	opcodes[0] = is_rax ? 0x05 : 0x81;
 	int opcode_size = 2 - is_rax; // 1 for RAX, 2 for others
 	textSectionData.insert(textSectionData.end(), opcodes, opcodes + opcode_size);
-	
+
 	uint32_t imm_u32 = static_cast<uint32_t>(imm);
 	textSectionData.push_back(imm_u32 & 0xFF);
 	textSectionData.push_back((imm_u32 >> 8) & 0xFF);

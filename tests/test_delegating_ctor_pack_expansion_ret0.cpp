@@ -14,31 +14,37 @@
 
 // Target constructor takes a fixed int + the variadic pack.
 // Delegating constructor forwards the pack with an extra leading argument.
-template<typename... Args>
+template <typename... Args>
 struct Wrapper {
 	int first;
 	int second;
 	int third;
 
-	// Target constructor: stores values in members
+ // Target constructor: stores values in members
 	Wrapper(int a, int b, int c) : first(a), second(b), third(c) {}
 
-	// Delegating constructor: prepends 100 and forwards the pack
+ // Delegating constructor: prepends 100 and forwards the pack
 	Wrapper(Args... args) : Wrapper(100, args...) {}
 };
 
 int main() {
-	// Wrapper<int, int> — pack is [int, int], delegating ctor calls Wrapper(100, 10, 20)
+ // Wrapper<int, int> — pack is [int, int], delegating ctor calls Wrapper(100, 10, 20)
 	Wrapper<int, int> w1(10, 20);
-	if (w1.first != 100) return 1;
-	if (w1.second != 10) return 2;
-	if (w1.third != 20) return 3;
+	if (w1.first != 100)
+		return 1;
+	if (w1.second != 10)
+		return 2;
+	if (w1.third != 20)
+		return 3;
 
-	// Direct construction via target constructor (no delegation)
+ // Direct construction via target constructor (no delegation)
 	Wrapper<int, int> w2(1, 2, 3);
-	if (w2.first != 1) return 4;
-	if (w2.second != 2) return 5;
-	if (w2.third != 3) return 6;
+	if (w2.first != 1)
+		return 4;
+	if (w2.second != 2)
+		return 5;
+	if (w2.third != 3)
+		return 6;
 
 	return 0;
 }

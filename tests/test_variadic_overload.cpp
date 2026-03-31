@@ -14,22 +14,21 @@ void log(int level, const char* format, ...);
 
 // Implementation of non-variadic version
 int print(const char* message) {
-    return 0;
+	return 0;
 }
 
 // Implementation of simple log
 void log(int level) {
-    // Do nothing
+	// Do nothing
 }
 
 void log(int level, const char* message) {
-    // Do nothing
+	// Do nothing
 }
 
 int main() {
-    print("Hello");
-    log(1);
-    log(2, "Test");
-    return 0;
+	print("Hello");
+	log(1);
+	log(2, "Test");
+	return 0;
 }
-

@@ -8,5 +8,5 @@ EMPTY2(1 <= 2, x)
 EMPTY2(1 << 2, x)
 
 int main() {
-    return SELECT(1 < 2, 0);
+	return SELECT(1 < 2, 0);
 }

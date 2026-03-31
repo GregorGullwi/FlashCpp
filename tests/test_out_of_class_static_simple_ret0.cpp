@@ -1,12 +1,12 @@
-template<typename T>
+template <typename T>
 struct Container {
-    static int value;
+	static int value;
 };
 
-template<typename T>
+template <typename T>
 int Container<T>::value = 42;
 
 int main() {
-    int x = Container<int>::value;
-    return x - 42;
+	int x = Container<int>::value;
+	return x - 42;
 }

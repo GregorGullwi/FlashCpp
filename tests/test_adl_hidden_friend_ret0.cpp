@@ -7,13 +7,13 @@
 // (non-standard simplification, documented in docs/NON_STANDARD_BEHAVIOR.md).
 
 namespace Lib {
-	struct X {
-		int val;
-		// Hidden friend: defined inside the struct body, not at namespace scope.
-		// ADL must find Lib::getVal when called as getVal(x) with x of type Lib::X.
-		friend int getVal(X x) { return x.val; }
-	};
-}
+struct X {
+	int val;
+	// Hidden friend: defined inside the struct body, not at namespace scope.
+	// ADL must find Lib::getVal when called as getVal(x) with x of type Lib::X.
+	friend int getVal(X x) { return x.val; }
+};
+} // namespace Lib
 
 int main() {
 	Lib::X x{0};

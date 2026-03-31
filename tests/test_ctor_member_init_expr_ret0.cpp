@@ -18,6 +18,6 @@ int main() {
 	Adder add(41);
 	Multi m(5, 20);
 	int check = add.result + m.a + m.b;
-	// 42 + 10 + 30 = 82
+ // 42 + 10 + 30 = 82
 	return check - 82;
 }

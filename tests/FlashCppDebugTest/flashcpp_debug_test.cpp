@@ -1,10 +1,10 @@
 int add(int a, int b) {
-    int c = a + b;
-    return c;
+	int c = a + b;
+	return c;
 }
 
 int main() {
-    return add(3, 5);  // Should compute: (10 + 5) * (20 - 8) / (10 + 20) = 6
+	return add(3, 5);  // Should compute: (10 + 5) * (20 - 8) / (10 + 20) = 6
 }
 
 /*int subtract(int a, int b) {

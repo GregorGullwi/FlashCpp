@@ -3,18 +3,19 @@
 
 class Wrapper {
 public:
-    explicit Wrapper(int x) : value_(x) {}
-    int value() const { return value_; }
+	explicit Wrapper(int x) : value_(x) {}
+	int value() const { return value_; }
+
 private:
-    int value_;
+	int value_;
 };
 
 void takeWrapper(Wrapper w) {
-    // Function that takes Wrapper by value
+	// Function that takes Wrapper by value
 }
 
 int main() {
-    // This should fail - implicit conversion from int to Wrapper
-    takeWrapper(10);  // ERROR: Cannot implicitly convert int to Wrapper
-    return 0;
+	// This should fail - implicit conversion from int to Wrapper
+	takeWrapper(10);	 // ERROR: Cannot implicitly convert int to Wrapper
+	return 0;
 }

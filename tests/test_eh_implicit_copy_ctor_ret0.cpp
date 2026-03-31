@@ -24,8 +24,10 @@ int main() {
 	try {
 		throw outer;
 	} catch (Outer caught) {
-		if (g_inner_copy_count != 2) return 1;
-		if (caught.inner.value != 7) return 2;
+		if (g_inner_copy_count != 2)
+			return 1;
+		if (caught.inner.value != 7)
+			return 2;
 		return caught.tag == 20 ? 0 : 3;
 	}
 

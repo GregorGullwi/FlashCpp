@@ -8,20 +8,18 @@ int test_av() {
 		int* p = 0;
 		*p = 42;
 		return 0;
-	}
-	__except(EXCEPTION_EXECUTE_HANDLER) {
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		return 10;
 	}
 }
 
 int main() {
-	int r1 = test_av();  // 10
+	int r1 = test_av();	// 10
 	__try {
 		int* p = 0;
 		*p = 42;
 		return 0;
-	}
-	__except(EXCEPTION_EXECUTE_HANDLER) {
-		return r1 + 20;  // 10 + 20 = 30
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		return r1 + 20;	// 10 + 20 = 30
 	}
 }

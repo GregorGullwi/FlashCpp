@@ -7,13 +7,17 @@
 // main() returns foo() + bar() - 109 == 0 on success.
 
 int foo() {
-	enum Color { Red = 10, Green = 20, Blue = 30 };
+	enum Color { Red = 10,
+				 Green = 20,
+				 Blue = 30 };
 	Color c = Red;
 	return c;  // expect 10
 }
 
 int bar() {
-	enum Color { Red = 99, Green = 88, Blue = 77 };
+	enum Color { Red = 99,
+				 Green = 88,
+				 Blue = 77 };
 	Color c = Red;
 	return c;  // expect 99
 }

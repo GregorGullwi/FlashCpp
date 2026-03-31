@@ -2,14 +2,15 @@
 // This test should NOT compile - it's expected to fail
 class Wrapper {
 public:
-    explicit Wrapper(int x) : value_(x) {}
-    int value() const { return value_; }
+	explicit Wrapper(int x) : value_(x) {}
+	int value() const { return value_; }
+
 private:
-    int value_;
+	int value_;
 };
 
 int main() {
-    // This should fail - copy initialization with explicit constructor
-    Wrapper w = 10;
-    return 0;
+	// This should fail - copy initialization with explicit constructor
+	Wrapper w = 10;
+	return 0;
 }

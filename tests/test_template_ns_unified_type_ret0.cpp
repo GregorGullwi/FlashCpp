@@ -3,15 +3,15 @@
 // qualified or unqualified name (no duplicate type entries in gTypesByName).
 
 namespace custom_ns {
-template<typename T>
+template <typename T>
 struct Holder {
-    T value;
-    T get() const { return value; }
+	T value;
+	T get() const { return value; }
 };
-}
+} // namespace custom_ns
 
 int main() {
-    custom_ns::Holder<int> h{42};
-    int v = h.get();
-    return v == 42 ? 0 : 1;
+	custom_ns::Holder<int> h{42};
+	int v = h.get();
+	return v == 42 ? 0 : 1;
 }

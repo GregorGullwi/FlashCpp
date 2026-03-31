@@ -14,7 +14,8 @@ int test_continue_plain_loop() {
 	int prev = g_dtor_count;
 	for (int i = 0; i < 3; i++) {
 		Guard g;
-		if (i == 1) continue;
+		if (i == 1)
+			continue;
 	}
 	return (g_dtor_count - prev) == 3 ? 0 : (g_dtor_count - prev);
 }
@@ -25,7 +26,8 @@ int test_continue_from_try_block() {
 	for (int i = 0; i < 3; i++) {
 		Guard g;
 		try {
-			if (i == 1) continue;
+			if (i == 1)
+				continue;
 		} catch (...) {
 			return -1;
 		}
@@ -34,7 +36,9 @@ int test_continue_from_try_block() {
 }
 
 int main() {
-	if (test_continue_plain_loop() != 0) return 1;
-	if (test_continue_from_try_block() != 0) return 2;
+	if (test_continue_plain_loop() != 0)
+		return 1;
+	if (test_continue_from_try_block() != 0)
+		return 2;
 	return 0;
 }

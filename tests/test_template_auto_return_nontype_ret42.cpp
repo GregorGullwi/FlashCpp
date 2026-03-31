@@ -1,4 +1,4 @@
-template<int N>
+template <int N>
 auto getValue() {
 	return N;
 }

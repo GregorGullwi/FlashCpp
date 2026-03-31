@@ -7,7 +7,8 @@ constexpr long long factorial(int n) {
 
 // Power function using recursion
 constexpr long long power(long long base, int exp) {
-	if (exp == 0) return 1LL;
+	if (exp == 0)
+		return 1LL;
 	return base * power(base, exp - 1);
 }
 

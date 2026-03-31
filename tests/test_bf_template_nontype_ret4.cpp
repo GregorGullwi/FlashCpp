@@ -1,4 +1,4 @@
-template<typename T, int W1, int W2>
+template <typename T, int W1, int W2>
 struct Packed {
 	T a : W1;
 	T b : W2;

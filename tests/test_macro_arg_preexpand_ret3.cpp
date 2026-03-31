@@ -1,8 +1,8 @@
 // Test: macro argument pre-expansion before substitution
-// Per C standard 6.10.3.1: arguments not adjacent to # or ## are expanded 
+// Per C standard 6.10.3.1: arguments not adjacent to # or ## are expanded
 // before substitution into the replacement list
 
-#define INNER_CONCAT(x, y) x ## y
+#define INNER_CONCAT(x, y) x##y
 #define CONCAT(x, y) INNER_CONCAT(x, y)
 #define MAKE_NAME(prefix, suffix) CONCAT(prefix, suffix)
 
@@ -19,5 +19,5 @@
 int get_val() { return 3; }
 
 int main() {
-    return CALL_FN(get, GET_SUFFIX());
+	return CALL_FN(get, GET_SUFFIX());
 }

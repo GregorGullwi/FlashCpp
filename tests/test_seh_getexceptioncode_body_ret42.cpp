@@ -10,9 +10,8 @@ int test_code_in_body_av() {
 	int* p = 0;
 	unsigned long code = 0;
 	__try {
-		*p = 1;  // Access violation: 0xC0000005
-	}
-	__except(GetExceptionCode() == 0xC0000005 ? 1 : 0) {
+		*p = 1;	// Access violation: 0xC0000005
+	} __except (GetExceptionCode() == 0xC0000005 ? 1 : 0) {
 		code = GetExceptionCode();  // Should still be 0xC0000005
 	}
 	return code == 0xC0000005 ? 20 : 0;
@@ -25,15 +24,14 @@ int test_code_in_body_divzero() {
 	unsigned long code = 0;
 	__try {
 		x = x / y;  // Integer divide by zero: 0xC0000094
-	}
-	__except(GetExceptionCode() == 0xC0000094 ? 1 : 0) {
+	} __except (GetExceptionCode() == 0xC0000094 ? 1 : 0) {
 		code = GetExceptionCode();  // Should still be 0xC0000094
 	}
 	return code == 0xC0000094 ? 22 : 0;
 }
 
 int main() {
-	int r1 = test_code_in_body_av();      // 20
+	int r1 = test_code_in_body_av();		 // 20
 	int r2 = test_code_in_body_divzero(); // 22
-	return r1 + r2;  // 20 + 22 = 42
+	return r1 + r2;	// 20 + 22 = 42
 }

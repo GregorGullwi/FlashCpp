@@ -18,7 +18,7 @@ struct Outer {
 	} in;
 };
 
-template<typename T>
+template <typename T>
 struct TemplateBitfield {
 	int a : 3;
 	T b;

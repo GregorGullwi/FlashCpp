@@ -2,11 +2,11 @@
 // Verifies that using Alias = void(*)(_Args...); is parsed
 // This pattern appears in variant:867 for element_type
 
-template<typename... Args>
+template <typename... Args>
 struct Holder {
-    using func_type = void(*)(Args...);
+	using func_type = void (*)(Args...);
 };
 
 int main() {
-    return 0;
+	return 0;
 }

@@ -3,7 +3,7 @@
 
 // unsigned int wraps at 32 bits
 constexpr unsigned int sub_wrap = 1u - 2u;
-static_assert(sub_wrap == 4294967295u);  // UINT_MAX
+static_assert(sub_wrap == 4294967295u);	// UINT_MAX
 
 // unsigned int overflow at maximum
 constexpr unsigned int add_overflow = 4294967295u + 1u;

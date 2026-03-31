@@ -2,18 +2,16 @@
 
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
-	const StructTypeInfo* struct_info
-);
+	const StructTypeInfo* struct_info);
 
-template<typename TDest, typename TSource>
-void appendLazyTemplateSequence(TDest& destination, const TSource& source)
-{
+template <typename TDest, typename TSource>
+void appendLazyTemplateSequence(TDest& destination, const TSource& source) {
 	for (const auto& value : source) {
 		destination.push_back(value);
 	}
 }
 
-template<typename TParams, typename TArgs>
+template <typename TParams, typename TArgs>
 LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	const StructMemberFunctionDecl& mem_func,
 	StringHandle class_template_name,
@@ -22,8 +20,7 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	bool is_constructor,
 	bool is_destructor,
 	const TParams& template_params,
-	const TArgs& template_args)
-{
+	const TArgs& template_args) {
 	LazyMemberFunctionInfo lazy_mem_info;
 	auto& id = lazy_mem_info.identity;
 	id.original_member_node = mem_func.function_declaration;
@@ -50,15 +47,14 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	return lazy_mem_info;
 }
 
-template<typename TParams, typename TArgs>
+template <typename TParams, typename TArgs>
 void registerNestedMemberFunctionsForLazy(
 	const StructDeclarationNode& nested_struct,
 	StructTypeInfo& nested_struct_info,
 	StringHandle class_template_name,
 	StringHandle qualified_name,
 	const TParams& template_params,
-	const TArgs& template_args)
-{
+	const TArgs& template_args) {
 	for (const StructMemberFunctionDecl& mem_func : nested_struct.member_functions()) {
 		if (mem_func.is_constructor || mem_func.is_destructor) {
 			if (mem_func.is_constructor)
@@ -81,8 +77,7 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_constructor,
 				mem_func.is_destructor,
 				template_params,
-				template_args
-			);
+				template_args);
 			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 		} else if (mem_func.function_declaration.is<FunctionDeclarationNode>()) {
 			const FunctionDeclarationNode& func_decl = mem_func.function_declaration.as<FunctionDeclarationNode>();
@@ -96,12 +91,11 @@ void registerNestedMemberFunctionsForLazy(
 				false,
 				false,
 				template_params,
-				template_args
-			);
+				template_args);
 
 			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 
-			// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
+	// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
 			{
 				ASTNode fn_node = mem_func.function_declaration;
 				if (auto* fn = get_function_decl_node_mut(fn_node)) {
@@ -116,12 +110,11 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_virtual,
 				mem_func.is_pure_virtual,
 				mem_func.is_override,
-				mem_func.is_final
-			);
-			// cv_qualifier is now auto-derived by propagateAstProperties
+				mem_func.is_final);
+	// cv_qualifier is now auto-derived by propagateAstProperties
 
 			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",
-				qualified_name, "::", decl.identifier_token().value());
+					  qualified_name, "::", decl.identifier_token().value());
 		}
 	}
 }

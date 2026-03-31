@@ -1,4 +1,4 @@
 int main() {
-    int eq = (10 == 10);
-    return eq;
+	int eq = (10 == 10);
+	return eq;
 }

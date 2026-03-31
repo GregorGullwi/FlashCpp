@@ -1,11 +1,11 @@
-template<typename A, typename B>
+template <typename A, typename B>
 struct Box {
 	int size() {
 		return 1;
 	}
 };
 
-template<typename T>
+template <typename T>
 struct Box<int, T> {
 	int size() {
 		return sizeof(T);

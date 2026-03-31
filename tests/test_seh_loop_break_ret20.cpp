@@ -9,12 +9,11 @@ int main() {
 			if (i == 1) {
 				break;  // break on second iteration
 			}
-		}
-		__finally {
-			result = result + 0;  // just to have a finally
+		} __finally {
+			result = result + 0;	 // just to have a finally
 		}
 	}
-	// i=0: result = 0+10 = 10
-	// i=1: result = 10+10 = 20, then break
+ // i=0: result = 0+10 = 10
+ // i=1: result = 10+10 = 20, then break
 	return result;  // expect 20
 }

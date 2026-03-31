@@ -2,13 +2,13 @@
 // Pattern: template<typename, typename> friend struct ns::ClassName;
 
 namespace ns {
-template<typename T, typename U>
+template <typename T, typename U>
 struct Helper {};
-}
+} // namespace ns
 
-template<typename T>
+template <typename T>
 struct Container {
-	template<typename, typename>
+	template <typename, typename>
 	friend struct ns::Helper;
 
 	int value;

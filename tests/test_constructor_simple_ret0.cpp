@@ -4,16 +4,16 @@ extern "C" int printf(const char*, ...);
 
 class Widget {
 public:
-    Widget(int v) {
-        printf("Constructed %d\n", v);
-    }
+	Widget(int v) {
+		printf("Constructed %d\n", v);
+	}
 };
 
 Widget make_widget() {
-    return Widget(42);
+	return Widget(42);
 }
 
 int main() {
-    make_widget();
-    return 0;
+	make_widget();
+	return 0;
 }

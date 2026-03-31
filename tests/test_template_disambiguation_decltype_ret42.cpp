@@ -2,23 +2,23 @@
 // Tests that decltype with qualified identifiers and template arguments works correctly
 
 namespace ns {
-    template<typename T>
-    struct Helper {
-        using type = int;
-    };
-    
-    template<typename T>
-    int getValue() {
-        return 42;
-    }
+template <typename T>
+struct Helper {
+	using type = int;
+};
+
+template <typename T>
+int getValue() {
+	return 42;
 }
+} // namespace ns
 
 // Test: decltype with template arguments in base class
-template<typename T>
+template <typename T>
 struct Base : decltype(ns::getValue<T>()) {
 };
 
 // Simplified test - just verify parsing works
 int main() {
-    return 42;
+	return 42;
 }

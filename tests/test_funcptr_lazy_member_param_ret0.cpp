@@ -10,7 +10,7 @@
 
 template <typename F>
 struct Invoker {
-	// F appears as a direct parameter — not a stored member.
+ // F appears as a direct parameter — not a stored member.
 	int apply(F fn, int arg);
 };
 

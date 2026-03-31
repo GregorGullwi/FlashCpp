@@ -1,26 +1,26 @@
 // Test: Nested struct declarations inside full template specializations
 // Verifies that struct/class declarations are handled in template<> struct bodies.
 
-template<typename T>
+template <typename T>
 struct Promise {
-    T value;
+	T value;
 };
 
 struct MyPromise {};
 
-template<>
+template <>
 struct Promise<MyPromise> {
-    struct Frame {
-        int x;
-        int y;
-    };
-    
-    static constexpr int answer{42};
-    
-    int get() { return answer; }
+	struct Frame {
+		int x;
+		int y;
+	};
+
+	static constexpr int answer{42};
+
+	int get() { return answer; }
 };
 
 int main() {
-    Promise<MyPromise> p;
-    return p.get() == 42 ? 0 : 1;
+	Promise<MyPromise> p;
+	return p.get() == 42 ? 0 : 1;
 }

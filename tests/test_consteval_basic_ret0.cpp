@@ -18,6 +18,6 @@ int arr[answer()];
 
 // Runtime call that can be constant-folded — valid C++20
 int main() {
-	// answer() is consteval so the compiler evaluates it to 42 at compile time
+ // answer() is consteval so the compiler evaluates it to 42 at compile time
 	return answer() - 42; // returns 0
 }

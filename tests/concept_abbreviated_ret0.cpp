@@ -4,10 +4,10 @@
 
 // Simple abbreviated function template using auto (without concept)
 void display(auto value) {
-    // Function body - simplified
+	// Function body - simplified
 }
 
 int main() {
-    display(100);
-    return 0;
+	display(100);
+	return 0;
 }

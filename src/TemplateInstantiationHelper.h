@@ -59,7 +59,7 @@ struct TemplateInstantiationError {
 	std::string function_name;
 	std::string reason;
 	size_t arg_count = 0;
-	
+
 	std::string format() const {
 		std::string msg = "Template instantiation failed for '" + function_name + "'";
 		if (!reason.empty()) {
@@ -102,68 +102,68 @@ struct TemplateInstantiationError {
 /// ```
 class TemplateInstantiationHelper {
 public:
-	/// Deduce template arguments from function call arguments
-	///
-	/// This handles the common pattern of deducing template arguments from
-	/// constructor call patterns like `func(__type_identity<int>{})`.
-	///
-	/// The pattern works because type wrapper templates like `__type_identity`
-	/// carry their template argument in their type, which we can extract.
-	///
-	/// @param arguments The function call arguments to analyze
-	/// @return A vector of deduced template type arguments
-	///
-	/// @note Used by both ExpressionSubstitutor::substituteFunctionCall() and
-	///       ConstExpr::Evaluator::evaluate_function_call()
+ /// Deduce template arguments from function call arguments
+ ///
+ /// This handles the common pattern of deducing template arguments from
+ /// constructor call patterns like `func(__type_identity<int>{})`.
+ ///
+ /// The pattern works because type wrapper templates like `__type_identity`
+ /// carry their template argument in their type, which we can extract.
+ ///
+ /// @param arguments The function call arguments to analyze
+ /// @return A vector of deduced template type arguments
+ ///
+ /// @note Used by both ExpressionSubstitutor::substituteFunctionCall() and
+ ///       ConstExpr::Evaluator::evaluate_function_call()
 	static std::vector<TemplateTypeArg> deduceTemplateArgsFromCall(
 		const ChunkedVector<ASTNode>& arguments);
 
-	/// Deduce template arguments from function parameter types (Phase 3)
-	///
-	/// This handles deducing template arguments by matching actual argument types
-	/// against function parameter types. For example:
-	/// ```cpp
-	/// template<typename T> void foo(T x);
-	/// foo(42);  // T deduced as int
-	/// ```
-	///
-	/// @param param_types The function parameter types from the template declaration
-	/// @param arg_types The actual argument types from the call
-	/// @return A vector of deduced template type arguments, empty if deduction fails
+ /// Deduce template arguments from function parameter types (Phase 3)
+ ///
+ /// This handles deducing template arguments by matching actual argument types
+ /// against function parameter types. For example:
+ /// ```cpp
+ /// template<typename T> void foo(T x);
+ /// foo(42);  // T deduced as int
+ /// ```
+ ///
+ /// @param param_types The function parameter types from the template declaration
+ /// @param arg_types The actual argument types from the call
+ /// @return A vector of deduced template type arguments, empty if deduction fails
 	static std::vector<TemplateTypeArg> deduceTemplateArgsFromParamTypes(
 		const std::vector<TypeSpecifierNode>& param_types,
 		const std::vector<TypeSpecifierNode>& arg_types);
 
-	/// Try to instantiate a template function with deduced or explicit arguments
-	///
-	/// This method attempts to instantiate a template function by trying the
-	/// qualified name first, then falling back to the simple name if different.
-	///
-	/// @param parser Reference to the parser for triggering template instantiation
-	/// @param qualified_name The qualified function name (e.g., "std::__is_complete_or_unbounded")
-	/// @param simple_name The simple function name (e.g., "__is_complete_or_unbounded")
-	/// @param template_args The template arguments to instantiate with
-	/// @return The instantiated function declaration if successful, std::nullopt otherwise
-	///
-	/// @note Used by both ExpressionSubstitutor::substituteFunctionCall() and
-	///       ConstExpr::Evaluator::evaluate_function_call()
+ /// Try to instantiate a template function with deduced or explicit arguments
+ ///
+ /// This method attempts to instantiate a template function by trying the
+ /// qualified name first, then falling back to the simple name if different.
+ ///
+ /// @param parser Reference to the parser for triggering template instantiation
+ /// @param qualified_name The qualified function name (e.g., "std::__is_complete_or_unbounded")
+ /// @param simple_name The simple function name (e.g., "__is_complete_or_unbounded")
+ /// @param template_args The template arguments to instantiate with
+ /// @return The instantiated function declaration if successful, std::nullopt otherwise
+ ///
+ /// @note Used by both ExpressionSubstitutor::substituteFunctionCall() and
+ ///       ConstExpr::Evaluator::evaluate_function_call()
 	static std::optional<ASTNode> tryInstantiateTemplateFunction(
 		Parser& parser,
 		std::string_view qualified_name,
 		std::string_view simple_name,
 		const std::vector<TemplateTypeArg>& template_args);
 
-	/// Try to instantiate with detailed error reporting (Phase 3)
-	///
-	/// Like tryInstantiateTemplateFunction but returns detailed error information
-	/// when instantiation fails.
-	///
-	/// @param parser Reference to the parser for triggering template instantiation
-	/// @param qualified_name The qualified function name
-	/// @param simple_name The simple function name
-	/// @param template_args The template arguments to instantiate with
-	/// @param error_out If provided, populated with error details on failure
-	/// @return The instantiated function declaration if successful, std::nullopt otherwise
+ /// Try to instantiate with detailed error reporting (Phase 3)
+ ///
+ /// Like tryInstantiateTemplateFunction but returns detailed error information
+ /// when instantiation fails.
+ ///
+ /// @param parser Reference to the parser for triggering template instantiation
+ /// @param qualified_name The qualified function name
+ /// @param simple_name The simple function name
+ /// @param template_args The template arguments to instantiate with
+ /// @param error_out If provided, populated with error details on failure
+ /// @return The instantiated function declaration if successful, std::nullopt otherwise
 	static std::optional<ASTNode> tryInstantiateWithErrorInfo(
 		Parser& parser,
 		std::string_view qualified_name,
@@ -171,15 +171,15 @@ public:
 		const std::vector<TemplateTypeArg>& template_args,
 		TemplateInstantiationError* error_out);
 
-	/// Check if a type represents a template template parameter (Phase 3)
-	///
-	/// Template template parameters have the form:
-	/// ```cpp
-	/// template<template<typename...> class Container>
-	/// ```
-	///
-	/// @param type_spec The type specifier to check
-	/// @return true if this is a template template parameter
+ /// Check if a type represents a template template parameter (Phase 3)
+ ///
+ /// Template template parameters have the form:
+ /// ```cpp
+ /// template<template<typename...> class Container>
+ /// ```
+ ///
+ /// @param type_spec The type specifier to check
+ /// @return true if this is a template template parameter
 	static bool isTemplateTemplateParameter(const TypeSpecifierNode& type_spec);
 };
 
@@ -187,16 +187,16 @@ public:
 
 inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateArgsFromCall(
 	const ChunkedVector<ASTNode>& arguments) {
-	
+
 	std::vector<TemplateTypeArg> deduced_args;
-	
-	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromCall: analyzing ", 
-	          arguments.size(), " arguments");
-	
+
+	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromCall: analyzing ",
+			  arguments.size(), " arguments");
+
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];
-		
-		// Check if argument is a ConstructorCallNode (like __type_identity<int>{})
+
+	// Check if argument is a ConstructorCallNode (like __type_identity<int>{})
 		if (arg.is<ExpressionNode>()) {
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (std::holds_alternative<ConstructorCallNode>(expr)) {
@@ -204,18 +204,18 @@ inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateA
 				const ASTNode& type_node = ctor.type_node();
 				if (type_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-					// Use this type as a template argument
+		// Use this type as a template argument
 					deduced_args.emplace_back(type_spec);
 					FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced template argument from constructor call arg ", i,
-					          " (type_index=", type_spec.type_index(), ")");
+							  " (type_index=", type_spec.type_index(), ")");
 				}
 			}
 		}
 	}
-	
-	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromCall: deduced ", 
-	          deduced_args.size(), " template arguments");
-	
+
+	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromCall: deduced ",
+			  deduced_args.size(), " template arguments");
+
 	return deduced_args;
 }
 
@@ -224,8 +224,8 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateTemplat
 	std::string_view qualified_name,
 	std::string_view simple_name,
 	const std::vector<TemplateTypeArg>& template_args) {
-	
-	// Delegate to the error-reporting version but ignore the error details
+
+ // Delegate to the error-reporting version but ignore the error details
 	return tryInstantiateWithErrorInfo(parser, qualified_name, simple_name, template_args, nullptr);
 }
 
@@ -235,7 +235,7 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 	std::string_view simple_name,
 	const std::vector<TemplateTypeArg>& template_args,
 	TemplateInstantiationError* error_out) {
-	
+
 	if (template_args.empty()) {
 		FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::tryInstantiateWithErrorInfo: No template arguments to instantiate with");
 		if (error_out) {
@@ -245,18 +245,18 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 		}
 		return std::nullopt;
 	}
-	
-	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::tryInstantiateWithErrorInfo: attempting to instantiate '", 
-	          qualified_name, "' with ", template_args.size(), " arguments");
-	
-	// Try qualified name first
+
+	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::tryInstantiateWithErrorInfo: attempting to instantiate '",
+			  qualified_name, "' with ", template_args.size(), " arguments");
+
+ // Try qualified name first
 	auto instantiated_opt = parser.try_instantiate_template_explicit(qualified_name, template_args);
 	if (instantiated_opt.has_value()) {
 		FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Instantiated with qualified name: ", qualified_name);
 		return instantiated_opt;
 	}
-	
-	// Try simple name if different from qualified name
+
+ // Try simple name if different from qualified name
 	if (qualified_name != simple_name) {
 		FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Trying simple name: ", simple_name);
 		instantiated_opt = parser.try_instantiate_template_explicit(simple_name, template_args);
@@ -265,20 +265,20 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 			return instantiated_opt;
 		}
 	}
-	
-	// Provide detailed error information
+
+ // Provide detailed error information
 	if (error_out) {
 		error_out->function_name = std::string(qualified_name);
 		error_out->arg_count = template_args.size();
-		
-		// Try to determine the reason for failure
+
+	// Try to determine the reason for failure
 		if (qualified_name.empty()) {
 			error_out->reason = "empty function name";
 		} else {
 			error_out->reason = "template not found or argument mismatch";
 		}
 	}
-	
+
 	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::tryInstantiateWithErrorInfo: Failed to instantiate '", qualified_name, "'");
 	return std::nullopt;
 }
@@ -286,62 +286,62 @@ inline std::optional<ASTNode> TemplateInstantiationHelper::tryInstantiateWithErr
 inline std::vector<TemplateTypeArg> TemplateInstantiationHelper::deduceTemplateArgsFromParamTypes(
 	const std::vector<TypeSpecifierNode>& param_types,
 	const std::vector<TypeSpecifierNode>& arg_types) {
-	
+
 	std::vector<TemplateTypeArg> deduced_args;
-	
+
 	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromParamTypes: ",
-	          param_types.size(), " params, ", arg_types.size(), " args");
-	
-	// Simple type matching: if argument count matches, use argument types directly
-	// This handles cases like: template<typename T> void foo(T x); foo(42);
-	// where we deduce T = int from the argument type
-	
+			  param_types.size(), " params, ", arg_types.size(), " args");
+
+ // Simple type matching: if argument count matches, use argument types directly
+ // This handles cases like: template<typename T> void foo(T x); foo(42);
+ // where we deduce T = int from the argument type
+
 	size_t min_count = std::min(param_types.size(), arg_types.size());
 	for (size_t i = 0; i < min_count; ++i) {
 		const TypeSpecifierNode& param = param_types[i];
 		const TypeSpecifierNode& arg = arg_types[i];
-		
-		// If the parameter is a template parameter (dependent type), deduce from argument
+
+	// If the parameter is a template parameter (dependent type), deduce from argument
 		if (param.category() == TypeCategory::Template) {
-			// This is a template parameter - use the argument type as the deduced type
+	// This is a template parameter - use the argument type as the deduced type
 			deduced_args.emplace_back(arg);
 			FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced type from param ", i,
-			          " (arg type_index=", arg.type_index(), ")");
+					  " (arg type_index=", arg.type_index(), ")");
 		}
-		// Check for template template parameter patterns (e.g., Container<T>)
+	// Check for template template parameter patterns (e.g., Container<T>)
 		else if (isTemplateTemplateParameter(param)) {
-			// For template template parameters, we need special handling
-			// The argument type should be an instantiation of a template
+	// For template template parameters, we need special handling
+	// The argument type should be an instantiation of a template
 			deduced_args.emplace_back(arg);
 			FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper: Deduced template template arg from param ", i);
 		}
 	}
-	
+
 	FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::deduceTemplateArgsFromParamTypes: deduced ",
-	          deduced_args.size(), " arguments");
-	
+			  deduced_args.size(), " arguments");
+
 	return deduced_args;
 }
 
 inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeSpecifierNode& type_spec) {
-	// A template template parameter is detected when:
-	// 1. The type is marked as a template type (Type::Template)
-	// 2. AND it has nested template arguments itself (like Container<T>)
-	//
-	// This is a simplified check - full template template parameter detection
-	// would require more context from the template declaration
-	
+ // A template template parameter is detected when:
+ // 1. The type is marked as a template type (Type::Template)
+ // 2. AND it has nested template arguments itself (like Container<T>)
+ //
+ // This is a simplified check - full template template parameter detection
+ // would require more context from the template declaration
+
 	if (type_spec.category() == TypeCategory::Template) {
-		// Check if this template type has template arguments
-		// (indicating it's something like Container<T> rather than just T)
+	// Check if this template type has template arguments
+	// (indicating it's something like Container<T> rather than just T)
 		TypeIndex idx = type_spec.type_index();
 		if (const TypeInfo* info = tryGetTypeInfo(idx)) {
-			// Template template parameters typically have nested template args
-			// indicated by the type name containing '<'
+	// Template template parameters typically have nested template args
+	// indicated by the type name containing '<'
 			std::string_view name = StringTable::getStringView(info->name());
 			if (name.find('<') != std::string_view::npos) {
 				FLASH_LOG(Templates, Debug, "TemplateInstantiationHelper::isTemplateTemplateParameter: ",
-				          "detected template template parameter: ", name);
+						  "detected template template parameter: ", name);
 				return true;
 			}
 		}
@@ -362,16 +362,15 @@ inline bool TemplateInstantiationHelper::isTemplateTemplateParameter(const TypeS
  */
 inline std::unordered_map<std::string_view, TemplateTypeArg> buildTemplateParamMap(
 	const std::vector<ASTNode>& params,
-	const std::vector<TemplateTypeArg>& args)
-{
+	const std::vector<TemplateTypeArg>& args) {
 	std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-	
+
 	for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
 		if (params[i].is<TemplateParameterNode>()) {
 			const TemplateParameterNode& param = params[i].as<TemplateParameterNode>();
 			param_map[param.name()] = args[i];
 		}
 	}
-	
+
 	return param_map;
 }

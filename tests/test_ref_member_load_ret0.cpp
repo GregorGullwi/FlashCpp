@@ -66,7 +66,9 @@ struct BoxLL {
 };
 
 // --- enum& member ---
-enum Color { Red = 1, Green = 2, Blue = 4 };
+enum Color { Red = 1,
+			 Green = 2,
+			 Blue = 4 };
 
 struct BoxEnum {
 	const Color& c;
@@ -75,7 +77,10 @@ struct BoxEnum {
 };
 
 // --- struct (const read through reference member) ---
-struct Point { int x; int y; };
+struct Point {
+	int x;
+	int y;
+};
 
 struct BoxPoint {
 	const Point& p;
@@ -87,7 +92,10 @@ struct BoxPoint {
 struct WrapPoint {
 	Point& p;
 	WrapPoint(Point& v) : p(v) {}
-	void scale(int n) { p.x = p.x * n; p.y = p.y * n; }
+	void scale(int n) {
+		p.x = p.x * n;
+		p.y = p.y * n;
+	}
 	int getX() const { return p.x; }
 	int getY() const { return p.y; }
 };
@@ -104,88 +112,110 @@ struct SinkFloat {
 };
 
 int main() {
-	// Part 1: reading through const int& member
+ // Part 1: reading through const int& member
 	int a = 42;
 	BoxInt b(a);
-	if (b.get() != 42) return 1;
+	if (b.get() != 42)
+		return 1;
 
-	// Part 2: mutation must propagate back through non-const int& member
+ // Part 2: mutation must propagate back through non-const int& member
 	int c = 10;
 	Wrapper w(c);
 	w.inc();
-	if (c != 11) return 2;		// caller sees the mutation
-	if (w.get() != 11) return 3;
+	if (c != 11)
+		return 2;  // caller sees the mutation
+	if (w.get() != 11)
+		return 3;
 	w.add(5);
-	if (c != 16) return 4;
-	if (w.get() != 16) return 5;
+	if (c != 16)
+		return 4;
+	if (w.get() != 16)
+		return 5;
 
-	// Part 3: reading through const double& member
+ // Part 3: reading through const double& member
 	double dd = 3.14;
 	BoxDouble bd(dd);
-	if ((int)(bd.get() * 100) != 314) return 6;
+	if ((int)(bd.get() * 100) != 314)
+		return 6;
 
-	// Part 4: constructor pre-bind conversion int → const double&
+ // Part 4: constructor pre-bind conversion int → const double&
 	SinkDouble sd(7);
-	if ((int)sd.stored != 7) return 7;
+	if ((int)sd.stored != 7)
+		return 7;
 
-	// Part 5: const int& member with int literal arg (temporary materialization)
+ // Part 5: const int& member with int literal arg (temporary materialization)
 	BoxInt lit(99);
-	if (lit.get() != 99) return 8;
+	if (lit.get() != 99)
+		return 8;
 
-	// Part 6: float reference member (read)
+ // Part 6: float reference member (read)
 	float fv = 1.5f;
 	BoxFloat bf(fv);
-	if ((int)(bf.get() * 2) != 3) return 9;
+	if ((int)(bf.get() * 2) != 3)
+		return 9;
 
-	// Part 7: float reference member (mutate)
+ // Part 7: float reference member (mutate)
 	float mf = 4.0f;
 	WrapFloat wf(mf);
 	wf.twice();
-	if ((int)mf != 8) return 10;
+	if ((int)mf != 8)
+		return 10;
 
-	// Part 8: short reference member
+ // Part 8: short reference member
 	short sv = 200;
 	BoxShort bs(sv);
-	if (bs.get() != 200) return 11;
+	if (bs.get() != 200)
+		return 11;
 
-	// Part 9: char reference member
+ // Part 9: char reference member
 	char cv = 'Z';
 	BoxChar bc(cv);
-	if (bc.get() != 'Z') return 12;
+	if (bc.get() != 'Z')
+		return 12;
 
-	// Part 10: long long reference member
+ // Part 10: long long reference member
 	long long llv = 1000000000LL;
 	BoxLL bll(llv);
-	if (bll.get() != 1000000000LL) return 13;
+	if (bll.get() != 1000000000LL)
+		return 13;
 
-	// Part 11: enum reference member
+ // Part 11: enum reference member
 	Color col = Green;
 	BoxEnum be(col);
-	if (be.get() != Green) return 14;
+	if (be.get() != Green)
+		return 14;
 
-	// Part 12: const struct reference member (read)
+ // Part 12: const struct reference member (read)
 	Point pt{3, 7};
 	BoxPoint bp(pt);
-	if (bp.sumXY() != 10) return 15;
+	if (bp.sumXY() != 10)
+		return 15;
 
-	// Part 13: constructor pre-bind conversion int → const float&
+ // Part 13: constructor pre-bind conversion int → const float&
 	SinkFloat sf(3);
-	if ((int)sf.stored != 3) return 16;
+	if ((int)sf.stored != 3)
+		return 16;
 
-	// Part 14: mutable struct reference member — read fields through method
+ // Part 14: mutable struct reference member — read fields through method
 	Point mp{2, 5};
 	WrapPoint wp(mp);
-	if (wp.getX() != 2) return 17;
-	if (wp.getY() != 5) return 18;
+	if (wp.getX() != 2)
+		return 17;
+	if (wp.getY() != 5)
+		return 18;
 
-	// Part 15: mutable struct reference member — write fields through method
+ // Part 15: mutable struct reference member — write fields through method
 	wp.scale(3);
-	if (mp.x != 6) return 19;
-	if (mp.y != 15) return 20;
+	if (mp.x != 6)
+		return 19;
+	if (mp.y != 15)
+		return 20;
 
-	// Part 16: mutable struct reference member — verify wrapper reads updated values
-	if (wp.getX() != 6) return 21;
-	if (wp.getY() != 15) return 22;
+ // Part 16: mutable struct reference member — verify wrapper reads updated values
+	if (wp.getX() != 6)
+		return 21;
+	if (wp.getY() != 15)
+		return 22;
 
 	return 0;
 }

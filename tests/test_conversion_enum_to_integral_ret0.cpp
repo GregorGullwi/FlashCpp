@@ -1,7 +1,8 @@
 // Test: enum-to-integral conversions and ranking.
 // Confirms enum->int promotion still beats wider integral conversions.
 
-enum SmallEnum { Zero = 0, Seven = 7 };
+enum SmallEnum { Zero = 0,
+				 Seven = 7 };
 
 int pickEnum(int value) {
 	return value;
@@ -18,16 +19,20 @@ double widenEnum(SmallEnum value) {
 int main() {
 	SmallEnum value = Seven;
 
-	if (pickEnum(value) != 7) return 1;
+	if (pickEnum(value) != 7)
+		return 1;
 
 	long long widened = value;
-	if (widened != 7) return 2;
+	if (widened != 7)
+		return 2;
 
 	double as_double = widenEnum(value);
-	if ((int)as_double != 7) return 3;
+	if ((int)as_double != 7)
+		return 3;
 
 	bool as_bool = value;
-	if (!as_bool) return 4;
+	if (!as_bool)
+		return 4;
 
 	return 0;
 }

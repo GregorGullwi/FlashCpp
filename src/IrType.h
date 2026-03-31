@@ -26,15 +26,15 @@
 // ============================================================================
 enum class IrType : int_fast16_t {
 	Void,
-	Integer,                // Deliberately coarse: width stays in size_in_bits, signedness in is_signed
-	Float,                  // 32-bit IEEE 754
-	Double,                 // 64-bit IEEE 754
-	LongDouble,             // 80-bit x87 extended precision
-	Struct,                 // Runtime family only; exact layout/ABI still comes from type_index + size metadata
+	Integer,				// Deliberately coarse: width stays in size_in_bits, signedness in is_signed
+	Float,				  // 32-bit IEEE 754
+	Double,				 // 64-bit IEEE 754
+	LongDouble,				// 80-bit x87 extended precision
+	Struct,				 // Runtime family only; exact layout/ABI still comes from type_index + size metadata
 	FunctionPointer,
 	MemberFunctionPointer,  // Kept distinct until member-pointer ABI/layout is lowered more explicitly
-	MemberObjectPointer,    // Kept distinct until member-pointer ABI/layout is lowered more explicitly
-	Nullptr,                // Transitional null-pointer family; can disappear once lowered earlier to concrete zero/pointer form
+	MemberObjectPointer,	 // Kept distinct until member-pointer ABI/layout is lowered more explicitly
+	Nullptr,				// Transitional null-pointer family; can disappear once lowered earlier to concrete zero/pointer form
 };
 
 // ============================================================================
@@ -109,7 +109,7 @@ inline bool carriesSemanticTypeIndex(TypeCategory cat) { return needs_type_index
 // ============================================================================
 std::string_view irTypeName(IrType t);
 
-template<>
+template <>
 struct std::formatter<IrType, char> : std::formatter<std::string_view, char> {
 	auto format(IrType t, std::format_context& ctx) const {
 		return std::formatter<std::string_view, char>::format(irTypeName(t), ctx);

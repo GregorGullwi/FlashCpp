@@ -1,97 +1,112 @@
 // Tests that converting constructors with const-reference parameters correctly
 // perform the pre-bind value conversion (e.g. int->double) before binding.
 struct IntTarget {
-    int value;
-    IntTarget(const double& d) : value(static_cast<int>(d)) {}
+	int value;
+	IntTarget(const double& d) : value(static_cast<int>(d)) {}
 };
 
 struct LongTarget {
-    long long value;
-    LongTarget(const double& d) : value(static_cast<long long>(d)) {}
+	long long value;
+	LongTarget(const double& d) : value(static_cast<long long>(d)) {}
 };
 
 struct FloatTarget {
-    float value;
-    FloatTarget(const float& f) : value(f) {}
+	float value;
+	FloatTarget(const float& f) : value(f) {}
 };
 
 struct RValueTarget {
-    double value;
-    RValueTarget(double&& d) : value(d) {}
+	double value;
+	RValueTarget(double&& d) : value(d) {}
 };
 
 int takeIntTargetValue(IntTarget target) {
-    return target.value;
+	return target.value;
 }
 
 int takeRValueTargetValue(RValueTarget target) {
-    return static_cast<int>(target.value);
+	return static_cast<int>(target.value);
 }
 
 struct TargetReader {
-    int takeLong(LongTarget target) const { return static_cast<int>(target.value); }
-    int takeFloat(FloatTarget target) const { return static_cast<int>(target.value); }
+	int takeLong(LongTarget target) const { return static_cast<int>(target.value); }
+	int takeFloat(FloatTarget target) const { return static_cast<int>(target.value); }
 };
 
 IntTarget makeIntTargetFromLiteral() {
-    return 42;
+	return 42;
 }
 
 LongTarget makeLongTargetFromExpr() {
-    return 40 + 2;
+	return 40 + 2;
 }
 
 FloatTarget makeFloatTargetFromLiteral() {
-    return 7;
+	return 7;
 }
 
 RValueTarget makeRValueTargetFromExpr() {
-    return 40 + 2;
+	return 40 + 2;
 }
 
 int main() {
-    // Copy-init: sema selects IntTarget(const double&) for int source
-    IntTarget t1 = 42;
-    if (t1.value != 42) return 1;
+	// Copy-init: sema selects IntTarget(const double&) for int source
+	IntTarget t1 = 42;
+	if (t1.value != 42)
+		return 1;
 
-    IntTarget t2 = 100;
-    if (t2.value != 100) return 2;
+	IntTarget t2 = 100;
+	if (t2.value != 100)
+		return 2;
 
-    // Test with different integral type source
-    LongTarget l1 = 99;
-    if (l1.value != 99) return 3;
+	// Test with different integral type source
+	LongTarget l1 = 99;
+	if (l1.value != 99)
+		return 3;
 
-    // Non-identifier expression source should still materialize a reference temporary.
-    IntTarget t3 = 40 + 2;
-    if (t3.value != 42) return 4;
+	// Non-identifier expression source should still materialize a reference temporary.
+	IntTarget t3 = 40 + 2;
+	if (t3.value != 42)
+		return 4;
 
-    // Direct-call argument conversion/materialization.
-    if (takeIntTargetValue(42) != 42) return 5;
-    if (takeIntTargetValue(40 + 2) != 42) return 6;
+	// Direct-call argument conversion/materialization.
+	if (takeIntTargetValue(42) != 42)
+		return 5;
+	if (takeIntTargetValue(40 + 2) != 42)
+		return 6;
 
-    // Member-call argument conversion/materialization for different destination types.
-    TargetReader reader;
-    if (reader.takeLong(42) != 42) return 7;
-    if (reader.takeLong(40 + 2) != 42) return 8;
-    if (reader.takeFloat(7) != 7) return 9;
+	// Member-call argument conversion/materialization for different destination types.
+	TargetReader reader;
+	if (reader.takeLong(42) != 42)
+		return 7;
+	if (reader.takeLong(40 + 2) != 42)
+		return 8;
+	if (reader.takeFloat(7) != 7)
+		return 9;
 
-    // Return conversion/materialization from both literals and expressions.
-    IntTarget from_literal = makeIntTargetFromLiteral();
-    if (from_literal.value != 42) return 10;
+	// Return conversion/materialization from both literals and expressions.
+	IntTarget from_literal = makeIntTargetFromLiteral();
+	if (from_literal.value != 42)
+		return 10;
 
-    LongTarget from_expr = makeLongTargetFromExpr();
-    if (from_expr.value != 42) return 11;
+	LongTarget from_expr = makeLongTargetFromExpr();
+	if (from_expr.value != 42)
+		return 11;
 
-    FloatTarget from_float_literal = makeFloatTargetFromLiteral();
-    if (static_cast<int>(from_float_literal.value) != 7) return 12;
+	FloatTarget from_float_literal = makeFloatTargetFromLiteral();
+	if (static_cast<int>(from_float_literal.value) != 7)
+		return 12;
 
-    // Rvalue-reference constructor parameters should materialize/bind correctly too.
-    RValueTarget rv = 42;
-    if (static_cast<int>(rv.value) != 42) return 13;
-    if (takeRValueTargetValue(40 + 2) != 42) return 14;
+	// Rvalue-reference constructor parameters should materialize/bind correctly too.
+	RValueTarget rv = 42;
+	if (static_cast<int>(rv.value) != 42)
+		return 13;
+	if (takeRValueTargetValue(40 + 2) != 42)
+		return 14;
 
-    RValueTarget from_rvalue_expr = makeRValueTargetFromExpr();
-    if (static_cast<int>(from_rvalue_expr.value) != 42) return 15;
+	RValueTarget from_rvalue_expr = makeRValueTargetFromExpr();
+	if (static_cast<int>(from_rvalue_expr.value) != 42)
+		return 15;
 
-    return 0;
+	return 0;
 }

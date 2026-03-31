@@ -25,28 +25,34 @@ int main() {
 	try {
 		throw Derived{};
 	} catch (Left& left) {
-		if (left.left != 11) return 1;
+		if (left.left != 11)
+			return 1;
 		caught = true;
 	}
-	if (!caught) return 2;
+	if (!caught)
+		return 2;
 
 	caught = false;
 	try {
 		throw Derived{};
 	} catch (Right& right) {
-		if (right.right != 22) return 3;
+		if (right.right != 22)
+			return 3;
 		caught = true;
 	}
-	if (!caught) return 4;
+	if (!caught)
+		return 4;
 
 	caught = false;
 	try {
 		throw MostDerived{};
 	} catch (Right& right) {
-		if (right.right != 22) return 5;
+		if (right.right != 22)
+			return 5;
 		caught = true;
 	}
-	if (!caught) return 6;
+	if (!caught)
+		return 6;
 
 	return 0;
 }

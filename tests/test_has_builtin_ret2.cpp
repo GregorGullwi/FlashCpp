@@ -21,7 +21,7 @@ int has_fake = 0;
 #endif
 
 int main() {
-    // has_is_void and has_is_same should be 1, has_fake should be 0
-    // So the return value should be 1 + 1 + 0 = 2
-    return has_is_void + has_is_same + has_fake;
+	// has_is_void and has_is_same should be 1, has_fake should be 0
+	// So the return value should be 1 + 1 + 0 = 2
+	return has_is_void + has_is_same + has_fake;
 }

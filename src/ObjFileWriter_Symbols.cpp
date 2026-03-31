@@ -5,8 +5,6 @@
 // ObjFileWriter_Symbols.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-
-
 // Add function signature information for member functions with class name
 // Returns the mangled name for the function
 std::string ObjectFileWriter::addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic) {
@@ -14,7 +12,7 @@ std::string ObjectFileWriter::addFunctionSignature(std::string_view name, const 
 	sig.class_name = class_name;
 	sig.linkage = linkage;
 	sig.is_variadic = is_variadic;
-	// Generate the mangled name and use it as the key
+ // Generate the mangled name and use it as the key
 	std::string mangled_name = generateMangledName(name, sig);
 	function_signatures_[mangled_name] = sig;
 	return mangled_name;
@@ -31,7 +29,8 @@ void ObjectFileWriter::addFunctionSignature([[maybe_unused]] std::string_view na
 }
 
 void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage) {
-	if (g_enable_debug_output) std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Adding function symbol: " << mangled_name << " at offset " << section_offset << " with linkage " << static_cast<int>(linkage) << std::endl;
 	auto section_text = coffi_.get_sections()[sectiontype_to_index[SectionType::TEXT]];
 	auto symbol_func = coffi_.add_symbol(mangled_name);
 	symbol_func->set_type(IMAGE_SYM_TYPE_FUNCTION);
@@ -39,27 +38,29 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 	symbol_func->set_section_number(section_text->get_index() + 1);
 	symbol_func->set_value(section_offset);
 
-	// Handle dllexport - add export directive
+ // Handle dllexport - add export directive
 	if (linkage == Linkage::DllExport) {
 		auto section_drectve = coffi_.get_sections()[sectiontype_to_index[SectionType::DRECTVE]];
-		// Validate mangled_name contains no spaces or directive-terminating characters
-		// to prevent linker directive injection via crafted symbol names.
-		// Valid MSVC-mangled names only contain [A-Za-z0-9?@_$] - no spaces.
+	// Validate mangled_name contains no spaces or directive-terminating characters
+	// to prevent linker directive injection via crafted symbol names.
+	// Valid MSVC-mangled names only contain [A-Za-z0-9?@_$] - no spaces.
 		bool name_is_safe = mangled_name.find(' ') == std::string_view::npos &&
-		                    mangled_name.find('\t') == std::string_view::npos &&
-		                    mangled_name.find('\n') == std::string_view::npos &&
-		                    !mangled_name.empty();
+							mangled_name.find('\t') == std::string_view::npos &&
+							mangled_name.find('\n') == std::string_view::npos &&
+							!mangled_name.empty();
 		if (name_is_safe) {
 			std::string export_directive = std::string(" /EXPORT:") + std::string(mangled_name);
-			if (g_enable_debug_output) std::cerr << "Adding export directive: " << export_directive << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Adding export directive: " << export_directive << std::endl;
 			section_drectve->append_data(export_directive.c_str(), export_directive.size());
 		} else {
-			if (g_enable_debug_output) std::cerr << "Skipping export directive for invalid mangled name: " << mangled_name << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Skipping export directive for invalid mangled name: " << mangled_name << std::endl;
 		}
 	}
 
-	// Extract unmangled name for debug info
-	// Mangled names start with '?' followed by the function name up to '@@'
+ // Extract unmangled name for debug info
+ // Mangled names start with '?' followed by the function name up to '@@'
 	std::string unmangled_name(mangled_name);
 	if (!mangled_name.empty() && mangled_name[0] == '?') {
 		size_t end_pos = mangled_name.find("@@");
@@ -68,14 +69,17 @@ void ObjectFileWriter::add_function_symbol(std::string_view mangled_name, uint32
 		}
 	}
 
-	// Add function to debug info with length 0 - length will be calculated later
-	if (g_enable_debug_output) std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
+ // Add function to debug info with length 0 - length will be calculated later
+	if (g_enable_debug_output)
+		std::cerr << "DEBUG: Adding function to debug builder: " << unmangled_name << " (mangled: " << mangled_name << ") at offset " << section_offset << "\n";
 	debug_builder_.addFunction(unmangled_name, std::string(mangled_name), section_offset, 0, stack_space);
-	if (g_enable_debug_output) std::cerr << "DEBUG: Function added to debug builder \n";
+	if (g_enable_debug_output)
+		std::cerr << "DEBUG: Function added to debug builder \n";
 
-	// Exception info is now handled directly in IRConverter finalization logic
+ // Exception info is now handled directly in IRConverter finalization logic
 
-	if (g_enable_debug_output) std::cerr << "Function symbol added successfully" << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Function symbol added successfully" << std::endl;
 }
 
 void ObjectFileWriter::add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset) {
@@ -96,24 +100,31 @@ void ObjectFileWriter::add_data(std::span<const uint8_t> data, SectionType secti
 
 void ObjectFileWriter::add_data(std::span<const char> data, SectionType section_type) {
 	int section_index = sectiontype_to_index[section_type];
-	if (g_enable_debug_output) std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
+	if (g_enable_debug_output)
+		std::cerr << "Adding " << data.size() << " bytes to section " << static_cast<int>(section_type) << " (index=" << section_index << ")";
 	auto section = coffi_.get_sections()[section_index];
 	uint32_t size_before = section->get_data_size();
-	if (g_enable_debug_output) std::cerr << " (current size: " << size_before << ")" << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << " (current size: " << size_before << ")" << std::endl;
 	if (section_type == SectionType::TEXT) {
-		if (g_enable_debug_output) std::cerr << "Machine code bytes (" << data.size() << " total): ";
+		if (g_enable_debug_output)
+			std::cerr << "Machine code bytes (" << data.size() << " total): ";
 		for (size_t i = 0; i < data.size(); ++i) {
-			if (g_enable_debug_output) std::cerr << std::hex << std::setfill('0') << std::setw(2) << (static_cast<unsigned char>(data[i]) & 0xFF) << " ";
+			if (g_enable_debug_output)
+				std::cerr << std::hex << std::setfill('0') << std::setw(2) << (static_cast<unsigned char>(data[i]) & 0xFF) << " ";
 		}
-		if (g_enable_debug_output) std::cerr << std::dec << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << std::dec << std::endl;
 	}
 	section->append_data(data.data(), data.size());
 	uint32_t size_after = section->get_data_size();
 	uint32_t size_increase = size_after - size_before;
-	if (g_enable_debug_output) std::cerr << "DEBUG: Section " << section_index << " size after append: " << size_after 
-	          << " (increased by " << size_increase << ", expected " << data.size() << ")" << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "DEBUG: Section " << section_index << " size after append: " << size_after
+				  << " (increased by " << size_increase << ", expected " << data.size() << ")" << std::endl;
 	if (size_increase != data.size()) {
-		if (g_enable_debug_output) std::cerr << "WARNING: Size increase mismatch! Expected " << data.size() << " but got " << size_increase << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << "WARNING: Size increase mismatch! Expected " << data.size() << " but got " << size_increase << std::endl;
 	}
 }
 
@@ -122,21 +133,21 @@ void ObjectFileWriter::add_relocation(uint64_t offset, std::string_view symbol_n
 }
 
 void ObjectFileWriter::add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type) {
-	// Get the function symbol (name already mangled by Parser)
+ // Get the function symbol (name already mangled by Parser)
 	std::string symbol_str(symbol_name);
 	auto* symbol = coffi_.get_symbol(symbol_str);
 	if (!symbol) {
-		// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
+	// Symbol not found - add it as an external symbol (for C library functions like puts, printf, etc.)
 
-		// Add external symbol with:
-		// - section number 0 (undefined/external)
-		// - storage class IMAGE_SYM_CLASS_EXTERNAL
-		// - value 0
-		// - type 0x20 (function)
+	// Add external symbol with:
+	// - section number 0 (undefined/external)
+	// - storage class IMAGE_SYM_CLASS_EXTERNAL
+	// - value 0
+	// - type 0x20 (function)
 		symbol = coffi_.add_symbol(symbol_str);
 		symbol->set_value(0);
 		symbol->set_section_number(0);  // 0 = undefined/external symbol
-		symbol->set_type(0x20);  // 0x20 = function type
+		symbol->set_type(0x20);	// 0x20 = function type
 		symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 	}
 
@@ -151,14 +162,15 @@ void ObjectFileWriter::add_relocation(uint64_t offset, std::string_view symbol_n
 
 // Add a relocation to the .text section with a custom relocation type
 void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& symbol_name, uint32_t relocation_type, [[maybe_unused]] int64_t addend) {
-	// For COFF format, addend is not used (it's a REL format, not RELA)
-	// The addend is encoded in the instruction itself
-	// Look up the symbol (could be a global variable, function, etc.)
+ // For COFF format, addend is not used (it's a REL format, not RELA)
+ // The addend is encoded in the instruction itself
+ // Look up the symbol (could be a global variable, function, etc.)
 	auto* symbol = coffi_.get_symbol(symbol_name);
 	if (!symbol) {
-		// Symbol not found
+	// Symbol not found
 		if (true) {
-			if (g_enable_debug_output) std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Warning: Symbol not found for relocation: " << symbol_name << std::endl;
 			return;
 		}
 	}
@@ -170,18 +182,20 @@ void ObjectFileWriter::add_text_relocation(uint64_t offset, const std::string& s
 	relocation.type = relocation_type;
 	section_text->add_relocation_entry(&relocation);
 
-	if (g_enable_debug_output) std::cerr << "Added text relocation at offset " << offset << " for symbol " << symbol_name
-	          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Added text relocation at offset " << offset << " for symbol " << symbol_name
+				  << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 }
 
 void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::string_view target_name) {
-	// Find the variable's symbol to get its offset in .data
+ // Find the variable's symbol to get its offset in .data
 	auto* var_symbol = coffi_.get_symbol(var_name);
-	if (!var_symbol) return;
+	if (!var_symbol)
+		return;
 
 	uint32_t var_offset = var_symbol->get_value();
 
-	// Get or create the target symbol
+ // Get or create the target symbol
 	auto* target_symbol = coffi_.get_symbol(target_name);
 	if (!target_symbol) {
 		target_symbol = coffi_.add_symbol(target_name);
@@ -199,23 +213,25 @@ void ObjectFileWriter::add_data_relocation(std::string_view var_name, std::strin
 	reloc.type = IMAGE_REL_AMD64_ADDR64;
 	data_section->add_relocation_entry(&reloc);
 
-	if (g_enable_debug_output) std::cerr << "Added data relocation: " << var_name << " -> " << target_name
-	          << " at .data offset " << var_offset << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Added data relocation: " << var_name << " -> " << target_name
+				  << " at .data offset " << var_offset << std::endl;
 }
 
 void ObjectFileWriter::add_pdata_relocations(uint32_t pdata_offset, std::string_view mangled_name, [[maybe_unused]] uint32_t xdata_offset) {
-	if (g_enable_debug_output) std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Adding PDATA relocations for function: " << mangled_name << " at pdata offset " << pdata_offset << std::endl;
 
-	// Use the .text section symbol (value=0) for BeginAddress/EndAddress relocations.
-	// The pdata data already contains absolute .text offsets as addends, so:
-	//   result = text_RVA + 0 + addend = text_RVA + addend = correct
-	// Using the function symbol would double-count: text_RVA + func_start + func_start
+ // Use the .text section symbol (value=0) for BeginAddress/EndAddress relocations.
+ // The pdata data already contains absolute .text offsets as addends, so:
+ //   result = text_RVA + 0 + addend = text_RVA + addend = correct
+ // Using the function symbol would double-count: text_RVA + func_start + func_start
 	auto* text_symbol = coffi_.get_symbol(".text");
 	if (!text_symbol) {
 		throw std::runtime_error("Text section symbol not found");
 	}
 
-	// Get the .xdata section symbol
+ // Get the .xdata section symbol
 	auto* xdata_symbol = coffi_.get_symbol(".xdata");
 	if (!xdata_symbol) {
 		throw std::runtime_error("XDATA section symbol not found");
@@ -223,57 +239,61 @@ void ObjectFileWriter::add_pdata_relocations(uint32_t pdata_offset, std::string_
 
 	auto pdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::PDATA]];
 
-	// Relocation 1: Function start address (offset 0 in PDATA entry)
-	// Addend in data = function_start (absolute .text offset)
+ // Relocation 1: Function start address (offset 0 in PDATA entry)
+ // Addend in data = function_start (absolute .text offset)
 	COFFI::rel_entry_generic reloc1;
 	reloc1.virtual_address = pdata_offset + 0;
 	reloc1.symbol_table_index = text_symbol->get_index();
 	reloc1.type = IMAGE_REL_AMD64_ADDR32NB;
 	pdata_section->add_relocation_entry(&reloc1);
 
-	// Relocation 2: Function end address (offset 4 in PDATA entry)
-	// Addend in data = function_start + function_size (absolute .text offset)
+ // Relocation 2: Function end address (offset 4 in PDATA entry)
+ // Addend in data = function_start + function_size (absolute .text offset)
 	COFFI::rel_entry_generic reloc2;
 	reloc2.virtual_address = pdata_offset + 4;
 	reloc2.symbol_table_index = text_symbol->get_index();
 	reloc2.type = IMAGE_REL_AMD64_ADDR32NB;
 	pdata_section->add_relocation_entry(&reloc2);
 
-	// Relocation 3: Unwind info address (offset 8 in PDATA entry)
+ // Relocation 3: Unwind info address (offset 8 in PDATA entry)
 	COFFI::rel_entry_generic reloc3;
 	reloc3.virtual_address = pdata_offset + 8;
 	reloc3.symbol_table_index = xdata_symbol->get_index();
 	reloc3.type = IMAGE_REL_AMD64_ADDR32NB;
 	pdata_section->add_relocation_entry(&reloc3);
 
-	if (g_enable_debug_output) std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Added 3 PDATA relocations for function " << mangled_name << std::endl;
 }
 
 void ObjectFileWriter::add_xdata_relocation(uint32_t xdata_offset, std::string_view handler_name) {
-	if (g_enable_debug_output) std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Adding XDATA relocation at offset " << xdata_offset << " for handler: " << handler_name << std::endl;
 
-	// Get or create the exception handler symbol
+ // Get or create the exception handler symbol
 	auto* handler_symbol = coffi_.get_symbol(handler_name);
 	if (!handler_symbol) {
-		// Add external symbol for the C++ exception handler
+	// Add external symbol for the C++ exception handler
 		handler_symbol = coffi_.add_symbol(handler_name);
 		handler_symbol->set_value(0);
 		handler_symbol->set_section_number(0);  // 0 = undefined/external symbol
-		handler_symbol->set_type(0x20);  // 0x20 = function type
+		handler_symbol->set_type(0x20);	// 0x20 = function type
 		handler_symbol->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
-		if (g_enable_debug_output) std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << "Created external symbol for exception handler: " << handler_name << std::endl;
 	}
 
 	auto xdata_section = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 
-	// Add relocation for the exception handler RVA in XDATA
+ // Add relocation for the exception handler RVA in XDATA
 	COFFI::rel_entry_generic reloc;
 	reloc.virtual_address = xdata_offset;
 	reloc.symbol_table_index = handler_symbol->get_index();
 	reloc.type = IMAGE_REL_AMD64_ADDR32NB;  // 32-bit address without base
 	xdata_section->add_relocation_entry(&reloc);
 
-	if (g_enable_debug_output) std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Added XDATA relocation for handler " << handler_name << " at offset " << xdata_offset << std::endl;
 }
 
 void ObjectFileWriter::add_rdata_relocation(uint32_t rdata_offset, std::string_view symbol_name, uint32_t relocation_type) {
@@ -298,40 +318,55 @@ void ObjectFileWriter::add_rdata_relocation(uint32_t rdata_offset, std::string_v
 // Simple type name mangling for exception type descriptors
 // Converts C++ type names to MSVC-style mangled names
 std::string ObjectFileWriter::mangleTypeName(const std::string& type_name) const {
-	// Simple mapping for built-in types
-	// MSVC type codes: H=int, I=unsigned int, D=char, E=unsigned char, etc.
-	if (type_name == "int") return "H@";
-	if (type_name == "unsigned int") return "I@";
-	if (type_name == "char") return "D@";
-	if (type_name == "unsigned char") return "E@";
-	if (type_name == "short") return "F@";
-	if (type_name == "unsigned short") return "G@";
-	if (type_name == "long") return "J@";
-	if (type_name == "unsigned long") return "K@";
-	if (type_name == "long long") return "_J@";
-	if (type_name == "unsigned long long") return "_K@";
-	if (type_name == "float") return "M@";
-	if (type_name == "double") return "N@";
-	if (type_name == "long double") return "O@";
-	if (type_name == "bool") return "_N@";
-	if (type_name == "void") return "X@";
-	
-	// For class/struct types, use the name directly with @ suffix
-	// This is a simplified approach - full MSVC would encode nested namespaces, templates, etc.
-	// Format: V<name>@@ for struct/class
+ // Simple mapping for built-in types
+ // MSVC type codes: H=int, I=unsigned int, D=char, E=unsigned char, etc.
+	if (type_name == "int")
+		return "H@";
+	if (type_name == "unsigned int")
+		return "I@";
+	if (type_name == "char")
+		return "D@";
+	if (type_name == "unsigned char")
+		return "E@";
+	if (type_name == "short")
+		return "F@";
+	if (type_name == "unsigned short")
+		return "G@";
+	if (type_name == "long")
+		return "J@";
+	if (type_name == "unsigned long")
+		return "K@";
+	if (type_name == "long long")
+		return "_J@";
+	if (type_name == "unsigned long long")
+		return "_K@";
+	if (type_name == "float")
+		return "M@";
+	if (type_name == "double")
+		return "N@";
+	if (type_name == "long double")
+		return "O@";
+	if (type_name == "bool")
+		return "_N@";
+	if (type_name == "void")
+		return "X@";
+
+ // For class/struct types, use the name directly with @ suffix
+ // This is a simplified approach - full MSVC would encode nested namespaces, templates, etc.
+ // Format: V<name>@@ for struct/class
 	return "V" + type_name + "@@";
 }
 
 // Returns (type descriptor symbol name, type descriptor runtime name string)
 // for use in MSVC exception metadata.
 std::pair<std::string, std::string> ObjectFileWriter::getMsvcTypeDescriptorInfo(const std::string& type_name) const {
-	// Built-ins use canonical MSVC RTTI descriptor naming with @8 suffix
-	// and runtime type name strings with leading dot (e.g., ".H" for int).
+ // Built-ins use canonical MSVC RTTI descriptor naming with @8 suffix
+ // and runtime type name strings with leading dot (e.g., ".H" for int).
 	if (type_name == "int") {
 		return {"??_R0H@8", ".H"};
 	}
 
-	// Fallback to existing simplified naming for non-builtins.
+ // Fallback to existing simplified naming for non-builtins.
 	std::string mangled_type_name = mangleTypeName(type_name);
 	return {"??_R0" + mangled_type_name, mangled_type_name};
 }
@@ -341,7 +376,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		return std::string();
 	}
 
-	// Keep canonical, known-good path for int.
+ // Keep canonical, known-good path for int.
 	if (type_name == "int") {
 		return get_or_create_builtin_throwinfo(TypeCategory::Int);
 	}
@@ -378,7 +413,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 			type_desc_sym->set_value(type_desc_offset);
 
-			// vftable pointer at offset 0 -> type_info::vftable
+	// vftable pointer at offset 0 -> type_info::vftable
 			add_rdata_relocation(type_desc_offset, "??_7type_info@@6B@", IMAGE_REL_AMD64_ADDR64);
 		}
 
@@ -450,9 +485,9 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 
 				add_catchable_type(StringTable::getStringView(base_type_info->name()), base_properties, base_offset, -1, 0, base_size);
 
-				// Transitive catches through deeply nested virtual bases need their own
-				// CatchableType entries as well. Recurse through both virtual and
-				// non-virtual public bases, while guarding against repeated paths.
+	// Transitive catches through deeply nested virtual bases need their own
+	// CatchableType entries as well. Recurse through both virtual and
+	// non-virtual public bases, while guarding against repeated paths.
 				collect_public_bases(base_struct_info, base_offset);
 			}
 		};
@@ -533,9 +568,9 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 		throw_info_sym->set_value(throw_info_offset);
 
 		if (!destructor_symbol.empty()) {
-			// pmfnUnwind should reference a real destructor only when one is required and emitted.
-			// For trivial implicit destructors (e.g. throw bad_any_cast{}), forcing a destructor
-			// symbol here creates an unnecessary unresolved external during link.
+	// pmfnUnwind should reference a real destructor only when one is required and emitted.
+	// For trivial implicit destructors (e.g. throw bad_any_cast{}), forcing a destructor
+	// symbol here creates an unnecessary unresolved external during link.
 			add_rdata_relocation(throw_info_offset + 4, destructor_symbol, IMAGE_REL_AMD64_ADDR32NB);
 		}
 
@@ -547,13 +582,14 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 }
 
 void ObjectFileWriter::add_debug_relocation(uint32_t offset, const std::string& symbol_name, uint32_t relocation_type) {
-	if (g_enable_debug_output) std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
-	          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Adding debug relocation at offset " << offset << " for symbol: " << symbol_name
+				  << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 
-	// Get the symbol (could be function symbol or section symbol)
+ // Get the symbol (could be function symbol or section symbol)
 	auto* symbol = coffi_.get_symbol(symbol_name);
 	if (!symbol) {
-		// Symbol not found
+	// Symbol not found
 		if (true) {
 			throw std::runtime_error("Debug symbol not found: " + symbol_name);
 		}
@@ -561,15 +597,16 @@ void ObjectFileWriter::add_debug_relocation(uint32_t offset, const std::string& 
 
 	auto debug_s_section = coffi_.get_sections()[sectiontype_to_index[SectionType::DEBUG_S]];
 
-	// Add relocation to .debug$S section with the specified type
+ // Add relocation to .debug$S section with the specified type
 	COFFI::rel_entry_generic reloc;
 	reloc.virtual_address = offset;
 	reloc.symbol_table_index = symbol->get_index();
 	reloc.type = relocation_type;  // Use the specified relocation type
 	debug_s_section->add_relocation_entry(&reloc);
 
-	if (g_enable_debug_output) std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset
-	          << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
+	if (g_enable_debug_output)
+		std::cerr << "Added debug relocation for symbol " << symbol_name << " at offset " << offset
+				  << " type: 0x" << std::hex << relocation_type << std::dec << std::endl;
 }
 
 // Debug information methods
@@ -586,7 +623,7 @@ void ObjectFileWriter::add_line_mapping(uint32_t code_offset, uint32_t line_numb
 }
 
 void ObjectFileWriter::add_local_variable(const std::string& name, uint32_t type_index, uint16_t flags,
-                       const std::vector<CodeView::VariableLocation>& locations) {
+										  const std::vector<CodeView::VariableLocation>& locations) {
 	debug_builder_.addLocalVariable(name, type_index, flags, locations);
 }
 

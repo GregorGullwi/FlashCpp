@@ -2,15 +2,15 @@
 
 class Simple {
 public:
-    int value;
-    
-    void set(int x) {
-        value = x;
-    }
+	int value;
+
+	void set(int x) {
+		value = x;
+	}
 };
 
 int main() {
-    Simple s;
-    s.set(42);
-    return s.value;
+	Simple s;
+	s.set(42);
+	return s.value;
 }

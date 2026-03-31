@@ -7,18 +7,18 @@ int main() {
 	static int s_int = 0;
 	int result = 0;
 
-	// int → double
+ // int → double
 	s_double = 100;
 	if (s_double > 99.5) {
 		result += 1;
 	}
 
-	// double → int (truncation)
+ // double → int (truncation)
 	s_int = 7.9;
 	if (s_int == 7) {
 		result += 10;
 	}
 
-	// Expected: 11 (1 + 10)
+ // Expected: 11 (1 + 10)
 	return result - 11;
 }

@@ -7,11 +7,11 @@
 // Call:        f(1, 2)                 → neither overload is strictly better
 
 struct Ambiguous {
-    int operator()(int a, double b) { return 10; }
-    int operator()(double a, int b) { return 20; }
+	int operator()(int a, double b) { return 10; }
+	int operator()(double a, int b) { return 20; }
 };
 
 int main() {
-    Ambiguous f;
-    return f(1, 2); // ambiguous: should fail to compile
+	Ambiguous f;
+	return f(1, 2); // ambiguous: should fail to compile
 }

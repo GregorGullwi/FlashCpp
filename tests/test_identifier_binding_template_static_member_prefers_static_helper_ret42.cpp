@@ -5,7 +5,7 @@ constexpr int helper() {
 	return 7;
 }
 
-template<typename T>
+template <typename T>
 struct Box {
 	static constexpr int helper() {
 		return static_cast<int>(sizeof(T)) + 38;
@@ -17,4 +17,3 @@ struct Box {
 int main() {
 	return Box<int>::value;
 }
-

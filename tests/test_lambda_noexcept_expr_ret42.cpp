@@ -3,7 +3,7 @@
 // Expected return: 42
 
 int main() {
-    auto f = [](int x) noexcept(true) -> int { return x + 2; };
-    auto g = [](int x) noexcept(false) -> int { return x; };
-    return f(g(40));
+	auto f = [](int x) noexcept(true) -> int { return x + 2; };
+	auto g = [](int x) noexcept(false) -> int { return x; };
+	return f(g(40));
 }

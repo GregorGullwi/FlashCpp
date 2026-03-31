@@ -23,7 +23,7 @@
 
 // This should fail during compilation due to missing features
 int main() {
-    return 0;
+	return 0;
 }
 
 /*

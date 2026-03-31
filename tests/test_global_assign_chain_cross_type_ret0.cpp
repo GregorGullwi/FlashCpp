@@ -14,28 +14,28 @@ int g_int = 0;
 int main() {
 	int result = 0;
 
-	// Use the result of a cross-type global assignment in an expression.
-	// (g_double = 42) should yield 42.0 (double), then + 0.5 = 42.5,
-	// then int x should truncate to 42.
+ // Use the result of a cross-type global assignment in an expression.
+ // (g_double = 42) should yield 42.0 (double), then + 0.5 = 42.5,
+ // then int x should truncate to 42.
 	int x = (g_double = 42) + 0.5;
 	if (x == 42) {
 		result += 1;
 	}
 
-	// Chain two global assignments with different types.
-	// g_int = (g_double = 3.7) should:
-	//   1. Store 3.7 into g_double  (g_double == 3.7)
-	//   2. Return 3.7 (double)
-	//   3. Truncate to int 3 and store into g_int
+ // Chain two global assignments with different types.
+ // g_int = (g_double = 3.7) should:
+ //   1. Store 3.7 into g_double  (g_double == 3.7)
+ //   2. Return 3.7 (double)
+ //   3. Truncate to int 3 and store into g_int
 	g_int = (g_double = 3.7);
 	if (g_int == 3) {
 		result += 10;
 	}
-	// g_double must still be 3.7 (not corrupted by the outer assignment)
+ // g_double must still be 3.7 (not corrupted by the outer assignment)
 	if (g_double > 3.5 && g_double < 3.9) {
 		result += 100;
 	}
 
-	// Expected: 111 (1 + 10 + 100)
+ // Expected: 111 (1 + 10 + 100)
 	return result - 111;
 }

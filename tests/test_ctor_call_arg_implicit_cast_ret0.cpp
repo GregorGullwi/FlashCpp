@@ -10,13 +10,15 @@ struct Pair {
 };
 
 int main() {
-	// Pass int literal where double is expected, and double where int is expected.
+ // Pass int literal where double is expected, and double where int is expected.
 	Pair p(42, 3.14);
 
-	// p.a should be 42.0 (int→double), p.b should be 3 (double→int truncation).
+ // p.a should be 42.0 (int→double), p.b should be 3 (double→int truncation).
 	int result = 0;
-	if (p.a < 41.5 || p.a > 42.5) result = 1;  // a should be ~42.0
-	if (p.b != 3) result = 2;                     // b should be 3
+	if (p.a < 41.5 || p.a > 42.5)
+		result = 1;	// a should be ~42.0
+	if (p.b != 3)
+		result = 2;					 // b should be 3
 
 	return result;  // 0 on success
 }

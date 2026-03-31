@@ -1,6 +1,6 @@
-template<typename T>
+template <typename T>
 struct Outer {
-	template<typename U>
+	template <typename U>
 	struct Inner {
 		unsigned int flag : 1;
 		unsigned int flag2 : 1 = 1;
