@@ -2,15 +2,34 @@
 
 ## Current status
 
-This issue is currently **deferred unless it becomes necessary** for nearby work.
+**Phases A and B are implemented.**  Phase C (normalized initializer records)
+and Phase D (default member initializer normalization) remain future work.
 
-- the bug remains tracked in `docs/KNOWN_ISSUES.md`
-- the compiler now has a clearer architectural plan for fixing it properly
-- the recommended future approach is to revisit it through the type-owned
-  instantiation-context + normalized-initializer work described below, rather
-  than by adding more codegen-side special cases
-- if a future task is blocked by this bug, start with the "Immediate next slice
-  recommendation" section in this document
+### What is done
+
+- `TypeInfo::InstantiationContext` stores template parameter names, concrete
+  arguments, and an optional parent pointer for nested types.
+- Outer class-template instantiation populates the context (primary and
+  specialization paths in `Parser_Templates_Inst_ClassTemplate.cpp`).
+- Nested types created during class-template instantiation receive the
+  enclosing type's context via the parent chain.
+- `ConstExprEvaluator::load_template_bindings_from_type` and
+  `try_load_current_struct_template_bindings` prefer the type-owned context
+  before falling back to registry-name lookups.
+- `IrGenerator_Visitors_TypeInit.cpp::evaluate_static_initializer` prefers
+  the type-owned context; the outer-template-binding recovery path also
+  checks the enclosing type first.
+- Registry-based fallbacks are retained as safety nets but are no longer the
+  primary lookup path for types that carry an InstantiationContext.
+
+### What remains
+
+- Phase C: Add `NormalizedInitializer` for static-storage members so that
+  constexpr aggregate byte-packing happens before codegen (eliminates the
+  retained-AST re-evaluation for common cases).
+- Phase D: Normalize default member initializers for instantiated structs.
+- Phase E: Remove the registry/name-based compatibility fallbacks once the
+  new owner model is proven across the full test suite.
 
 ## Problem statement
 
