@@ -1172,6 +1172,26 @@ struct RTTITypeInfo {
 	}
 };
 
+// Pre-materialized initializer for static-storage members.
+// Populated during or right after template instantiation so that codegen
+// and constexpr evaluation can consume pre-packed bytes directly instead
+// of re-evaluating retained AST.
+struct NormalizedInitializer {
+	enum class Kind : uint8_t {
+		Uninitialized,					// No initializer or not yet classified
+		ConstantBytes,					// Fully evaluated compile-time constant bytes
+		Relocation,						// Requires a data relocation (address-of a symbol)
+		NormalizedAst,					// AST was normalized but still requires late emission
+		DynamicInitializationRequired	// Requires runtime initialization
+	};
+
+	Kind kind = Kind::Uninitialized;
+	std::vector<char> constant_bytes;	// Pre-packed byte representation (for ConstantBytes)
+	StringHandle reloc_target;			// Symbol name for data relocation (for Relocation)
+
+	bool isConstant() const { return kind == Kind::ConstantBytes && !constant_bytes.empty(); }
+};
+
 // Static member information
 struct StructStaticMember {
 	StringHandle name;
@@ -1183,6 +1203,10 @@ struct StructStaticMember {
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifiers (const, volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
+
+	// Pre-materialized initializer (Phase C).
+	// When populated, codegen prefers this over re-evaluating the raw AST initializer.
+	std::optional<NormalizedInitializer> normalized_init;
 
 	// Convenience helpers for common checks
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }

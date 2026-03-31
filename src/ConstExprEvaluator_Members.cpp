@@ -1191,7 +1191,7 @@ Evaluator::ResolvedCurrentStructStaticInitializer Evaluator::resolve_current_str
 
 	if (auto static_member_result = resolve_current_struct_static_member(identifier, context, lookup_mode);
 		static_member_result.static_member) {
-		return {&static_member_result.static_member->initializer, true};
+		return {&static_member_result.static_member->initializer, true, static_member_result.static_member};
 	}
 
 	auto member_name_handle = get_current_struct_static_lookup_name_handle(identifier, lookup_mode);
@@ -3243,6 +3243,20 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return *resolve_error;
 	}
 
+ // Phase C: if the object was materialized from pre-packed constant bytes,
+ // try to extract the member value from object_member_bindings.
+ // Array/struct members are excluded from the materialized bindings, so
+ // a miss here is expected and we fall through to normal AST evaluation.
+	if (resolved_object.materialized_value.has_value()) {
+		const EvalResult& mat = *resolved_object.materialized_value;
+		auto it = mat.object_member_bindings.find(member_name);
+		if (it != mat.object_member_bindings.end()) {
+			return it->second;
+		}
+ // Not found in materialized bindings (e.g., array member) — fall through
+ // to normal AST-based evaluation below.
+	}
+
 	if (resolved_object.initializer == nullptr) {
 		return EvalResult::error("Internal error: unresolved member access object source");
 	}
@@ -3551,11 +3565,54 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	ResolvedConstexprObject& resolved_object) {
 	resolved_object = {};
 
+ // Try BoundOnly first (for statically-bound static members)
 	if (auto static_member_result = resolve_current_struct_static_member(
 			object_identifier,
 			context,
 			CurrentStructStaticLookupMode::BoundOnly);
 		static_member_result.static_member) {
+ // Phase C: if pre-packed bytes are available, materialize the struct and
+ // provide the result directly so member access can read scalar fields from bytes.
+ // Array/nested-struct members are excluded from the materialized bindings,
+ // so callers will fall through to normal AST evaluation for those.
+		if (static_member_result.static_member->normalized_init.has_value() &&
+			static_member_result.static_member->normalized_init->isConstant()) {
+			EvalResult materialized = materializeFromConstantBytes(
+				static_member_result.static_member->normalized_init->constant_bytes,
+				static_member_result.static_member->type_index);
+			if (materialized.success()) {
+				resolved_object.declared_type_index = static_member_result.static_member->type_index;
+				resolved_object.materialized_value = materialized;
+ // Also set the raw initializer so that if a member lookup misses in the
+ // materialized bindings (e.g., array members), the caller can fall through.
+				resolved_object.initializer = &static_member_result.static_member->initializer;
+				return std::nullopt;
+			}
+		}
+		resolved_object.initializer = &static_member_result.static_member->initializer;
+		resolved_object.declared_type_index = static_member_result.static_member->type_index;
+		return std::nullopt;
+	}
+
+ // Also try PreferCurrentStruct if the identifier is unresolved/global
+ // (template-copied expressions may not have StaticMember binding set)
+	if (auto static_member_result = resolve_current_struct_static_member(
+			object_identifier,
+			context,
+			CurrentStructStaticLookupMode::PreferCurrentStruct);
+		static_member_result.static_member) {
+		if (static_member_result.static_member->normalized_init.has_value() &&
+			static_member_result.static_member->normalized_init->isConstant()) {
+			EvalResult materialized = materializeFromConstantBytes(
+				static_member_result.static_member->normalized_init->constant_bytes,
+				static_member_result.static_member->type_index);
+			if (materialized.success()) {
+				resolved_object.declared_type_index = static_member_result.static_member->type_index;
+				resolved_object.materialized_value = materialized;
+				resolved_object.initializer = &static_member_result.static_member->initializer;
+				return std::nullopt;
+			}
+		}
 		resolved_object.initializer = &static_member_result.static_member->initializer;
 		resolved_object.declared_type_index = static_member_result.static_member->type_index;
 		return std::nullopt;

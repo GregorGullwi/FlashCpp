@@ -332,6 +332,26 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
 		ctx.struct_info = struct_info;
 		if (struct_info) {
+ // Prefer type-owned instantiation context (avoids registry-name lookups)
+			bool context_loaded = false;
+			if (struct_info->own_type_index_.has_value()) {
+				if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
+					if (const auto* inst_ctx = ti->instantiationContext()) {
+						ctx.template_param_names.reserve(inst_ctx->param_names.size());
+						ctx.template_args.reserve(inst_ctx->param_args.size());
+						for (StringHandle h : inst_ctx->param_names) {
+							ctx.template_param_names.push_back(StringTable::getStringView(h));
+						}
+						for (const auto& arg_info : inst_ctx->param_args) {
+							ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+						}
+						context_loaded = true;
+					}
+				}
+			}
+
+ // Fallback: lazy class info or registry-based lookup
+			if (!context_loaded) {
 			if (const LazyClassInstantiationInfo* lazy_class_info =
 					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
 				ctx.template_args = lazy_class_info->template_args;
@@ -361,6 +381,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					}
 					for (const auto& arg_info : struct_type->templateArgs()) {
 						ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+						}
 					}
 				}
 			}
@@ -409,6 +430,23 @@ void AstToIr::generateStaticMemberDeclarations() {
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
+	// Try type-owned instantiation context first
+							auto parent_struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_function_decl->parent_struct_name()));
+							if (parent_struct_it != getTypesByNameMap().end()) {
+								if (const auto* inst_ctx = parent_struct_it->second->instantiationContext()) {
+									rebound_ctx.template_param_names.reserve(inst_ctx->param_names.size());
+									rebound_ctx.template_args.reserve(inst_ctx->param_args.size());
+									for (StringHandle h : inst_ctx->param_names) {
+										rebound_ctx.template_param_names.push_back(StringTable::getStringView(h));
+									}
+									for (const auto& arg_info : inst_ctx->param_args) {
+										rebound_ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+									}
+								}
+							}
+
+	// Fallback: outer template binding registry lookup
+							if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty()) {
 							StringBuilder qualified_name_builder;
 							StringHandle qualified_name = StringTable::getOrInternStringHandle(
 								qualified_name_builder
@@ -421,6 +459,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
 								for (StringHandle param_name : outer_binding->param_names) {
 									rebound_ctx.template_param_names.push_back(StringTable::getStringView(param_name));
+									}
 								}
 							}
 						}
@@ -557,6 +596,23 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 				// Check if static member has an initializer
 				op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
+
+ // Phase C: if a NormalizedInitializer with pre-packed bytes exists, use it
+ // directly and skip all AST-based classification / evaluation.
+				if (static_member.normalized_init.has_value() && static_member.normalized_init->isConstant()) {
+					op.is_initialized = true;
+					op.init_data = static_member.normalized_init->constant_bytes;
+					FLASH_LOG(Codegen, Debug, "Using pre-materialized NormalizedInitializer for static member '",
+							  qualified_name, "' (", op.init_data.size(), " bytes)");
+				} else if (static_member.normalized_init.has_value() &&
+						   static_member.normalized_init->kind == NormalizedInitializer::Kind::Relocation) {
+					op.is_initialized = true;
+					op.reloc_target = static_member.normalized_init->reloc_target;
+					size_t byte_count = op.size_in_bits.value / 8;
+					op.init_data.resize(byte_count, 0);
+					FLASH_LOG(Codegen, Debug, "Using pre-materialized relocation for static member '", qualified_name, "'");
+				} else {
+ // --- existing AST-based classification (fallback) ---
 				auto zero_initialize = [&]() {
 					size_t byte_count = op.size_in_bits.value / 8;
 					for (size_t i = 0; i < byte_count; ++i) {
@@ -570,6 +626,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (static_member.initializer->is<InitializerListNode>()) {
 						if (static_member.type_index.category() == TypeCategory::Struct) {
 							if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
+									FLASH_LOG(Codegen, Debug, "Aggregate static member '", qualified_name,
+											  "': struct total_size=", static_struct_info->total_size,
+											  ", members=", static_struct_info->members.size(),
+											  ", type_index=", static_member.type_index.index());
 								op.init_data.resize(static_struct_info->total_size, 0);
 								auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
 									unsigned long long leaf_value = 0;
@@ -602,7 +662,20 @@ void AstToIr::generateStaticMemberDeclarations() {
 									return 0;
 								};
 								fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
-								FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "'");
+									FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
+
+ // Phase C: immediately write-back aggregate bytes so subsequent
+ // static members can reference them via constexpr evaluation.
+									if (!op.init_data.empty()) {
+										if (StructStaticMember* mutable_member =
+												const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
+											NormalizedInitializer ni;
+											ni.kind = NormalizedInitializer::Kind::ConstantBytes;
+											ni.constant_bytes = op.init_data;
+											mutable_member->normalized_init = std::move(ni);
+											FLASH_LOG(Codegen, Debug, "Wrote back aggregate NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
+										}
+									}
 							} else {
 								FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
 								zero_initialize();
@@ -890,6 +963,30 @@ void AstToIr::generateStaticMemberDeclarations() {
 						}
 					}
 				}
+				} // end of else (AST-based fallback) from NormalizedInitializer check
+
+ // Phase C: write-back — record successfully packed bytes into the owning
+ // StructStaticMember so that subsequent constexpr evaluations (e.g.,
+ // "sum = data.a + data.b") can read earlier members from pre-packed bytes.
+				FLASH_LOG(Codegen, Debug, "Phase C write-back check for '", qualified_name,
+						  "': init_data.size()=", op.init_data.size(),
+						  ", has_normalized=", static_member.normalized_init.has_value() ? "yes" : "no");
+				if (!op.init_data.empty() && !static_member.normalized_init.has_value()) {
+					if (StructStaticMember* mutable_member =
+							const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
+						NormalizedInitializer ni;
+						if (op.reloc_target.isValid()) {
+							ni.kind = NormalizedInitializer::Kind::Relocation;
+							ni.reloc_target = op.reloc_target;
+						} else {
+							ni.kind = NormalizedInitializer::Kind::ConstantBytes;
+						}
+						ni.constant_bytes = op.init_data;
+						mutable_member->normalized_init = std::move(ni);
+						FLASH_LOG(Codegen, Debug, "Wrote back NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
+					}
+				}
+
 				// static const/constexpr members with constant initializers go to .rodata (read-only).
 				// constexpr implies const, so this covers both 'static constexpr T val = x' and
 				// 'static const T val = x' (both are compile-time constants when initialized).

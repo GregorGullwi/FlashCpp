@@ -108,6 +108,21 @@ static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	return 8;
 }
 
+// Extract template parameter names (as StringHandles) from a list of
+// TemplateParameterNode AST nodes.  Only collects names for the first
+// `max_count` parameters to stay in sync with the argument vector.
+static InlineVector<StringHandle, 4> collectParamNameHandles(
+	const InlineVector<ASTNode, 4>& template_params,
+	size_t max_count) {
+	InlineVector<StringHandle, 4> names;
+	for (size_t i = 0; i < template_params.size() && i < max_count; ++i) {
+		if (template_params[i].is<TemplateParameterNode>()) {
+			names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
+		}
+	}
+	return names;
+}
+
 template <typename ParamContainer, typename ArgContainer>
 static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	const TypeSpecifierNode& type_spec,
@@ -1166,9 +1181,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, spec_decl_ns);
 
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
+			auto template_args_info = convertToTemplateArgInfo(template_args);
 			struct_type_info.setTemplateInstantiationInfo(
 				QualifiedIdentifier::fromQualifiedName(template_name, spec_decl_ns),
-				convertToTemplateArgInfo(template_args));
+				template_args_info);
+
+ // Populate type-owned instantiation context
+			struct_type_info.setInstantiationContext(
+				collectParamNameHandles(template_params, template_args.size()),
+				template_args_info, nullptr);
 
 			// Register class template pack sizes in persistent registry for specializations
 			// Only register if this specialization actually has variadic parameters
@@ -1959,12 +1980,65 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
+ // Substitute template parameters in the static member initializer.
+ // The sizeof... special cases above handle specific patterns, but
+ // general expressions like {static_cast<T>(20), static_cast<T>(22)}
+ // still need template parameter substitution (e.g., T → int).
+						if (substituted_initializer.has_value()) {
+							substituted_initializer = substituteTemplateParameters(
+								substituted_initializer.value(), template_params, template_args);
+							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member '",
+									  static_member.getName(), "' initializer");
+						}
+
 						// Phase 7B: Intern static member name and use StringHandle overload
 						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
+
+ // Substitute nested type references in static member type.
+ // For static members whose type is a nested class of the pattern template
+ // (e.g., `static constexpr Payload data`), we need to remap the type_index
+ // to the instantiated nested class and use its finalized size.
+						TypeIndex substituted_type_index = static_member.type_index;
+						size_t substituted_size = static_member.size;
+						if (static_member.type_index.category() == TypeCategory::Struct) {
+							TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
+							original_type_spec.set_type_index(static_member.type_index);
+							TypeIndex new_type_index = substitute_template_parameter(
+								original_type_spec, template_params, template_args);
+							if (new_type_index != static_member.type_index) {
+								substituted_type_index = new_type_index;
+								substituted_size = get_substituted_type_size_bytes(new_type_index);
+							} else if (substituted_size == 0) {
+ // The type wasn't a template parameter, but might be a nested class
+ // whose instantiated form is registered under the qualified name.
+								StringBuilder qualified_nested_sb;
+								if (const TypeInfo* orig_ti = tryGetTypeInfo(static_member.type_index)) {
+									std::string_view orig_name = StringTable::getStringView(orig_ti->name());
+ // Replace pattern prefix with instantiated prefix
+ // e.g., "Container::Payload" -> "Container$hash::Payload"
+									std::string_view pattern_prefix = template_name;
+									if (orig_name.starts_with(pattern_prefix) &&
+										orig_name.size() > pattern_prefix.size() &&
+										orig_name[pattern_prefix.size()] == ':') {
+										qualified_nested_sb.append(StringTable::getStringView(instantiated_name))
+											.append(orig_name.substr(pattern_prefix.size()));
+										StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_nested_sb.commit());
+										auto type_it = getTypesByNameMap().find(qualified_handle);
+										if (type_it != getTypesByNameMap().end()) {
+											substituted_type_index = type_it->second->type_index_;
+											if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
+												substituted_size = nested_si->total_size;
+											}
+										}
+									}
+								}
+							}
+						}
+
 						struct_info->addStaticMember(
 							static_member_name_handle,
-							static_member.type_index,
-							static_member.size,
+							substituted_type_index,
+							substituted_size,
 							static_member.alignment,
 							static_member.access,
 							substituted_initializer,
@@ -3043,9 +3117,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
 	// This allows us to check if a type is a template instantiation without parsing the name
 	// QualifiedIdentifier captures both the namespace and unqualified name.
+	auto template_args_info = convertToTemplateArgInfo(template_args_to_use);
 	struct_type_info.setTemplateInstantiationInfo(
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
-		convertToTemplateArgInfo(template_args_to_use));
+		template_args_info);
+
+ // Populate type-owned instantiation context so that codegen and constexpr
+ // evaluation can resolve template bindings without registry-name lookups.
+	struct_type_info.setInstantiationContext(
+		collectParamNameHandles(template_params, template_args_to_use.size()),
+		template_args_info, nullptr);
 
 	// Register class template pack sizes in persistent registry for member function template lookup
 	if (has_parameter_pack) {
@@ -4329,10 +4410,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
-			// General fallback: use ExpressionSubstitutor to substitute any remaining template
-			// parameters in the initializer. This handles cases like V + W where V and W are
-			// non-type template parameters that the specific handlers above didn't cover.
+ // General fallback: substitute remaining template parameters in the initializer.
+ // ExpressionSubstitutor handles ExpressionNode variants; substituteTemplateParameters
+ // is needed for InitializerListNode since ExpressionSubstitutor doesn't recurse into it.
 			if (substituted_initializer.has_value()) {
+				if (substituted_initializer->is<InitializerListNode>()) {
+					substituted_initializer = substituteTemplateParameters(
+						substituted_initializer.value(), template_params, template_args_to_use);
+					FLASH_LOG(Templates, Debug, "Substituted template parameters in InitializerListNode static member initializer");
+				} else {
 				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 				for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
 					if (template_params[pi].is<TemplateParameterNode>()) {
@@ -4344,6 +4430,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					ExpressionSubstitutor substitutor(param_map, *this);
 					substituted_initializer = substitutor.substitute(substituted_initializer.value());
 					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
+					}
 				}
 
 				if (substituted_initializer.has_value()) {
@@ -4644,12 +4731,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 												 instantiated_name, qualified_name, template_params, template_args_to_use);
 
+			// Mark nested struct as needing a trivial default constructor when it
+			// has no explicit constructors.  Without this, default member
+			// initializers (e.g. `int tag = N;`) are never applied because
+			// generateTrivialDefaultConstructors() skips types without the flag.
+			if (!nested_struct_info->hasAnyConstructor()) {
+				nested_struct_info->needs_default_constructor = true;
+			}
+
 			// Register the nested class in the type system
 			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
 				nested_type_info.type_size_ = nested_type_info.getStructInfo()->total_size;
 			}
+
+ // Propagate the outer type's instantiation context to the nested type.
+ // The nested type isn't itself a template instantiation, but it lives inside
+ // one and needs the enclosing template's bindings for constexpr evaluation.
+			nested_type_info.setInstantiationContext(
+				collectParamNameHandles(template_params, template_args_to_use.size()),
+				convertToTemplateArgInfo(template_args_to_use),
+				struct_type_info.instantiationContext());
+
 			struct_info->addNestedClass(nested_type_info.getStructInfo());
 			FLASH_LOG(Templates, Debug, "Registered nested class: ", StringTable::getStringView(qualified_name));
 			instantiated_nested_class_nodes.push_back(instantiated_nested_struct);
@@ -4873,6 +4977,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Finalize the struct layout
+ // Phase C fixup: update static members whose type references a nested class that
+ // was registered after the static members were initially copied from the pattern.
+ // At copy time (line ~1686), nested types hadn't been instantiated yet, so their
+ // type_index and size were still from the unfinalized pattern.
+	for (auto& sm : struct_info->static_members) {
+		if (sm.size == 0 && sm.type_index.category() == TypeCategory::Struct) {
+			if (const TypeInfo* orig_ti = tryGetTypeInfo(sm.type_index)) {
+				std::string_view orig_name = StringTable::getStringView(orig_ti->name());
+				std::string_view inst_name_sv = StringTable::getStringView(instantiated_name);
+				if (orig_name.starts_with(template_name) &&
+					orig_name.size() > template_name.size() &&
+					orig_name[template_name.size()] == ':') {
+					std::string_view suffix = orig_name.substr(template_name.size());
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(inst_name_sv).append(suffix).commit());
+					auto type_it = getTypesByNameMap().find(qualified_handle);
+					if (type_it != getTypesByNameMap().end()) {
+						sm.type_index = type_it->second->type_index_;
+						if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
+							sm.size = nested_si->total_size;
+						}
+						FLASH_LOG(Templates, Debug, "Fixed up static member '", sm.getName(),
+								  "' type to '", StringTable::getStringView(qualified_handle),
+								  "', size=", sm.size);
+					}
+				}
+			}
+		}
+	}
+
 	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
 		finalize_success = struct_info->finalizeWithBases();

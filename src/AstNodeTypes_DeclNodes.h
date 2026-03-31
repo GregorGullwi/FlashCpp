@@ -796,7 +796,23 @@ struct TypeInfo {
 		double doubleValue() const { return std::holds_alternative<double>(value) ? std::get<double>(value) : 0.0; }
 		StringHandle stringValue() const { return std::holds_alternative<StringHandle>(value) ? std::get<StringHandle>(value) : StringHandle{}; }
 	};
+
+ // Canonical template environment owned by instantiated types.
+ // Stores both parameter names and concrete arguments so that later phases
+ // (codegen, constexpr evaluation) can resolve template bindings without
+ // registry-name reconstruction.  For nested types inside a template
+ // instantiation, `parent` points to the enclosing type's context.
+	struct InstantiationContext {
+		InlineVector<StringHandle, 4> param_names; // Template parameter names (e.g., "T", "U")
+		InlineVector<TemplateArgInfo, 4> param_args; // Concrete template arguments
+		const InstantiationContext* parent = nullptr; // Enclosing type's context (for nesting)
+	};
+
 	InlineVector<TemplateArgInfo, 4> template_args_;
+
+ // Type-owned instantiation context (non-null for template instantiations
+ // and for types nested inside a template instantiation).
+	std::unique_ptr<InstantiationContext> instantiation_context_;
 
 	StringHandle name() const {
 		return name_;
@@ -812,9 +828,23 @@ struct TypeInfo {
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
 
+ // Access the type-owned instantiation context (may be null).
+	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
+	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
+
 	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_ = base_template;
 		template_args_ = std::move(args);
+	}
+
+ // Set the type-owned instantiation context for template instantiations.
+	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
+								 InlineVector<TemplateArgInfo, 4> param_args,
+								 const InstantiationContext* parent) {
+		instantiation_context_ = std::make_unique<InstantiationContext>();
+		instantiation_context_->param_names = std::move(param_names);
+		instantiation_context_->param_args = std::move(param_args);
+		instantiation_context_->parent = parent;
 	}
 
 	// Returns the TypeCategory embedded in type_index_.
