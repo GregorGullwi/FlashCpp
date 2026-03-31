@@ -2455,6 +2455,40 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				return {};
 			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
+				// Three-way comparison (<=>) returns a comparison category type
+				if (op == "<=>") {
+					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
+					const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
+					if (lhs_id && rhs_id) {
+						const CanonicalTypeDesc& l = type_context_.get(lhs_id);
+						const CanonicalTypeDesc& r = type_context_.get(rhs_id);
+						// For struct types, the result type depends on the user-defined operator<=>.
+						// For built-in types, C++20 [expr.spaceship]:
+						//   - integral types → std::strong_ordering
+						//   - floating-point types → std::partial_ordering
+						//   - bool → std::strong_ordering
+						if (l.category() != TypeCategory::Struct && r.category() != TypeCategory::Struct) {
+							const bool is_float_cmp = is_floating_point_type(l.category()) || is_floating_point_type(r.category());
+							const char* qualified_name = is_float_cmp ? "std::partial_ordering" : "std::strong_ordering";
+							const char* unqualified_name = is_float_cmp ? "partial_ordering" : "strong_ordering";
+							const StringHandle q_handle = StringTable::getOrInternStringHandle(qualified_name);
+							const TypeInfo* ordering_type = findTypeByName(q_handle);
+							if (!ordering_type) {
+								const StringHandle u_handle = StringTable::getOrInternStringHandle(unqualified_name);
+								ordering_type = findTypeByName(u_handle);
+							}
+							if (ordering_type) {
+								CanonicalTypeDesc desc;
+								desc.type_index = ordering_type->type_index_;
+								return type_context_.intern(desc);
+							}
+							FLASH_LOG(General, Debug, "inferExpressionType: <=> on primitive types but ordering type not found: ",
+									  qualified_name);
+						}
+					}
+					// Fallback: if ordering types not found, return unknown
+					return {};
+				}
 				// Comparison and logical operators always produce bool
 				if (op == "==" || op == "!=" || op == "<" || op == ">" ||
 					op == "<=" || op == ">=" || op == "&&" || op == "||") {
@@ -3138,9 +3172,23 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 	if (!best_non_explicit) {
 		if (found_explicit_viable || best_any) {
+			// Special case: don't error for integer -> comparison category conversions.
+			// In deferred template bodies, inferExpressionType may not fully resolve
+			// built-in <=> results as comparison category types, so semantic analysis
+			// can see "int -> strong_ordering" instead of the final target type.
+			// Codegen still produces the correct comparison category object.
+			const StructTypeInfo* target_struct = to_type_info->getStructInfo();
+			if (is_integer_type(from_desc.category()) && target_struct && target_struct->total_size == 1) {
+				const std::string_view target_name = StringTable::getStringView(to_type_info->name());
+				if (isExactComparisonCategoryType(to_type_info->type_index_)) {
+					FLASH_LOG(General, Debug, "Suppressed explicit-ctor error for comparison category type '",
+							  target_name, "' from integer type", context_description);
+					return false;
+				}
+			}
 			FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for target type '",
 					  StringTable::getStringView(to_type_info->name()), "' from type category ",
-					  static_cast<int>(from_desc.category()));
+					  static_cast<int>(from_desc.category()), context_description);
 			throw CompileError("Cannot use copy initialization with explicit constructor");
 		}
 		return false;

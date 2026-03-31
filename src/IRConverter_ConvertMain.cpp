@@ -1206,9 +1206,9 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			textSectionData.push_back((imm32 >> 16) & 0xFF);
 			textSectionData.push_back((imm32 >> 24) & 0xFF);
 		}
-	} else if (instruction.isOperandType<double>(3)) {
+	} else if (std::holds_alternative<double>(bin_op.lhs.value)) {
 			// LHS is a floating-point literal value
-		auto lhs_value = instruction.getOperandAs<double>(3);
+		auto lhs_value = std::get<double>(bin_op.lhs.value);
 		ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 
 			// For floating-point, we need to load the value into an XMM register
@@ -1238,7 +1238,15 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 		std::array<uint8_t, 5> movqInst = {0x66, 0x48, 0x0F, 0x6E, 0xC0};
-		movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+		uint8_t xmm_num = xmm_modrm_bits(ctx.result_physical_reg);
+		uint8_t gpr_num = static_cast<uint8_t>(temp_gpr);
+		if (xmm_num >= 8) {
+			movqInst[1] |= 0x04; // REX.R
+		}
+		if (gpr_num >= 8) {
+			movqInst[1] |= 0x01; // REX.B
+		}
+		movqInst[4] = 0xC0 + ((xmm_num & 0x07) << 3) + (gpr_num & 0x07);
 		textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 
 			// Release the temporary GPR
@@ -1513,7 +1521,15 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 			std::array<uint8_t, 5> movqInst = {0x66, 0x48, 0x0F, 0x6E, 0xC0};
-			movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
+			uint8_t xmm_num = xmm_modrm_bits(ctx.rhs_physical_reg);
+			uint8_t gpr_num = static_cast<uint8_t>(temp_gpr);
+			if (xmm_num >= 8) {
+				movqInst[1] |= 0x04; // REX.R
+			}
+			if (gpr_num >= 8) {
+				movqInst[1] |= 0x01; // REX.B
+			}
+			movqInst[4] = 0xC0 + ((xmm_num & 0x07) << 3) + (gpr_num & 0x07);
 			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 		}
 
@@ -9592,7 +9608,42 @@ void IrToObjConverter<TWriterClass>::handleFloatEqual(const IrInstruction& instr
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatNotEqual(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
-	emitFloatComparisonInstruction(ctx, 0x95); // SETNE
+
+	// IEEE/C++ `!=` is true for unordered comparisons too. Combine SETNE with
+	// SETP (unordered) via OR to implement that behavior.
+	if (ctx.operand_type == TypeCategory::Float) {
+		auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+	} else if (ctx.operand_type == TypeCategory::Double) {
+		auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
+		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
+	}
+
+	X64Register bool_reg = allocateRegisterWithSpilling();
+	uint8_t bool_setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? REX_B : REX_BASE;
+	textSectionData.push_back(bool_setcc_rex);
+	std::array<uint8_t, 3> setne_inst = {0x0F, 0x95, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(bool_reg) & 0x07))};
+	textSectionData.insert(textSectionData.end(), setne_inst.begin(), setne_inst.end());
+	auto bool_movzx = encodeRegToRegInstruction(bool_reg, bool_reg);
+	std::array<uint8_t, 4> movzx_bool_inst = {bool_movzx.rex_prefix, 0x0F, 0xB6, bool_movzx.modrm_byte};
+	textSectionData.insert(textSectionData.end(), movzx_bool_inst.begin(), movzx_bool_inst.end());
+
+	X64Register unordered_reg = allocateRegisterWithSpilling(bool_reg);
+	uint8_t unordered_setcc_rex = (static_cast<uint8_t>(unordered_reg) >= 8) ? REX_B : REX_BASE;
+	textSectionData.push_back(unordered_setcc_rex);
+	std::array<uint8_t, 3> setp_inst = {0x0F, 0x9A, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(unordered_reg) & 0x07))};
+	textSectionData.insert(textSectionData.end(), setp_inst.begin(), setp_inst.end());
+	auto unordered_movzx = encodeRegToRegInstruction(unordered_reg, unordered_reg);
+	std::array<uint8_t, 4> movzx_unordered_inst = {unordered_movzx.rex_prefix, 0x0F, 0xB6, unordered_movzx.modrm_byte};
+	textSectionData.insert(textSectionData.end(), movzx_unordered_inst.begin(), movzx_unordered_inst.end());
+
+	emitBinaryOpInstruction(0x09, unordered_reg, bool_reg, 64);
+	regAlloc.release(unordered_reg);
+
+	ctx.result_value.setType(TypeCategory::Bool);
+	ctx.result_value.size_in_bits = SizeInBits{8};
+	ctx.result_physical_reg = bool_reg;
+	storeArithmeticResult(ctx);
 }
 
 template <class TWriterClass>

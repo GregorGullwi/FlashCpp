@@ -902,6 +902,17 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		return makeExprResult(nativeTypeIndex(TypeCategory::Bool), SizeInBits{8}, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
+	// static_cast to actual comparison category types should preserve the wrapper
+	// identity instead of treating every struct cast as a raw reinterpretation.
+	if (target_type == TypeCategory::Struct && isExactComparisonCategoryType(target_type_node.type_index())) {
+		const TypeInfo* target_type_info = tryGetTypeInfo(target_type_node.type_index());
+		if (target_type_info && target_type_info->struct_info_) {
+			return makeExprResult(target_type_node.type_index(),
+								  SizeInBits{static_cast<int>(target_type_info->struct_info_->total_size * 8)},
+								  expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
+		}
+	}
+
 		// For numeric conversions, we might need to generate a conversion instruction
 		// For now, just change the type metadata (works for most cases)
 	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);

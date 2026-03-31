@@ -176,6 +176,30 @@ size_t getTypeInfoCount() {
 	return gTypeInfo.size();
 }
 
+bool isExactComparisonCategoryType(TypeIndex type_index) {
+	if (!type_index.is_valid()) {
+		return false;
+	}
+
+	// Cache interned StringHandles so repeated calls avoid re-interning.
+	// StringHandle values are stable once interned, so function-local statics are safe.
+	static const StringHandle cached_handles[] = {
+		StringTable::getOrInternStringHandle("std::strong_ordering"),
+		StringTable::getOrInternStringHandle("std::weak_ordering"),
+		StringTable::getOrInternStringHandle("std::partial_ordering"),
+		StringTable::getOrInternStringHandle("strong_ordering"),
+		StringTable::getOrInternStringHandle("weak_ordering"),
+		StringTable::getOrInternStringHandle("partial_ordering"),
+	};
+	for (StringHandle handle : cached_handles) {
+		const TypeInfo* type_info = findTypeByName(handle);
+		if (type_info && type_info->type_index_ == type_index) {
+			return true;
+		}
+	}
+	return false;
+}
+
 TypeInfo& add_template_param_type(StringHandle name, TypeCategory kind, uint32_t size_bits) {
 	auto& type_info = gTypeInfo.emplace_back(name, TypeIndex{static_cast<uint32_t>(gTypeInfo.size()), kind}, size_bits);
 	gTypesByName.emplace(type_info.name(), &type_info);

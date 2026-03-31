@@ -929,6 +929,8 @@ const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not fou
 TypeIndex nativeTypeIndex(TypeCategory cat);	 // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
 size_t getTypeInfoCount();	   // replaces gTypeInfo.size()
 
+bool isExactComparisonCategoryType(TypeIndex type_index);
+
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
