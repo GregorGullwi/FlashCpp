@@ -1,4 +1,4 @@
-// Verify: deferred body replay finds the stub via identity map (not name scan).
+// Verify: deferred body replay keeps conversion operators usable.
 // The static const int tag member forces deferred body replay for all inline
 // member bodies (because the struct type must be fully registered before any
 // member body that references a dependent name can be parsed).

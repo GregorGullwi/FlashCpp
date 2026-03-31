@@ -105,31 +105,6 @@ codegen/runtime bug rather than a parser/sema typing failure.
 classes; use scalar static members, move the object out of the nested template
 class, or materialize the value through another helper path.
 
-## Conversion operator type-alias resolution incomplete during template instantiation
-
-When a conversion operator uses a dependent type alias (e.g.,
-`operator value_type()` where `using value_type = T;`), template instantiation
-may not fully resolve the alias, leaving the member function registered under the
-internal name `"operator user_defined"` instead of the canonical form
-`"operator int"`, `"operator double"`, etc.
-
-Both sema (`structHasConversionOperatorTo` in `SemanticAnalysis.cpp`) and codegen
-(`findConversionOperator` in `IrGenerator_MemberAccess.cpp`) work around this by:
-
-1. resolving the `UserDefined` return type through the `gTypeInfo` alias chain
-2. matching the resolved return type against the target type
-3. falling back to **size-based matching** when alias resolution fails
-
-The size-based fallback is not standard-conformant: it can match wrong types that
-share the same bit width (e.g., `int` and `float` are both 32-bit; `double` and
-`long long` are both 64-bit). In practice this has not caused observable
-miscompilations because the fallback only fires for still-unresolved `UserDefined`
-return types in template contexts, but it is a known accuracy limitation.
-
-The proper fix is to fully resolve type aliases during template instantiation so
-that conversion operators always carry their canonical name and the
-`"operator user_defined"` workaround becomes unnecessary.
-
 ## `constexpr`/`consteval` enforcement — partially implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;
