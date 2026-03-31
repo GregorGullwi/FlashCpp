@@ -1168,7 +1168,10 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			false,  // is_array
 			{},		// array_dimensions
 			static_cast<int>(type_spec.pointer_depth()),
-			member_decl.bitfield_width);
+			member_decl.bitfield_width,
+			resolveTemplateFunctionPointerSignature(
+				type_spec, substituted_type_index,
+				lazy_info->parent_template_params, lazy_info->parent_template_args));
 	}
 
 	// Finalize layout
