@@ -479,7 +479,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (found_pack) {
 					if (pack_size == 0)
 						continue; // Empty pack — omit this parameter entirely.
-	// Expand into N parameters: args_0, args_1, ...
+ // Expand into N parameters: args_0, args_1, ...
 					std::string_view orig_name = param_decl.identifier_token().value();
 					for (size_t pi = 0; pi < pack_size; ++pi) {
 						const TemplateTypeArg& elem = tmpl_args[non_variadic + pi];
@@ -505,7 +505,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						target_node.add_parameter_node(emplace_node<DeclarationNode>(
 							emplace_node<TypeSpecifierNode>(sub_type), elem_token));
 					}
-	// Register the pack so expandPackExpansionArgs renames args→args_0, args_1…
+ // Register the pack so expandPackExpansionArgs renames args→args_0, args_1…
 					pack_param_info_.push_back({orig_name, 0, pack_size});
 					handled_as_pack = true;
 				}
@@ -808,7 +808,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 
-	// Simple case: default is void
+ // Simple case: default is void
 					if (default_type.category() == TypeCategory::Void) {
 						TemplateTypeArg void_arg;
 						void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
@@ -817,22 +817,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-	// Check if default is an alias template like void_t
-	// by looking at the token value
+ // Check if default is an alias template like void_t
+ // by looking at the token value
 					Token default_token = default_type.token();
 					std::string_view alias_name = default_token.value();
 
-	// Look up if this is an alias template
+ // Look up if this is an alias template
 					auto alias_opt = gTemplateRegistry.lookup_alias_template(alias_name);
 					if (alias_opt.has_value()) {
 						const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
 
-	// Check if the alias target type is void (like void_t)
+ // Check if the alias target type is void (like void_t)
 						const ASTNode& target_type = alias_node.target_type();
 						if (target_type.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& alias_type_spec = target_type.as<TypeSpecifierNode>();
 							if (alias_type_spec.category() == TypeCategory::Void) {
-	// void_t-like alias: fill in void here, SFINAE check happens in pattern matching
+ // void_t-like alias: fill in void here, SFINAE check happens in pattern matching
 								TemplateTypeArg void_arg;
 								void_arg.type_index = nativeTypeIndex(TypeCategory::Void);
 								filled_args_for_pattern_match.push_back(void_arg);
@@ -842,13 +842,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-	// Check if this is a dependent qualified type (like wrapper<T>::type)
-	// that needs resolution based on already-filled template arguments
+ // Check if this is a dependent qualified type (like wrapper<T>::type)
+ // that needs resolution based on already-filled template arguments
 					if ((default_type.category() == TypeCategory::UserDefined || default_type.category() == TypeCategory::TypeAlias || default_type.category() == TypeCategory::Template) && default_type.type_index().is_valid()) {
 						if (const TypeInfo* default_type_info = tryGetTypeInfo(default_type.type_index())) {
 							std::string_view default_type_name = StringTable::getStringView(default_type_info->name());
 
-	// Try to resolve using each filled argument
+ // Try to resolve using each filled argument
 							for (size_t arg_idx = 0; arg_idx < filled_args_for_pattern_match.size(); ++arg_idx) {
 								auto resolved = resolve_dependent_qualified_type(default_type_name, filled_args_for_pattern_match[arg_idx]);
 								if (resolved.has_value()) {
@@ -859,45 +859,45 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-	// For other default types, use the type as-is
+ // For other default types, use the type as-is
 					filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
 
 				next_param:;
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
-	// Handle non-type template parameter defaults like is_arithmetic<T>::value
+ // Handle non-type template parameter defaults like is_arithmetic<T>::value
 					const ExpressionNode& expr = default_node.as<ExpressionNode>();
 
 					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 
-	// Handle dependent static member access like is_arithmetic_void::value
+ // Handle dependent static member access like is_arithmetic_void::value
 						if (!qual_id.namespace_handle().isGlobal()) {
 							std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 							std::string_view member_name = qual_id.name();
 
-	// Check for dependent placeholder using TypeInfo-based detection
+ // Check for dependent placeholder using TypeInfo-based detection
 							auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name);
 							if (is_dependent_placeholder && !filled_args_for_pattern_match.empty()) {
-	// Build the instantiated template name using hash-based naming
+ // Build the instantiated template name using hash-based naming
 								std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
 
 								FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier (pattern match): ",
 										  type_name, "::", member_name, " -> ", inst_name, "::", member_name);
 
-	// Try to instantiate the template
+ // Try to instantiate the template
 								try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_args_for_pattern_match[0]});
 
-	// Look up the instantiated type
+ // Look up the instantiated type
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (type_it != getTypesByNameMap().end()) {
 									const TypeInfo* type_info = type_it->second;
 									if (type_info->getStructInfo()) {
 										const StructTypeInfo* struct_info = type_info->getStructInfo();
-	// Find the static member
+ // Find the static member
 										for (const auto& static_member : struct_info->static_members) {
 											if (StringTable::getStringView(static_member.getName()) == member_name) {
-	// Evaluate the static member's initializer
+ // Evaluate the static member's initializer
 												if (static_member.initializer.has_value()) {
 													const ASTNode& init_node = *static_member.initializer;
 													if (init_node.is<ExpressionNode>()) {
@@ -934,35 +934,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const BoolLiteralNode& lit = *bool_literal_ptr;
 						filled_args_for_pattern_match.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeCategory::Bool));
 					} else if (std::holds_alternative<SizeofExprNode>(expr)) {
-	// Handle sizeof(T) as a default value
+ // Handle sizeof(T) as a default value
 						const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
 						if (sizeof_node.is_type()) {
-	// sizeof(type) - evaluate the type size
+ // sizeof(type) - evaluate the type size
 							const ASTNode& type_node = sizeof_node.type_or_expr();
 							if (type_node.is<TypeSpecifierNode>()) {
 								TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
 
-	// Check if this is a template parameter that needs substitution
+ // Check if this is a template parameter that needs substitution
 								bool found_substitution = false;
 								std::string_view type_name;
 
-	// Try to get the type name from the token first (most reliable for template params)
+ // Try to get the type name from the token first (most reliable for template params)
 								if (type_spec.token().type() == Token::Type::Identifier) {
 									type_name = type_spec.token().value();
 								} else if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().is_valid()) {
-	// Fall back to gTypeInfo for fully resolved types
+ // Fall back to gTypeInfo for fully resolved types
 									if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 										type_name = StringTable::getStringView(type_info->name());
 									}
 								}
 
 								if (!type_name.empty()) {
-	// Check if this is one of the template parameters we've already filled
+ // Check if this is one of the template parameters we've already filled
 									for (size_t j = 0; j < primary_params.size() && j < filled_args_for_pattern_match.size(); ++j) {
 										if (primary_params[j].is<TemplateParameterNode>()) {
 											const TemplateParameterNode& prev_param = primary_params[j].as<TemplateParameterNode>();
 											if (prev_param.name() == type_name) {
-	// Found the matching template parameter - use its filled value
+ // Found the matching template parameter - use its filled value
 												const TemplateTypeArg& filled_arg = filled_args_for_pattern_match[j];
 												if (filled_arg.category() != TypeCategory::Invalid) {
 													const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
@@ -980,7 +980,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 
 								if (!found_substitution) {
-	// Direct type (not a template parameter)
+ // Direct type (not a template parameter)
 									int size_in_bits = type_spec.size_in_bits();
 									int size_in_bytes = (size_in_bits + 7) / 8; // Round up to bytes
 									filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
@@ -1047,7 +1047,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (patterns_it != gTemplateRegistry.specialization_patterns_.end()) {
  // Find the matching pattern to get its template params
 				for (const auto& pattern : patterns_it->second) {
-	// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
+ // Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
 					const StructDeclarationNode* spec_struct_ptr = nullptr;
 					if (pattern.specialized_node.is<StructDeclarationNode>()) {
 						spec_struct_ptr = &pattern.specialized_node.as<StructDeclarationNode>();
@@ -1076,7 +1076,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							if (!best) {
 								best = &tmpl_class;
 							} else {
-	// Prefer template with named parameters (not __anon_type_)
+ // Prefer template with named parameters (not __anon_type_)
 								bool current_has_anon = false;
 								bool best_has_anon = false;
 								for (const auto& param : tmpl_class.template_parameters()) {
@@ -1197,10 +1197,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (template_params[i].is<TemplateParameterNode>()) {
 						const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
 						if (param.name() == base_name_str) {
-	// The base class is a template parameter - substitute with the corresponding argument
+ // The base class is a template parameter - substitute with the corresponding argument
 							const TemplateTypeArg& arg = template_args[i];
 
-	// Get the concrete type name for this argument
+ // Get the concrete type name for this argument
 							std::string substituted_name = arg.toString();
 							FLASH_LOG(Templates, Debug, "Substituting base class template parameter '", base_name_str,
 									  "' with '", substituted_name, "'");
@@ -1221,11 +1221,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view base_template_name = StringTable::getStringView(
 						incomplete_type_it->second->baseTemplateName());
 
-	// For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
-	// The base class uses Rest... (the variadic pack), which corresponds to
-	// all template args EXCEPT the first one (First)
+ // For partial specialization like Tuple<First, Rest...> : Tuple<Rest...>
+ // The base class uses Rest... (the variadic pack), which corresponds to
+ // all template args EXCEPT the first one (First)
 
-	// Check if this pattern uses a variadic pack for the base
+ // Check if this pattern uses a variadic pack for the base
 					bool base_uses_variadic_pack = false;
 					size_t first_variadic_index = template_params.size();
 					for (size_t i = 0; i < template_params.size(); ++i) {
@@ -1239,20 +1239,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					std::vector<TemplateTypeArg> base_template_args;
 					if (base_uses_variadic_pack && template_args.size() > first_variadic_index) {
-	// Skip the non-variadic parameters (First) and use Rest...
-	// For Tuple<int>: template_args = [int], first_variadic_index = 1
-	// So base_template_args = [] (empty)
-	// For Tuple<int, float>: template_args = [int, float], first_variadic_index = 1
-	// So base_template_args = [float]
+ // Skip the non-variadic parameters (First) and use Rest...
+ // For Tuple<int>: template_args = [int], first_variadic_index = 1
+ // So base_template_args = [] (empty)
+ // For Tuple<int, float>: template_args = [int, float], first_variadic_index = 1
+ // So base_template_args = [float]
 						for (size_t i = first_variadic_index; i < template_args.size(); ++i) {
 							base_template_args.push_back(template_args[i]);
 						}
 					} else if (base_uses_variadic_pack) {
-	// Empty variadic pack - base_template_args stays empty
-	// For Tuple<int>: template_args = [int], first_variadic_index = 1
-	// base_template_args = [] (Tuple<>)
+ // Empty variadic pack - base_template_args stays empty
+ // For Tuple<int>: template_args = [int], first_variadic_index = 1
+ // base_template_args = [] (Tuple<>)
 					} else {
-	// Fallback: assume single template parameter for non-variadic cases
+ // Fallback: assume single template parameter for non-variadic cases
 						if (!template_args.empty()) {
 							base_template_args.push_back(template_args[0]);
 						}
@@ -1260,14 +1260,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
 
-	// Instantiate the base template (may be empty specialization like Tuple<>)
+ // Instantiate the base template (may be empty specialization like Tuple<>)
 					auto base_instantiated = try_instantiate_class_template(base_template_name, base_template_args);
 					if (base_instantiated.has_value()) {
-	// Add the base class instantiation to the AST so its constructors get generated
+ // Add the base class instantiation to the AST so its constructors get generated
 						ast_nodes_.push_back(*base_instantiated);
 					}
 
-	// Get the instantiated name
+ // Get the instantiated name
 					base_name_str = std::string(get_instantiated_class_name(base_template_name, base_template_args));
 					FLASH_LOG(Templates, Debug, "Base class resolved to: ", base_name_str);
 				}
@@ -1301,7 +1301,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					const auto& tparam = template_params[i].as<TemplateParameterNode>();
 					if (tparam.is_variadic()) {
-	// Collect all remaining template_args into pack
+ // Collect all remaining template_args into pack
 						std::vector<TemplateTypeArg> pack_args;
 						for (size_t j = non_variadic_count; j < template_args.size(); ++j)
 							pack_args.push_back(template_args[j]);
@@ -1323,7 +1323,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					bool resolution_failed = false;
 					for (const auto& arg_info : deferred_base.template_arguments) {
 						if (arg_info.is_pack) {
-	// Expand pack argument – empty packs are valid (base<>)
+ // Expand pack argument – empty packs are valid (base<>)
 							auto try_expand = [&](StringHandle pack_name) -> bool {
 								auto it = spec_pack_subst_map.find(pack_name);
 								if (it != spec_pack_subst_map.end()) {
@@ -1351,7 +1351,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 							if (!expanded) {
-	// Pack name not found in substitution map – skip this base class
+ // Pack name not found in substitution map – skip this base class
 								FLASH_LOG(Templates, Warning, "Could not resolve pack for deferred base '", base_tpl_name, "'");
 								resolution_failed = true;
 								break;
@@ -1359,7 +1359,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							continue;
 						}
 
-	// Non-pack argument: try name substitution
+ // Non-pack argument: try name substitution
 						bool resolved = false;
 						if (arg_info.node.is<TypeSpecifierNode>()) {
 							const TypeSpecifierNode& ts = arg_info.node.as<TypeSpecifierNode>();
@@ -1390,7 +1390,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									resolved = true;
 								}
 							} else if (std::holds_alternative<IdentifierNode>(expr)) {
-	// Identifier that may refer to a type in the substitution map or in getTypesByNameMap()
+ // Identifier that may refer to a type in the substitution map or in getTypesByNameMap()
 								std::string_view iname = std::get<IdentifierNode>(expr).name();
 								auto sit = spec_name_subst_map.find(iname);
 								if (sit != spec_name_subst_map.end()) {
@@ -1408,7 +1408,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 							if (!resolved) {
-	// Non-type value argument - try to convert to TemplateTypeArg
+ // Non-type value argument - try to convert to TemplateTypeArg
 								if (std::holds_alternative<NumericLiteralNode>(expr)) {
 									TemplateTypeArg va;
 									va.is_value = true;
@@ -1423,7 +1423,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									va.value = bool_literal->value() ? 1 : 0;
 									resolved_args.push_back(va);
 								} else {
-	// Unresolvable expression argument - cannot safely instantiate
+ // Unresolvable expression argument - cannot safely instantiate
 									FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
 									resolution_failed = true;
 								}
@@ -1436,7 +1436,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-	// Instantiate the base template with resolved args
+ // Instantiate the base template with resolved args
 					auto base_node = try_instantiate_class_template(base_tpl_name, resolved_args, true);
 					if (base_node.has_value() && base_node->is<StructDeclarationNode>()) {
 						ast_nodes_.push_back(*base_node);
@@ -1476,7 +1476,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Calculate member size accounting for pointer depth
 				size_t member_size = get_substituted_type_size_bytes(member_type_index);
 				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
-	// Pointers and references are always 8 bytes (64-bit)
+ // Pointers and references are always 8 bytes (64-bit)
 					member_size = 8;
 				}
 				for (size_t dim_size : resolved_array_dimensions) {
@@ -1505,7 +1505,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return std::nullopt;
 					if (type_spec.has_function_signature())
 						return type_spec.function_signature();
-	// type_spec is a template-parameter placeholder: look up by name
+ // type_spec is a template-parameter placeholder: look up by name
 					std::string_view type_name;
 					if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
 						type_name = StringTable::getStringView(ts_ti->name());
@@ -1542,8 +1542,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Copy member functions from pattern
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 				if (mem_func.is_constructor) {
-	// Handle constructor - create a substituted copy so StructTypeInfo
-	// has correct parameter types for name mangling and codegen.
+ // Handle constructor - create a substituted copy so StructTypeInfo
+ // has correct parameter types for name mangling and codegen.
 					const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name, orig_ctor.name());
@@ -1558,14 +1558,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_ctor_ref.set_noexcept(orig_ctor.is_noexcept());
 					struct_info->addConstructor(new_ctor_node, mem_func.access);
 				} else if (mem_func.is_destructor) {
-	// Handle destructor
+ // Handle destructor
 					struct_info->addDestructor(
 						mem_func.function_declaration,
 						mem_func.access,
 						mem_func.is_virtual);
 				} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-	// Member function template (e.g., template<typename _Up, typename... _Args> void construct(...))
-	// Add as-is without return type substitution - the template will handle it when instantiated
+ // Member function template (e.g., template<typename _Up, typename... _Args> void construct(...))
+ // Add as-is without return type substitution - the template will handle it when instantiated
 					const TemplateFunctionDeclarationNode& tmpl_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 					const FunctionDeclarationNode& inner_func = tmpl_func.function_decl_node();
 					StringHandle func_name_handle = inner_func.decl_node().identifier_token().handle();
@@ -1581,13 +1581,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 					const DeclarationNode& orig_decl = orig_func.decl_node();
 
-	// Substitute return type if it uses a template parameter
-	// For partial specializations like Container<T*>, the return type T* needs substitution
-	// The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
+ // Substitute return type if it uses a template parameter
+ // For partial specializations like Container<T*>, the return type T* needs substitution
+ // The pattern has Type::UserDefined for T, which needs to be replaced with the concrete type
 					const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
 
-	// Use substitute_template_parameter for return type — handles all params by name,
-	// not just template_args[0].
+ // Use substitute_template_parameter for return type — handles all params by name,
+ // not just template_args[0].
 					TypeIndex substituted_return_type_index = substitute_template_parameter(
 						orig_return_type, template_params, template_args);
 
@@ -1611,7 +1611,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituteAndCopyParams(orig_func.parameter_nodes(), new_func_ref, template_params, template_args);
 
 					copy_function_properties(new_func_ref, orig_func);
-	// Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
+ // Ensure is_const_member_function is set from pattern so propagateAstProperties derives cv_qualifier.
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 					if (orig_func.get_definition().has_value()) {
@@ -1619,7 +1619,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 					pack_param_info_.resize(saved_pack_info);
 
-	// Add the function to the struct info (with substituted signature)
+ // Add the function to the struct info (with substituted signature)
 					StringHandle func_name_handle = orig_decl.identifier_token().handle();
 					struct_info->addMemberFunction(
 						func_name_handle,
@@ -1629,7 +1629,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						mem_func.is_pure_virtual,
 						mem_func.is_override,
 						mem_func.is_final);
-	// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
+ // cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 				}
 			}
 
@@ -1660,7 +1660,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeInfo* pattern_type_info = pattern_type_it->second;
 				const StructTypeInfo* pattern_struct_info = pattern_type_info->getStructInfo();
 				if (pattern_struct_info) {
-	// Copy deleted constructor flags from pattern
+ // Copy deleted constructor flags from pattern
 					if (pattern_struct_info->has_deleted_default_constructor) {
 						struct_info->has_deleted_default_constructor = true;
 					}
@@ -1687,13 +1687,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					for (const auto& static_member : pattern_struct_info->static_members) {
 						FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
 
-	// Check if initializer contains sizeof...(pack_name) and substitute with pack size
+ // Check if initializer contains sizeof...(pack_name) and substitute with pack size
 						std::optional<ASTNode> substituted_initializer = static_member.initializer;
 						if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 							const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 							FLASH_LOG(Templates, Debug, "Static member initializer is an expression, checking for sizeof...");
 
-	// Calculate pack size for substitution
+ // Calculate pack size for substitution
 							auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 								FLASH_LOG(Templates, Debug, "Looking for pack: ", pack_name);
 								for (size_t i = 0; i < template_params.size(); ++i) {
@@ -1712,7 +1712,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								return std::nullopt;
 							};
 
-	// Helper to create a numeric literal from pack size
+ // Helper to create a numeric literal from pack size
 							auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
 								std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 								Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
@@ -1721,13 +1721,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							};
 
 							if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
-	// Direct sizeof... expression
+ // Direct sizeof... expression
 								const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 								if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 									substituted_initializer = make_pack_size_literal(*pack_size);
 								}
 							} else if (std::holds_alternative<StaticCastNode>(expr)) {
-	// Handle static_cast<T>(sizeof...(Ts)) patterns
+ // Handle static_cast<T>(sizeof...(Ts)) patterns
 								const StaticCastNode& cast_node = std::get<StaticCastNode>(expr);
 								if (cast_node.expr().is<ExpressionNode>()) {
 									const ExpressionNode& cast_inner = cast_node.expr().as<ExpressionNode>();
@@ -1739,16 +1739,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 							} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-	// Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
+ // Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
 								const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
 
-	// Helper to extract pack size from various expression forms
+ // Helper to extract pack size from various expression forms
 								auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
 									if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
 										const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 										return calculate_pack_size(sizeof_pack.pack_name());
 									}
-	// Handle static_cast<T>(sizeof...(Ts))
+ // Handle static_cast<T>(sizeof...(Ts))
 									if (std::holds_alternative<StaticCastNode>(e)) {
 										const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 										if (cast_node.expr().is<ExpressionNode>()) {
@@ -1762,7 +1762,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return std::nullopt;
 								};
 
-	// Helper to extract numeric value from expression
+ // Helper to extract numeric value from expression
 								auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
 									if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&e)) {
 										const NumericLiteralNode& num = *numeric_literal;
@@ -1774,7 +1774,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return std::nullopt;
 								};
 
-	// Helper to evaluate a binary expression
+ // Helper to evaluate a binary expression
 								auto evaluate_binary = [](std::string_view op, unsigned long long lhs, unsigned long long rhs) -> unsigned long long {
 									if (op == "+")
 										return lhs + rhs;
@@ -1787,27 +1787,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									return 0;
 								};
 
-	// Try to evaluate the top-level binary expression
+ // Try to evaluate the top-level binary expression
 								if (bin_expr.get_lhs().is<ExpressionNode>() && bin_expr.get_rhs().is<ExpressionNode>()) {
 									const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
 									const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
 
-	// Case 1: LHS is pack_size_expr, RHS is numeric
+ // Case 1: LHS is pack_size_expr, RHS is numeric
 									if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
 										if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 											unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
 											substituted_initializer = make_pack_size_literal(result);
 										}
 									}
-	// Case 2: LHS is numeric, RHS is pack_size_expr
+ // Case 2: LHS is numeric, RHS is pack_size_expr
 									else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
 										if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
 											unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
 											substituted_initializer = make_pack_size_literal(result);
 										}
 									}
-	// Case 3: LHS is nested binary expression, RHS is numeric
-	// Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
+ // Case 3: LHS is nested binary expression, RHS is numeric
+ // Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
 									else if (std::holds_alternative<BinaryOperatorNode>(lhs_expr)) {
 										const BinaryOperatorNode& nested_bin = std::get<BinaryOperatorNode>(lhs_expr);
 										if (nested_bin.get_lhs().is<ExpressionNode>() && nested_bin.get_rhs().is<ExpressionNode>()) {
@@ -1835,7 +1835,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 							}
-	// Handle template parameter reference substitution (e.g., static constexpr T value = v;)
+ // Handle template parameter reference substitution (e.g., static constexpr T value = v;)
 							if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 								FLASH_LOG(Templates, Debug, "Static member initializer contains template parameter reference: ", tparam_ref.param_name());
@@ -1844,7 +1844,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", tparam_ref.param_name(), "'");
 								}
 							}
-	// Handle IdentifierNode that might be a template parameter
+ // Handle IdentifierNode that might be a template parameter
 							else if (std::holds_alternative<IdentifierNode>(expr)) {
 								const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 								std::string_view id_name = id_node.name();
@@ -1854,14 +1854,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									FLASH_LOG(Templates, Debug, "Substituted static member initializer identifier '", id_name, "' (template parameter)");
 								}
 							}
-	// Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
+ // Handle FoldExpressionNode (e.g., static constexpr bool value = (Bs && ...);)
 							else if (std::holds_alternative<FoldExpressionNode>(expr)) {
 								const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 								std::string_view pack_name = fold.pack_name();
 								std::string_view op = fold.op();
 								FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
 
-	// Find the parameter pack in template parameters
+ // Find the parameter pack in template parameters
 								std::optional<size_t> pack_param_idx;
 								for (size_t p = 0; p < template_params.size(); ++p) {
 									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -1872,11 +1872,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 
 								if (pack_param_idx.has_value()) {
-	// Collect the values from the variadic pack arguments
+ // Collect the values from the variadic pack arguments
 									std::vector<int64_t> pack_values;
 									bool all_values_found = true;
 
-	// For variadic packs, arguments after non-variadic parameters are the pack values
+ // For variadic packs, arguments after non-variadic parameters are the pack values
 									size_t non_variadic_count = 0;
 									for (const auto& param : template_params) {
 										if (!param.as<TemplateParameterNode>().is_variadic()) {
@@ -1901,12 +1901,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 								}
 							}
-	// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
+ // Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
 							else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 								const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 								const ASTNode& cond_node = ternary.condition();
 
-	// Check if condition is a template parameter reference or identifier
+ // Check if condition is a template parameter reference or identifier
 								if (cond_node.is<ExpressionNode>()) {
 									const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
 									std::optional<int64_t> cond_value;
@@ -1915,7 +1915,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
 										FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
 
-	// Look up the parameter value
+ // Look up the parameter value
 										for (size_t p = 0; p < template_params.size(); ++p) {
 											const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 											if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
@@ -1931,7 +1931,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										std::string_view id_name = id_node.name();
 										FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
 
-	// Look up the identifier as a template parameter
+ // Look up the identifier as a template parameter
 										for (size_t p = 0; p < template_params.size(); ++p) {
 											const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 											if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
@@ -1944,7 +1944,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										}
 									}
 
-	// If we found the condition value, evaluate the ternary
+ // If we found the condition value, evaluate the ternary
 									if (cond_value.has_value()) {
 										const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
 
@@ -1957,7 +1957,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																				 ? std::get<unsigned long long>(val)
 																				 : static_cast<unsigned long long>(std::get<double>(val));
 
-	// Create a new numeric literal with the evaluated result
+ // Create a new numeric literal with the evaluated result
 												std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
 												Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 												substituted_initializer = emplace_node<ExpressionNode>(
@@ -1970,13 +1970,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-	// Phase 7B: Intern static member name and use StringHandle overload
+ // Substitute template parameters in the static member initializer.
+ // The sizeof... special cases above handle specific patterns, but
+ // general expressions like {static_cast<T>(20), static_cast<T>(22)}
+ // still need template parameter substitution (e.g., T → int).
+						if (substituted_initializer.has_value()) {
+							substituted_initializer = substituteTemplateParameters(
+								substituted_initializer.value(), template_params, template_args);
+							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member '",
+									  static_member.getName(), "' initializer");
+						}
+
+ // Phase 7B: Intern static member name and use StringHandle overload
 						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
 
-	// Substitute nested type references in static member type.
-	// For static members whose type is a nested class of the pattern template
-	// (e.g., `static constexpr Payload data`), we need to remap the type_index
-	// to the instantiated nested class and use its finalized size.
+ // Substitute nested type references in static member type.
+ // For static members whose type is a nested class of the pattern template
+ // (e.g., `static constexpr Payload data`), we need to remap the type_index
+ // to the instantiated nested class and use its finalized size.
 						TypeIndex substituted_type_index = static_member.type_index;
 						size_t substituted_size = static_member.size;
 						if (static_member.type_index.category() == TypeCategory::Struct) {
@@ -1988,13 +1999,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								substituted_type_index = new_type_index;
 								substituted_size = get_substituted_type_size_bytes(new_type_index);
 							} else if (substituted_size == 0) {
-	// The type wasn't a template parameter, but might be a nested class
-	// whose instantiated form is registered under the qualified name.
+ // The type wasn't a template parameter, but might be a nested class
+ // whose instantiated form is registered under the qualified name.
 								StringBuilder qualified_nested_sb;
 								if (const TypeInfo* orig_ti = tryGetTypeInfo(static_member.type_index)) {
 									std::string_view orig_name = StringTable::getStringView(orig_ti->name());
-	// Replace pattern prefix with instantiated prefix
-	// e.g., "Container::Payload" -> "Container$hash::Payload"
+ // Replace pattern prefix with instantiated prefix
+ // e.g., "Container::Payload" -> "Container$hash::Payload"
 									std::string_view pattern_prefix = template_name;
 									if (orig_name.starts_with(pattern_prefix) &&
 										orig_name.size() > pattern_prefix.size() &&
@@ -2035,27 +2046,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& static_member : pattern_struct.static_members()) {
 					FLASH_LOG(Templates, Debug, "Copying static member from AST: ", StringTable::getStringView(static_member.name));
 
-	// Check if already added from StructTypeInfo
+ // Check if already added from StructTypeInfo
 					if (struct_info->findStaticMember(static_member.name) != nullptr) {
 						continue; // Already added
 					}
 
-	// Substitute type if it's a template parameter
-	// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
+ // Substitute type if it's a template parameter
+ // Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
 					TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
 					original_type_spec.set_type_index(static_member.type_index);
 
-	// Use substitute_template_parameter for consistent template parameter matching
+ // Use substitute_template_parameter for consistent template parameter matching
 					TypeIndex substituted_type_index = substitute_template_parameter(
 						original_type_spec, template_params, template_args);
 
 					size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
 
-	// Substitute template parameters in the static member initializer
-	// Use ExpressionSubstitutor to handle all types of template-dependent expressions
+ // Substitute template parameters in the static member initializer
+ // Use ExpressionSubstitutor to handle all types of template-dependent expressions
 					std::optional<ASTNode> substituted_initializer = static_member.initializer;
 					if (static_member.initializer.has_value()) {
-	// Build parameter substitution map and preserve parameter order
+ // Build parameter substitution map and preserve parameter order
 						std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 						std::vector<std::string_view> template_param_order;
 						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -2066,7 +2077,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-	// Use ExpressionSubstitutor to substitute template parameters in the initializer
+ // Use ExpressionSubstitutor to substitute template parameters in the initializer
 						if (!param_map.empty()) {
 							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
 							substituted_initializer = substitutor.substitute(static_member.initializer.value());
@@ -2112,7 +2123,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto patterns_it_for_alias = gTemplateRegistry.specialization_patterns_.find(template_name);
 			if (patterns_it_for_alias != gTemplateRegistry.specialization_patterns_.end()) {
 				for (const auto& pattern : patterns_it_for_alias->second) {
-	// Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
+ // Handle both StructDeclarationNode and TemplateClassDeclarationNode patterns
 					const StructDeclarationNode* spec_struct_ptr_alias = nullptr;
 					if (pattern.specialized_node.is<StructDeclarationNode>()) {
 						spec_struct_ptr_alias = &pattern.specialized_node.as<StructDeclarationNode>();
@@ -2193,30 +2204,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
  // Check if the alias type is a template parameter that needs substitution
 				if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template) && !template_args.empty() && !pattern_args.empty()) {
-	// The alias_type_spec.type_index() identifies which template parameter this is
-	// We need to find which pattern_arg corresponds to this template parameter,
-	// then map to the corresponding template_arg
+ // The alias_type_spec.type_index() identifies which template parameter this is
+ // We need to find which pattern_arg corresponds to this template parameter,
+ // then map to the corresponding template_arg
 
-	// For enable_if<true, T>:
-	// - pattern_args = [true (is_value=true), T (is_value=false, is_dependent=true)]
-	// - template_params = [T] (template parameter at index 0)
-	// - template_args = [true (is_value=true), int (is_value=false)]
-	// - The alias "using type = T" has T which is template_params[0]
-	// - T appears at pattern_args[1]
-	// - So we substitute with template_args[1] = int
+ // For enable_if<true, T>:
+ // - pattern_args = [true (is_value=true), T (is_value=false, is_dependent=true)]
+ // - template_params = [T] (template parameter at index 0)
+ // - template_args = [true (is_value=true), int (is_value=false)]
+ // - The alias "using type = T" has T which is template_params[0]
+ // - T appears at pattern_args[1]
+ // - So we substitute with template_args[1] = int
 
-	// Find which template parameter index this alias type corresponds to
+ // Find which template parameter index this alias type corresponds to
 					for (size_t param_idx = 0; param_idx < template_params.size(); ++param_idx) {
 						if (template_params[param_idx].is<TemplateParameterNode>()) {
-	// Find which pattern_arg position this template parameter appears at
+ // Find which pattern_arg position this template parameter appears at
 							for (size_t pattern_idx = 0; pattern_idx < pattern_args.size() && pattern_idx < template_args.size(); ++pattern_idx) {
 								const TemplateTypeArg& pattern_arg = pattern_args[pattern_idx];
 
-	// Check if this pattern_arg is a template parameter (not a concrete value/type)
+ // Check if this pattern_arg is a template parameter (not a concrete value/type)
 								if (!pattern_arg.is_value && pattern_arg.is_dependent) {
-	// This is a template parameter position
-	// Check if it's the parameter we're looking for
-	// We can match by counting dependent parameters
+ // This is a template parameter position
+ // Check if it's the parameter we're looking for
+ // We can match by counting dependent parameters
 									size_t dependent_param_index = 0;
 									for (size_t i = 0; i < pattern_idx; ++i) {
 										if (!pattern_args[i].is_value && pattern_args[i].is_dependent) {
@@ -2225,15 +2236,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									}
 
 									if (dependent_param_index == param_idx) {
-	// Found it! Substitute with template_args[pattern_idx]
+ // Found it! Substitute with template_args[pattern_idx]
 										const TemplateTypeArg& concrete_arg = template_args[pattern_idx];
 										substituted_type = concrete_arg.typeEnum();
 										substituted_type_index = concrete_arg.type_index;
-	// Only call get_type_size_bits for basic types
+ // Only call get_type_size_bits for basic types
 										if (!is_struct_type(substituted_type)) {
 											substituted_size = static_cast<unsigned char>(get_type_size_bits(substituted_type));
 										} else {
-	// For UserDefined types, look up the size from the type registry
+ // For UserDefined types, look up the size from the type registry
 											substituted_size = 0;
 											if (const TypeInfo* sub_ti = tryGetTypeInfo(substituted_type_index)) {
 												substituted_size = sub_ti->type_size_;
@@ -2327,24 +2338,24 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // This is critical - we need to create new FunctionDeclarationNodes with instantiated_name as parent
 			for (StructMemberFunctionDecl& mem_func : pattern_struct.member_functions()) {
 				if (mem_func.is_constructor) {
-	// Handle constructor - it's a ConstructorDeclarationNode
+ // Handle constructor - it's a ConstructorDeclarationNode
 					const ConstructorDeclarationNode& orig_ctor = mem_func.function_declaration.as<ConstructorDeclarationNode>();
 
-	// Create a NEW ConstructorDeclarationNode with the instantiated struct name
+ // Create a NEW ConstructorDeclarationNode with the instantiated struct name
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name, // Set correct parent struct name
 						orig_ctor.name() // Constructor name (same as template name)
 					);
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_for_pattern);
 
-	// Copy parameters with template parameter substitution
+ // Copy parameters with template parameter substitution
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(orig_ctor.parameter_nodes(), new_ctor_ref, template_params, template_args_for_pattern);
 
-	// Copy initializers (member, base, delegating)
+ // Copy initializers (member, base, delegating)
 					substituteAndCopyInitializers(orig_ctor, new_ctor_ref, template_params, template_args_for_pattern);
 
-	// Copy definition if present (with template parameter substitution)
+ // Copy definition if present (with template parameter substitution)
 					if (orig_ctor.get_definition().has_value()) {
 						new_ctor_ref.set_definition(substituteTemplateParameters(*orig_ctor.get_definition(), template_params, template_args_for_pattern));
 					}
@@ -2352,11 +2363,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 				} else if (mem_func.is_destructor) {
-	// Handle destructor
+ // Handle destructor
 					instantiated_struct_ref.add_destructor(mem_func.function_declaration, mem_func.access, mem_func.is_virtual);
 				} else if (mem_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
-	// Member function template - add as-is without creating new node
-	// The template will be instantiated on demand when called
+ // Member function template - add as-is without creating new node
+ // The template will be instantiated on demand when called
 					instantiated_struct_ref.add_member_function(
 						mem_func.function_declaration,
 						mem_func.access,
@@ -2390,7 +2401,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						new_func_decl_ref,
 						instantiated_name);
 
-	// Copy all parameters and definition
+ // Copy all parameters and definition
 					FunctionDeclarationNode& new_func = new_func_ref;
 					setOuterTemplateBindingsFromParams(new_func, template_params, template_args_for_pattern);
 					size_t saved_pack_info = pack_param_info_.size();
@@ -2414,14 +2425,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						new_func.set_definition(substituted_body);
 					} else if (orig_func.has_template_body_position()) {
-	// Member struct template partial specializations store function bodies
-	// as deferred template body positions — re-parse the body now with
-	// concrete template arguments so the definition is available at codegen.
+ // Member struct template partial specializations store function bodies
+ // as deferred template body positions — re-parse the body now with
+ // concrete template arguments so the definition is available at codegen.
 						FLASH_LOG(Templates, Debug, "Re-parsing deferred function body from template body position");
 
-	// Reuse the already-aligned template args so deferred body re-parsing
-	// sees the deduced specialization parameters, not the raw concrete
-	// instantiation arguments.
+ // Reuse the already-aligned template args so deferred body re-parsing
+ // sees the deduced specialization parameters, not the raw concrete
+ // instantiation arguments.
 						FlashCpp::TemplateParameterScope template_scope;
 						for (const auto& [param_name, deduced_arg] : deduced_args) {
 							TypeCategory concrete_type = deduced_arg.typeEnum();
@@ -2449,7 +2460,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto block_result = parse_function_body();
 
 						if (!block_result.is_error() && block_result.node().has_value()) {
-	// Substitute template parameters in the parsed body
+ // Substitute template parameters in the parsed body
 							ASTNode substituted_body = substituteTemplateParameters(
 								*block_result.node(),
 								template_params,
@@ -2492,7 +2503,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::vector<std::string_view> template_param_order;
 				for (size_t i = 0; i < template_params.size() && i < template_args_for_pattern.size(); ++i) {
 					const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
-	// param.name() already returns string_view
+ // param.name() already returns string_view
 					param_map[param.name()] = template_args_for_pattern[i];
 					template_param_order.push_back(param.name());
 				}
@@ -2518,8 +2529,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						error_msg += " - " + std::string(message_view);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-	// Don't return error - continue with other static_asserts
-	// This matches the behavior of most compilers which report all failures
+ // Don't return error - continue with other static_asserts
+ // This matches the behavior of most compilers which report all failures
 					continue;
 				}
 
@@ -2531,7 +2542,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						error_msg += ": " + std::string(message_view);
 					}
 					FLASH_LOG(Templates, Error, error_msg);
-	// Don't return error - continue with other static_asserts
+ // Don't return error - continue with other static_asserts
 					continue;
 				}
 
@@ -2563,12 +2574,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Check struct_parsing_context_stack_ for self-reference
 				for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
 					std::string_view struct_name = it->struct_name;
-	// Compare with both unqualified and potentially qualified names
+ // Compare with both unqualified and potentially qualified names
 					if (struct_name == template_name) {
 						FLASH_LOG_FORMAT(Templates, Debug, "Self-referential template '{}' in body - deferring", template_name);
 						return std::nullopt;
 					}
-	// Also try stripping namespace prefix from struct_name
+ // Also try stripping namespace prefix from struct_name
 					size_t colon_pos = struct_name.rfind("::");
 					if (colon_pos != std::string_view::npos) {
 						std::string_view unqualified = struct_name.substr(colon_pos + 2);
@@ -2681,7 +2692,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (const TypeInfo* default_type_info = tryGetTypeInfo(default_type.type_index())) {
 						std::string_view default_type_name = StringTable::getStringView(default_type_info->name());
 
-	// Try to resolve using each filled argument
+ // Try to resolve using each filled argument
 						for (size_t arg_idx = 0; arg_idx < filled_template_args.size(); ++arg_idx) {
 							auto resolved_type = resolve_dependent_qualified_type(default_type_name, filled_template_args[arg_idx]);
 							if (resolved_type.has_value()) {
@@ -2728,42 +2739,42 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
 					FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode for non-type default");
 
-	// Handle dependent static member access like is_arithmetic_void::value or is_arithmetic__Tp::value
-	// namespace handle name = template instantiation name (e.g., is_arithmetic_void or is_arithmetic__Tp)
-	// name() = member name (e.g., value)
+ // Handle dependent static member access like is_arithmetic_void::value or is_arithmetic__Tp::value
+ // namespace handle name = template instantiation name (e.g., is_arithmetic_void or is_arithmetic__Tp)
+ // name() = member name (e.g., value)
 					if (!qual_id.namespace_handle().isGlobal()) {
 						std::string_view type_name = gNamespaceRegistry.getName(qual_id.namespace_handle());
 						std::string_view member_name = qual_id.name();
 						FLASH_LOG(Templates, Debug, "Non-global qualified id: type='", type_name, "', member='", member_name, "'");
 
-	// Check if type_name contains a template parameter placeholder
-	// Use TypeInfo-based detection for template instantiation placeholders
+ // Check if type_name contains a template parameter placeholder
+ // Use TypeInfo-based detection for template instantiation placeholders
 						auto [is_dependent, template_base_name] = isDependentTemplatePlaceholder(type_name);
 
-	// Additional check: if not detected as template instantiation, check for param-like suffixes
+ // Additional check: if not detected as template instantiation, check for param-like suffixes
 						if (!is_dependent && !filled_template_args.empty()) {
-	// Check if type_name ends with what looks like a template parameter
-	// Mangling: template_name + "_" + param_name
-	// For param "_Tp", this becomes: template_name + "_" + "_Tp" = template_name + "__Tp"
+ // Check if type_name ends with what looks like a template parameter
+ // Mangling: template_name + "_" + param_name
+ // For param "_Tp", this becomes: template_name + "_" + "_Tp" = template_name + "__Tp"
 							size_t last_underscore = type_name.rfind('_');
 							FLASH_LOG(Templates, Debug, "Checking for dependent param in type='", type_name, "', last_underscore=", last_underscore);
 							if (last_underscore != std::string_view::npos && last_underscore > 0) {
 								std::string_view suffix = type_name.substr(last_underscore + 1);
 								FLASH_LOG(Templates, Debug, "Suffix='", suffix, "'");
 
-	// Check if suffix looks like a template parameter
-	// Template parameters typically start with uppercase (Tp, T, U) or underscore (_Tp)
+ // Check if suffix looks like a template parameter
+ // Template parameters typically start with uppercase (Tp, T, U) or underscore (_Tp)
 								bool looks_like_param = false;
 								if (!suffix.empty() && (std::isupper(static_cast<unsigned char>(suffix[0])) ||
 														suffix[0] == '_')) {
 									looks_like_param = true;
 								}
 
-	// Special case: if suffix is empty and the character before last_underscore is also '_',
-	// then the param starts with '_'. Try splitting earlier.
+ // Special case: if suffix is empty and the character before last_underscore is also '_',
+ // then the param starts with '_'. Try splitting earlier.
 								if (suffix.empty() && last_underscore > 0 && type_name[last_underscore - 1] == '_') {
-	// Double underscore: template_name + "__" + rest_of_param
-	// Try finding the underscore before the double underscore
+ // Double underscore: template_name + "__" + rest_of_param
+ // Try finding the underscore before the double underscore
 									size_t prev_underscore = type_name.rfind('_', last_underscore - 1);
 									if (prev_underscore != std::string_view::npos) {
 										template_base_name = type_name.substr(0, prev_underscore);
@@ -2771,22 +2782,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										FLASH_LOG(Templates, Debug, "Double underscore detected, template_base_name='", template_base_name, "'");
 									}
 								} else if (looks_like_param) {
-	// Check if there's a double underscore pattern (param starts with _)
-	// Pattern: "template__Param" where Param starts with _
-	// We split at position of second _, giving suffix without leading _
-	// Check if previous char is also underscore
+ // Check if there's a double underscore pattern (param starts with _)
+ // Pattern: "template__Param" where Param starts with _
+ // We split at position of second _, giving suffix without leading _
+ // Check if previous char is also underscore
 									if (last_underscore > 0 && type_name[last_underscore - 1] == '_') {
-	// Yes, double underscore. Template name ends before the first of the two underscores
+ // Yes, double underscore. Template name ends before the first of the two underscores
 										template_base_name = type_name.substr(0, last_underscore - 1);
 										is_dependent = true;
 									} else {
-	// Single underscore separator
+ // Single underscore separator
 										template_base_name = type_name.substr(0, last_underscore);
 										is_dependent = true;
 									}
 								}
 
-	// Already set is_dependent=true above, just log
+ // Already set is_dependent=true above, just log
 								if (!template_base_name.empty()) {
 									FLASH_LOG(Templates, Debug, "Looks like template param! template_base_name='", template_base_name, "'");
 								}
@@ -2795,25 +2806,25 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						if (is_dependent && !filled_template_args.empty()) {
 
-	// Build the instantiated template name using hash-based naming
+ // Build the instantiated template name using hash-based naming
 							std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 
 							FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier: ",
 									  type_name, "::", member_name, " -> ", inst_name, "::", member_name);
 
-	// Try to instantiate the template
+ // Try to instantiate the template
 							try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 
-	// Look up the instantiated type
+ // Look up the instantiated type
 							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* type_info = type_it->second;
 								if (type_info->getStructInfo()) {
 									const StructTypeInfo* struct_info = type_info->getStructInfo();
-	// Find the static member
+ // Find the static member
 									for (const auto& static_member : struct_info->static_members) {
 										if (StringTable::getStringView(static_member.getName()) == member_name) {
-	// Evaluate the static member's initializer
+ // Evaluate the static member's initializer
 											if (static_member.initializer.has_value()) {
 												const ASTNode& init_node = *static_member.initializer;
 												if (init_node.is<ExpressionNode>()) {
@@ -2851,53 +2862,53 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						filled_template_args.push_back(TemplateTypeArg(int_val));
 					}
 				} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-	// Handle boolean literals
+ // Handle boolean literals
 					const BoolLiteralNode& lit = *bool_literal;
 					filled_template_args.push_back(TemplateTypeArg(lit.value() ? 1LL : 0LL, TypeCategory::Bool));
 				} else if (std::holds_alternative<MemberAccessNode>(expr)) {
-	// Handle dependent expressions like is_arithmetic<T>::value
+ // Handle dependent expressions like is_arithmetic<T>::value
 					const MemberAccessNode& member_access = std::get<MemberAccessNode>(expr);
 					std::string_view member_name = member_access.member_name();
 
 					FLASH_LOG(Templates, Debug, "Processing MemberAccess for non-type default: member='", member_name, "'");
 
-	// Check if the object is a type/template instantiation
+ // Check if the object is a type/template instantiation
 					ASTNode object_node = member_access.object();
 					if (object_node.is<ExpressionNode>()) {
 						const ExpressionNode& obj_expr = object_node.as<ExpressionNode>();
 
-	// The object might be an IdentifierNode referencing a template
+ // The object might be an IdentifierNode referencing a template
 						if (std::holds_alternative<IdentifierNode>(obj_expr)) {
 							const IdentifierNode& obj_id = std::get<IdentifierNode>(obj_expr);
 							std::string_view obj_name = obj_id.name();
 
 							FLASH_LOG(Templates, Debug, "MemberAccess object is IdentifierNode: '", obj_name, "'");
 
-	// Check if this identifier has template arguments stored separately
-	// For now, look for a type that was parsed as a dependent template instantiation
-	// The type name might be stored like "is_arithmetic$hash" for is_arithmetic<T>
+ // Check if this identifier has template arguments stored separately
+ // For now, look for a type that was parsed as a dependent template instantiation
+ // The type name might be stored like "is_arithmetic$hash" for is_arithmetic<T>
 
-	// Try looking up as a dependent template instantiation
-	// Build the instantiated name using filled_template_args
+ // Try looking up as a dependent template instantiation
+ // Build the instantiated name using filled_template_args
 							if (!filled_template_args.empty()) {
-	// Use hash-based naming instead of underscore-based
+ // Use hash-based naming instead of underscore-based
 								std::string_view inst_name = get_instantiated_class_name(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 
 								FLASH_LOG(Templates, Debug, "Looking up instantiated type: '", inst_name, "'");
 
-	// Try to instantiate the template
+ // Try to instantiate the template
 								try_instantiate_class_template(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
 
-	// Look up the instantiated type
+ // Look up the instantiated type
 								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (type_it != getTypesByNameMap().end()) {
 									const TypeInfo* type_info = type_it->second;
 									if (type_info->getStructInfo()) {
 										const StructTypeInfo* struct_info = type_info->getStructInfo();
-	// Find the static member
+ // Find the static member
 										for (const auto& static_member : struct_info->static_members) {
 											if (StringTable::getStringView(static_member.getName()) == member_name) {
-	// Evaluate the static member's initializer
+ // Evaluate the static member's initializer
 												if (static_member.initializer.has_value()) {
 													const ASTNode& init_node = *static_member.initializer;
 													if (init_node.is<ExpressionNode>()) {
@@ -2924,35 +2935,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				} else if (std::holds_alternative<SizeofExprNode>(expr)) {
-	// Handle sizeof(T) as a default value
+ // Handle sizeof(T) as a default value
 					const SizeofExprNode& sizeof_node = std::get<SizeofExprNode>(expr);
 					if (sizeof_node.is_type()) {
-	// sizeof(type) - evaluate the type size
+ // sizeof(type) - evaluate the type size
 						const ASTNode& type_node = sizeof_node.type_or_expr();
 						if (type_node.is<TypeSpecifierNode>()) {
 							TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
 
-	// Check if this is a template parameter that needs substitution
+ // Check if this is a template parameter that needs substitution
 							bool found_substitution = false;
 							std::string_view sizeof_type_name;
 
-	// Try to get the type name from the token first (most reliable for template params)
+ // Try to get the type name from the token first (most reliable for template params)
 							if (type_spec.token().type() == Token::Type::Identifier) {
 								sizeof_type_name = type_spec.token().value();
 							} else if ((type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) && type_spec.type_index().is_valid()) {
-	// Fall back to gTypeInfo for fully resolved types
+ // Fall back to gTypeInfo for fully resolved types
 								if (const TypeInfo* sizeof_type_info = tryGetTypeInfo(type_spec.type_index())) {
 									sizeof_type_name = StringTable::getStringView(sizeof_type_info->name());
 								}
 							}
 
 							if (!sizeof_type_name.empty()) {
-	// Check if this is one of the template parameters we've already filled
+ // Check if this is one of the template parameters we've already filled
 								for (size_t j = 0; j < template_params.size() && j < filled_template_args.size(); ++j) {
 									if (template_params[j].is<TemplateParameterNode>()) {
 										const TemplateParameterNode& prev_param = template_params[j].as<TemplateParameterNode>();
 										if (prev_param.name() == sizeof_type_name) {
-	// Found the matching template parameter - use its filled value
+ // Found the matching template parameter - use its filled value
 											const TemplateTypeArg& filled_arg = filled_template_args[j];
 											if (filled_arg.category() != TypeCategory::Invalid) {
 												const int size_in_bytes = getTemplateArgumentSizeInBytes(filled_arg);
@@ -2969,7 +2980,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 
 							if (!found_substitution) {
-	// Direct type (not a template parameter)
+ // Direct type (not a template parameter)
 								int size_in_bits = type_spec.size_in_bits();
 								int size_in_bytes = (size_in_bits + 7) / 8; // Round up to bytes
 								filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(size_in_bytes)));
@@ -3155,7 +3166,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
 						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
 					} else {
-	// Add the resolved base class
+ // Add the resolved base class
 						struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), concrete_arg.type_index, base.access, base.is_virtual);
 						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type.name_), "' with type_index=", concrete_arg.type_index);
 						found = true;
@@ -3228,7 +3239,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& arg_info : deferred_base.template_arguments) {
  // Pack expansion handling
 				if (arg_info.is_pack) {
-	// If the argument node references a template parameter pack, expand it
+ // If the argument node references a template parameter pack, expand it
 					if (arg_info.node.is<ExpressionNode>()) {
 						const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
 						if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
@@ -3242,7 +3253,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								continue;
 							}
 						}
-	// Also handle IdentifierNode - it may represent a pack parameter that wasn't converted to TemplateParameterReferenceNode
+ // Also handle IdentifierNode - it may represent a pack parameter that wasn't converted to TemplateParameterReferenceNode
 						else if (std::holds_alternative<IdentifierNode>(expr)) {
 							const IdentifierNode& id = std::get<IdentifierNode>(expr);
 							StringHandle pack_name = StringTable::getOrInternStringHandle(id.name());
@@ -3291,13 +3302,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved_args.push_back(subst);
 								resolved = true;
 							} else {
-	// Check if this is a template class that needs to be instantiated with substituted args
-	// For example: is_integral<T> where T needs to be substituted with int
+ // Check if this is a template class that needs to be instantiated with substituted args
+ // For example: is_integral<T> where T needs to be substituted with int
 								auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
 								if (template_entry.has_value()) {
-	// This is a template class - try to instantiate it with our template args
-	// The template args for the nested template should be our current template args
-	// (e.g., is_integral<T> with T=int should become is_integral_int)
+ // This is a template class - try to instantiate it with our template args
+ // The template args for the nested template should be our current template args
+ // (e.g., is_integral<T> with T=int should become is_integral_int)
 									FLASH_LOG(Templates, Debug, "Nested template lookup found '", type_name,
 											  "', attempting instantiation with ", template_args_to_use.size(), " args");
 									auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
@@ -3335,7 +3346,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-	// Fallback: use the type specifier as-is
+ // Fallback: use the type specifier as-is
 					if (!resolved) {
 						resolved_args.emplace_back(type_spec);
 						resolved_args.back().is_pack = arg_info.is_pack;
@@ -3346,7 +3357,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (arg_info.node.is<ExpressionNode>()) {
 					const ExpressionNode& expr = arg_info.node.as<ExpressionNode>();
 
-	// Handle TemplateParameterReferenceNode - substitute template parameter with actual type
+ // Handle TemplateParameterReferenceNode - substitute template parameter with actual type
 					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 						const auto& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						std::string_view param_name = tparam_ref.param_name().view();
@@ -3360,21 +3371,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							continue;
 						} else {
 							FLASH_LOG_FORMAT(Templates, Debug, "Template parameter '{}' not found in substitution map", param_name);
-	// Template parameter not found in substitution - this is an unresolved dependency
+ // Template parameter not found in substitution - this is an unresolved dependency
 							unresolved_arg = true;
 							break;
 						}
 					}
 
-	// Special handling for TypeTraitExprNode - need to substitute template parameters
+ // Special handling for TypeTraitExprNode - need to substitute template parameters
 					if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 						const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
 
-	// Create a substituted version of the type trait
+ // Create a substituted version of the type trait
 						if (trait_expr.has_type()) {
 							const TypeSpecifierNode& type_spec = trait_expr.type_node().as<TypeSpecifierNode>();
 
-	// Check if the type needs substitution
+ // Check if the type needs substitution
 							TypeCategory base_type = type_spec.type();
 							TypeIndex type_idx = type_spec.type_index();
 							[[maybe_unused]] bool substituted = false;
@@ -3385,7 +3396,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									std::string_view type_name = StringTable::getStringView(type_idx_ti->name());
 									auto subst_it = name_substitution_map.find(type_name);
 									if (subst_it != name_substitution_map.end()) {
-	// Substitute the type
+ // Substitute the type
 										const TemplateTypeArg& subst = subst_it->second;
 										substituted_type_spec = TypeSpecifierNode(
 											subst.type_index.withCategory(subst.typeEnum()),
@@ -3400,7 +3411,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 
-	// Create substituted type trait node and evaluate
+ // Create substituted type trait node and evaluate
 							ASTNode subst_type_node = emplace_node<TypeSpecifierNode>(substituted_type_spec);
 							ASTNode subst_trait_node = emplace_node<ExpressionNode>(
 								TypeTraitExprNode(trait_expr.kind(), subst_type_node, trait_expr.trait_token()));
@@ -3413,13 +3424,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-	// Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
-	// These need template parameter substitution before evaluation
+ // Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
+ // These need template parameter substitution before evaluation
 						const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
 
 						FLASH_LOG(Templates, Debug, "Processing FunctionCallNode in deferred base argument");
 
-	// Check if the function has template arguments that need substitution
+ // Check if the function has template arguments that need substitution
 						bool has_dependent_template_args = false;
 						std::vector<TemplateTypeArg> substituted_func_template_args;
 
@@ -3449,7 +3460,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											has_dependent_template_args = true;
 										}
 									} else {
-	// Keep the argument as-is for other expression types
+ // Keep the argument as-is for other expression types
 										has_dependent_template_args = true;
 									}
 								} else if (targ_node.is<TypeSpecifierNode>()) {
@@ -3461,7 +3472,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											if (subst_it != name_substitution_map.end()) {
 												substituted_func_template_args.push_back(subst_it->second);
 											} else {
-	// Keep as-is
+ // Keep as-is
 												substituted_func_template_args.emplace_back(type_spec);
 											}
 										} else {
@@ -3474,13 +3485,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-	// If we successfully substituted all template arguments, try to instantiate and call the function
+ // If we successfully substituted all template arguments, try to instantiate and call the function
 						if (!has_dependent_template_args && !substituted_func_template_args.empty()) {
 							std::string_view func_name = func_call.called_from().value();
 							FLASH_LOG_FORMAT(Templates, Debug, "Trying to instantiate constexpr function '{}' with {} template args",
 											 func_name, substituted_func_template_args.size());
 
-	// Try to instantiate the template function
+ // Try to instantiate the template function
 							auto instantiated_func = try_instantiate_template_explicit(func_name, substituted_func_template_args);
 
 							if (instantiated_func.has_value()) {
@@ -3496,14 +3507,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								FLASH_LOG_FORMAT(Templates, Debug, "Instantiated function: is_constexpr={}, has_definition={}",
 												 func_decl.is_constexpr(), func_decl.get_definition().has_value());
 
-	// Check if the function is constexpr
+ // Check if the function is constexpr
 								if (func_decl.is_constexpr()) {
-	// For constexpr functions that return a constant value, we can evaluate them
-	// Look for a simple return statement with a constant value
-	// This is a simplified constexpr evaluation - full constexpr requires an interpreter
+ // For constexpr functions that return a constant value, we can evaluate them
+ // Look for a simple return statement with a constant value
+ // This is a simplified constexpr evaluation - full constexpr requires an interpreter
 
-	// For now, if the function body is just "return true;" or "return false;", we can evaluate it
-	// This handles the common type_traits pattern
+ // For now, if the function body is just "return true;" or "return false;", we can evaluate it
+ // This handles the common type_traits pattern
 									if (func_decl.get_definition().has_value()) {
 										const ASTNode& body_node = *func_decl.get_definition();
 										FLASH_LOG_FORMAT(Templates, Debug, "Function body is BlockNode: {}", body_node.is<BlockNode>());
@@ -3516,7 +3527,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 												if (stmt.is<ReturnStatementNode>()) {
 													const ReturnStatementNode& ret_stmt = stmt.as<ReturnStatementNode>();
 													if (ret_stmt.expression().has_value()) {
-	// Try to evaluate the return expression as a constant
+ // Try to evaluate the return expression as a constant
 														if (auto ret_value = try_evaluate_constant_expression(*ret_stmt.expression())) {
 															FLASH_LOG_FORMAT(Templates, Debug, "Evaluated constexpr function call to value {}", ret_value->value);
 															TemplateTypeArg val_arg(ret_value->value, ret_value->type);
@@ -3533,7 +3544,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-	// Fallback: try to evaluate the expression directly
+ // Fallback: try to evaluate the expression directly
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
 							TemplateTypeArg val_arg(value->value, value->type);
 							val_arg.is_pack = arg_info.is_pack;
@@ -3541,15 +3552,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							continue;
 						}
 					} else if (std::holds_alternative<BinaryOperatorNode>(expr) || std::holds_alternative<TernaryOperatorNode>(expr)) {
-	// Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
-	// These need template parameter substitution before evaluation
+ // Handle binary/ternary operator expressions like: R1<T>::num < R2<T>::num
+ // These need template parameter substitution before evaluation
 						FLASH_LOG(Templates, Debug, "Processing BinaryOperatorNode/TernaryOperatorNode in deferred base argument");
 
-	// Use ExpressionSubstitutor to substitute template parameters
+ // Use ExpressionSubstitutor to substitute template parameters
 						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
 						ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
-	// Now try to evaluate the substituted expression
+ // Now try to evaluate the substituted expression
 						if (auto value = try_evaluate_constant_expression(substituted_node)) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted binary/ternary operator to value {}", value->value);
 							TemplateTypeArg val_arg(value->value, value->type);
@@ -3560,15 +3571,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted binary/ternary operator");
 						}
 					} else if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-	// Handle unary operator expressions like: -Num<T>::num
-	// These need template parameter substitution before evaluation
+ // Handle unary operator expressions like: -Num<T>::num
+ // These need template parameter substitution before evaluation
 						FLASH_LOG(Templates, Debug, "Processing UnaryOperatorNode in deferred base argument");
 
-	// Use ExpressionSubstitutor to substitute template parameters
+ // Use ExpressionSubstitutor to substitute template parameters
 						ExpressionSubstitutor substitutor(name_substitution_map, *this);
 						ASTNode substituted_node = substitutor.substitute(arg_info.node);
 
-	// Now try to evaluate the substituted expression
+ // Now try to evaluate the substituted expression
 						if (auto value = try_evaluate_constant_expression(substituted_node)) {
 							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted unary operator to value {}", value->value);
 							TemplateTypeArg val_arg(value->value, value->type);
@@ -3579,7 +3590,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
 						}
 					} else {
-	// Try to evaluate non-type template argument after substitution
+ // Try to evaluate non-type template argument after substitution
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
 							TemplateTypeArg val_arg(value->value, value->type);
 							val_arg.is_pack = arg_info.is_pack;
@@ -3625,22 +3636,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
 				if (alias_it == getTypesByNameMap().end()) {
-	// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
+ // Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
 					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
 					if (inherited_alias == nullptr) {
-	// This can happen when templates are instantiated with void/dependent arguments
-	// during template metaprogramming (e.g., SFINAE). The code may still compile
-	// and run correctly, so log at Debug level rather than Error.
+ // This can happen when templates are instantiated with void/dependent arguments
+ // during template metaprogramming (e.g., SFINAE). The code may still compile
+ // and run correctly, so log at Debug level rather than Error.
 						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ", alias_name,
 								  " (this may be expected for SFINAE/dependent template arguments)");
 						continue;
 					}
-	// The inherited_alias is a type alias - resolve it to the underlying type
-	// If type_index_ is valid, use it to get the actual type name
+ // The inherited_alias is a type alias - resolve it to the underlying type
+ // If type_index_ is valid, use it to get the actual type name
 					if (const TypeInfo* underlying_type = tryGetTypeInfo(inherited_alias->type_index_)) {
 						final_base_name = StringTable::getStringView(underlying_type->name());
 					} else {
-	// Fallback: use the alias name if type_index is invalid
+ // Fallback: use the alias name if type_index is invalid
 						final_base_name = StringTable::getStringView(inherited_alias->name());
 					}
 					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
@@ -3693,7 +3704,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
 						std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
 
-	// Add the base class to the instantiated struct
+ // Add the base class to the instantiated struct
 						struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
 						FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
 					} else {
@@ -3722,7 +3733,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
 					std::string_view base_class_name = StringTable::getStringView(base_type_info->name());
 
-	// Add the base class to the instantiated struct
+ // Add the base class to the instantiated struct
 					struct_info->addBaseClass(base_class_name, base_type_index, deferred_base.access, deferred_base.is_virtual);
 					FLASH_LOG(Templates, Debug, "Added deferred base class: ", base_class_name, " with type_index=", base_type_index);
 				} else {
@@ -3768,7 +3779,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // This is a template instantiation - check if it's already fully instantiated
  // Need to instantiate if: no struct_info OR struct_info exists but size is 0
 				if (!member_type_info->getStructInfo() || member_type_info->getStructInfo()->total_size == 0) {
-	// Not yet instantiated - get the base template name and instantiate
+ // Not yet instantiated - get the base template name and instantiate
 					member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 					needs_instantiation = true;
 					FLASH_LOG(Templates, Debug, "Member needs instantiation (placeholder with size=0 or no struct_info): base_name='", member_struct_name, "'");
@@ -3790,10 +3801,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::string inst_name(inst_name_view);
 				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 				if (inst_type_it != getTypesByNameMap().end()) {
-	// Update member_type_index to point to the instantiated type
+ // Update member_type_index to point to the instantiated type
 					member_type_index = inst_type_it->second->type_index_;
-	// Update member_type to match the instantiated type's actual type
-	// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
+ // Update member_type to match the instantiated type's actual type
+ // This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
 					member_type_index.setCategory(inst_type_it->second->typeEnum());
 				}
 			}
@@ -3804,7 +3815,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (member_type_index.is_valid()) {
 			if (const TypeInfo* member_fix_info = tryGetTypeInfo(member_type_index)) {
 				if (member_fix_info->getStructInfo() && member_type_index.category() == TypeCategory::UserDefined) {
-	// Fix Type::UserDefined to Type::Struct for instantiated templates
+ // Fix Type::UserDefined to Type::Struct for instantiated templates
 					member_type_index.setCategory(member_fix_info->typeEnum());
 				}
 			}
@@ -3846,13 +3857,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
  // If we found an identifier, try to substitute it with a non-type template parameter value
 				if (identifier_name.has_value()) {
-	// Try to find which non-type template parameter this is
+ // Try to find which non-type template parameter this is
 					for (size_t i = 0; i < template_params.size(); ++i) {
 						const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 						if (tparam.kind() == TemplateParameterKind::NonType && tparam.name() == *identifier_name) {
-	// Found the non-type parameter - substitute with the actual value
+ // Found the non-type parameter - substitute with the actual value
 							if (i < template_args_to_use.size() && template_args_to_use[i].is_value) {
-	// Create a numeric literal node with the substituted value
+ // Create a numeric literal node with the substituted value
 								int64_t val = template_args_to_use[i].value;
 								Token num_token(Token::Type::Literal, StringBuilder().append(val).commit(), 0, 0, 0);
 								auto num_literal = emplace_node<ExpressionNode>(
@@ -4222,14 +4233,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Handle complex expressions containing sizeof... using ConstExpr::Evaluator
  // (e.g., static_cast<int>(sizeof...(Ts)) * 2 + 40, binary expressions, etc.)
 				else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-	// Recursive helper to substitute SizeofPackNode with numeric literals in an expression
+ // Recursive helper to substitute SizeofPackNode with numeric literals in an expression
 					std::function<ASTNode(const ASTNode&)> substitute_sizeof_pack = [&](const ASTNode& node) -> ASTNode {
 						if (!node.is<ExpressionNode>()) {
 							return node;
 						}
 						const ExpressionNode& expr_node = node.as<ExpressionNode>();
 
-	// Handle SizeofPackNode directly
+ // Handle SizeofPackNode directly
 						if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr_node)) {
 							const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 							if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
@@ -4237,11 +4248,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 							return node;
 						}
-	// Handle static_cast wrapping sizeof...
+ // Handle static_cast wrapping sizeof...
 						if (std::holds_alternative<StaticCastNode>(expr_node)) {
 							const StaticCastNode& cast_node = std::get<StaticCastNode>(expr_node);
 							ASTNode substituted_inner = substitute_sizeof_pack(cast_node.expr());
-	// If inner was substituted to a literal, just use the literal (static_cast has no effect)
+ // If inner was substituted to a literal, just use the literal (static_cast has no effect)
 							if (substituted_inner.is<ExpressionNode>()) {
 								const ExpressionNode& inner_expr = substituted_inner.as<ExpressionNode>();
 								if (std::holds_alternative<NumericLiteralNode>(inner_expr)) {
@@ -4250,12 +4261,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 							return node;
 						}
-	// Handle BinaryOperatorNode - recursively substitute both sides
+ // Handle BinaryOperatorNode - recursively substitute both sides
 						if (std::holds_alternative<BinaryOperatorNode>(expr_node)) {
 							const BinaryOperatorNode& bin_op = std::get<BinaryOperatorNode>(expr_node);
 							ASTNode subst_lhs = substitute_sizeof_pack(bin_op.get_lhs());
 							ASTNode subst_rhs = substitute_sizeof_pack(bin_op.get_rhs());
-	// Create new binary operator with substituted operands
+ // Create new binary operator with substituted operands
 							BinaryOperatorNode& new_bin = gChunkedAnyStorage.emplace_back<BinaryOperatorNode>(
 								bin_op.get_token(), subst_lhs, subst_rhs);
 							return emplace_node<ExpressionNode>(new_bin);
@@ -4263,10 +4274,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return node;
 					};
 
-	// Substitute sizeof... in the expression
+ // Substitute sizeof... in the expression
 					ASTNode substituted_expr = substitute_sizeof_pack(static_member.initializer.value());
 
-	// Now use ConstExpr::Evaluator to evaluate the expression
+ // Now use ConstExpr::Evaluator to evaluate the expression
 					ConstExpr::EvaluationContext eval_context(gSymbolTable);
 					ConstExpr::EvalResult result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_context);
 
@@ -4282,7 +4293,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view op = fold.op();
 					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
 
-	// Find the parameter pack in template parameters
+ // Find the parameter pack in template parameters
 					std::optional<size_t> pack_param_idx;
 					for (size_t p = 0; p < template_params.size(); ++p) {
 						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -4293,11 +4304,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (pack_param_idx.has_value()) {
-	// Collect the values from the variadic pack arguments
+ // Collect the values from the variadic pack arguments
 						std::vector<int64_t> pack_values;
 						bool all_values_found = true;
 
-	// For variadic packs, arguments after non-variadic parameters are the pack values
+ // For variadic packs, arguments after non-variadic parameters are the pack values
 						size_t non_variadic_count = 0;
 						for (const auto& param : template_params) {
 							if (!param.as<TemplateParameterNode>().is_variadic()) {
@@ -4346,7 +4357,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 					const ASTNode& cond_node = ternary.condition();
 
-	// Check if condition is a template parameter reference or identifier
+ // Check if condition is a template parameter reference or identifier
 					if (cond_node.is<ExpressionNode>()) {
 						const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
 						std::optional<int64_t> cond_value;
@@ -4355,7 +4366,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
 							FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
 
-	// Look up the parameter value
+ // Look up the parameter value
 							for (size_t p = 0; p < template_params.size(); ++p) {
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 								if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
@@ -4371,7 +4382,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							std::string_view id_name = id_node.name();
 							FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
 
-	// Look up the identifier as a template parameter
+ // Look up the identifier as a template parameter
 							for (size_t p = 0; p < template_params.size(); ++p) {
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 								if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
@@ -4384,7 +4395,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
-	// If we found the condition value, evaluate the ternary
+ // If we found the condition value, evaluate the ternary
 						if (cond_value.has_value()) {
 							const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
 
@@ -4397,7 +4408,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																	 ? std::get<unsigned long long>(val)
 																	 : static_cast<unsigned long long>(std::get<double>(val));
 
-	// Create a new numeric literal with the evaluated result
+ // Create a new numeric literal with the evaluated result
 									std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
 									Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 									substituted_initializer = emplace_node<ExpressionNode>(
@@ -4410,21 +4421,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
- // General fallback: use ExpressionSubstitutor to substitute any remaining template
- // parameters in the initializer. This handles cases like V + W where V and W are
- // non-type template parameters that the specific handlers above didn't cover.
+ // General fallback: substitute remaining template parameters in the initializer.
+ // ExpressionSubstitutor handles ExpressionNode variants; substituteTemplateParameters
+ // is needed for InitializerListNode since ExpressionSubstitutor doesn't recurse into it.
 			if (substituted_initializer.has_value()) {
-				std::unordered_map<std::string_view, TemplateTypeArg> param_map;
-				for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
-					if (template_params[pi].is<TemplateParameterNode>()) {
-						const TemplateParameterNode& param = template_params[pi].as<TemplateParameterNode>();
-						param_map[param.name()] = template_args_to_use[pi];
+				if (substituted_initializer->is<InitializerListNode>()) {
+					substituted_initializer = substituteTemplateParameters(
+						substituted_initializer.value(), template_params, template_args_to_use);
+					FLASH_LOG(Templates, Debug, "Substituted template parameters in InitializerListNode static member initializer");
+				} else {
+					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					for (size_t pi = 0; pi < template_params.size() && pi < template_args_to_use.size(); ++pi) {
+						if (template_params[pi].is<TemplateParameterNode>()) {
+							const TemplateParameterNode& param = template_params[pi].as<TemplateParameterNode>();
+							param_map[param.name()] = template_args_to_use[pi];
+						}
 					}
-				}
-				if (!param_map.empty()) {
-					ExpressionSubstitutor substitutor(param_map, *this);
-					substituted_initializer = substitutor.substitute(substituted_initializer.value());
-					FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
+					if (!param_map.empty()) {
+						ExpressionSubstitutor substitutor(param_map, *this);
+						substituted_initializer = substitutor.substitute(substituted_initializer.value());
+						FLASH_LOG(Templates, Debug, "Applied general ExpressionSubstitutor to static member initializer");
+					}
 				}
 
 				if (substituted_initializer.has_value()) {
@@ -4510,7 +4527,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					std::string_view op = fold.op();
 					FLASH_LOG(Templates, Debug, "Static member initializer contains fold expression with pack: ", pack_name, " op: ", op);
 
-	// Find the parameter pack in template parameters
+ // Find the parameter pack in template parameters
 					std::optional<size_t> pack_param_idx;
 					for (size_t p = 0; p < template_params.size(); ++p) {
 						const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -4521,7 +4538,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (pack_param_idx.has_value()) {
-	// For variadic packs, arguments after non-variadic parameters are the pack values.
+ // For variadic packs, arguments after non-variadic parameters are the pack values.
 						std::vector<int64_t> pack_values;
 						bool all_values_found = true;
 						size_t non_variadic_count = 0;
@@ -4827,7 +4844,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (member.size == 0) {
 					if (const TypeInfo* mem_type_info = tryGetTypeInfo(member.type_index)) {
 						std::string_view mem_type_name = StringTable::getStringView(mem_type_info->name());
-	// Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
+ // Check if this is a nested class of the current template (e.g., "Wrapper::Nested")
 						if (mem_type_name.starts_with(template_name) && mem_type_name.size() > template_name.size() + 2 &&
 							mem_type_name.substr(template_name.size(), 2) == "::") {
 							std::string_view nested_name = mem_type_name.substr(template_name.size() + 2);
@@ -4896,22 +4913,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // Check for self-referential type alias (e.g., "using type = bool_constant;" inside bool_constant template)
  // When the template is instantiated (e.g., bool_constant_true), this should point to the instantiated type
 				if (type_name == template_name) {
-	// Self-referential type alias - point to the instantiated type
+ // Self-referential type alias - point to the instantiated type
 					auto inst_it = getTypesByNameMap().find(instantiated_name);
 					if (inst_it != getTypesByNameMap().end()) {
-	// Use the type_index_ field directly instead of pointer arithmetic
-	// Pointer arithmetic on deque elements is undefined behavior
+ // Use the type_index_ field directly instead of pointer arithmetic
+ // Pointer arithmetic on deque elements is undefined behavior
 						TypeIndex inst_idx = inst_it->second->type_index_;
 						substituted_type_index = inst_idx;
 						FLASH_LOG(Templates, Debug, "Self-referential type alias '", StringTable::getStringView(type_alias.alias_name),
 								  "' now points to instantiated type '", instantiated_name, "' (index ", inst_idx, ")");
 					}
 				} else {
-	// Use substitute_template_parameter for consistent template parameter matching
+ // Use substitute_template_parameter for consistent template parameter matching
 					TypeIndex subst_type_index = substitute_template_parameter(
 						alias_type_spec, template_params, template_args_to_use);
 
-	// Only apply substitution if the type was actually a template parameter
+ // Only apply substitution if the type was actually a template parameter
 					if (subst_type_index.category() != alias_type_spec.type() || subst_type_index != alias_type_spec.type_index()) {
 						substituted_type = subst_type_index.category();
 						substituted_type_index = subst_type_index;
@@ -5169,19 +5186,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // (e.g., "operator value_type()" where "using value_type = T;")
  // This is needed because substitute_template_parameter doesn't have access to type aliases
 				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
-	// type_index=0 means this is a placeholder (type parsed inside template before registration)
-	// Try to find the type name from the token
+ // type_index=0 means this is a placeholder (type parsed inside template before registration)
+ // Try to find the type name from the token
 					std::string_view return_type_name = return_type_spec.token().value();
 					if (!return_type_name.empty()) {
-	// Look up in the template class's type aliases
+ // Look up in the template class's type aliases
 						for (const auto& type_alias : class_decl.type_aliases()) {
 							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
-	// Found the type alias - check what it resolves to
+ // Found the type alias - check what it resolves to
 								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 
-	// If the alias resolves to a template parameter, substitute it
+ // If the alias resolves to a template parameter, substitute it
 								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
-	// Try to substitute the alias target
+ // Try to substitute the alias target
 									TypeIndex subst_index = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use);
 									if (subst_index.category() != TypeCategory::UserDefined || subst_index.is_valid()) {
@@ -5263,11 +5280,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
 						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-	// Substitute parameter type
+ // Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
 
-	// Create substituted parameter type
+ // Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(
 							param_type_index.category(),
 							param_type_spec.qualifier(),
@@ -5276,7 +5293,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							param_type_spec.cv_qualifier());
 						substituted_param_type.set_type_index(param_type_index);
 
-	// Copy pointer levels and reference qualifiers
+ // Copy pointer levels and reference qualifiers
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
@@ -5298,9 +5315,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
 							substituted_param_type_node, param_decl.identifier_token());
-	// Copy default value if present
+ // Copy default value if present
 						if (param_decl.has_default_value()) {
-	// Substitute template parameters in the default value expression
+ // Substitute template parameters in the default value expression
 							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 								if (template_params[i].is<TemplateParameterNode>()) {
@@ -5316,7 +5333,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						new_func_ref.add_parameter_node(substituted_param_decl);
 					} else {
-	// Non-declaration parameter, copy as-is
+ // Non-declaration parameter, copy as-is
 						new_func_ref.add_parameter_node(param);
 					}
 				}
@@ -5418,11 +5435,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
 						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-	// Substitute parameter type
+ // Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
 
-	// Create substituted parameter type
+ // Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(
 							param_type_index.category(),
 							param_type_spec.qualifier(),
@@ -5432,7 +5449,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						);
 						substituted_param_type.set_type_index(param_type_index);
 
-	// Copy pointer levels and reference qualifiers
+ // Copy pointer levels and reference qualifiers
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
@@ -5454,9 +5471,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
 							substituted_param_type_node, param_decl.identifier_token());
-	// Copy default value if present
+ // Copy default value if present
 						if (param_decl.has_default_value()) {
-	// Substitute template parameters in the default value expression
+ // Substitute template parameters in the default value expression
 							std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 							for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 								if (template_params[i].is<TemplateParameterNode>()) {
@@ -5472,7 +5489,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 						new_func_ref.add_parameter_node(substituted_param_decl);
 					} else {
-	// Non-declaration parameter, copy as-is
+ // Non-declaration parameter, copy as-is
 						new_func_ref.add_parameter_node(param);
 					}
 				}
@@ -5481,15 +5498,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::optional<ASTNode> body_to_substitute;
 
 				if (func_decl.get_definition().has_value()) {
-	// Use the already-parsed definition
+ // Use the already-parsed definition
 					FLASH_LOG(Templates, Debug, "Function has definition, using parsed body");
 					body_to_substitute = func_decl.get_definition();
 				} else if (func_decl.has_template_body_position()) {
-	// Re-parse the function body from saved position
-	// This is needed for member struct templates where body parsing is deferred
+ // Re-parse the function body from saved position
+ // This is needed for member struct templates where body parsing is deferred
 					FLASH_LOG(Templates, Debug, "Function has template body position, re-parsing");
 
-	// Set up template parameter types in the type system for body parsing
+ // Set up template parameter types in the type system for body parsing
 					FlashCpp::TemplateParameterScope template_scope;
 					InlineVector<StringHandle, 4> param_names;
 					param_names.reserve(template_params.size());
@@ -5501,18 +5518,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					registerTypeParamsInScope(param_names, template_args_to_use, template_scope, true);
 
-	// Save current position and parsing context
+ // Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
 					const FunctionDeclarationNode* saved_current_function = current_function_;
 
-	// Restore to the function body start
+ // Restore to the function body start
 					restore_lexer_position_only(func_decl.template_body_position());
 
-	// Set up parsing context for the function
+ // Set up parsing context for the function
 					gSymbolTable.enter_scope(ScopeType::Function);
 					current_function_ = &new_func_ref;
 
-	// Add parameters to symbol table
+ // Add parameters to symbol table
 					for (const auto& param : new_func_ref.parameter_nodes()) {
 						if (param.is<DeclarationNode>()) {
 							const auto& param_decl = param.as<DeclarationNode>();
@@ -5520,18 +5537,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-	// Parse the function body (handles function-try-blocks too)
+ // Parse the function body (handles function-try-blocks too)
 					auto block_result = parse_function_body();
 
 					if (!block_result.is_error() && block_result.node().has_value()) {
 						body_to_substitute = block_result.node();
 					}
 
-	// Clean up context
+ // Clean up context
 					current_function_ = saved_current_function;
 					gSymbolTable.exit_scope();
 
-	// Restore original position
+ // Restore original position
 					restore_lexer_position_only(current_pos);
 					discard_saved_token(current_pos);
 				}
@@ -5540,8 +5557,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (body_to_substitute.has_value()) {
 					FLASH_LOG(Templates, Debug, "About to substitute template parameters in function body for struct: ", StringTable::getStringView(instantiated_name));
 
-	// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
-	// This is needed for sizeof...(Pack) to work in eager member function body substitution
+ // Push struct parsing context so that get_class_template_pack_size can find pack info in the registry
+ // This is needed for sizeof...(Pack) to work in eager member function body substitution
 					StructParsingContext struct_ctx;
 					struct_ctx.struct_name = StringTable::getStringView(instantiated_name);
 					struct_ctx.struct_node = nullptr;
@@ -5569,7 +5586,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						throw;
 					}
 
-	// Pop struct parsing context
+ // Pop struct parsing context
 					struct_parsing_context_stack_.pop_back();
 					FLASH_LOG(Templates, Debug, "Popped struct context");
 				}
@@ -5622,16 +5639,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // First, check if the return type is a type alias defined in this template class
  // (e.g., "operator value_type()" where "using value_type = T;")
 				if (return_type == TypeCategory::UserDefined && !return_type_index.is_valid()) {
-	// type_index=0 means this is a placeholder (type parsed inside template before registration)
+ // type_index=0 means this is a placeholder (type parsed inside template before registration)
 					std::string_view return_type_name = return_type_spec.token().value();
 					if (!return_type_name.empty()) {
-	// Look up in the template class's type aliases
+ // Look up in the template class's type aliases
 						for (const auto& type_alias : class_decl.type_aliases()) {
 							if (StringTable::getStringView(type_alias.alias_name) == return_type_name) {
-	// Found the type alias - check what it resolves to
+ // Found the type alias - check what it resolves to
 								const TypeSpecifierNode& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 
-	// If the alias resolves to a template parameter, substitute it
+ // If the alias resolves to a template parameter, substitute it
 								if ((alias_type_spec.category() == TypeCategory::UserDefined || alias_type_spec.category() == TypeCategory::TypeAlias || alias_type_spec.category() == TypeCategory::Template)) {
 									TypeIndex subst_index = substitute_template_parameter(
 										alias_type_spec, template_params, template_args_to_use);
@@ -5698,11 +5715,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						const DeclarationNode& param_decl = param.as<DeclarationNode>();
 						const TypeSpecifierNode& param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
 
-	// Substitute parameter type
+ // Substitute parameter type
 						TypeIndex param_type_index = substitute_template_parameter(
 							param_type_spec, template_params, template_args_to_use);
 
-	// Create substituted parameter type
+ // Create substituted parameter type
 						TypeSpecifierNode substituted_param_type(
 							param_type_index.category(),
 							param_type_spec.qualifier(),
@@ -5711,7 +5728,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							CVQualifier::None);
 						substituted_param_type.set_type_index(param_type_index);
 
-	// Copy pointer levels and reference qualifiers
+ // Copy pointer levels and reference qualifiers
 						for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 							substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 						}
@@ -5783,13 +5800,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // EAGER INSTANTIATION PATH (original code)
 			if (ctor_decl.get_definition().has_value()) {
 				try {
-	// Create a new constructor declaration with substituted body
+ // Create a new constructor declaration with substituted body
 					auto [new_ctor_node, new_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
 						instantiated_name,
 						instantiated_name);
 					setOuterTemplateBindingsFromParams(new_ctor_ref, template_params, template_args_to_use);
 
-	// Ensure template_param_order is populated (used by ExpressionSubstitutor later)
+ // Ensure template_param_order is populated (used by ExpressionSubstitutor later)
 					if (template_param_order.empty()) {
 						for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
 							if (template_params[i].is<TemplateParameterNode>()) {
@@ -5798,31 +5815,31 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 
-	// Substitute and copy parameters — may add function-pack info to pack_param_info_
-	// so that pack expansions in the body and initializers resolve correctly.
+ // Substitute and copy parameters — may add function-pack info to pack_param_info_
+ // so that pack expansions in the body and initializers resolve correctly.
 					size_t saved_pack_info = pack_param_info_.size();
 					substituteAndCopyParams(ctor_decl.parameter_nodes(), new_ctor_ref, template_params, template_args_to_use);
 
-	// Substitute body AFTER parameters (pack_param_info_ may now be populated)
+ // Substitute body AFTER parameters (pack_param_info_ may now be populated)
 					ASTNode substituted_body = substituteTemplateParameters(
 						*ctor_decl.get_definition(),
 						template_params,
 						template_args_to_use);
 
-	// Copy all initializers (member, base, delegating) with template parameter substitution
+ // Copy all initializers (member, base, delegating) with template parameter substitution
 					substituteAndCopyInitializers(ctor_decl, new_ctor_ref, template_params, template_args_to_use);
 					new_ctor_ref.set_is_implicit(ctor_decl.is_implicit());
 					new_ctor_ref.set_noexcept(ctor_decl.is_noexcept());
 					new_ctor_ref.set_definition(substituted_body);
 					pack_param_info_.resize(saved_pack_info);
 
-	// Add the substituted constructor to the instantiated struct AST node
+ // Add the substituted constructor to the instantiated struct AST node
 					instantiated_struct_ref.add_constructor(new_ctor_node, mem_func.access);
 
-	// Also add to struct_info so it can be found during codegen
+ // Also add to struct_info so it can be found during codegen
 					struct_info_ptr->addConstructor(new_ctor_node, mem_func.access);
 
-	// Slice 3: record constructor-with-definition stub.
+ // Slice 3: record constructor-with-definition stub.
 					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_ctor_node;
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for constructor ",
@@ -5859,7 +5876,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						template_params,
 						template_args_to_use);
 
-	// Create a new destructor declaration with substituted body
+ // Create a new destructor declaration with substituted body
 					StringHandle specialized_dtor_name = StringTable::getOrInternStringHandle(StringBuilder()
 																								  .append("~")
 																								  .append(instantiated_name));
@@ -5868,10 +5885,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						specialized_dtor_name);
 					setOuterTemplateBindingsFromParams(new_dtor_ref, template_params, template_args_to_use);
 
-	// Copy noexcept properties from the original destructor declaration.
-	// DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
-	// must propagate the original's evaluated flag (and expression, if any)
-	// to handle explicit noexcept(false) correctly.
+ // Copy noexcept properties from the original destructor declaration.
+ // DestructorDeclarationNode defaults to noexcept(true) per C++11, so we
+ // must propagate the original's evaluated flag (and expression, if any)
+ // to handle explicit noexcept(false) correctly.
 					new_dtor_ref.set_noexcept(dtor_decl.is_noexcept());
 					new_dtor_ref.set_has_noexcept_specifier(dtor_decl.has_noexcept_specifier());
 					if (dtor_decl.has_noexcept_expression()) {
@@ -5880,13 +5897,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					new_dtor_ref.set_definition(substituted_body);
 
-	// Add the substituted destructor to the instantiated struct
+ // Add the substituted destructor to the instantiated struct
 					instantiated_struct_ref.add_destructor(new_dtor_node, mem_func.access);
 
-	// Also add to struct_info so hasDestructor() returns true during codegen
+ // Also add to struct_info so hasDestructor() returns true during codegen
 					struct_info_ptr->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
 
-	// Slice 3: record destructor-with-definition stub.
+ // Slice 3: record destructor-with-definition stub.
 					source_member_to_stub[astNodeKey(mem_func.function_declaration)] = new_dtor_node;
 				} catch (const std::exception& e) {
 					FLASH_LOG(Templates, Error, "Exception during template parameter substitution for destructor ",
@@ -5992,7 +6009,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						TypeCategory new_param_type = param_type_spec.type();
 						TypeIndex new_param_type_index = param_type_spec.type_index();
 
-	// Only substitute UserDefined types (not Auto, which is inner template)
+ // Only substitute UserDefined types (not Auto, which is inner template)
 						if (new_param_type == TypeCategory::UserDefined) {
 							TypeIndex subst_idx = substitute_template_parameter(
 								param_type_spec, template_params, template_args_to_use);
@@ -6024,7 +6041,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 						auto new_param_decl = emplace_node<DeclarationNode>(
 							new_param_type_node, param_decl.identifier_token());
-	// Copy default value if present
+ // Copy default value if present
 						if (param_decl.has_default_value()) {
 							std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
 							std::unordered_map<std::string_view, int64_t> nontype_sub_map;
@@ -6145,7 +6162,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					auto& inst_template_func = mem_func.function_declaration.as<TemplateFunctionDeclarationNode>();
 					auto& inst_func_decl = inst_template_func.function_decl_node();
 					if (inst_func_decl.decl_node().identifier_token().value() == ool_func_name) {
-	// Set the body position from the out-of-line definition
+ // Set the body position from the out-of-line definition
 						inst_func_decl.set_template_body_position(out_of_line_member.body_start);
 						FLASH_LOG(Templates, Debug, "Set body position on nested template member: ", ool_func_name);
 						found = true;
@@ -6183,11 +6200,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
  // Check if function names match
 				if (inst_decl.identifier_token().value() == decl.identifier_token().value()) {
-	// Save current position
+ // Save current position
 					SaveHandle saved_pos = save_token_position();
 
-	// Match the normal delayed-body flow so member/parameter lookup works
-	// during parsing and auto-return deduction.
+ // Match the normal delayed-body flow so member/parameter lookup works
+ // during parsing and auto-return deduction.
 					current_function_ = &inst_func;
 					gSymbolTable.enter_scope(ScopeType::Function);
 					register_parameters_in_scope(inst_func.parameter_nodes());
@@ -6197,10 +6214,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															  nullptr});
 					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
 
-	// Restore to the out-of-line function body position
+ // Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 
-	// Parse the function body (handles function-try-blocks too)
+ // Parse the function body (handles function-try-blocks too)
 					auto body_result = parse_function_body();
 					if (body_result.is_error() || !body_result.node().has_value()) {
 						FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ",
@@ -6212,7 +6229,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-	// Now substitute template parameters in the parsed body
+ // Now substitute template parameters in the parsed body
 					try {
 						ASTNode substituted_body = substituteTemplateParameters(
 							*body_result.node(),
@@ -6226,8 +6243,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								  decl.identifier_token().value(), ": ", e.what());
 					}
 
-	// Pop member function context and parameter scope after body-based
-	// finalization so auto return deduction can still resolve members.
+ // Pop member function context and parameter scope after body-based
+ // finalization so auto return deduction can still resolve members.
 					current_function_ = nullptr;
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
@@ -6253,10 +6270,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					names_match = true;
 				}
 				if (names_match) {
-	// Save current position
+ // Save current position
 					SaveHandle saved_pos = save_token_position();
 
-	// Match the normal delayed-body flow for member functions/constructors.
+ // Match the normal delayed-body flow for member functions/constructors.
 					gSymbolTable.enter_scope(ScopeType::Function);
 					register_parameters_in_scope(ctor.parameter_nodes());
 					member_function_context_stack_.push_back({instantiated_name,
@@ -6265,12 +6282,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 															  nullptr});
 					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
 
-	// Restore to the out-of-line function body position
+ // Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 
-	// Parse the function body (handles function-try-blocks too)
-	// Pass true for is_ctor_or_dtor so constructor function-try-blocks
-	// get the C++20 [except.handle]/15 implicit rethrow at catch handler ends.
+ // Parse the function body (handles function-try-blocks too)
+ // Pass true for is_ctor_or_dtor so constructor function-try-blocks
+ // get the C++20 [except.handle]/15 implicit rethrow at catch handler ends.
 					auto body_result = parse_function_body(true /* is_ctor_or_dtor */);
 					member_function_context_stack_.pop_back();
 					gSymbolTable.exit_scope();
@@ -6288,7 +6305,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							out_of_line_member.template_params,
 							template_args_to_use);
 						ctor.set_definition(substituted_body);
-	// Also update the StructTypeInfo's copy (used by codegen)
+ // Also update the StructTypeInfo's copy (used by codegen)
 						if (struct_type_info.struct_info_) {
 							for (auto& info_func : struct_type_info.struct_info_->member_functions) {
 								if (info_func.is_constructor && info_func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -6383,7 +6400,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
 					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
 
-	// Calculate pack size for substitution
+ // Calculate pack size for substitution
 					auto calculate_pack_size = [&](std::string_view pack_name) -> std::optional<size_t> {
 						for (size_t i = 0; i < template_params.size(); ++i) {
 							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
@@ -6400,7 +6417,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						return std::nullopt;
 					};
 
-	// Helper to create a numeric literal from pack size
+ // Helper to create a numeric literal from pack size
 					auto make_pack_size_literal = [&](size_t pack_size) -> ASTNode {
 						std::string_view pack_size_str = StringBuilder().append(pack_size).commit();
 						Token num_token(Token::Type::Literal, pack_size_str, 0, 0, 0);
@@ -6409,22 +6426,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					};
 
 					if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&expr)) {
-	// Direct sizeof... expression
+ // Direct sizeof... expression
 						const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 						if (auto pack_size = calculate_pack_size(sizeof_pack.pack_name())) {
 							substituted_initializer = make_pack_size_literal(*pack_size);
 						}
 					} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-	// Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
+ // Binary expression like "1 + sizeof...(Rest)" - need to substitute sizeof...
 						const BinaryOperatorNode& bin_expr = std::get<BinaryOperatorNode>(expr);
 
-	// Helper to extract pack size from various expression forms (including static_cast)
+ // Helper to extract pack size from various expression forms (including static_cast)
 						auto try_extract_pack_size = [&](const ExpressionNode& e) -> std::optional<size_t> {
 							if (const auto* sizeof_pack_ptr = std::get_if<SizeofPackNode>(&e)) {
 								const SizeofPackNode& sizeof_pack = *sizeof_pack_ptr;
 								return calculate_pack_size(sizeof_pack.pack_name());
 							}
-	// Handle static_cast<T>(sizeof...(Ts))
+ // Handle static_cast<T>(sizeof...(Ts))
 							if (std::holds_alternative<StaticCastNode>(e)) {
 								const StaticCastNode& cast_node = std::get<StaticCastNode>(e);
 								if (cast_node.expr().is<ExpressionNode>()) {
@@ -6438,7 +6455,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return std::nullopt;
 						};
 
-	// Helper to extract numeric value from expression
+ // Helper to extract numeric value from expression
 						auto try_extract_numeric = [](const ExpressionNode& e) -> std::optional<unsigned long long> {
 							if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&e)) {
 								const NumericLiteralNode& num = *numeric_literal;
@@ -6450,7 +6467,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return std::nullopt;
 						};
 
-	// Helper to evaluate a binary expression
+ // Helper to evaluate a binary expression
 						auto evaluate_binary = [](std::string_view op, unsigned long long lhs, unsigned long long rhs) -> unsigned long long {
 							if (op == "+")
 								return lhs + rhs;
@@ -6463,27 +6480,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							return 0;
 						};
 
-	// Try to evaluate the top-level binary expression
+ // Try to evaluate the top-level binary expression
 						if (bin_expr.get_lhs().is<ExpressionNode>() && bin_expr.get_rhs().is<ExpressionNode>()) {
 							const ExpressionNode& lhs_expr = bin_expr.get_lhs().as<ExpressionNode>();
 							const ExpressionNode& rhs_expr = bin_expr.get_rhs().as<ExpressionNode>();
 
-	// Case 1: LHS is pack_size_expr (direct or via static_cast), RHS is numeric
+ // Case 1: LHS is pack_size_expr (direct or via static_cast), RHS is numeric
 							if (auto lhs_pack = try_extract_pack_size(lhs_expr)) {
 								if (auto rhs_num = try_extract_numeric(rhs_expr)) {
 									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_pack, *rhs_num);
 									substituted_initializer = make_pack_size_literal(result);
 								}
 							}
-	// Case 2: LHS is numeric, RHS is pack_size_expr
+ // Case 2: LHS is numeric, RHS is pack_size_expr
 							else if (auto lhs_num = try_extract_numeric(lhs_expr)) {
 								if (auto rhs_pack = try_extract_pack_size(rhs_expr)) {
 									unsigned long long result = evaluate_binary(bin_expr.op(), *lhs_num, *rhs_pack);
 									substituted_initializer = make_pack_size_literal(result);
 								}
 							}
-	// Case 3: LHS is nested binary expression (e.g., static_cast<int>(sizeof...(Ts)) * 2), RHS is numeric
-	// Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
+ // Case 3: LHS is nested binary expression (e.g., static_cast<int>(sizeof...(Ts)) * 2), RHS is numeric
+ // Handles patterns like (static_cast<int>(sizeof...(Ts)) * 2) + 40
 							else if (std::holds_alternative<BinaryOperatorNode>(lhs_expr)) {
 								const BinaryOperatorNode& nested_bin = std::get<BinaryOperatorNode>(lhs_expr);
 								if (nested_bin.get_lhs().is<ExpressionNode>() && nested_bin.get_rhs().is<ExpressionNode>()) {
@@ -6511,7 +6528,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 					}
-	// Handle template parameter reference substitution using shared helper lambda
+ // Handle template parameter reference substitution using shared helper lambda
 					else if (std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
 							 std::holds_alternative<IdentifierNode>(expr)) {
 						std::string_view param_name;
@@ -6521,18 +6538,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							param_name = std::get<IdentifierNode>(expr).name();
 						}
 
-	// Use shared helper lambda defined at function scope
+ // Use shared helper lambda defined at function scope
 						if (auto subst = substitute_template_param_in_initializer(param_name, template_args_to_use, template_params)) {
 							substituted_initializer = subst;
 							FLASH_LOG(Templates, Debug, "Substituted static member initializer template parameter '", param_name, "'");
 						}
 					}
-	// Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
+ // Handle TernaryOperatorNode where the condition is a template parameter (e.g., IsArith ? 42 : TypeIndex{})
 					else if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 						const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(expr);
 						const ASTNode& cond_node = ternary.condition();
 
-	// Check if condition is a template parameter reference or identifier
+ // Check if condition is a template parameter reference or identifier
 						if (cond_node.is<ExpressionNode>()) {
 							const ExpressionNode& cond_expr = cond_node.as<ExpressionNode>();
 							std::optional<int64_t> cond_value;
@@ -6541,7 +6558,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(cond_expr);
 								FLASH_LOG(Templates, Debug, "Ternary condition is template parameter: ", tparam_ref.param_name());
 
-	// Look up the parameter value
+ // Look up the parameter value
 								for (size_t p = 0; p < template_params.size(); ++p) {
 									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 									if (tparam.name() == tparam_ref.param_name() && tparam.kind() == TemplateParameterKind::NonType) {
@@ -6557,7 +6574,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								std::string_view id_name = id_node.name();
 								FLASH_LOG(Templates, Debug, "Ternary condition is identifier: ", id_name);
 
-	// Look up the identifier as a template parameter
+ // Look up the identifier as a template parameter
 								for (size_t p = 0; p < template_params.size(); ++p) {
 									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 									if (tparam.name() == id_name && tparam.kind() == TemplateParameterKind::NonType) {
@@ -6570,7 +6587,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 
-	// If we found the condition value, evaluate the ternary
+ // If we found the condition value, evaluate the ternary
 							if (cond_value.has_value()) {
 								const ASTNode& result_branch = (*cond_value != 0) ? ternary.true_expr() : ternary.false_expr();
 
@@ -6583,7 +6600,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																		 ? std::get<unsigned long long>(val)
 																		 : static_cast<unsigned long long>(std::get<double>(val));
 
-	// Create a new numeric literal with the evaluated result
+ // Create a new numeric literal with the evaluated result
 										std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(num_val)).commit();
 										Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
 										substituted_initializer = emplace_node<ExpressionNode>(
@@ -6605,11 +6622,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
  // This ensures lazy instantiation registrations get their initializers filled in
 				const StructStaticMember* existing_member = struct_info_ptr->findStaticMember(static_member_name_handle);
 				if (existing_member != nullptr) {
-	// Member already exists - update the initializer if we have a substituted one
+ // Member already exists - update the initializer if we have a substituted one
 					if (substituted_initializer.has_value()) {
 						struct_info_ptr->updateStaticMemberInitializer(static_member_name_handle, substituted_initializer);
 					}
-	// Skip adding duplicate
+ // Skip adding duplicate
 				} else {
 					struct_info_ptr->addStaticMember(
 						static_member_name_handle,
@@ -6711,7 +6728,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const auto& arg = template_args_to_use[i];
 
 				if (param.kind() == TemplateParameterKind::NonType && arg.is_value) {
-	// Non-type parameter - store value for substitution
+ // Non-type parameter - store value for substitution
 					TemplateParamSubstitution subst;
 					subst.param_name = param.nameHandle();
 					subst.is_value_param = true;
@@ -6722,9 +6739,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					FLASH_LOG(Templates, Debug, "Registered non-type template parameter '",
 							  param.name(), "' with value ", arg.value);
 				} else if (param.kind() == TemplateParameterKind::Type && !arg.is_value) {
-	// Type parameter - store type for substitution
-	// This enables variable templates inside function templates to work correctly:
-	// e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
+ // Type parameter - store type for substitution
+ // This enables variable templates inside function templates to work correctly:
+ // e.g., __is_ratio_v<_R1> where _R1 should be substituted with ratio<1,2>
 					TemplateParamSubstitution subst;
 					subst.param_name = param.nameHandle();
 					subst.is_value_param = false;
