@@ -956,8 +956,17 @@ ParseResult Parser::parse_template_declaration() {
 					advance(); // consume 'typename'
 				}
 				
-				// Check if this is a non-type value (numeric literal)
-				if (peek().is_literal()) {
+				// Check if this is a non-type value (numeric or boolean literal)
+				if (peek() == "true"_tok || peek() == "false"_tok) {
+					bool bool_value = peek() == "true"_tok;
+					advance();
+
+					TemplateTypeArg arg;
+					arg.is_value = true;
+					arg.value = bool_value ? 1LL : 0LL;
+					arg.setCategory(TypeCategory::Bool);
+					specialization_pattern.push_back(arg);
+				} else if (peek().is_literal()) {
 					// It's a numeric literal - treat as non-type value
 					Token value_token = peek_info();
 					advance();
