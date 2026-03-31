@@ -209,12 +209,12 @@ inline int floatingRank(TypeCategory category) {
 }
 
 template <typename FloatT>
-inline bool isFloatingValueExactlyRepresentableAs(double value) {
-	FloatT converted = static_cast<FloatT>(value);
-	if (!std::isfinite(value) || !std::isfinite(static_cast<double>(converted))) {
+inline bool isFloatingValueWithinRepresentableRange(double value) {
+	if (!std::isfinite(value)) {
 		return false;
 	}
-	return static_cast<double>(converted) == value;
+	FloatT converted = static_cast<FloatT>(value);
+	return std::isfinite(converted);
 }
 
 inline bool isFloatingValueExactlyRepresentableInTarget(double value, TypeCategory target) {
