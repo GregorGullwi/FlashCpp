@@ -5,7 +5,7 @@
 class NamespaceDeclarationNode {
 public:
 	explicit NamespaceDeclarationNode(std::string_view name)
-	    : name_(name) {}
+		: name_(name) {}
 
 	std::string_view name() const { return name_; }
 	const std::vector<ASTNode>& declarations() const { return declarations_; }
@@ -24,7 +24,7 @@ private:
 class UsingDirectiveNode {
 public:
 	explicit UsingDirectiveNode(NamespaceHandle namespace_handle, Token using_token)
-	    : namespace_handle_(namespace_handle), using_token_(using_token) {}
+		: namespace_handle_(namespace_handle), using_token_(using_token) {}
 
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	const Token& using_token() const { return using_token_; }
@@ -38,7 +38,7 @@ private:
 class UsingDeclarationNode {
 public:
 	explicit UsingDeclarationNode(NamespaceHandle namespace_handle, Token identifier, Token using_token)
-	    : namespace_handle_(namespace_handle), identifier_(identifier), using_token_(using_token) {}
+		: namespace_handle_(namespace_handle), identifier_(identifier), using_token_(using_token) {}
 
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	std::string_view identifier_name() const { return identifier_.value(); }
@@ -56,7 +56,7 @@ private:
 class UsingEnumNode {
 public:
 	explicit UsingEnumNode(StringHandle enum_type_name, Token using_token)
-	    : enum_type_name_(enum_type_name), using_token_(using_token) {}
+		: enum_type_name_(enum_type_name), using_token_(using_token) {}
 
 	StringHandle enum_type_name() const { return enum_type_name_; }
 	const Token& using_token() const { return using_token_; }
@@ -70,7 +70,7 @@ private:
 class NamespaceAliasNode {
 public:
 	explicit NamespaceAliasNode(Token alias_name, NamespaceHandle target_namespace)
-	    : alias_name_(alias_name), target_namespace_(target_namespace) {}
+		: alias_name_(alias_name), target_namespace_(target_namespace) {}
 
 	std::string_view alias_name() const { return alias_name_.value(); }
 	NamespaceHandle target_namespace() const { return target_namespace_; }
@@ -85,7 +85,7 @@ private:
 class EnumeratorNode {
 public:
 	EnumeratorNode(Token name, std::optional<ASTNode> value = std::nullopt)
-	    : name_(name), value_(value) {}
+		: name_(name), value_(value) {}
 
 	std::string_view name() const { return name_.value(); }
 	const Token& name_token() const { return name_; }
@@ -101,7 +101,7 @@ private:
 class EnumDeclarationNode {
 public:
 	explicit EnumDeclarationNode(StringHandle name_handle, bool is_scoped = false)
-	    : name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_(), type_index_{} {}
+		: name_(StringTable::getStringView(name_handle)), is_scoped_(is_scoped), is_forward_declaration_(false), underlying_type_(), type_index_{} {}
 
 	std::string_view name() const { return name_; }
 	bool is_scoped() const { return is_scoped_; } // true for enum class, false for enum
@@ -143,7 +143,7 @@ private:
 class MemberAccessNode {
 public:
 	explicit MemberAccessNode(ASTNode object, Token member_name, bool is_arrow = false)
-	    : object_(object), member_name_(member_name), is_arrow_(is_arrow) {}
+		: object_(object), member_name_(member_name), is_arrow_(is_arrow) {}
 
 	ASTNode object() const { return object_; }
 	std::string_view member_name() const { return member_name_.value(); }
@@ -162,7 +162,7 @@ private:
 class PointerToMemberAccessNode {
 public:
 	explicit PointerToMemberAccessNode(ASTNode object, ASTNode member_pointer, Token operator_token, bool is_arrow)
-	    : object_(object), member_pointer_(member_pointer), operator_token_(operator_token), is_arrow_(is_arrow) {}
+		: object_(object), member_pointer_(member_pointer), operator_token_(operator_token), is_arrow_(is_arrow) {}
 
 	ASTNode object() const { return object_; }
 	ASTNode member_pointer() const { return member_pointer_; }
@@ -181,8 +181,8 @@ private:
 class MemberFunctionCallNode {
 public:
 	explicit MemberFunctionCallNode(ASTNode object, const FunctionDeclarationNode& func_decl,
-	                                ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-	    : object_(object), func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+									ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: object_(object), func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	ASTNode object() const { return object_; }
 	const auto& arguments() const { return arguments_; }
@@ -205,11 +205,11 @@ class PseudoDestructorCallNode {
 public:
 	// Constructor for simple type names: obj.~Type()
 	explicit PseudoDestructorCallNode(ASTNode object, Token type_name_token, bool is_arrow)
-	    : object_(object), qualified_type_name_(), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
+		: object_(object), qualified_type_name_(), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 
 	// Constructor with qualified type: obj.~std::string()
 	explicit PseudoDestructorCallNode(ASTNode object, std::string_view qualified_type_name, Token type_name_token, bool is_arrow)
-	    : object_(object), qualified_type_name_(StringTable::getOrInternStringHandle(qualified_type_name)), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
+		: object_(object), qualified_type_name_(StringTable::getOrInternStringHandle(qualified_type_name)), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 
 	ASTNode object() const { return object_; }
 	std::string_view type_name() const { return type_name_token_.value(); }
@@ -229,7 +229,7 @@ private:
 class ArraySubscriptNode {
 public:
 	explicit ArraySubscriptNode(ASTNode array_expr, ASTNode index_expr, Token bracket_token)
-	    : array_expr_(array_expr), index_expr_(index_expr), bracket_token_(bracket_token) {}
+		: array_expr_(array_expr), index_expr_(index_expr), bracket_token_(bracket_token) {}
 
 	ASTNode array_expr() const { return array_expr_; }
 	ASTNode index_expr() const { return index_expr_; }
@@ -246,7 +246,7 @@ class SizeofExprNode {
 public:
 	// Constructor for sizeof(type)
 	explicit SizeofExprNode(ASTNode type_node, Token sizeof_token)
-	    : type_or_expr_(type_node), sizeof_token_(sizeof_token), is_type_(true) {}
+		: type_or_expr_(type_node), sizeof_token_(sizeof_token), is_type_(true) {}
 
 	// Constructor for sizeof(expression)
 	static SizeofExprNode from_expression(ASTNode expr_node, Token sizeof_token) {
@@ -269,7 +269,7 @@ private:
 class SizeofPackNode {
 public:
 	explicit SizeofPackNode(std::string_view pack_name, Token sizeof_token)
-	    : pack_name_(pack_name), sizeof_token_(sizeof_token) {}
+		: pack_name_(pack_name), sizeof_token_(sizeof_token) {}
 
 	std::string_view pack_name() const { return pack_name_; }
 	const Token& sizeof_token() const { return sizeof_token_; }
@@ -284,7 +284,7 @@ class AlignofExprNode {
 public:
 	// Constructor for alignof(type)
 	explicit AlignofExprNode(ASTNode type_node, Token alignof_token)
-	    : type_or_expr_(type_node), alignof_token_(alignof_token), is_type_(true) {}
+		: type_or_expr_(type_node), alignof_token_(alignof_token), is_type_(true) {}
 
 	// Constructor for alignof(expression)
 	static AlignofExprNode from_expression(ASTNode expr_node, Token alignof_token) {
@@ -309,7 +309,7 @@ class NoexceptExprNode {
 public:
 	// Constructor for noexcept(expression)
 	explicit NoexceptExprNode(ASTNode expr_node, Token noexcept_token)
-	    : expr_(expr_node), noexcept_token_(noexcept_token) {}
+		: expr_(expr_node), noexcept_token_(noexcept_token) {}
 
 	ASTNode expr() const { return expr_; }
 	const Token& noexcept_token() const { return noexcept_token_; }
@@ -323,7 +323,7 @@ private:
 class OffsetofExprNode {
 public:
 	explicit OffsetofExprNode(ASTNode type_node, std::vector<Token> member_path, Token offsetof_token)
-	    : type_node_(type_node), member_path_(std::move(member_path)), offsetof_token_(offsetof_token) {}
+		: type_node_(type_node), member_path_(std::move(member_path)), offsetof_token_(offsetof_token) {}
 
 	ASTNode type_node() const { return type_node_; }
 	const std::vector<Token>& member_path() const { return member_path_; }
@@ -407,19 +407,19 @@ class TypeTraitExprNode {
 public:
 	// Constructor for unary type traits (single type argument)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, Token trait_token)
-	    : kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
 	// Constructor for binary type traits (two type arguments, like __is_base_of, __is_assignable)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, ASTNode second_type_node, Token trait_token)
-	    : kind_(kind), type_node_(type_node), second_type_node_(second_type_node), additional_type_nodes_(), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(second_type_node), additional_type_nodes_(), trait_token_(trait_token) {}
 
 	// Constructor for variadic type traits (T + Args..., like __is_constructible)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, std::vector<ASTNode> additional_types, Token trait_token)
-	    : kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(std::move(additional_types)), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(std::move(additional_types)), trait_token_(trait_token) {}
 
 	// Constructor for no-argument traits (like __is_constant_evaluated)
 	explicit TypeTraitExprNode(TypeTraitKind kind, Token trait_token)
-	    : kind_(kind), type_node_(), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
+		: kind_(kind), type_node_(), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
 	TypeTraitKind kind() const { return kind_; }
 	ASTNode type_node() const { return type_node_; }
@@ -432,21 +432,21 @@ public:
 	// Check if this is a binary trait (takes exactly 2 types)
 	bool is_binary_trait() const {
 		return kind_ == TypeTraitKind::IsBaseOf ||
-		       kind_ == TypeTraitKind::IsSame ||
-		       kind_ == TypeTraitKind::IsConvertible ||
-		       kind_ == TypeTraitKind::IsNothrowConvertible ||
-		       kind_ == TypeTraitKind::IsAssignable ||
-		       kind_ == TypeTraitKind::IsTriviallyAssignable ||
-		       kind_ == TypeTraitKind::IsNothrowAssignable ||
-		       kind_ == TypeTraitKind::IsLayoutCompatible ||
-		       kind_ == TypeTraitKind::IsPointerInterconvertibleBaseOf;
+			   kind_ == TypeTraitKind::IsSame ||
+			   kind_ == TypeTraitKind::IsConvertible ||
+			   kind_ == TypeTraitKind::IsNothrowConvertible ||
+			   kind_ == TypeTraitKind::IsAssignable ||
+			   kind_ == TypeTraitKind::IsTriviallyAssignable ||
+			   kind_ == TypeTraitKind::IsNothrowAssignable ||
+			   kind_ == TypeTraitKind::IsLayoutCompatible ||
+			   kind_ == TypeTraitKind::IsPointerInterconvertibleBaseOf;
 	}
 
 	// Check if this is a variadic trait (takes T + Args...)
 	bool is_variadic_trait() const {
 		return kind_ == TypeTraitKind::IsConstructible ||
-		       kind_ == TypeTraitKind::IsTriviallyConstructible ||
-		       kind_ == TypeTraitKind::IsNothrowConstructible;
+			   kind_ == TypeTraitKind::IsTriviallyConstructible ||
+			   kind_ == TypeTraitKind::IsNothrowConstructible;
 	}
 
 	// Check if this is a no-argument trait
@@ -588,23 +588,23 @@ private:
 class NewExpressionNode {
 public:
 	explicit NewExpressionNode(ASTNode type_node, bool is_array = false,
-	                           std::optional<ASTNode> size_expr = std::nullopt,
-	                           ChunkedVector<ASTNode, 128, 256> constructor_args = {},
-	                           std::optional<ASTNode> placement_address = std::nullopt)
-	    : type_node_(type_node), is_array_(is_array),
-	      size_expr_(size_expr), constructor_args_(std::move(constructor_args)) {
+							   std::optional<ASTNode> size_expr = std::nullopt,
+							   ChunkedVector<ASTNode, 128, 256> constructor_args = {},
+							   std::optional<ASTNode> placement_address = std::nullopt)
+		: type_node_(type_node), is_array_(is_array),
+		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)) {
 		if (placement_address.has_value()) {
 			placement_args_.push_back(*placement_address);
 		}
 	}
 
 	explicit NewExpressionNode(ASTNode type_node, bool is_array,
-	                           std::optional<ASTNode> size_expr,
-	                           ChunkedVector<ASTNode, 128, 256> constructor_args,
-	                           InlineVector<ASTNode, 2> placement_args)
-	    : type_node_(type_node), is_array_(is_array),
-	      size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
-	      placement_args_(std::move(placement_args)) {}
+							   std::optional<ASTNode> size_expr,
+							   ChunkedVector<ASTNode, 128, 256> constructor_args,
+							   InlineVector<ASTNode, 2> placement_args)
+		: type_node_(type_node), is_array_(is_array),
+		  size_expr_(size_expr), constructor_args_(std::move(constructor_args)),
+		  placement_args_(std::move(placement_args)) {}
 
 	const ASTNode& type_node() const { return type_node_; }
 	bool is_array() const { return is_array_; }
@@ -630,7 +630,7 @@ private:
 class DeleteExpressionNode {
 public:
 	explicit DeleteExpressionNode(ASTNode expr, bool is_array = false)
-	    : expr_(expr), is_array_(is_array) {}
+		: expr_(expr), is_array_(is_array) {}
 
 	const ASTNode& expr() const { return expr_; }
 	bool is_array() const { return is_array_; }
@@ -644,7 +644,7 @@ private:
 class StaticCastNode {
 public:
 	explicit StaticCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
-	    : target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
 
 	const ASTNode& target_type() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
@@ -660,7 +660,7 @@ private:
 class DynamicCastNode {
 public:
 	explicit DynamicCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
-	    : target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
 
 	const ASTNode& target_type() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
@@ -676,7 +676,7 @@ private:
 class ConstCastNode {
 public:
 	explicit ConstCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
-	    : target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
 
 	const ASTNode& target_type() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
@@ -692,7 +692,7 @@ private:
 class ReinterpretCastNode {
 public:
 	explicit ReinterpretCastNode(ASTNode target_type, ASTNode expr, Token cast_token)
-	    : target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
+		: target_type_(target_type), expr_(expr), cast_token_(cast_token) {}
 
 	const ASTNode& target_type() const { return target_type_; }
 	const ASTNode& expr() const { return expr_; }
@@ -709,7 +709,7 @@ class TypeidNode {
 public:
 	// Constructor for typeid(expr)
 	explicit TypeidNode(ASTNode operand, bool is_type, Token typeid_token)
-	    : operand_(operand), is_type_(is_type), typeid_token_(typeid_token) {}
+		: operand_(operand), is_type_(is_type), typeid_token_(typeid_token) {}
 
 	const ASTNode& operand() const { return operand_; }
 	bool is_type() const { return is_type_; } // true if operand is a type, false if expression
@@ -734,7 +734,7 @@ public:
 	};
 
 	explicit LambdaCaptureNode(CaptureKind kind, Token identifier = Token(), std::optional<ASTNode> initializer = std::nullopt)
-	    : kind_(kind), identifier_(identifier), initializer_(initializer) {}
+		: kind_(kind), identifier_(identifier), initializer_(initializer) {}
 
 	CaptureKind kind() const { return kind_; }
 	std::string_view identifier_name() const { return identifier_.value(); }
@@ -755,27 +755,27 @@ private:
 class LambdaExpressionNode {
 public:
 	explicit LambdaExpressionNode(
-	    std::vector<LambdaCaptureNode> captures,
-	    std::vector<ASTNode> parameters,
-	    ASTNode body,
-	    std::optional<ASTNode> return_type = std::nullopt,
-	    Token lambda_token = Token(),
-	    bool is_mutable = false,
-	    std::vector<std::string_view> template_params = {},
-	    bool is_noexcept = false,
-	    bool is_constexpr = false,
-	    bool is_consteval = false)
-	    : captures_(std::move(captures)),
-	      parameters_(std::move(parameters)),
-	      body_(body),
-	      return_type_(return_type),
-	      lambda_token_(lambda_token),
-	      lambda_id_(next_lambda_id_++),
-	      is_mutable_(is_mutable),
-	      template_params_(std::move(template_params)),
-	      is_noexcept_(is_noexcept),
-	      is_constexpr_(is_constexpr),
-	      is_consteval_(is_consteval) {}
+		std::vector<LambdaCaptureNode> captures,
+		std::vector<ASTNode> parameters,
+		ASTNode body,
+		std::optional<ASTNode> return_type = std::nullopt,
+		Token lambda_token = Token(),
+		bool is_mutable = false,
+		std::vector<std::string_view> template_params = {},
+		bool is_noexcept = false,
+		bool is_constexpr = false,
+		bool is_consteval = false)
+		: captures_(std::move(captures)),
+		  parameters_(std::move(parameters)),
+		  body_(body),
+		  return_type_(return_type),
+		  lambda_token_(lambda_token),
+		  lambda_id_(next_lambda_id_++),
+		  is_mutable_(is_mutable),
+		  template_params_(std::move(template_params)),
+		  is_noexcept_(is_noexcept),
+		  is_constexpr_(is_constexpr),
+		  is_consteval_(is_consteval) {}
 
 	const std::vector<LambdaCaptureNode>& captures() const { return captures_; }
 	const std::vector<ASTNode>& parameters() const { return parameters_; }
@@ -852,7 +852,7 @@ private:
 class TemplateParameterReferenceNode {
 public:
 	explicit TemplateParameterReferenceNode(StringHandle param_name, Token token)
-	    : param_name_(param_name), token_(token) {}
+		: param_name_(param_name), token_(token) {}
 
 	StringHandle param_name() const { return param_name_; }
 	const Token& token() const { return token_; }
@@ -869,11 +869,11 @@ private:
 class InitializerListConstructionNode {
 public:
 	InitializerListConstructionNode(
-	    ASTNode element_type, // Type of elements (e.g., int in initializer_list<int>)
-	    ASTNode target_type, // The full initializer_list type
-	    std::vector<ASTNode> elements, // The initializer expressions {1, 2, 3}
-	    Token called_from) : element_type_(std::move(element_type)), target_type_(std::move(target_type)),
-	                         elements_(std::move(elements)), called_from_(called_from) {}
+		ASTNode element_type, // Type of elements (e.g., int in initializer_list<int>)
+		ASTNode target_type, // The full initializer_list type
+		std::vector<ASTNode> elements, // The initializer expressions {1, 2, 3}
+		Token called_from) : element_type_(std::move(element_type)), target_type_(std::move(target_type)),
+							 elements_(std::move(elements)), called_from_(called_from) {}
 
 	const ASTNode& element_type() const { return element_type_; }
 	const ASTNode& target_type() const { return target_type_; }
@@ -895,11 +895,11 @@ class ThrowExpressionNode {
 public:
 	// throw expression
 	explicit ThrowExpressionNode(ASTNode expression, Token throw_token)
-	    : expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
+		: expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
 
 	// throw (rethrow)
 	explicit ThrowExpressionNode(Token throw_token)
-	    : expression_(), throw_token_(throw_token), is_rethrow_(true) {}
+		: expression_(), throw_token_(throw_token), is_rethrow_(true) {}
 
 	const std::optional<ASTNode>& expression() const { return expression_; }
 	bool is_rethrow() const { return is_rethrow_; }
@@ -920,7 +920,7 @@ private:
 class SehFilterExpressionNode {
 public:
 	explicit SehFilterExpressionNode(ASTNode expression, Token except_token)
-	    : expression_(expression), except_token_(except_token) {}
+		: expression_(expression), except_token_(except_token) {}
 
 	const ASTNode& expression() const { return expression_; }
 	const Token& except_token() const { return except_token_; }
@@ -935,10 +935,10 @@ private:
 class RequiresExpressionNode {
 public:
 	explicit RequiresExpressionNode(
-	    std::vector<ASTNode> requirements,
-	    Token requires_token = Token())
-	    : requirements_(std::move(requirements)),
-	      requires_token_(requires_token) {}
+		std::vector<ASTNode> requirements,
+		Token requires_token = Token())
+		: requirements_(std::move(requirements)),
+		  requires_token_(requires_token) {}
 
 	const std::vector<ASTNode>& requirements() const { return requirements_; }
 	const Token& requires_token() const { return requires_token_; }
@@ -954,6 +954,6 @@ private:
 // `PackExpansionExprNode` are parser/template-only helpers there and are
 // guarded by the lightweight post-parse boundary checker before sema runs.
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
-                                    BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
-                                    ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
-                                    DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;
+									BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
+									ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
+									DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode>;

@@ -381,8 +381,8 @@ ParseResult Parser::parse_template_declaration() {
 									}
 									// Create a token with the full operator name
 									nested_func_name_token = Token(Token::Type::Identifier, full_op_name,
-									                               operator_keyword.line(), operator_keyword.column(),
-									                               operator_keyword.file_index());
+																   operator_keyword.line(), operator_keyword.column(),
+																   operator_keyword.file_index());
 									found_nested_def = true;
 									if (peek() == "("_tok) {
 										break;
@@ -491,9 +491,9 @@ ParseResult Parser::parse_template_declaration() {
 				gTemplateRegistry.registerOutOfLineMember(nested_class_name, std::move(out_of_line_member));
 
 				FLASH_LOG(Templates, Debug, "Registered nested template out-of-line member: ",
-				          nested_class_name, "::", nested_func_name_token.value(),
-				          " (outer params: ", template_params.size(),
-				          ", inner params: ", inner_template_params.size(), ")");
+						  nested_class_name, "::", nested_func_name_token.value(),
+						  " (outer params: ", template_params.size(),
+						  ", inner params: ", inner_template_params.size(), ")");
 
 				cleanup_template_state();
 				return saved_position.success();
@@ -529,8 +529,8 @@ ParseResult Parser::parse_template_declaration() {
 
 	// Check if it's a class/struct/union template
 	bool is_class_template = !peek().is_eof() &&
-	                         peek().is_keyword() &&
-	                         (peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok);
+							 peek().is_keyword() &&
+							 (peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok);
 
 	// Check if it's a variable template (constexpr, inline, etc. + type + identifier)
 	bool is_variable_template = false;
@@ -543,7 +543,7 @@ ParseResult Parser::parse_template_declaration() {
 		while (peek().is_keyword()) {
 			auto kw = peek();
 			if (kw == "constexpr"_tok || kw == "inline"_tok || kw == "static"_tok ||
-			    kw == "const"_tok || kw == "volatile"_tok || kw == "extern"_tok) {
+				kw == "const"_tok || kw == "volatile"_tok || kw == "extern"_tok) {
 				advance();
 			} else {
 				break;
@@ -585,7 +585,7 @@ ParseResult Parser::parse_template_declaration() {
 						// If it's '=' or '{', it's a variable template partial spec
 						// If it's '::', it's a static member definition (NOT variable template)
 						if (!peek().is_eof() &&
-						    (peek() == "="_tok || peek() == "{"_tok)) {
+							(peek() == "="_tok || peek() == "{"_tok)) {
 							is_variable_template = true;
 						}
 						// If it's '::', fall through (is_variable_template stays false)
@@ -619,15 +619,15 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Create RequiresClauseNode
 		requires_clause = emplace_node<RequiresClauseNode>(
-		    *constraint_result.node(),
-		    requires_token);
+			*constraint_result.node(),
+			requires_token);
 
 		// After parsing requires clause, re-check if this is a class/struct/union template
 		// The original check (before requires clause) would have seen 'requires' keyword
 		// and set is_class_template to false, but now we can see the actual keyword
 		if (!is_class_template && !peek().is_eof() &&
-		    peek().is_keyword() &&
-		    (peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
+			peek().is_keyword() &&
+			(peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
 			is_class_template = true;
 			FLASH_LOG(Parser, Debug, "Re-detected class template after requires clause");
 		}
@@ -665,7 +665,7 @@ ParseResult Parser::parse_template_declaration() {
 								advance();
 							}
 							if (!peek().is_eof() &&
-							    (peek() == "="_tok || peek() == "{"_tok)) {
+								(peek() == "="_tok || peek() == "{"_tok)) {
 								is_variable_template = true;
 								FLASH_LOG(Parser, Debug, "Re-detected variable template partial spec after requires clause");
 							}
@@ -719,10 +719,10 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Create the ConceptDeclarationNode with template parameters
 		auto concept_node = emplace_node<ConceptDeclarationNode>(
-		    concept_name_token,
-		    std::move(template_param_nodes),
-		    *constraint_result.node(),
-		    concept_token);
+			concept_name_token,
+			std::move(template_param_nodes),
+			*constraint_result.node(),
+			concept_token);
 
 		// Register the concept in the global concept registry
 		gConceptRegistry.registerConcept(concept_name_token.value(), concept_node);
@@ -828,10 +828,10 @@ ParseResult Parser::parse_template_declaration() {
 						// Pattern: "..._<param>" like "integral_constant_bool_B"
 						size_t pos = type_name.rfind(param_sv);
 						if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
-						    pos + param_sv.size() == type_name.size()) {
+							pos + param_sv.size() == type_name.size()) {
 							has_unresolved_params = true;
 							FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' is a dependent placeholder containing template param '",
-							          param_sv, "' - using deferred instantiation");
+									  param_sv, "' - using deferred instantiation");
 							break;
 						}
 					}
@@ -876,7 +876,7 @@ ParseResult Parser::parse_template_declaration() {
 								if (const TypeInfo* type_info = tryGetTypeInfo(ts.type_index())) {
 									std::string_view node_type_name = StringTable::getStringView(type_info->name());
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()),
-									          ", type_name='", node_type_name, "'");
+											  ", type_name='", node_type_name, "'");
 								}
 							}
 						}
@@ -903,27 +903,27 @@ ParseResult Parser::parse_template_declaration() {
 		if (has_unresolved_params && target_template_name.isValid()) {
 			FLASH_LOG(Parser, Debug, "Creating deferred TemplateAliasNode for '", alias_name, "' -> '", target_template_name.view(), "'");
 			alias_node = emplace_node<TemplateAliasNode>(
-			    std::move(template_params),
-			    std::move(template_param_names),
-			    StringTable::getOrInternStringHandle(alias_name),
-			    type_result.node().value(),
-			    target_template_name,
-			    std::move(target_template_arg_nodes));
+				std::move(template_params),
+				std::move(template_param_names),
+				StringTable::getOrInternStringHandle(alias_name),
+				type_result.node().value(),
+				target_template_name,
+				std::move(target_template_arg_nodes));
 		} else {
 			// Regular (non-deferred) alias
 			alias_node = emplace_node<TemplateAliasNode>(
-			    std::move(template_params),
-			    std::move(template_param_names),
-			    StringTable::getOrInternStringHandle(alias_name),
-			    type_result.node().value());
+				std::move(template_params),
+				std::move(template_param_names),
+				StringTable::getOrInternStringHandle(alias_name),
+				type_result.node().value());
 		}
 
 		// Register the alias template in the template registry
 		// We'll handle instantiation later when the alias is used
 		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
 		gTemplateRegistry.register_alias_template(
-		    QualifiedIdentifier::fromQualifiedName(alias_name, gSymbolTable.get_current_namespace_handle()),
-		    alias_node);
+			QualifiedIdentifier::fromQualifiedName(alias_name, gSymbolTable.get_current_namespace_handle()),
+			alias_node);
 
 		// Clean up template parameter context before returning
 		// Note: only clear current_template_param_names_, keep parsing_template_depth_ as-is
@@ -1064,8 +1064,8 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Create DeclarationNode
 		auto decl_node = emplace_node<DeclarationNode>(
-		    type_result.node().value(),
-		    var_name_token);
+			type_result.node().value(),
+			var_name_token);
 
 		// Parse initializer
 		std::optional<ASTNode> init_expr;
@@ -1096,17 +1096,17 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Create VariableDeclarationNode
 		auto var_decl_node = emplace_node<VariableDeclarationNode>(
-		    decl_node,
-		    init_expr,
-		    storage_class);
+			decl_node,
+			init_expr,
+			storage_class);
 
 		// Set constexpr flag if present
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(is_constexpr);
 
 		// Create TemplateVariableDeclarationNode
 		auto template_var_node = emplace_node<TemplateVariableDeclarationNode>(
-		    std::move(template_params),
-		    var_decl_node);
+			std::move(template_params),
+			var_decl_node);
 
 		// Register in template registry
 		std::string_view var_name = var_name_token.value();
@@ -1114,13 +1114,13 @@ ParseResult Parser::parse_template_declaration() {
 			// Register structurally for pattern matching via TemplatePattern::matches()
 			const auto& spec_tmpl = template_var_node.as<TemplateVariableDeclarationNode>();
 			gTemplateRegistry.registerVariableTemplateSpecialization(
-			    var_name, spec_tmpl.template_parameters(), specialization_pattern, template_var_node);
+				var_name, spec_tmpl.template_parameters(), specialization_pattern, template_var_node);
 			FLASH_LOG(Parser, Debug, "Registered variable template partial specialization (structural): ", var_name,
-			          " with ", specialization_pattern.size(), " pattern args");
+					  " with ", specialization_pattern.size(), " pattern args");
 		} else {
 			gTemplateRegistry.registerVariableTemplate(
-			    QualifiedIdentifier::fromQualifiedName(var_name, gSymbolTable.get_current_namespace_handle()),
-			    template_var_node);
+				QualifiedIdentifier::fromQualifiedName(var_name, gSymbolTable.get_current_namespace_handle()),
+				template_var_node);
 		}
 
 		// Also add to symbol table so identifier lookup works
@@ -1213,7 +1213,7 @@ ParseResult Parser::parse_template_declaration() {
 					std::string_view member_class_name = peek_info().value();
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition (full spec): {}::{}",
-					                 template_name, member_class_name);
+									 template_name, member_class_name);
 
 					// Skip base class list if present
 					if (peek() == ":"_tok) {
@@ -1237,13 +1237,13 @@ ParseResult Parser::parse_template_declaration() {
 					// For full specializations (template<>), store the concrete template_args so the
 					// nested class is only applied when instantiation arguments match.
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
-					                                                                  template_params,
-					                                                                  StringTable::getOrInternStringHandle(member_class_name),
-					                                                                  struct_keyword_pos, template_param_names, is_class,
-					                                                                  template_args // concrete specialization args (e.g., <int>)
-					                                                              });
+																					  template_params,
+																					  StringTable::getOrInternStringHandle(member_class_name),
+																					  struct_keyword_pos, template_param_names, is_class,
+																					  template_args // concrete specialization args (e.g., <int>)
+																				  });
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
-					                 template_name, member_class_name);
+									 template_name, member_class_name);
 
 					// Reset parsing context flags
 					parsing_template_class_ = false;
@@ -1268,26 +1268,26 @@ ParseResult Parser::parse_template_declaration() {
 
 				// Create a minimal struct node
 				auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
-				    instantiated_name,
-				    is_class,
-				    is_union);
+					instantiated_name,
+					is_class,
+					is_union);
 
 				// Register the type so it can be referenced later
 				TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 
 				// Store template instantiation metadata for O(1) lookup (Phase 6)
 				struct_type_info.setTemplateInstantiationInfo(
-				    QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
-				    convertToTemplateArgInfo(template_args));
+					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+					convertToTemplateArgInfo(template_args));
 
 				// Register the specialization with the template registry
 				gTemplateRegistry.registerSpecialization(
-				    std::string(template_name),
-				    template_args,
-				    struct_node);
+					std::string(template_name),
+					template_args,
+					struct_node);
 
 				FLASH_LOG_FORMAT(Templates, Debug, "Registered forward declaration for specialization: {}",
-				                 StringTable::getStringView(instantiated_name));
+								 StringTable::getStringView(instantiated_name));
 
 				// Reset parsing context flags
 				parsing_template_class_ = false;
@@ -1301,17 +1301,17 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create a struct node with the instantiated name
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
-			    instantiated_name,
-			    is_class,
-			    is_union);
+				instantiated_name,
+				is_class,
+				is_union);
 
 			// Create struct type info first so we can reference it
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
 			struct_type_info.setTemplateInstantiationInfo(
-			    QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
-			    convertToTemplateArgInfo(template_args));
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+				convertToTemplateArgInfo(template_args));
 
 			// Create struct info for tracking members - required before parsing static members
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
@@ -1454,17 +1454,17 @@ ParseResult Parser::parse_template_declaration() {
 			// Set up member function context so functions know they're in a class.
 			// RAII guard ensures the stack entry is always popped, even on early returns.
 			member_function_context_stack_.push_back({
-			    instantiated_name,
-			    struct_type_info.type_index_,
-			    &struct_ref,
-			    nullptr // local_struct_info - not needed during template instantiation
+				instantiated_name,
+				struct_type_info.type_index_,
+				&struct_ref,
+				nullptr // local_struct_info - not needed during template instantiation
 			});
 			auto pop_member_ctx_guard = [this](void*) {
 				if (!member_function_context_stack_.empty())
 					member_function_context_stack_.pop_back();
 			};
 			std::unique_ptr<void, decltype(pop_member_ctx_guard)> member_ctx_scope(
-			    reinterpret_cast<void*>(1), pop_member_ctx_guard);
+				reinterpret_cast<void*>(1), pop_member_ctx_guard);
 
 			// Set up struct parsing context so member typedef/using registrations
 			// build struct-qualified names (e.g., "SpecName$HASH::char_type").
@@ -1473,16 +1473,16 @@ ParseResult Parser::parse_template_declaration() {
 			// both register under the simple name "char_type" and only the first survives.
 			// RAII guard ensures the stack entry is always popped, even on early returns.
 			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
-			                                         &struct_ref,
-			                                         struct_info.get(),
-			                                         gSymbolTable.get_current_namespace_handle(),
-			                                         {}});
+													 &struct_ref,
+													 struct_info.get(),
+													 gSymbolTable.get_current_namespace_handle(),
+													 {}});
 			auto pop_struct_ctx_guard = [this](void*) {
 				if (!struct_parsing_context_stack_.empty())
 					struct_parsing_context_stack_.pop_back();
 			};
 			std::unique_ptr<void, decltype(pop_struct_ctx_guard)> struct_ctx_scope(
-			    reinterpret_cast<void*>(1), pop_struct_ctx_guard);
+				reinterpret_cast<void*>(1), pop_struct_ctx_guard);
 
 			while (!peek().is_eof() && peek() != "}"_tok) {
 				// Skip empty declarations (bare ';' tokens) - valid in C++
@@ -1563,13 +1563,13 @@ ParseResult Parser::parse_template_declaration() {
 						advance(); // consume "static"
 
 						auto static_result = parse_static_member_block(
-						    instantiated_name,
-						    struct_ref,
-						    struct_info.get(),
-						    current_access,
-						    current_template_param_names_,
-						    /*use_struct_type_info=*/false,
-						    /*add_functions_to_ast_nodes=*/true);
+							instantiated_name,
+							struct_ref,
+							struct_info.get(),
+							current_access,
+							current_template_param_names_,
+							/*use_struct_type_info=*/false,
+							/*add_functions_to_ast_nodes=*/true);
 						if (static_result.is_error()) {
 							return static_result;
 						}
@@ -1652,7 +1652,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 				}
 				if (!peek().is_eof() && peek().is_identifier() &&
-				    peek_info().value() == template_name) {
+					peek_info().value() == template_name) {
 					// Look ahead to see if this is a constructor
 					Token name_token = advance();
 					std::string_view ctor_name = name_token.value();
@@ -1714,7 +1714,7 @@ ParseResult Parser::parse_template_declaration() {
 							advance(); // consume ':'
 
 							while (peek() != "{"_tok &&
-							       peek() != ";"_tok) {
+								   peek() != ";"_tok) {
 								auto init_name_token = advance();
 								if (init_name_token.type() != Token::Type::Identifier) {
 									return ParseResult::error("Expected member or base class name in initializer list", init_name_token);
@@ -1759,7 +1759,7 @@ ParseResult Parser::parse_template_declaration() {
 												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
 												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-												    PackExpansionExprNode(*arg_node, ellipsis_token));
+													PackExpansionExprNode(*arg_node, ellipsis_token));
 												init_args.push_back(ASTNode(&pack_expansion));
 												continue;
 											}
@@ -1859,7 +1859,7 @@ ParseResult Parser::parse_template_declaration() {
 												std::string_view param_type_name = type_spec.token().value();
 												// For template specializations, match against base template name
 												if (param_type_name == template_name ||
-												    param_type_name == instantiated_name) {
+													param_type_name == instantiated_name) {
 													if (type_spec.is_rvalue_reference()) {
 														is_move_ctor = true;
 													} else if (type_spec.is_reference()) {
@@ -1963,7 +1963,7 @@ ParseResult Parser::parse_template_declaration() {
 
 						auto name_token_opt = advance();
 						if (name_token_opt.type() != Token::Type::Identifier ||
-						    name_token_opt.value() != template_name) {
+							name_token_opt.value() != template_name) {
 							return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt);
 						}
 						Token dtor_name_token = name_token_opt;
@@ -2032,18 +2032,18 @@ ParseResult Parser::parse_template_declaration() {
 							skip_function_body(); // skip '{...}' or 'try{...}catch(...){...}'
 
 							delayed_function_bodies_.push_back({
-							    nullptr, // member_func_ref
-							    body_start,
-							    {}, // initializer_list_start (not used)
-							    instantiated_name,
-							    struct_type_info.type_index_,
-							    &struct_ref,
-							    false, // has_initializer_list
-							    false, // is_constructor
-							    true, // is_destructor
-							    nullptr, // ctor_node
-							    &dtor_ref, // dtor_node
-							    {} // no template parameter names for specializations
+								nullptr, // member_func_ref
+								body_start,
+								{}, // initializer_list_start (not used)
+								instantiated_name,
+								struct_type_info.type_index_,
+								&struct_ref,
+								false, // has_initializer_list
+								false, // is_constructor
+								true, // is_destructor
+								nullptr, // ctor_node
+								&dtor_ref, // dtor_node
+								{} // no template parameter names for specializations
 							});
 						} else if (!consume(";"_tok)) {
 							return ParseResult::error("Expected '{', 'try', or ';' after destructor declaration", peek_info());
@@ -2076,8 +2076,8 @@ ParseResult Parser::parse_template_declaration() {
 						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
 						bool is_conversion = false;
 						if (peek() != "("_tok &&
-						    !peek().is_operator() &&
-						    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
+							!peek().is_operator() &&
+							peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
 							// Try to parse the target type
 							auto type_result = parse_type_specifier();
 							if (!type_result.is_error() && type_result.node().has_value()) {
@@ -2096,12 +2096,12 @@ ParseResult Parser::parse_template_declaration() {
 									std::string_view operator_name = op_name_builder.commit();
 
 									Token identifier_token = Token(Token::Type::Identifier, operator_name,
-									                               operator_keyword_token.line(), operator_keyword_token.column(),
-									                               operator_keyword_token.file_index());
+																   operator_keyword_token.line(), operator_keyword_token.column(),
+																   operator_keyword_token.file_index());
 
 									ASTNode decl_node = emplace_node<DeclarationNode>(
-									    type_result.node().value(),
-									    identifier_token);
+										type_result.node().value(),
+										identifier_token);
 
 									discard_saved_token(op_saved);
 									discard_saved_token(conv_saved);
@@ -2152,7 +2152,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
-					    emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, instantiated_name);
 
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -2195,18 +2195,18 @@ ParseResult Parser::parse_template_declaration() {
 
 						// Record for delayed parsing
 						delayed_function_bodies_.push_back({
-						    &member_func_ref,
-						    body_start,
-						    {}, // initializer_list_start (not used)
-						    instantiated_name,
-						    struct_type_info.type_index_,
-						    &struct_ref,
-						    false, // has_initializer_list
-						    false, // is_constructor
-						    false, // is_destructor
-						    nullptr, // ctor_node
-						    nullptr, // dtor_node
-						    {} // no template parameter names for specializations
+							&member_func_ref,
+							body_start,
+							{}, // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false, // has_initializer_list
+							false, // is_constructor
+							false, // is_destructor
+							nullptr, // ctor_node
+							nullptr, // dtor_node
+							{} // no template parameter names for specializations
 						});
 					} else {
 						// No body - expect semicolon
@@ -2217,13 +2217,13 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Add to struct
 					struct_ref.add_member_function(
-					    member_func_node,
-					    current_access,
-					    !!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-					    func_specs.is_pure_virtual(),
-					    func_specs.is_override,
-					    func_specs.is_final,
-					    member_quals.cv_qualifier);
+						member_func_node,
+						current_access,
+						!!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+						func_specs.is_pure_virtual(),
+						func_specs.is_override,
+						func_specs.is_final,
+						member_quals.cv_qualifier);
 
 					// Also add to StructTypeInfo so out-of-line definitions can find the declaration
 					if (struct_info) {
@@ -2232,9 +2232,9 @@ ParseResult Parser::parse_template_declaration() {
 						member_func_ref.set_is_const_member_function(member_quals.is_const());
 						member_func_ref.set_is_volatile_member_function(member_quals.is_volatile());
 						struct_info->addMemberFunction(func_name_handle, member_func_node,
-						                               current_access,
-						                               !!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
-						                               func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
+													   current_access,
+													   !!(conv_specs & FlashCpp::MLS_Virtual) || func_specs.is_virtual,
+													   func_specs.is_pure_virtual(), func_specs.is_override, func_specs.is_final);
 						// cv_qualifier is now auto-derived by propagateAstProperties
 					}
 
@@ -2307,8 +2307,8 @@ ParseResult Parser::parse_template_declaration() {
 
 						// Create declaration with same type
 						ASTNode next_member_decl = emplace_node<DeclarationNode>(
-						    emplace_node<TypeSpecifierNode>(type_spec),
-						    next_member_name);
+							emplace_node<TypeSpecifierNode>(type_spec),
+							next_member_name);
 						struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
 					}
 
@@ -2358,9 +2358,9 @@ ParseResult Parser::parse_template_declaration() {
 			if (!struct_info_ptr) {
 				// Defensive guard: if attachment above failed for any reason, bail out
 				return ParseResult::error(
-				    "Internal error: missing struct info for specialization '" +
-				        std::string(StringTable::getStringView(instantiated_name)) + "'",
-				    peek_info());
+					"Internal error: missing struct info for specialization '" +
+						std::string(StringTable::getStringView(instantiated_name)) + "'",
+					peek_info());
 			}
 
 			// Add members to struct info
@@ -2388,19 +2388,19 @@ ParseResult Parser::parse_template_declaration() {
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info_ptr->addMember(
-				    member_name_handle,
-				    type_spec.type_index(),
-				    member_size,
-				    member_alignment,
-				    member_decl.access,
-				    member_decl.default_initializer,
-				    ref_qual,
-				    referenced_size_bits,
-				    false,
-				    {},
-				    static_cast<int>(type_spec.pointer_depth()),
-				    member_decl.bitfield_width,
-				    type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+					member_name_handle,
+					type_spec.type_index(),
+					member_size,
+					member_alignment,
+					member_decl.access,
+					member_decl.default_initializer,
+					ref_qual,
+					referenced_size_bits,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth()),
+					member_decl.bitfield_width,
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
 			}
 
 			// Add member functions to struct info
@@ -2410,14 +2410,14 @@ ParseResult Parser::parse_template_declaration() {
 					has_constructor = true;
 					// Add constructor to struct type info
 					struct_info_ptr->addConstructor(
-					    member_func_decl.function_declaration,
-					    member_func_decl.access);
+						member_func_decl.function_declaration,
+						member_func_decl.access);
 				} else if (member_func_decl.is_destructor) {
 					// Add destructor to struct type info
 					struct_info_ptr->addDestructor(
-					    member_func_decl.function_declaration,
-					    member_func_decl.access,
-					    member_func_decl.is_virtual);
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual);
 				} else {
 					const FunctionDeclarationNode* func_decl = get_function_decl_node(member_func_decl.function_declaration);
 					if (!func_decl) {
@@ -2428,13 +2428,13 @@ ParseResult Parser::parse_template_declaration() {
 					// Phase 7B: Intern function name and use StringHandle overload
 					StringHandle func_name_handle = decl.identifier_token().handle();
 					struct_info_ptr->addMemberFunction(
-					    func_name_handle,
-					    member_func_decl.function_declaration,
-					    member_func_decl.access,
-					    member_func_decl.is_virtual,
-					    member_func_decl.is_pure_virtual,
-					    member_func_decl.is_override,
-					    member_func_decl.is_final);
+						func_name_handle,
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual,
+						member_func_decl.is_pure_virtual,
+						member_func_decl.is_override,
+						member_func_decl.is_final);
 				}
 			}
 
@@ -2468,10 +2468,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Set up function context
 				FlashCpp::SymbolTableScope delayed_scope(ScopeType::Function);
 				member_function_context_stack_.push_back({
-				    delayed.struct_name,
-				    delayed.struct_type_index,
-				    delayed.struct_node,
-				    nullptr // local_struct_info - not needed for delayed function bodies
+					delayed.struct_name,
+					delayed.struct_type_index,
+					delayed.struct_node,
+					nullptr // local_struct_info - not needed for delayed function bodies
 				});
 
 				// Set up template parameter names if this is a template member
@@ -2612,7 +2612,7 @@ ParseResult Parser::parse_template_declaration() {
 					std::string_view member_class_name = peek_info().value();
 					advance(); // consume member class name
 					FLASH_LOG_FORMAT(Templates, Debug, "Out-of-line member class definition: {}::{}",
-					                 template_name, member_class_name);
+									 template_name, member_class_name);
 
 					// Skip base class list if present
 					if (peek() == ":"_tok) {
@@ -2635,15 +2635,15 @@ ParseResult Parser::parse_template_declaration() {
 					// can re-parse "struct Wrapper<T>::Nested { ... }" during instantiation.
 					// Partial specializations leave specialization_args empty — applies to all instantiations.
 					gTemplateRegistry.registerOutOfLineNestedClass(template_name, OutOfLineNestedClass{
-					                                                                  template_params,
-					                                                                  StringTable::getOrInternStringHandle(member_class_name),
-					                                                                  struct_keyword_pos,
-					                                                                  template_param_names,
-					                                                                  is_class,
-					                                                                  {} // no specialization args — applies to all instantiations
-					                                                              });
+																					  template_params,
+																					  StringTable::getOrInternStringHandle(member_class_name),
+																					  struct_keyword_pos,
+																					  template_param_names,
+																					  is_class,
+																					  {} // no specialization args — applies to all instantiations
+																				  });
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",
-					                 template_name, member_class_name);
+									 template_name, member_class_name);
 
 					// Clean up template parameter context
 					current_template_param_names_.clear();
@@ -2708,9 +2708,9 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create a struct node for this specialization
 			auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(
-			    instantiated_name,
-			    is_class,
-			    is_union);
+				instantiated_name,
+				is_class,
+				is_union);
 
 			// Create struct type info early so we can add base classes
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
@@ -2719,7 +2719,7 @@ ParseResult Parser::parse_template_declaration() {
 			// This allows constructor detection (e.g., template<typename U> allocator(const allocator<U>&))
 			// to find the base template name and match it against the constructor name
 			struct_type_info.setTemplateInstantiationInfo(
-			    QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
+				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
 
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
@@ -2825,7 +2825,7 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Handle stray member access tokens (e.g., ::type) that weren't consumed earlier
 			while ((current_token_.value() == "::") ||
-			       (peek() == "::"_tok)) {
+				   (peek() == "::"_tok)) {
 				if (current_token_.value() == "::") {
 					// Current token is '::' - consume following identifier
 					if (peek().is_identifier()) {
@@ -2854,9 +2854,9 @@ ParseResult Parser::parse_template_declaration() {
 					param_names_view.push_back(StringTable::getStringView(name));
 				}
 				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-				    template_params,
-				    std::move(param_names_view),
-				    struct_node);
+					template_params,
+					std::move(param_names_view),
+					struct_node);
 
 				// Build pattern key for lookup
 				StringBuilder pattern_key;
@@ -2897,9 +2897,9 @@ ParseResult Parser::parse_template_declaration() {
 					param_names_view2.push_back(StringTable::getStringView(name));
 				}
 				auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-				    template_params,
-				    std::move(param_names_view2),
-				    struct_node);
+					template_params,
+					std::move(param_names_view2),
+					struct_node);
 
 				gTemplateRegistry.registerSpecialization(template_name, pattern_args, template_class_node);
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered forward declaration for partial specialization (after extra tokens): {}", template_name);
@@ -2918,10 +2918,10 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Set up member function context
 			member_function_context_stack_.push_back({
-			    instantiated_name,
-			    struct_type_info.type_index_,
-			    &struct_ref,
-			    nullptr // local_struct_info - not needed during template instantiation
+				instantiated_name,
+				struct_type_info.type_index_,
+				&struct_ref,
+				nullptr // local_struct_info - not needed during template instantiation
 			});
 
 			// Set up struct parsing context for inherited member lookups (e.g., _S_test from base class)
@@ -2930,10 +2930,10 @@ ParseResult Parser::parse_template_declaration() {
 			// This fixes the issue where static constexpr members (e.g., __g, __d2) are not visible
 			// when used as template arguments in typedef declarations within the same struct body
 			struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
-			                                         &struct_ref,
-			                                         struct_info.get(),
-			                                         gSymbolTable.get_current_namespace_handle(),
-			                                         {}});
+													 &struct_ref,
+													 struct_info.get(),
+													 gSymbolTable.get_current_namespace_handle(),
+													 {}});
 
 			// Parse class body (same as full specialization)
 			while (!peek().is_eof() && peek() != "}"_tok) {
@@ -3023,13 +3023,13 @@ ParseResult Parser::parse_template_declaration() {
 						advance(); // consume "static"
 
 						auto static_result = parse_static_member_block(
-						    instantiated_name,
-						    struct_ref,
-						    struct_info.get(),
-						    current_access,
-						    current_template_param_names_,
-						    /*use_struct_type_info=*/false,
-						    /*add_functions_to_ast_nodes=*/false);
+							instantiated_name,
+							struct_ref,
+							struct_info.get(),
+							current_access,
+							current_template_param_names_,
+							/*use_struct_type_info=*/false,
+							/*add_functions_to_ast_nodes=*/false);
 						if (static_result.is_error()) {
 							return static_result;
 						}
@@ -3082,9 +3082,9 @@ ParseResult Parser::parse_template_declaration() {
 						}
 						continue;
 					} else if (peek() == "constexpr"_tok ||
-					           peek() == "consteval"_tok ||
-					           peek() == "inline"_tok ||
-					           peek() == "explicit"_tok) {
+							   peek() == "consteval"_tok ||
+							   peek() == "inline"_tok ||
+							   peek() == "explicit"_tok) {
 						// Handle constexpr/consteval/inline/explicit before constructor or member function
 						// Consume the specifier and continue to constructor/member check below
 					}
@@ -3098,7 +3098,7 @@ ParseResult Parser::parse_template_declaration() {
 				// not the instantiated pattern name (e.g., "Calculator$pattern_P")
 				SaveHandle saved_pos = save_token_position();
 				if (!peek().is_eof() && peek().is_identifier() &&
-				    peek_info().value() == template_name) {
+					peek_info().value() == template_name) {
 					// Look ahead to see if this is a constructor (next token is '(')
 					Token name_token = advance();
 					if (name_token.type() == Token::Type::EndOfFile) {
@@ -3150,7 +3150,7 @@ ParseResult Parser::parse_template_declaration() {
 							advance(); // consume ':'
 
 							while (peek() != "{"_tok &&
-							       peek() != ";"_tok) {
+								   peek() != ";"_tok) {
 								auto init_name_token = advance();
 								if (init_name_token.type() != Token::Type::Identifier) {
 									return ParseResult::error("Expected member or base class name in initializer list", init_name_token);
@@ -3195,7 +3195,7 @@ ParseResult Parser::parse_template_declaration() {
 												Token ellipsis_token = peek_info();
 												advance(); // consume '...'
 												ExpressionNode& pack_expansion = gChunkedAnyStorage.emplace_back<ExpressionNode>(
-												    PackExpansionExprNode(*arg_node, ellipsis_token));
+													PackExpansionExprNode(*arg_node, ellipsis_token));
 												init_args.push_back(ASTNode(&pack_expansion));
 												continue;
 											}
@@ -3295,7 +3295,7 @@ ParseResult Parser::parse_template_declaration() {
 												std::string_view param_type_name = type_spec.token().value();
 												// For template specializations, match against base template name
 												if (param_type_name == template_name ||
-												    param_type_name == instantiated_name) {
+													param_type_name == instantiated_name) {
 													if (type_spec.is_rvalue_reference()) {
 														is_move_ctor = true;
 													} else if (type_spec.is_reference()) {
@@ -3341,18 +3341,18 @@ ParseResult Parser::parse_template_declaration() {
 							skip_balanced_braces();
 
 							delayed_function_bodies_.push_back({
-							    nullptr,
-							    body_start,
-							    {},
-							    instantiated_name,
-							    struct_type_index,
-							    &struct_ref,
-							    false, // has_initializer_list
-							    true, // is_constructor
-							    false,
-							    &ctor_ref,
-							    nullptr,
-							    {} // template_param_names
+								nullptr,
+								body_start,
+								{},
+								instantiated_name,
+								struct_type_index,
+								&struct_ref,
+								false, // has_initializer_list
+								true, // is_constructor
+								false,
+								&ctor_ref,
+								nullptr,
+								{} // template_param_names
 							});
 						} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 							return ParseResult::error("Expected '{', ';', '= default', or '= delete' after constructor declaration", peek_info());
@@ -3375,7 +3375,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					auto name_token_opt = advance();
 					if (name_token_opt.type() != Token::Type::Identifier ||
-					    name_token_opt.value() != template_name) {
+						name_token_opt.value() != template_name) {
 						return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt);
 					}
 					Token dtor_name_token = name_token_opt;
@@ -3450,18 +3450,18 @@ ParseResult Parser::parse_template_declaration() {
 
 						// Record for delayed parsing
 						delayed_function_bodies_.push_back({
-						    nullptr, // member_func_ref
-						    body_start,
-						    {}, // initializer_list_start (not used)
-						    instantiated_name,
-						    struct_type_info.type_index_,
-						    &struct_ref,
-						    false, // has_initializer_list
-						    false, // is_constructor
-						    true, // is_destructor
-						    nullptr, // ctor_node
-						    &dtor_ref, // dtor_node
-						    {} // no template parameter names for specializations
+							nullptr, // member_func_ref
+							body_start,
+							{}, // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false, // has_initializer_list
+							false, // is_constructor
+							true, // is_destructor
+							nullptr, // ctor_node
+							&dtor_ref, // dtor_node
+							{} // no template parameter names for specializations
 						});
 					} else if (!consume(";"_tok)) {
 						return ParseResult::error("Expected '{' or ';' after destructor declaration", peek_info());
@@ -3489,8 +3489,8 @@ ParseResult Parser::parse_template_declaration() {
 						// If next token is not '(' and not an operator symbol, it's likely a conversion operator
 						bool is_conversion = false;
 						if (peek() != "("_tok &&
-						    !peek().is_operator() &&
-						    peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
+							!peek().is_operator() &&
+							peek() != "["_tok && peek() != "new"_tok && peek() != "delete"_tok) {
 							// Try to parse the target type
 							auto type_result = parse_type_specifier();
 							if (!type_result.is_error() && type_result.node().has_value()) {
@@ -3509,12 +3509,12 @@ ParseResult Parser::parse_template_declaration() {
 									std::string_view operator_name = op_name_builder.commit();
 
 									Token identifier_token = Token(Token::Type::Identifier, operator_name,
-									                               operator_keyword_token.line(), operator_keyword_token.column(),
-									                               operator_keyword_token.file_index());
+																   operator_keyword_token.line(), operator_keyword_token.column(),
+																   operator_keyword_token.file_index());
 
 									ASTNode decl_node = emplace_node<DeclarationNode>(
-									    type_result.node().value(),
-									    identifier_token);
+										type_result.node().value(),
+										identifier_token);
 
 									discard_saved_token(op_saved);
 									discard_saved_token(conv_saved);
@@ -3577,7 +3577,7 @@ ParseResult Parser::parse_template_declaration() {
 
 					// Create a new FunctionDeclarationNode with member function info
 					auto [member_func_node, member_func_ref] =
-					    emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(instantiated_name));
+						emplace_node_ref<FunctionDeclarationNode>(func_decl_node, StringTable::getStringView(instantiated_name));
 
 					// Copy parameters from the parsed function
 					for (const auto& param : func_decl.parameter_nodes()) {
@@ -3648,18 +3648,18 @@ ParseResult Parser::parse_template_declaration() {
 
 						// Record for delayed parsing
 						delayed_function_bodies_.push_back({
-						    &member_func_ref,
-						    body_start,
-						    {}, // initializer_list_start (not used)
-						    instantiated_name,
-						    struct_type_info.type_index_,
-						    &struct_ref,
-						    false, // has_initializer_list
-						    false, // is_constructor
-						    false, // is_destructor
-						    nullptr, // ctor_node
-						    nullptr, // dtor_node
-						    {} // no template parameter names for specializations
+							&member_func_ref,
+							body_start,
+							{}, // initializer_list_start (not used)
+							instantiated_name,
+							struct_type_info.type_index_,
+							&struct_ref,
+							false, // has_initializer_list
+							false, // is_constructor
+							false, // is_destructor
+							nullptr, // ctor_node
+							nullptr, // dtor_node
+							{} // no template parameter names for specializations
 						});
 					} else {
 						// Just a declaration, consume the semicolon
@@ -3738,8 +3738,8 @@ ParseResult Parser::parse_template_declaration() {
 
 							// Create declaration with same type
 							ASTNode next_member_decl = emplace_node<DeclarationNode>(
-							    emplace_node<TypeSpecifierNode>(type_spec),
-							    next_member_name);
+								emplace_node<TypeSpecifierNode>(type_spec),
+								next_member_name);
 							struct_ref.add_member(next_member_decl, current_access, additional_init, additional_bitfield_width, additional_bitfield_width_expr);
 						}
 					}
@@ -3783,19 +3783,19 @@ ParseResult Parser::parse_template_declaration() {
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
-				    member_name_handle,
-				    type_spec.type_index(),
-				    member_size,
-				    member_alignment,
-				    member_decl.access,
-				    member_decl.default_initializer,
-				    ref_qual,
-				    ref_qual != ReferenceQualifier::None ? get_type_size_bits(type_spec.type()) : 0,
-				    false,
-				    {},
-				    static_cast<int>(type_spec.pointer_depth()),
-				    member_decl.bitfield_width,
-				    type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+					member_name_handle,
+					type_spec.type_index(),
+					member_size,
+					member_alignment,
+					member_decl.access,
+					member_decl.default_initializer,
+					ref_qual,
+					ref_qual != ReferenceQualifier::None ? get_type_size_bits(type_spec.type()) : 0,
+					false,
+					{},
+					static_cast<int>(type_spec.pointer_depth()),
+					member_decl.bitfield_width,
+					type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
 			}
 
 			// Add member functions to struct info
@@ -3803,14 +3803,14 @@ ParseResult Parser::parse_template_declaration() {
 				if (member_func_decl.is_constructor) {
 					// Add constructor to struct type info
 					struct_info->addConstructor(
-					    member_func_decl.function_declaration,
-					    member_func_decl.access);
+						member_func_decl.function_declaration,
+						member_func_decl.access);
 				} else if (member_func_decl.is_destructor) {
 					// Add destructor to struct type info
 					struct_info->addDestructor(
-					    member_func_decl.function_declaration,
-					    member_func_decl.access,
-					    member_func_decl.is_virtual);
+						member_func_decl.function_declaration,
+						member_func_decl.access,
+						member_func_decl.is_virtual);
 				} else {
 					// Handle both regular functions and member function templates
 					if (member_func_decl.function_declaration.is<TemplateFunctionDeclarationNode>()) {
@@ -3822,13 +3822,13 @@ ParseResult Parser::parse_template_declaration() {
 						// Phase 7B: Intern function name and use StringHandle overload
 						StringHandle func_name_handle = decl.identifier_token().handle();
 						struct_info->addMemberFunction(
-						    func_name_handle,
-						    member_func_decl.function_declaration,
-						    member_func_decl.access,
-						    member_func_decl.is_virtual,
-						    member_func_decl.is_pure_virtual,
-						    member_func_decl.is_override,
-						    member_func_decl.is_final);
+							func_name_handle,
+							member_func_decl.function_declaration,
+							member_func_decl.access,
+							member_func_decl.is_virtual,
+							member_func_decl.is_pure_virtual,
+							member_func_decl.is_override,
+							member_func_decl.is_final);
 					} else {
 						// Regular member function
 						const FunctionDeclarationNode& func_decl = member_func_decl.function_declaration.as<FunctionDeclarationNode>();
@@ -3837,13 +3837,13 @@ ParseResult Parser::parse_template_declaration() {
 						// Phase 7B: Intern function name and use StringHandle overload
 						StringHandle func_name_handle = decl.identifier_token().handle();
 						struct_info->addMemberFunction(
-						    func_name_handle,
-						    member_func_decl.function_declaration,
-						    member_func_decl.access,
-						    member_func_decl.is_virtual,
-						    member_func_decl.is_pure_virtual,
-						    member_func_decl.is_override,
-						    member_func_decl.is_final);
+							func_name_handle,
+							member_func_decl.function_declaration,
+							member_func_decl.access,
+							member_func_decl.is_virtual,
+							member_func_decl.is_pure_virtual,
+							member_func_decl.is_override,
+							member_func_decl.is_final);
 					}
 				}
 			}
@@ -4059,7 +4059,7 @@ ParseResult Parser::parse_template_declaration() {
 										if (fp_param_result.is_error())
 											break;
 										while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
-										       peek() == "const"_tok || peek() == "volatile"_tok) {
+											   peek() == "const"_tok || peek() == "volatile"_tok) {
 											advance();
 										}
 										if (peek() == "..."_tok)
@@ -4142,7 +4142,7 @@ ParseResult Parser::parse_template_declaration() {
 								advance();
 								angle_depth--;
 							} else if (paren_depth == 0 && angle_depth == 0 &&
-							           (peek() == ","_tok || peek() == ")"_tok)) {
+									   (peek() == ","_tok || peek() == ")"_tok)) {
 								break;
 							} else {
 								advance();
@@ -4192,10 +4192,10 @@ ParseResult Parser::parse_template_declaration() {
 
 			// Create DeductionGuideNode
 			auto guide_node = emplace_node<DeductionGuideNode>(
-			    std::move(template_params),
-			    class_name,
-			    std::move(guide_params),
-			    std::move(deduced_type_nodes));
+				std::move(template_params),
+				class_name,
+				std::move(guide_params),
+				std::move(deduced_type_nodes));
 
 			// Register the deduction guide
 			gTemplateRegistry.register_deduction_guide(class_name, guide_node);
@@ -4346,8 +4346,8 @@ ParseResult Parser::parse_template_declaration() {
 				}
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTemplateArgs(
-				    func_base_name, return_type, param_types, spec_non_type_args,
-				    func_for_mangling.is_variadic(), "", ns_path, false);
+					func_base_name, return_type, param_types, spec_non_type_args,
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else if (!spec_template_args.empty()) {
 				// Use the version that includes TYPE template arguments in the mangled name
 				// This handles specializations like sum<int>, sum<int, int>
@@ -4364,12 +4364,12 @@ ParseResult Parser::parse_template_declaration() {
 				}
 
 				specialization_mangled_name = NameMangling::generateMangledNameWithTypeTemplateArgs(
-				    func_base_name, return_type, param_types, spec_template_args,
-				    func_for_mangling.is_variadic(), "", ns_path, false);
+					func_base_name, return_type, param_types, spec_template_args,
+					func_for_mangling.is_variadic(), "", ns_path, false);
 			} else {
 				// Regular specialization without any template args (shouldn't happen but fallback)
 				specialization_mangled_name =
-				    NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
+					NameMangling::generateMangledNameFromNode(func_for_mangling, ns_path);
 			}
 
 			func_for_mangling.set_mangled_name(specialization_mangled_name.view());
@@ -4416,8 +4416,8 @@ ParseResult Parser::parse_template_declaration() {
 
 		// Register with QualifiedIdentifier — handles both simple and namespace-qualified keys
 		gTemplateRegistry.registerTemplate(
-		    QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
-		    template_func_node);
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_func_node);
 
 		// Add the template function to the symbol table so it can be found during overload resolution
 		gSymbolTable.insert(simple_name, template_func_node);
@@ -4447,9 +4447,9 @@ ParseResult Parser::parse_template_declaration() {
 		}
 
 		auto template_class_node = emplace_node<TemplateClassDeclarationNode>(
-		    std::move(template_params),
-		    std::move(param_names),
-		    decl_node);
+			std::move(template_params),
+			std::move(param_names),
+			decl_node);
 
 		// Attach deferred member function bodies for two-phase lookup
 		// These will be parsed during template instantiation when TypeInfo is available
@@ -4469,8 +4469,8 @@ ParseResult Parser::parse_template_declaration() {
 		// parse_struct_declaration prepended the namespace. fromQualifiedName() handles both cases.
 		FLASH_LOG_FORMAT(Templates, Debug, "Registering template class: '{}'", simple_name);
 		gTemplateRegistry.registerTemplate(
-		    QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
-		    template_class_node);
+			QualifiedIdentifier::fromQualifiedName(simple_name, gSymbolTable.get_current_namespace_handle()),
+			template_class_node);
 
 		// Primary templates shouldn't be added to AST - only instantiations and specializations
 		// Return success with no node so the caller doesn't add it to ast_nodes_
@@ -4486,8 +4486,8 @@ ParseResult Parser::parse_template_declaration() {
 // (using add_deferred_template_base_class / add_base_class with is_deferred=true) so they
 // are resolved during later template instantiation.
 ParseResult Parser::parse_member_struct_template_base_class_list(
-    StructDeclarationNode& struct_ref,
-    bool is_class) {
+	StructDeclarationNode& struct_ref,
+	bool is_class) {
 	do {
 		// Optional 'virtual' keyword
 		bool is_virtual_base = false;
@@ -4543,8 +4543,8 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 			auto arg_infos = build_template_arg_infos(*template_args_opt, template_arg_nodes);
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
 			struct_ref.add_deferred_template_base_class(
-			    template_name_handle, std::move(arg_infos),
-			    post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+				template_name_handle, std::move(arg_infos),
+				post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
 		} else {
 			// Simple identifier base class – look it up now; defer only if it's a template parameter
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
@@ -4627,13 +4627,13 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 		// Create RequiresClauseNode (but we just skip it for member struct templates)
 		requires_clause = emplace_node<RequiresClauseNode>(
-		    *constraint_result.node(),
-		    requires_token);
+			*constraint_result.node(),
+			requires_token);
 	}
 
 	// Expect 'struct' or 'class' or 'union' keyword
 	if (!peek().is_keyword() ||
-	    (peek() != "struct"_tok && peek() != "class"_tok && peek() != "union"_tok)) {
+		(peek() != "struct"_tok && peek() != "class"_tok && peek() != "union"_tok)) {
 		return ParseResult::error("Expected 'struct' or 'class' or 'union' after template parameter list", current_token_);
 	}
 
@@ -4659,26 +4659,26 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// For forward declarations, we just register the template without a body
 		// Create a minimal struct node
 		auto qualified_name = StringTable::getOrInternStringHandle(
-		    StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
 
 		auto forward_struct_node = emplace_node<StructDeclarationNode>(
-		    qualified_name,
-		    is_class,
-		    is_union);
+			qualified_name,
+			is_class,
+			is_union);
 		forward_struct_node.as<StructDeclarationNode>().set_is_forward_declaration(true);
 
 		// Create template struct node for the forward declaration
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-		    std::move(template_params),
-		    std::move(template_param_names),
-		    forward_struct_node);
+			std::move(template_params),
+			std::move(template_param_names),
+			forward_struct_node);
 
 		// Register the template
 		gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);
 		gTemplateRegistry.registerTemplate(struct_name_token.handle(), template_struct_node);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template forward declaration: {}",
-		                 StringTable::getStringView(qualified_name));
+						 StringTable::getStringView(qualified_name));
 
 		return saved_position.success();
 	}
@@ -4766,18 +4766,18 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Qualify with parent struct name
 		std::string_view pattern_name_str = pattern_name.commit();
 		auto qualified_pattern_name = StringTable::getOrInternStringHandle(
-		    StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(pattern_name_str));
 
 		// Register this as a pattern struct name with its base template name for non-string-based lookup
 		auto qualified_base_name = StringTable::getOrInternStringHandle(
-		    StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
 		gTemplateRegistry.registerPatternStructName(qualified_pattern_name, qualified_base_name);
 
 		// Create a struct node for this partial specialization
 		auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
-		    qualified_pattern_name,
-		    is_class,
-		    is_union);
+			qualified_pattern_name,
+			is_class,
+			is_union);
 
 		// Parse base class list if present (e.g., : List<Rest...>)
 		if (peek() == ":"_tok) {
@@ -4935,15 +4935,15 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						// Add to struct's static members
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
-						    static_member_name_handle,
-						    type_spec.type_index(),
-						    static_member_size,
-						    static_member_alignment,
-						    current_access,
-						    init_expr_opt,
-						    cv_qual,
-						    ref_qual,
-						    ptr_depth);
+							static_member_name_handle,
+							type_spec.type_index(),
+							static_member_size,
+							static_member_alignment,
+							current_access,
+							init_expr_opt,
+							cv_qual,
+							ref_qual,
+							ptr_depth);
 					}
 					continue;
 				}
@@ -4977,7 +4977,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			// Check for constructor (identifier matching struct name followed by '(')
 			// For member struct templates, struct_name is the simple name (e.g., "_Int")
 			if (!peek().is_eof() && peek().is_identifier() &&
-			    peek_info().value() == struct_name) {
+				peek_info().value() == struct_name) {
 				// Save position after specifiers for constructor lookahead
 				SaveHandle ctor_lookahead_pos = save_token_position();
 				// Look ahead to see if this is a constructor (next token is '(')
@@ -5031,7 +5031,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 				// Create member function node
 				auto [member_func_node, member_func_ref] =
-				    emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_pattern_name);
+					emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_pattern_name);
 
 				// Copy parameters
 				for (const auto& param : func_decl.parameter_nodes()) {
@@ -5069,9 +5069,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 				// Add member function to struct
 				member_struct_ref.add_member_function(member_func_node, current_access,
-				                                      func_specs.is_virtual, func_specs.is_pure_virtual(),
-				                                      func_specs.is_override, func_specs.is_final,
-				                                      member_quals.cv_qualifier);
+													  func_specs.is_virtual, func_specs.is_pure_virtual(),
+													  func_specs.is_override, func_specs.is_final,
+													  member_quals.cv_qualifier);
 			} else if (peek() == ":"_tok) {
 				// Bitfield data member
 				std::optional<size_t> bitfield_width;
@@ -5152,31 +5152,31 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Register the partial specialization pattern FIRST (before moving template_params)
 		// For member struct templates, we need to store the pattern with the parent struct name
 		auto qualified_simple_name = StringTable::getOrInternStringHandle(
-		    StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+			StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
 
 		// Create template struct node for the partial specialization
 		auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-		    template_params, // Copy, don't move yet
-		    template_param_names, // Copy, don't move yet
-		    member_struct_node);
+			template_params, // Copy, don't move yet
+			template_param_names, // Copy, don't move yet
+			member_struct_node);
 
 		// Register pattern under qualified name (MakeUnsigned::List)
 		gTemplateRegistry.registerSpecializationPattern(
-		    StringTable::getStringView(qualified_simple_name),
-		    template_params,
-		    pattern_args,
-		    template_struct_node);
+			StringTable::getStringView(qualified_simple_name),
+			template_params,
+			pattern_args,
+			template_struct_node);
 
 		// Also register pattern under simple name (List) for consistency with primary template
 		// This ensures patterns are found regardless of whether qualified or simple name is used
 		gTemplateRegistry.registerSpecializationPattern(
-		    struct_name,
-		    template_params,
-		    pattern_args,
-		    template_struct_node);
+			struct_name,
+			template_params,
+			pattern_args,
+			template_struct_node);
 
 		FLASH_LOG_FORMAT(Parser, Info, "Registered member struct template partial specialization: {} with pattern",
-		                 StringTable::getStringView(qualified_pattern_name));
+						 StringTable::getStringView(qualified_pattern_name));
 
 		return saved_position.success();
 	}
@@ -5185,12 +5185,12 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 	// Create the struct declaration node first so we can add base classes to it
 	// Member structs are prefixed with parent struct name for uniqueness
 	auto qualified_name = StringTable::getOrInternStringHandle(
-	    StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
+		StringBuilder().append(struct_node.name()).append("::"sv).append(struct_name));
 
 	auto [member_struct_node, member_struct_ref] = emplace_node_ref<StructDeclarationNode>(
-	    qualified_name,
-	    is_class,
-	    is_union);
+		qualified_name,
+		is_class,
+		is_union);
 
 	// Handle base class list if present (e.g., : true_type<T>)
 	if (peek() == ":"_tok) {
@@ -5345,7 +5345,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 		// Check for constructor (identifier matching struct name followed by '(')
 		// For member struct templates, struct_name is the simple name (e.g., "_Int")
 		if (!peek().is_eof() && peek().is_identifier() &&
-		    peek_info().value() == struct_name) {
+			peek_info().value() == struct_name) {
 			// Save position after specifiers for constructor lookahead
 			SaveHandle ctor_lookahead_pos2 = save_token_position();
 			// Look ahead to see if this is a constructor (next token is '(')
@@ -5399,7 +5399,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 			// Create member function node
 			auto [member_func_node, member_func_ref] =
-			    emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_name);
+				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_name);
 
 			// Copy parameters
 			for (const auto& param : func_decl.parameter_nodes()) {
@@ -5439,9 +5439,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 			// Add member function to struct
 			member_struct_ref.add_member_function(member_func_node, current_access,
-			                                      func_specs.is_virtual, func_specs.is_pure_virtual(),
-			                                      func_specs.is_override, func_specs.is_final,
-			                                      member_quals.cv_qualifier);
+												  func_specs.is_virtual, func_specs.is_pure_virtual(),
+												  func_specs.is_override, func_specs.is_final,
+												  member_quals.cv_qualifier);
 		} else if (peek() == ":"_tok) {
 			// Bitfield data member
 			std::optional<size_t> bitfield_width;
@@ -5501,9 +5501,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 
 	// Create template struct node (using TemplateClassDeclarationNode which handles both struct and class)
 	auto template_struct_node = emplace_node<TemplateClassDeclarationNode>(
-	    std::move(template_params),
-	    std::move(template_param_names),
-	    member_struct_node);
+		std::move(template_params),
+		std::move(template_param_names),
+		member_struct_node);
 
 	// Register the template in the global registry with qualified name
 	gTemplateRegistry.registerTemplate(qualified_name, template_struct_node);

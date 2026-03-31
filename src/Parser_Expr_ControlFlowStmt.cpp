@@ -106,7 +106,7 @@ ParseResult Parser::parse_for_loop() {
 			}
 
 			return ParseResult::success(emplace_node<RangedForStatementNode>(
-			    *init_statement, *range_expr, *body_node));
+				*init_statement, *range_expr, *body_node));
 		}
 
 		if (!consume(";"_tok)) {
@@ -126,7 +126,7 @@ ParseResult Parser::parse_for_loop() {
 	std::optional<ASTNode> range_decl;
 
 	if (peek().is_keyword() &&
-	    type_keywords.find(peek_info().value()) != type_keywords.end()) {
+		type_keywords.find(peek_info().value()) != type_keywords.end()) {
 		// Try to parse as a range declaration
 		ParseResult decl_result = parse_variable_declaration();
 		if (!decl_result.is_error() && decl_result.node().has_value()) {
@@ -176,7 +176,7 @@ ParseResult Parser::parse_for_loop() {
 
 		// Create ranged for statement with init-statement
 		return ParseResult::success(emplace_node<RangedForStatementNode>(
-		    *range_decl, *range_expr, *body_node, init_statement));
+			*range_decl, *range_expr, *body_node, init_statement));
 	}
 
 	// Not a range-based for with init - restore position and continue with regular for loop
@@ -235,7 +235,7 @@ ParseResult Parser::parse_for_loop() {
 	}
 
 	return ParseResult::success(emplace_node<ForStatementNode>(
-	    init_statement, condition, update_expression, *body_node));
+		init_statement, condition, update_expression, *body_node));
 }
 
 ParseResult Parser::parse_while_loop() {
@@ -272,7 +272,7 @@ ParseResult Parser::parse_while_loop() {
 	}
 
 	return ParseResult::success(emplace_node<WhileStatementNode>(
-	    *condition_node, *body_node));
+		*condition_node, *body_node));
 }
 
 ParseResult Parser::parse_do_while_loop() {
@@ -323,7 +323,7 @@ ParseResult Parser::parse_do_while_loop() {
 	}
 
 	return ParseResult::success(emplace_node<DoWhileStatementNode>(
-	    *body_node, *condition_node));
+		*body_node, *condition_node));
 }
 
 ParseResult Parser::parse_break_statement() {
@@ -812,12 +812,12 @@ ParseResult Parser::parse_lambda_expression() {
 	// Add captures to symbol table
 	for (const auto& capture : captures) {
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-		    capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis) {
 			// Skip 'this' and '*this' captures - they're handled differently
 			continue;
 		}
 		if (capture.kind() == LambdaCaptureNode::CaptureKind::AllByValue ||
-		    capture.kind() == LambdaCaptureNode::CaptureKind::AllByReference) {
+			capture.kind() == LambdaCaptureNode::CaptureKind::AllByReference) {
 			// Capture-all will be expanded later, skip for now
 			continue;
 		}
@@ -852,8 +852,8 @@ ParseResult Parser::parse_lambda_expression() {
 
 		// Create a DeclarationNode for the capture variable
 		auto capture_decl = emplace_node<DeclarationNode>(
-		    emplace_node<TypeSpecifierNode>(capture_type_node),
-		    id_token);
+			emplace_node<TypeSpecifierNode>(capture_type_node),
+			id_token);
 
 		// Add to symbol table
 		gSymbolTable.insert(id_token.value(), capture_decl);
@@ -872,7 +872,7 @@ ParseResult Parser::parse_lambda_expression() {
 		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_map;
 		for (const auto& capture : captures) {
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByValue ||
-			    capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
+				capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
 				capture_map[capture.identifier_token().handle()] = capture.kind();
 			}
 			// AllByValue, AllByReference, This, CopyThis are not identifier-based; skip here.
@@ -893,7 +893,7 @@ ParseResult Parser::parse_lambda_expression() {
 	// Now with proper guard against circular dependencies in get_expression_type
 	// AND validation that all return paths return the same type
 	if (!return_type.has_value() ||
-	    (return_type->is<TypeSpecifierNode>() && isPlaceholderAutoType(return_type->as<TypeSpecifierNode>().type()))) {
+		(return_type->is<TypeSpecifierNode>() && isPlaceholderAutoType(return_type->as<TypeSpecifierNode>().type()))) {
 		// Search lambda body for return statements to deduce return type
 		[[maybe_unused]] const BlockNode& body = body_result.node()->as<BlockNode>();
 		std::optional<TypeSpecifierNode> deduced_type;
@@ -912,13 +912,13 @@ ParseResult Parser::parse_lambda_expression() {
 						all_return_types.emplace_back(*expr_type_opt, lambda_token);
 
 						FLASH_LOG(Parser, Debug, "Lambda found return statement #", all_return_types.size(),
-						          " with type=", (int)expr_type_opt->type(), " size=", (int)expr_type_opt->size_in_bits());
+								  " with type=", (int)expr_type_opt->type(), " size=", (int)expr_type_opt->size_in_bits());
 
 						// Set the deduced type from the first return statement
 						if (!deduced_type.has_value()) {
 							deduced_type = *expr_type_opt;
 							FLASH_LOG(Parser, Debug, "Lambda return type deduced from expression: type=",
-							          (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
+									  (int)deduced_type->type(), " size=", (int)deduced_type->size_in_bits());
 						}
 					} else {
 						// If we couldn't deduce (possibly due to circular dependency guard),
@@ -1031,19 +1031,19 @@ ParseResult Parser::parse_lambda_expression() {
 
 		// Convert capture-all kind to specific capture kind
 		LambdaCaptureNode::CaptureKind specific_kind =
-		    (capture_all_kind == LambdaCaptureNode::CaptureKind::AllByValue)
-		        ? LambdaCaptureNode::CaptureKind::ByValue
-		        : LambdaCaptureNode::CaptureKind::ByReference;
+			(capture_all_kind == LambdaCaptureNode::CaptureKind::AllByValue)
+				? LambdaCaptureNode::CaptureKind::ByValue
+				: LambdaCaptureNode::CaptureKind::ByReference;
 
 		auto has_this_style_capture = [&expanded_captures]() {
 			return std::any_of(expanded_captures.begin(), expanded_captures.end(), [](const LambdaCaptureNode& capture) {
 				return capture.kind() == LambdaCaptureNode::CaptureKind::This ||
-				       capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis;
+					   capture.kind() == LambdaCaptureNode::CaptureKind::CopyThis;
 			});
 		};
 		if (uses_implicit_this_capture && !has_this_style_capture()) {
 			Token implicit_this_token(Token::Type::Keyword, "this"sv,
-			                          lambda_token.line(), lambda_token.column(), lambda_token.file_index());
+									  lambda_token.line(), lambda_token.column(), lambda_token.file_index());
 			expanded_captures.emplace_back(LambdaCaptureNode::CaptureKind::This, implicit_this_token);
 		}
 
@@ -1095,16 +1095,16 @@ ParseResult Parser::parse_lambda_expression() {
 	}
 
 	auto lambda_node = emplace_node<LambdaExpressionNode>(
-	    std::move(expanded_captures),
-	    std::move(parameters),
-	    *body_result.node(),
-	    return_type,
-	    lambda_token,
-	    is_mutable,
-	    std::move(template_param_names),
-	    lambda_is_noexcept,
-	    lambda_is_constexpr,
-	    lambda_is_consteval);
+		std::move(expanded_captures),
+		std::move(parameters),
+		*body_result.node(),
+		return_type,
+		lambda_token,
+		is_mutable,
+		std::move(template_param_names),
+		lambda_is_noexcept,
+		lambda_is_constexpr,
+		lambda_is_consteval);
 	auto& lambda_ref = lambda_node.as<LambdaExpressionNode>();
 	if (!current_template_param_names_.empty() && !template_param_substitutions_.empty()) {
 		InlineVector<StringHandle, 4> outer_template_param_names;
@@ -1179,14 +1179,14 @@ ParseResult Parser::parse_lambda_expression() {
 				// Phase 7B: Intern special member name and use StringHandle overload
 				StringHandle this_member_handle = StringTable::getOrInternStringHandle("__this");
 				closure_struct_info->addMember(
-				    this_member_handle, // Special member name for captured this
-				    nativeTypeIndex(TypeCategory::Void), // Void pointer type
-				    8, // Pointer size on x64
-				    8, // Alignment
-				    AccessSpecifier::Public,
-				    std::nullopt, // No initializer
-				    ReferenceQualifier::None, // Not a reference
-				    64 // Size in bits
+					this_member_handle, // Special member name for captured this
+					nativeTypeIndex(TypeCategory::Void), // Void pointer type
+					8, // Pointer size on x64
+					8, // Alignment
+					AccessSpecifier::Public,
+					std::nullopt, // No initializer
+					ReferenceQualifier::None, // Not a reference
+					64 // Size in bits
 				);
 				continue; // Skip the rest of processing for this capture
 			}
@@ -1205,14 +1205,14 @@ ParseResult Parser::parse_lambda_expression() {
 						if (enclosing_struct) {
 							StringHandle copy_this_member_handle = StringTable::getOrInternStringHandle("__copy_this");
 							closure_struct_info->addMember(
-							    copy_this_member_handle, // Special member name for copied this
-							    enclosing_type->type_index_, // Type index of enclosing struct
-							    enclosing_struct->total_size, // Size of the entire struct
-							    enclosing_struct->alignment, // Alignment from enclosing struct
-							    AccessSpecifier::Public,
-							    std::nullopt, // No initializer
-							    ReferenceQualifier::None, // Not a reference
-							    enclosing_struct->total_size * 8 // Size in bits
+								copy_this_member_handle, // Special member name for copied this
+								enclosing_type->type_index_, // Type index of enclosing struct
+								enclosing_struct->total_size, // Size of the entire struct
+								enclosing_struct->alignment, // Alignment from enclosing struct
+								AccessSpecifier::Public,
+								std::nullopt, // No initializer
+								ReferenceQualifier::None, // Not a reference
+								enclosing_struct->total_size * 8 // Size in bits
 							);
 						}
 					}
@@ -1314,14 +1314,14 @@ ParseResult Parser::parse_lambda_expression() {
 			}
 
 			closure_struct_info->addMember(
-			    var_name,
-			    type_index,
-			    member_size,
-			    member_alignment,
-			    AccessSpecifier::Public,
-			    std::nullopt,
-			    is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
-			    referenced_size_bits);
+				var_name,
+				type_index,
+				member_size,
+				member_alignment,
+				AccessSpecifier::Public,
+				std::nullopt,
+				is_ref_capture ? ReferenceQualifier::LValueReference : ReferenceQualifier::None,
+				referenced_size_bits);
 		}
 
 		// addMember() already updates total_size and alignment, but ensure minimum size of 1
@@ -1340,14 +1340,14 @@ ParseResult Parser::parse_lambda_expression() {
 
 	// Create operator() declaration
 	DeclarationNode& operator_call_decl = emplace_node<DeclarationNode>(
-	                                          emplace_node<TypeSpecifierNode>(return_type_spec),
-	                                          Token(Token::Type::Identifier, "operator()"sv, lambda_token.line(), lambda_token.column(), lambda_token.file_index()))
-	                                          .as<DeclarationNode>();
+											  emplace_node<TypeSpecifierNode>(return_type_spec),
+											  Token(Token::Type::Identifier, "operator()"sv, lambda_token.line(), lambda_token.column(), lambda_token.file_index()))
+											  .as<DeclarationNode>();
 
 	// Create FunctionDeclarationNode for operator()
 	ASTNode operator_call_func_node = emplace_node<FunctionDeclarationNode>(
-	    operator_call_decl,
-	    closure_name);
+		operator_call_decl,
+		closure_name);
 	FunctionDeclarationNode& operator_call_func = operator_call_func_node.as<FunctionDeclarationNode>();
 
 	// Non-mutable lambdas have a const operator() per C++20 [expr.prim.lambda.closure] p4
@@ -1361,12 +1361,12 @@ ParseResult Parser::parse_lambda_expression() {
 
 	// Add operator() as a member function
 	StructMemberFunction operator_call_member(
-	    StringTable::getOrInternStringHandle("operator()"),
-	    operator_call_func_node, // Use the original ASTNode, not a copy
-	    AccessSpecifier::Public,
-	    false, // not constructor
-	    false, // not destructor
-	    OverloadableOperator::Call // operator kind
+		StringTable::getOrInternStringHandle("operator()"),
+		operator_call_func_node, // Use the original ASTNode, not a copy
+		AccessSpecifier::Public,
+		false, // not constructor
+		false, // not destructor
+		OverloadableOperator::Call // operator kind
 	);
 	operator_call_member.cv_qualifier = is_mutable ? CVQualifier::None : CVQualifier::Const;
 
@@ -1616,7 +1616,7 @@ ParseResult Parser::parse_if_statement() {
 	if (auto cond_node = condition.node()) {
 		if (auto then_node = then_stmt.node()) {
 			return ParseResult::success(emplace_node<IfStatementNode>(
-			    *cond_node, *then_node, else_stmt, init_statement, is_constexpr));
+				*cond_node, *then_node, else_stmt, init_statement, is_constexpr));
 		}
 	}
 
@@ -1676,9 +1676,9 @@ ParseResult Parser::parse_switch_statement() {
 			auto [case_block_node, case_block_ref] = create_node_ref(BlockNode());
 
 			while (!peek().is_eof() &&
-			       peek() != "}"_tok &&
-			       !(peek().is_keyword() &&
-			         (peek() == "case"_tok || peek() == "default"_tok))) {
+				   peek() != "}"_tok &&
+				   !(peek().is_keyword() &&
+					 (peek() == "case"_tok || peek() == "default"_tok))) {
 				// Skip stray semicolons (empty statements)
 				if (peek().is_punctuator() && peek() == ";"_tok) {
 					advance();
@@ -1713,9 +1713,9 @@ ParseResult Parser::parse_switch_statement() {
 			auto [default_block_node, default_block_ref] = create_node_ref(BlockNode());
 
 			while (!peek().is_eof() &&
-			       peek() != "}"_tok &&
-			       !(peek().is_keyword() &&
-			         (peek() == "case"_tok || peek() == "default"_tok))) {
+				   peek() != "}"_tok &&
+				   !(peek().is_keyword() &&
+					 (peek() == "case"_tok || peek() == "default"_tok))) {
 				// Skip stray semicolons (empty statements)
 				if (peek().is_punctuator() && peek() == ";"_tok) {
 					advance();

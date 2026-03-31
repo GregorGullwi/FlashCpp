@@ -65,8 +65,8 @@ struct StructTypeInfo {
 	std::optional<TypeIndex> own_type_index_;
 
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
-	               NamespaceHandle ns)
-	    : name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
+				   NamespaceHandle ns)
+		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
 
 	StringHandle getName() const {
 		return name;
@@ -77,15 +77,15 @@ struct StructTypeInfo {
 	}
 
 	void addMember(StringHandle member_name, TypeIndex type_index,
-	               size_t member_size, size_t member_alignment, AccessSpecifier access,
-	               std::optional<ASTNode> default_initializer,
-	               ReferenceQualifier reference_qualifier,
-	               size_t referenced_size_bits,
-	               bool is_array = false,
-	               std::vector<size_t> array_dimensions = {},
-	               int pointer_depth = 0,
-	               std::optional<size_t> bitfield_width = std::nullopt,
-	               std::optional<FunctionSignature> function_sig = std::nullopt) {
+				   size_t member_size, size_t member_alignment, AccessSpecifier access,
+				   std::optional<ASTNode> default_initializer,
+				   ReferenceQualifier reference_qualifier,
+				   size_t referenced_size_bits,
+				   bool is_array = false,
+				   std::vector<size_t> array_dimensions = {},
+				   int pointer_depth = 0,
+				   std::optional<size_t> bitfield_width = std::nullopt,
+				   std::optional<FunctionSignature> function_sig = std::nullopt) {
 		// Apply pack alignment if specified
 		// Pack alignment limits the maximum alignment of members.
 		// Some dependent/template paths can transiently report 0 alignment; treat that as byte alignment.
@@ -117,10 +117,10 @@ struct StructTypeInfo {
 				offset = total_size;
 			} else {
 				bool can_pack_into_active_unit =
-				    active_bitfield_unit_size == member_size &&
-				    active_bitfield_unit_alignment == effective_alignment &&
-				    active_bitfield_type == type_index.category() &&
-				    (active_bitfield_bits_used + width) <= storage_bits;
+					active_bitfield_unit_size == member_size &&
+					active_bitfield_unit_alignment == effective_alignment &&
+					active_bitfield_type == type_index.category() &&
+					(active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
 					total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
@@ -160,8 +160,8 @@ struct StructTypeInfo {
 			referenced_size_bits = member_size * 8;
 		}
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
-		                     access, std::move(default_initializer), reference_qualifier,
-		                     referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
+							 access, std::move(default_initializer), reference_qualifier,
+							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
 		if (function_sig.has_value()) {
 			members.back().function_signature = std::move(function_sig);
@@ -182,7 +182,7 @@ struct StructTypeInfo {
 
 	// StringHandle overload for addMemberFunction - Phase 7A
 	void addMemberFunction(StringHandle function_name, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
-	                       bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final_func = false) {
+						   bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final_func = false) {
 		auto& func = member_functions.emplace_back(function_name, function_decl, access, false, false);
 		func.is_virtual = is_virtual;
 		func.is_pure_virtual = is_pure_virtual;
@@ -206,7 +206,7 @@ struct StructTypeInfo {
 	}
 
 	void addOperatorOverload(OverloadableOperator operator_kind, ASTNode function_decl, AccessSpecifier access = AccessSpecifier::Public,
-	                         bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final_func = false) {
+							 bool is_virtual = false, bool is_pure_virtual = false, bool is_override = false, bool is_final_func = false) {
 		StringBuilder sb;
 		sb.append("operator").append(overloadableOperatorToString(operator_kind));
 		StringHandle op_name_handle = StringTable::getOrInternStringHandle(sb.commit());
@@ -334,8 +334,8 @@ struct StructTypeInfo {
 
 	// Add static member
 	void addStaticMember(StringHandle member_name, TypeIndex type_index, size_t size, size_t member_alignment,
-	                     AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
-	                     ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
+						 AccessSpecifier access = AccessSpecifier::Public, std::optional<ASTNode> initializer = std::nullopt, CVQualifier cv_qual = CVQualifier::None,
+						 ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0) {
 		static_members.push_back(StructStaticMember(member_name, type_index, size, member_alignment, access, initializer, cv_qual, ref_qual, ptr_depth));
 	}
 
@@ -438,18 +438,18 @@ struct StructTypeInfo {
 		StringHandle class_name_handle = StringTable::getOrInternStringHandle(class_name);
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                       [class_name_handle, func_name_handle](const auto& pair) {
-			                       return pair.first == class_name_handle && pair.second == func_name_handle;
-		                       });
+							   [class_name_handle, func_name_handle](const auto& pair) {
+								   return pair.first == class_name_handle && pair.second == func_name_handle;
+							   });
 		return it != friend_member_functions_.end();
 	}
 
 	// StringHandle overload for isFriendMemberFunction - Phase 7A
 	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
-		                       [class_name, func_name](const auto& pair) {
-			                       return pair.first == class_name && pair.second == func_name;
-		                       });
+							   [class_name, func_name](const auto& pair) {
+								   return pair.first == class_name && pair.second == func_name;
+							   });
 		return it != friend_member_functions_.end();
 	}
 
@@ -510,8 +510,8 @@ struct StructTypeInfo {
 	// include_implicit → whether compiler-generated ctors participate
 	// Handles default arguments: a ctor like Foo(const Foo&, int=0) qualifies.
 	const StructMemberFunction* findSameTypeConstructorCore(
-	    bool want_move,
-	    bool include_implicit) const;
+		bool want_move,
+		bool include_implicit) const;
 
 	// Find copy constructor (takes const Type& or Type&).
 	// By default this only returns user-declared constructors; pass
@@ -528,13 +528,13 @@ struct StructTypeInfo {
 	// For lvalue sources, use copy only. Respects deleted-ctor flags.
 	// Implicit constructors participate when include_implicit=true.
 	const StructMemberFunction* findPreferredSameTypeConstructor(
-	    bool prefer_move,
-	    bool include_implicit = true) const;
+		bool prefer_move,
+		bool include_implicit = true) const;
 
 	// Collect constructor candidates matching argument count.
 	InlineVector<const StructMemberFunction*, 4> getConstructorsByParameterCount(
-	    size_t parameter_count,
-	    bool skip_implicit) const;
+		size_t parameter_count,
+		bool skip_implicit) const;
 
 	// Find destructor
 	const StructMemberFunction* findDestructor() const {
@@ -640,7 +640,7 @@ struct Enumerator {
 	long long value; // Enumerator value (always an integer)
 
 	Enumerator(StringHandle n, long long v)
-	    : name(n), value(v) {}
+		: name(n), value(v) {}
 
 	StringHandle getName() const {
 		return name;
@@ -656,11 +656,11 @@ struct EnumTypeInfo {
 	std::vector<Enumerator> enumerators;
 
 	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
-	    : name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 
 	// Convenience: default underlying type is Int/32-bit
 	explicit EnumTypeInfo(StringHandle n, bool scoped)
-	    : EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
+		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
 
 	StringHandle getName() const {
 		return name;
@@ -696,8 +696,8 @@ struct QualifiedIdentifier {
 
 	// Construct from a StringHandle — resolves to string_view and delegates.
 	static QualifiedIdentifier fromQualifiedName(
-	    StringHandle name,
-	    NamespaceHandle current_ns) {
+		StringHandle name,
+		NamespaceHandle current_ns) {
 		return fromQualifiedName(StringTable::getStringView(name), current_ns);
 	}
 
@@ -705,8 +705,8 @@ struct QualifiedIdentifier {
 	// current_ns is the namespace the code is being parsed in — used to resolve
 	// unqualified names so the namespace context is never lost.
 	static QualifiedIdentifier fromQualifiedName(
-	    std::string_view name,
-	    NamespaceHandle current_ns) {
+		std::string_view name,
+		NamespaceHandle current_ns) {
 		QualifiedIdentifier result;
 		size_t pos = name.rfind("::");
 		if (pos != std::string_view::npos) {
@@ -717,10 +717,10 @@ struct QualifiedIdentifier {
 			while (start < ns_part.size()) {
 				size_t sep = ns_part.find("::", start);
 				std::string_view component = (sep == std::string_view::npos)
-				                                 ? ns_part.substr(start)
-				                                 : ns_part.substr(start, sep - start);
+												 ? ns_part.substr(start)
+												 : ns_part.substr(start, sep - start);
 				ns = gNamespaceRegistry.getOrCreateNamespace(ns,
-				                                             StringTable::getOrInternStringHandle(component));
+															 StringTable::getOrInternStringHandle(component));
 				start = (sep == std::string_view::npos) ? ns_part.size() : sep + 2;
 			}
 			result.namespace_handle = ns;
@@ -908,7 +908,7 @@ struct CanonicalTypeAlias {
 
 	// Constructor: TypeIndex must already have the correct category embedded.
 	explicit CanonicalTypeAlias(TypeIndex idx)
-	    : type_index(idx) {}
+		: type_index(idx) {}
 
 	// Returns the TypeCategory for backward compat.
 	TypeCategory typeEnum() const { return type_index.category(); }
@@ -931,7 +931,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	TypeIndex current_type_index = type_index;
 	size_t depthLimit = typeInfoCount;
 	while (current_type_index.is_valid() &&
-	       depthLimit-- > 0) {
+		   depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
 		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
 			TypeIndex resolved = type_info.type_index_;
@@ -940,9 +940,9 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 			return CanonicalTypeAlias{resolved};
 		}
 		if ((type_info.category() != TypeCategory::UserDefined &&
-		     type_info.category() != TypeCategory::TypeAlias) ||
-		    !type_info.type_index_.is_valid() ||
-		    type_info.type_index_ == current_type_index) {
+			 type_info.category() != TypeCategory::TypeAlias) ||
+			!type_info.type_index_.is_valid() ||
+			type_info.type_index_ == current_type_index) {
 			break;
 		}
 		current_type_index = type_info.type_index_;
@@ -1069,18 +1069,18 @@ public:
 
 	// TypeIndex-first constructor — preferred for new code.
 	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
-	                  const Token& token, CVQualifier cv_qualifier)
-	    : size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
+					  const Token& token, CVQualifier cv_qualifier)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
 
 	// TypeCategory constructor — for primitive types without a gTypeInfo index.
 	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
-	                  const Token& token, CVQualifier cv_qualifier)
-	    : size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+					  const Token& token, CVQualifier cv_qualifier)
+		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
 	// Constructor for struct types with TypeIndex
 	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
-	                  const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
-	    : size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
+					  const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
+		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }
@@ -1328,16 +1328,16 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-	    : type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-	    : type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
+		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
 		if (array_size.has_value()) {
 			array_dimensions_.push_back(*array_size);
 		}
 	}
 	// Multidimensional array constructor
 	DeclarationNode(ASTNode type_node, Token identifier, std::vector<ASTNode> array_dimensions)
-	    : type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+		: type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
 	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
@@ -1431,7 +1431,7 @@ inline size_t computeMinRequiredArgs(const ParamContainer& params) {
 	size_t min_required = params.size();
 	for (size_t i = params.size(); i > 0; --i) {
 		if (!params[i - 1].template is<DeclarationNode>() ||
-		    !params[i - 1].template as<DeclarationNode>().has_default_value()) {
+			!params[i - 1].template as<DeclarationNode>().has_default_value()) {
 			break;
 		}
 		--min_required;
@@ -1443,7 +1443,7 @@ inline size_t computeMinRequiredArgs(const ParamContainer& params) {
 class QualifiedIdentifierNode {
 public:
 	explicit QualifiedIdentifierNode(NamespaceHandle namespace_handle, Token identifier)
-	    : namespace_handle_(namespace_handle), identifier_(identifier) {}
+		: namespace_handle_(namespace_handle), identifier_(identifier) {}
 
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	std::string_view name() const { return identifier_.value(); }
@@ -1525,8 +1525,8 @@ enum class BinaryOperatorSemanticResolutionState : uint8_t {
 class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
-	                            ASTNode rhs_node)
-	    : identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
+								ASTNode rhs_node)
+		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
@@ -1546,16 +1546,16 @@ public:
 		resolved_member_operator_overload_ = overload;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = overload != nullptr
-		                                          ? BinaryOperatorSemanticResolutionState::MemberMatch
-		                                          : BinaryOperatorSemanticResolutionState::NoMatch;
+												  ? BinaryOperatorSemanticResolutionState::MemberMatch
+												  : BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = overload != nullptr
-		                                          ? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
-		                                          : BinaryOperatorSemanticResolutionState::NoMatch;
+												  ? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
+												  : BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_no_match_operator_overload() {
@@ -1594,7 +1594,7 @@ private:
 class UnaryOperatorNode {
 public:
 	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true, bool is_builtin_addressof = false)
-	    : identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
+		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
@@ -1612,7 +1612,7 @@ private:
 class TernaryOperatorNode {
 public:
 	explicit TernaryOperatorNode(ASTNode condition, ASTNode true_expr, ASTNode false_expr, Token question_token)
-	    : condition_(condition), true_expr_(true_expr), false_expr_(false_expr), question_token_(question_token) {}
+		: condition_(condition), true_expr_(true_expr), false_expr_(false_expr), question_token_(question_token) {}
 
 	const ASTNode& condition() const { return condition_; }
 	const ASTNode& true_expr() const { return true_expr_; }
@@ -1634,26 +1634,26 @@ private:
 class FoldExpressionNode {
 public:
 	enum class Direction { Left,
-		                   Right };
+						   Right };
 	enum class Type { Unary,
-		              Binary };
+					  Binary };
 
 	// Unary fold: (... op pack) or (pack op ...)
 	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op, Direction dir, Token token)
-	    : pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Unary),
-	      init_expr_(std::nullopt), pack_expr_(std::nullopt), token_(token) {}
+		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Unary),
+		  init_expr_(std::nullopt), pack_expr_(std::nullopt), token_(token) {}
 
 	// Binary fold: (init op ... op pack) or (pack op ... op init)
 	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op,
-	                            Direction dir, ASTNode init, Token token)
-	    : pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Binary),
-	      init_expr_(init), pack_expr_(std::nullopt), token_(token) {}
+								Direction dir, ASTNode init, Token token)
+		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Binary),
+		  init_expr_(init), pack_expr_(std::nullopt), token_(token) {}
 
 	// Unary fold with complex pack expression: (expr op ...) or (... op expr)
 	// Used when the pack is a complex expression like a function call
 	explicit FoldExpressionNode(ASTNode pack_expr, std::string_view op, Direction dir, Token token)
-	    : pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
-	      init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
+		: pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
+		  init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
 
 	std::string_view pack_name() const { return pack_name_; }
 	std::string_view op() const { return op_; }
@@ -1682,7 +1682,7 @@ private:
 class PackExpansionExprNode {
 public:
 	explicit PackExpansionExprNode(ASTNode pattern, Token ellipsis_token)
-	    : pattern_(pattern), ellipsis_token_(ellipsis_token) {}
+		: pattern_(pattern), ellipsis_token_(ellipsis_token) {}
 
 	ASTNode pattern() const { return pattern_; }
 	const Token& get_token() const { return ellipsis_token_; }
@@ -1711,13 +1711,13 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-	    : decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-	    : decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
-	    : decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-	    : decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -1916,7 +1916,7 @@ private:
 class FunctionCallNode {
 public:
 	explicit FunctionCallNode(const DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-	    : func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
 	const auto& function_declaration() const { return func_decl_; }
@@ -1966,7 +1966,7 @@ private:
 class ConstructorCallNode {
 public:
 	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-	    : type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const ASTNode& type_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }

@@ -13,15 +13,15 @@ class TemplateParameterNode {
 public:
 	// Type parameter: template<typename T> or template<class T>
 	TemplateParameterNode(StringHandle name, Token token)
-	    : kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
+		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
 	// Non-type parameter: template<int N>
 	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
-	    : kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
+		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
 	// Template template parameter: template<template<typename> class Container>
 	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
-	    : kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
+		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
 
 	TemplateParameterKind kind() const { return kind_; }
 	std::string_view name() const { return name_.view(); }
@@ -74,10 +74,10 @@ class TemplateFunctionDeclarationNode {
 public:
 	TemplateFunctionDeclarationNode() = delete;
 	TemplateFunctionDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode function_decl,
-	                                std::optional<ASTNode> requires_clause = std::nullopt)
-	    : template_parameters_(std::move(template_params)),
-	      function_declaration_(function_decl),
-	      requires_clause_(requires_clause) {}
+									std::optional<ASTNode> requires_clause = std::nullopt)
+		: template_parameters_(std::move(template_params)),
+		  function_declaration_(function_decl),
+		  requires_clause_(requires_clause) {}
 
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode function_declaration() const { return function_declaration_; }
@@ -134,19 +134,19 @@ class TemplateAliasNode {
 public:
 	TemplateAliasNode() = delete;
 	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
-	                  InlineVector<StringHandle, 4> param_names,
-	                  StringHandle alias_name,
-	                  ASTNode target_type)
-	    : template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  ASTNode target_type)
+		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
 
 	// Constructor for deferred template instantiation (Option 1)
 	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
-	                  InlineVector<StringHandle, 4> param_names,
-	                  StringHandle alias_name,
-	                  ASTNode target_type,
-	                  StringHandle target_template_name,
-	                  std::vector<ASTNode> target_template_args)
-	    : template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
+					  InlineVector<StringHandle, 4> param_names,
+					  StringHandle alias_name,
+					  ASTNode target_type,
+					  StringHandle target_template_name,
+					  std::vector<ASTNode> target_template_args)
+		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(true), target_template_name_(target_template_name), target_template_args_(std::move(target_template_args)) {}
 
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	const InlineVector<StringHandle, 4>& template_param_names() const { return template_param_names_; }
@@ -184,10 +184,10 @@ class DeductionGuideNode {
 public:
 	DeductionGuideNode() = delete;
 	DeductionGuideNode(std::vector<ASTNode> template_params,
-	                   std::string_view class_name,
-	                   std::vector<ASTNode> guide_params,
-	                   std::vector<ASTNode> deduced_template_args)
-	    : template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
+					   std::string_view class_name,
+					   std::vector<ASTNode> guide_params,
+					   std::vector<ASTNode> deduced_template_args)
+		: template_parameters_(std::move(template_params)), class_name_(class_name), guide_parameters_(std::move(guide_params)), deduced_template_args_(std::move(deduced_template_args)) {}
 
 	const std::vector<ASTNode>& template_parameters() const { return template_parameters_; }
 	std::string_view class_name() const { return class_name_; }
@@ -210,7 +210,7 @@ class TemplateVariableDeclarationNode {
 public:
 	TemplateVariableDeclarationNode() = delete;
 	TemplateVariableDeclarationNode(InlineVector<ASTNode, 4> template_params, ASTNode variable_decl)
-	    : template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
+		: template_parameters_(std::move(template_params)), variable_declaration_(variable_decl) {}
 
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode variable_declaration() const { return variable_declaration_; }
@@ -240,7 +240,7 @@ enum class StorageClass {
 class VariableDeclarationNode {
 public:
 	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
-	    : declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
+		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
 
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
 	const ASTNode& declaration_node() const { return declaration_node_; }
@@ -302,10 +302,10 @@ class StructuredBindingNode {
 public:
 	StructuredBindingNode() = delete;
 	StructuredBindingNode(std::vector<StringHandle> identifiers,
-	                      ASTNode initializer,
-	                      CVQualifier cv_qualifiers,
-	                      ReferenceQualifier ref_qualifier)
-	    : identifiers_(std::move(identifiers)), initializer_(initializer), cv_qualifiers_(cv_qualifiers), ref_qualifier_(ref_qualifier) {}
+						  ASTNode initializer,
+						  CVQualifier cv_qualifiers,
+						  ReferenceQualifier ref_qualifier)
+		: identifiers_(std::move(identifiers)), initializer_(initializer), cv_qualifiers_(cv_qualifiers), ref_qualifier_(ref_qualifier) {}
 
 	const std::vector<StringHandle>& identifiers() const { return identifiers_; }
 	const ASTNode& initializer() const { return initializer_; }
@@ -337,7 +337,7 @@ struct MemberInitializer {
 	ASTNode initializer_expr;
 
 	MemberInitializer(std::string_view name, ASTNode expr)
-	    : member_name(name), initializer_expr(expr) {}
+		: member_name(name), initializer_expr(expr) {}
 };
 
 // Base class initializer for constructor initializer lists
@@ -346,7 +346,7 @@ struct BaseInitializer {
 	std::vector<ASTNode> arguments;
 
 	BaseInitializer(StringHandle name, std::vector<ASTNode> args)
-	    : base_class_name(name), arguments(std::move(args)) {}
+		: base_class_name(name), arguments(std::move(args)) {}
 
 	StringHandle getBaseClassName() const {
 		return base_class_name;
@@ -358,7 +358,7 @@ struct DelegatingInitializer {
 	std::vector<ASTNode> arguments;
 
 	explicit DelegatingInitializer(std::vector<ASTNode> args)
-	    : arguments(std::move(args)) {}
+		: arguments(std::move(args)) {}
 };
 
 // Constructor declaration node
@@ -366,7 +366,7 @@ class ConstructorDeclarationNode {
 public:
 	ConstructorDeclarationNode() = delete;
 	ConstructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
-	    : struct_name_(struct_name_handle), name_(name_handle), is_implicit_(false) {}
+		: struct_name_(struct_name_handle), name_(name_handle), is_implicit_(false) {}
 
 	StringHandle struct_name() const { return struct_name_; }
 	StringHandle name() const { return name_; }
@@ -505,7 +505,7 @@ class DestructorDeclarationNode {
 public:
 	DestructorDeclarationNode() = delete;
 	DestructorDeclarationNode(StringHandle struct_name_handle, StringHandle name_handle)
-	    : struct_name_(struct_name_handle), name_(name_handle) {}
+		: struct_name_(struct_name_handle), name_(name_handle) {}
 
 	StringHandle struct_name() const { return struct_name_; }
 	StringHandle name() const { return name_; }
@@ -607,15 +607,15 @@ struct AnonymousUnionMemberInfo {
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
 	AnonymousUnionMemberInfo(StringHandle name, TypeIndex tidx, size_t size, size_t align,
-	                         std::optional<size_t> bitfield_w,
-	                         size_t ref_size_bits, ReferenceQualifier ref_qual,
-	                         bool is_arr,
-	                         int ptr_depth,
-	                         std::vector<size_t> arr_dims)
-	    : member_name(name), type_index(tidx), member_size(size),
-	      member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
-	      is_array(is_arr), array_dimensions(std::move(arr_dims)),
-	      pointer_depth(ptr_depth) {}
+							 std::optional<size_t> bitfield_w,
+							 size_t ref_size_bits, ReferenceQualifier ref_qual,
+							 bool is_arr,
+							 int ptr_depth,
+							 std::vector<size_t> arr_dims)
+		: member_name(name), type_index(tidx), member_size(size),
+		  member_alignment(align), bitfield_width(bitfield_w), referenced_size_bits(ref_size_bits), reference_qualifier(ref_qual),
+		  is_array(is_arr), array_dimensions(std::move(arr_dims)),
+		  pointer_depth(ptr_depth) {}
 };
 
 // Anonymous union information - groups all members that should share the same offset
@@ -636,9 +636,9 @@ struct StructMemberDecl {
 	std::optional<ASTNode> bitfield_width_expr; // Deferred bitfield width for template non-type params
 
 	StructMemberDecl(ASTNode decl, AccessSpecifier acc, std::optional<ASTNode> init = std::nullopt,
-	                 std::optional<size_t> width = std::nullopt)
-	    : declaration(decl), access(acc), default_initializer(init), bitfield_width(width),
-	      bitfield_width_expr(std::nullopt) {}
+					 std::optional<size_t> width = std::nullopt)
+		: declaration(decl), access(acc), default_initializer(init), bitfield_width(width),
+		  bitfield_width_expr(std::nullopt) {}
 };
 
 // Struct member function with access specifier
@@ -683,9 +683,9 @@ struct StructMemberFunctionDecl {
 	}
 
 	StructMemberFunctionDecl(ASTNode func_decl, AccessSpecifier acc, bool is_ctor = false, bool is_dtor = false,
-	                         OverloadableOperator op_kind = OverloadableOperator::None)
-	    : function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
-	      operator_kind(op_kind) {}
+							 OverloadableOperator op_kind = OverloadableOperator::None)
+		: function_declaration(func_decl), access(acc), is_constructor(is_ctor), is_destructor(is_dtor),
+		  operator_kind(op_kind) {}
 };
 
 // Friend declaration node
@@ -693,11 +693,11 @@ class FriendDeclarationNode {
 public:
 	// Friend class declaration: friend class ClassName;
 	explicit FriendDeclarationNode(FriendKind kind, StringHandle name)
-	    : kind_(kind), name_(name) {}
+		: kind_(kind), name_(name) {}
 
 	// Friend member function declaration: friend void ClassName::functionName();
 	FriendDeclarationNode(FriendKind kind, StringHandle name, StringHandle class_name)
-	    : kind_(kind), name_(name), class_name_(class_name) {}
+		: kind_(kind), name_(name), class_name_(class_name) {}
 
 	FriendKind kind() const { return kind_; }
 	StringHandle name() const { return name_; }
@@ -721,7 +721,7 @@ struct TypeAliasDecl {
 	AccessSpecifier access; // Access specifier (public/private/protected)
 
 	TypeAliasDecl(StringHandle name, ASTNode type, AccessSpecifier acc)
-	    : alias_name(name), type_node(type), access(acc) {}
+		: alias_name(name), type_node(type), access(acc) {}
 };
 
 // Static member declaration (for AST storage in templates/partial specializations)
@@ -740,17 +740,17 @@ struct StaticMemberDecl {
 	TypeCategory memberType() const { return type_index.category(); }
 
 	StaticMemberDecl(StringHandle name_, TypeIndex type_index_, size_t size_, size_t alignment_,
-	                 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
-	                 ReferenceQualifier ref_qual_, int ptr_depth_)
-	    : name(name_), type_index(type_index_), size(size_), alignment(alignment_),
-	      access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
-	      reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
+					 AccessSpecifier access_, std::optional<ASTNode> initializer_, CVQualifier cv_qual_,
+					 ReferenceQualifier ref_qual_, int ptr_depth_)
+		: name(name_), type_index(type_index_), size(size_), alignment(alignment_),
+		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
+		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
 };
 
 class StructDeclarationNode {
 public:
 	explicit StructDeclarationNode(StringHandle name, bool is_class = false, bool is_union = false)
-	    : name_(name), is_class_(is_class), is_union_(is_union) {}
+		: name_(name), is_class_(is_class), is_union_(is_union) {}
 
 	StringHandle name() const { return name_; }
 	const std::vector<StructMemberDecl>& members() const { return members_; }
@@ -771,8 +771,8 @@ public:
 	}
 
 	void add_member(const ASTNode& member, AccessSpecifier access, std::optional<ASTNode> default_initializer = std::nullopt,
-	                std::optional<size_t> bitfield_width = std::nullopt,
-	                std::optional<ASTNode> bitfield_width_expr = std::nullopt) {
+					std::optional<size_t> bitfield_width = std::nullopt,
+					std::optional<ASTNode> bitfield_width_expr = std::nullopt) {
 		members_.emplace_back(member, access, std::move(default_initializer), bitfield_width);
 		members_.back().bitfield_width_expr = std::move(bitfield_width_expr);
 	}
@@ -786,18 +786,18 @@ public:
 	}
 
 	void add_deferred_template_base_class(StringHandle base_template_name,
-	                                      std::vector<TemplateArgumentNodeInfo> args,
-	                                      std::optional<StringHandle> member_type,
-	                                      AccessSpecifier access,
-	                                      bool is_virtual = false,
-	                                      bool is_pack_expansion = false) {
+										  std::vector<TemplateArgumentNodeInfo> args,
+										  std::optional<StringHandle> member_type,
+										  AccessSpecifier access,
+										  bool is_virtual = false,
+										  bool is_pack_expansion = false) {
 		deferred_template_base_classes_.emplace_back(base_template_name, std::move(args), member_type, access, is_virtual, is_pack_expansion);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,
-	                         bool is_virtual = false, bool is_pure_virtual = false,
-	                         bool is_override = false, bool is_final = false,
-	                         CVQualifier cv_qualifier = CVQualifier::None) {
+							 bool is_virtual = false, bool is_pure_virtual = false,
+							 bool is_override = false, bool is_final = false,
+							 CVQualifier cv_qualifier = CVQualifier::None) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
@@ -823,9 +823,9 @@ public:
 	}
 
 	void add_operator_overload(OverloadableOperator operator_kind, ASTNode function_decl, AccessSpecifier access,
-	                           bool is_virtual = false, bool is_pure_virtual = false,
-	                           bool is_override = false, bool is_final = false,
-	                           CVQualifier cv_qualifier = CVQualifier::None) {
+							   bool is_virtual = false, bool is_pure_virtual = false,
+							   bool is_override = false, bool is_final = false,
+							   CVQualifier cv_qualifier = CVQualifier::None) {
 		auto& func_decl = member_functions_.emplace_back(function_decl, access, false, false, operator_kind);
 		func_decl.is_virtual = is_virtual;
 		func_decl.is_pure_virtual = is_pure_virtual;
@@ -866,8 +866,8 @@ public:
 
 	// Static member support (for template/partial specialization AST storage)
 	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
-	                       AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
-	                       ReferenceQualifier ref_qual, int ptr_depth) {
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth) {
 		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
 	}
 
@@ -883,18 +883,18 @@ public:
 	// Add a member to the most recently created anonymous union
 	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index,
-	                                size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
-	                                size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
-	                                bool is_array,
-	                                int pointer_depth,
-	                                std::vector<size_t> array_dimensions) {
+									size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
+									size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
+									bool is_array,
+									int pointer_depth,
+									std::vector<size_t> array_dimensions) {
 		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
-			    member_name, type_index, member_size, member_alignment,
-			    bitfield_width, referenced_size_bits, reference_qualifier, is_array,
-			    pointer_depth,
-			    std::move(array_dimensions));
+				member_name, type_index, member_size, member_alignment,
+				bitfield_width, referenced_size_bits, reference_qualifier, is_array,
+				pointer_depth,
+				std::move(array_dimensions));
 		}
 		// Note: If anonymous_unions_ is empty, this is a programming error in the parser
 		// The parser should always call add_anonymous_union_marker() before adding members
@@ -1004,9 +1004,9 @@ class TemplateClassDeclarationNode {
 public:
 	TemplateClassDeclarationNode() = delete;
 	TemplateClassDeclarationNode(InlineVector<ASTNode, 4> template_params,
-	                             InlineVector<std::string_view, 4> param_names,
-	                             ASTNode class_decl)
-	    : template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
+								 InlineVector<std::string_view, 4> param_names,
+								 ASTNode class_decl)
+		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), class_declaration_(class_decl) {}
 
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	InlineVector<ASTNode, 4>& template_parameters() { return template_parameters_; }

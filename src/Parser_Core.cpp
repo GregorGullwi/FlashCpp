@@ -40,10 +40,10 @@ ChunkedStringAllocator gChunkedStringAllocator;
 TemplateRegistry gTemplateRegistry;
 ConceptRegistry gConceptRegistry;
 const std::unordered_set<std::string_view> type_keywords = {
-    "int", "float", "double", "char", "bool", "void",
-    "short", "long", "signed", "unsigned", "const", "volatile", "alignas",
-    "auto", "wchar_t", "char8_t", "char16_t", "char32_t", "decltype",
-    "__int8", "__int16", "__int32", "__int64"};
+	"int", "float", "double", "char", "bool", "void",
+	"short", "long", "signed", "unsigned", "const", "volatile", "alignas",
+	"auto", "wchar_t", "char8_t", "char16_t", "char32_t", "decltype",
+	"__int8", "__int16", "__int32", "__int64"};
 
 MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
 	MemberSizeAndAlignment result;
@@ -250,14 +250,14 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
 			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-			                     std::is_same_v<T, ConstCastNode> ||
-			                     std::is_same_v<T, ReinterpretCastNode> ||
-			                     std::is_same_v<T, DynamicCastNode>) {
+								 std::is_same_v<T, ConstCastNode> ||
+								 std::is_same_v<T, ReinterpretCastNode> ||
+								 std::is_same_v<T, DynamicCastNode>) {
 				findReferencedIdentifiers(inner_node.expr(), identifiers);
 			}
 			// Add more types as needed
 		},
-		           expr);
+				   expr);
 	} else if (node.is<BinaryOperatorNode>()) {
 		const auto& binop = node.as<BinaryOperatorNode>();
 		findReferencedIdentifiers(binop.get_lhs(), identifiers);
@@ -340,8 +340,8 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 
 // Helper function to find capture candidates and detect implicit [this] usage in lambdas
 void collectLambdaCaptureCandidates(const ASTNode& node,
-                                    std::unordered_set<StringHandle>& capture_candidates,
-                                    bool& uses_implicit_this_capture) {
+									std::unordered_set<StringHandle>& capture_candidates,
+									bool& uses_implicit_this_capture) {
 	if (node.is<IdentifierNode>()) {
 		const auto& identifier = node.as<IdentifierNode>();
 		if (identifier.name() == "this"sv || identifier.binding() == IdentifierBinding::NonStaticMember) {
@@ -349,7 +349,7 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 			return;
 		}
 		if (identifier.binding() == IdentifierBinding::Local ||
-		    identifier.binding() == IdentifierBinding::Unresolved) {
+			identifier.binding() == IdentifierBinding::Unresolved) {
 			capture_candidates.insert(identifier.nameHandle());
 		}
 		return;
@@ -361,7 +361,7 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 				if (inner_node.name() == "this"sv || inner_node.binding() == IdentifierBinding::NonStaticMember) {
 					uses_implicit_this_capture = true;
 				} else if (inner_node.binding() == IdentifierBinding::Local ||
-				           inner_node.binding() == IdentifierBinding::Unresolved) {
+						   inner_node.binding() == IdentifierBinding::Unresolved) {
 					capture_candidates.insert(inner_node.nameHandle());
 				}
 			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
@@ -395,13 +395,13 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 				collectLambdaCaptureCandidates(inner_node.array_expr(), capture_candidates, uses_implicit_this_capture);
 				collectLambdaCaptureCandidates(inner_node.index_expr(), capture_candidates, uses_implicit_this_capture);
 			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-			                     std::is_same_v<T, ConstCastNode> ||
-			                     std::is_same_v<T, ReinterpretCastNode> ||
-			                     std::is_same_v<T, DynamicCastNode>) {
+								 std::is_same_v<T, ConstCastNode> ||
+								 std::is_same_v<T, ReinterpretCastNode> ||
+								 std::is_same_v<T, DynamicCastNode>) {
 				collectLambdaCaptureCandidates(inner_node.expr(), capture_candidates, uses_implicit_this_capture);
 			}
 		},
-		           expr);
+				   expr);
 	} else if (node.is<BinaryOperatorNode>()) {
 		const auto& binop = node.as<BinaryOperatorNode>();
 		collectLambdaCaptureCandidates(binop.get_lhs(), capture_candidates, uses_implicit_this_capture);
@@ -474,7 +474,7 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 }
 
 Parser::Parser(Lexer& lexer, CompileContext& context)
-    : lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
+	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
 	initialize_native_types();
 	ast_nodes_.reserve(default_ast_tree_size_);
 }
@@ -490,7 +490,7 @@ int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
 }
 
 Parser::ScopedTokenPosition::ScopedTokenPosition(class Parser& parser, const std::source_location location)
-    : parser_(parser), saved_handle_(parser.save_token_position()), location_(location) {}
+	: parser_(parser), saved_handle_(parser.save_token_position()), location_(location) {}
 
 Parser::ScopedTokenPosition::~ScopedTokenPosition() {
 	if (!discarded_) {
@@ -508,7 +508,7 @@ ParseResult Parser::ScopedTokenPosition::error(std::string_view error_message) {
 	discarded_ = true;
 	parser_.discard_saved_token(saved_handle_);
 	return ParseResult::error(std::string(error_message),
-	                          parser_.peek_info());
+							  parser_.peek_info());
 }
 
 ParseResult Parser::ScopedTokenPosition::propagate(ParseResult&& result) {
@@ -528,14 +528,14 @@ Token Parser::consume_token() {
 		current_token_ = injected_token_;
 		injected_token_ = Token{}; // reset to Uninitialized
 		FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from injected='{}'",
-		                 std::string(token.value()),
-		                 std::string(current_token_.value()));
+						 std::string(token.value()),
+						 std::string(current_token_.value()));
 	} else {
 		// Normal path: get next token from lexer
 		Token next = lexer_.next_token();
 		FLASH_LOG_FORMAT(Parser, Debug, "consume_token: Consumed token='{}', next token from lexer='{}'",
-		                 std::string(token.value()),
-		                 std::string(next.value()));
+						 std::string(token.value()),
+						 std::string(next.value()));
 		current_token_ = next;
 	}
 	return token;
@@ -586,14 +586,14 @@ void Parser::split_right_shift_token() {
 	static const std::string_view gt_str = ">";
 
 	Token first_gt(Token::Type::Operator, gt_str,
-	               current_token_.line(),
-	               current_token_.column(),
-	               current_token_.file_index());
+				   current_token_.line(),
+				   current_token_.column(),
+				   current_token_.file_index());
 
 	Token second_gt(Token::Type::Operator, gt_str,
-	                current_token_.line(),
-	                current_token_.column() + 1, // Second > is one character after first
-	                current_token_.file_index());
+					current_token_.line(),
+					current_token_.column() + 1, // Second > is one character after first
+					current_token_.file_index());
 
 	// Replace current >> with first >
 	current_token_ = first_gt;
@@ -664,7 +664,7 @@ Token Parser::expect(TokenKind kind) {
 	}
 	const Token& cur = peek_info();
 	FLASH_LOG(Parser, Error, "Expected '", expected_spelling, "' but got '", cur.value(),
-	          "' at line ", cur.line(), " column ", cur.column());
+			  "' at line ", cur.line(), " column ", cur.column());
 	return eof_token_sentinel;
 }
 
@@ -678,7 +678,7 @@ Parser::SaveHandle Parser::save_token_position() {
 	saved_tokens_[handle] = {current_token_, injected_token_, ast_nodes_.size(), lexer_pos};
 
 	FLASH_LOG_FORMAT(Parser, Debug, "save_token_position: handle={}, token={}",
-	                 static_cast<unsigned long>(handle), std::string(current_token_.value()));
+					 static_cast<unsigned long>(handle), std::string(current_token_.value()));
 
 	return handle;
 }
@@ -698,11 +698,11 @@ void Parser::restore_token_position(SaveHandle handle, [[maybe_unused]] const st
 		// DEBUGGING: Track if we're restoring to "ns" token
 		if (saved_tok == "ns") {
 			FLASH_LOG_FORMAT(Parser, Error, "!!! RESTORING TO 'ns' TOKEN !!! handle={}, current={}",
-			                 static_cast<unsigned long>(handle), current_tok);
+							 static_cast<unsigned long>(handle), current_tok);
 		}
 
 		FLASH_LOG_FORMAT(Parser, Debug, "restore_token_position: handle={}, saved token={}, current={}",
-		                 static_cast<unsigned long>(handle), saved_tok, current_tok);
+						 static_cast<unsigned long>(handle), saved_tok, current_tok);
 	}
 
 	lexer_.restore_token_position(saved_token.lexer_position_);
@@ -1043,8 +1043,8 @@ ParseResult Parser::parse_pragma_pack_inner() {
 		size_t alignment = 0;
 		auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 		if (result.ec == std::errc() &&
-		    (alignment == 0 || alignment == 1 || alignment == 2 ||
-		     alignment == 4 || alignment == 8 || alignment == 16)) {
+			(alignment == 0 || alignment == 1 || alignment == 2 ||
+			 alignment == 4 || alignment == 8 || alignment == 16)) {
 			context_.setPackAlignment(alignment);
 			advance(); // consume the number
 			if (!consume(")"_tok)) {
@@ -1211,9 +1211,9 @@ void Parser::register_builtin_functions() {
 
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
-	    "__builtin_strlen",
-	    make_builtin_type(size_t_base, CVQualifier::None, 0),
-	    {make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1)});
+		"__builtin_strlen",
+		make_builtin_type(size_t_base, CVQualifier::None, 0),
+		{make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1)});
 
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
 	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
@@ -1223,29 +1223,29 @@ void Parser::register_builtin_functions() {
 	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 
 	register_extern_c_builtin(
-	    "wmemcmp",
-	    make_builtin_type(TypeCategory::Int, CVQualifier::None, 0),
-	    {const_wchar_t_ptr, const_wchar_t_ptr, size_t_type});
+		"wmemcmp",
+		make_builtin_type(TypeCategory::Int, CVQualifier::None, 0),
+		{const_wchar_t_ptr, const_wchar_t_ptr, size_t_type});
 	register_extern_c_builtin(
-	    "wmemchr",
-	    wchar_t_ptr,
-	    {const_wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
+		"wmemchr",
+		wchar_t_ptr,
+		{const_wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
 	register_extern_c_builtin(
-	    "wmemcpy",
-	    wchar_t_ptr,
-	    {wchar_t_ptr, const_wchar_t_ptr, size_t_type});
+		"wmemcpy",
+		wchar_t_ptr,
+		{wchar_t_ptr, const_wchar_t_ptr, size_t_type});
 	register_extern_c_builtin(
-	    "wmemmove",
-	    wchar_t_ptr,
-	    {wchar_t_ptr, const_wchar_t_ptr, size_t_type});
+		"wmemmove",
+		wchar_t_ptr,
+		{wchar_t_ptr, const_wchar_t_ptr, size_t_type});
 	register_extern_c_builtin(
-	    "wmemset",
-	    wchar_t_ptr,
-	    {wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
+		"wmemset",
+		wchar_t_ptr,
+		{wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
 	register_extern_c_builtin(
-	    "wcslen",
-	    size_t_type,
-	    {const_wchar_t_ptr});
+		"wcslen",
+		size_t_type,
+		{const_wchar_t_ptr});
 
 	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
 	// Note: Forward declarations inside functions don't capture namespace context,
