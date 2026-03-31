@@ -4568,6 +4568,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 																				   *member_decl.bitfield_width_expr, template_params, template_args_to_use))
 																			 : std::nullopt;
 
+				auto resolve_member_function_signature = [&]() -> std::optional<FunctionSignature> {
+					if (substituted_type_spec.type_index().category() != TypeCategory::FunctionPointer &&
+						substituted_type_spec.type_index().category() != TypeCategory::MemberFunctionPointer)
+						return std::nullopt;
+					if (substituted_type_spec.has_function_signature())
+						return substituted_type_spec.function_signature();
+					std::string_view type_name;
+					if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
+						type_name = StringTable::getStringView(ts_ti->name());
+					if (type_name.empty())
+						type_name = type_spec.token().value();
+					for (size_t i = 0; i < template_params.size() && i < template_args_to_use.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>())
+							continue;
+						const auto& tparam = template_params[i].as<TemplateParameterNode>();
+						if (tparam.name() == type_name && template_args_to_use[i].function_signature.has_value())
+							return template_args_to_use[i].function_signature;
+					}
+					return std::nullopt;
+				};
+
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
@@ -4582,7 +4603,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					resolved_array_dimensions,
 					static_cast<int>(substituted_type_spec.pointer_depth()),
 					resolve_bitfield_width(member_decl, template_params, template_args_to_use),
-					substituted_type_spec.has_function_signature() ? std::optional(substituted_type_spec.function_signature()) : std::nullopt);
+					resolve_member_function_signature());
 
 				ASTNode substituted_member_decl = substituteTemplateParameters(
 					member_decl.declaration, template_params, template_args_to_use);

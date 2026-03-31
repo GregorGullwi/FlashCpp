@@ -1155,6 +1155,27 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		// Get the name from the identifier token
 		StringHandle member_name_handle = decl.identifier_token().handle();
 
+		auto resolve_member_function_signature = [&]() -> std::optional<FunctionSignature> {
+			if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
+				substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
+				return std::nullopt;
+			if (type_spec.has_function_signature())
+				return type_spec.function_signature();
+			std::string_view type_name;
+			if (const TypeInfo* ts_ti = tryGetTypeInfo(type_spec.type_index()))
+				type_name = StringTable::getStringView(ts_ti->name());
+			if (type_name.empty())
+				type_name = type_spec.token().value();
+			for (size_t i = 0; i < lazy_info->parent_template_params.size() && i < lazy_info->parent_template_args.size(); ++i) {
+				if (!lazy_info->parent_template_params[i].is<TemplateParameterNode>())
+					continue;
+				const auto& tparam = lazy_info->parent_template_params[i].as<TemplateParameterNode>();
+				if (tparam.name() == type_name && lazy_info->parent_template_args[i].function_signature.has_value())
+					return lazy_info->parent_template_args[i].function_signature;
+			}
+			return std::nullopt;
+		};
+
 		// Add member to nested struct info
 		nested_struct_info->addMember(
 			member_name_handle,
@@ -1168,7 +1189,8 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 			false,  // is_array
 			{},		// array_dimensions
 			static_cast<int>(type_spec.pointer_depth()),
-			member_decl.bitfield_width);
+			member_decl.bitfield_width,
+			resolve_member_function_signature());
 	}
 
 	// Finalize layout
