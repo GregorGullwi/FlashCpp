@@ -156,7 +156,6 @@ inline bool integerConstantFitsTarget(const IntegerConstantValue& constant, Type
 }
 
 template <typename FloatT>
-template <typename FloatT>
 inline bool isIntegerConstantExactlyRepresentableInFloating(const IntegerConstantValue& constant) {
 	if (constant.is_signed) {
 		FloatT converted = static_cast<FloatT>(constant.signed_value);
