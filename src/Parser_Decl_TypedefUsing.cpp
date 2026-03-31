@@ -4,53 +4,60 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
-ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access)
-{
+ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access) {
 	advance(); // consume 'typedef' or 'using'
-	
+
 	// For 'using', check if it's an alias or a using-declaration
 	if (keyword == "using") {
+		// Handle 'using typename _Base::member;' - C++ using-declaration with typename disambiguator
+		// This imports a dependent type name from a base class into the derived class scope.
+		bool has_typename = false;
+		if (peek() == "typename"_tok) {
+			has_typename = true;
+			advance(); // consume 'typename'
+		}
+		(void)has_typename; // May be used in the future for dependent name resolution
+
 		auto alias_token = peek_info();
 		if (!alias_token.kind().is_identifier()) {
 			return ParseResult::error("Expected alias name after 'using'", peek_info());
 		}
-		
+
 		// Look ahead to see if this is:
 		// 1. Type alias: using Alias = Type;  (identifier followed by '=')
 		// 2. Using-declaration: using namespace::member;  (identifier followed by '::')
 		// 3. Inheriting constructor: using Base<T>::Base;  (identifier<template args> followed by '::')
 		SaveHandle lookahead_pos = save_token_position();
 		advance(); // consume first identifier
-		
+
 		// Skip template arguments if present
 		if (peek() == "<"_tok) {
 			skip_template_arguments();
 		}
-		
+
 		auto next_token = peek_info();
-		
+
 		if (next_token.kind() == "::"_tok) {
 			// This is a using-declaration like: using std::__is_integer<_Tp>::__value;
 			// Or an inheriting constructor like: using Base<T>::Base;
 			// Parse and extract the member name to register it in the current scope
-			std::string_view base_class_name = alias_token.value();  // Remember the first identifier (base class name)
+			std::string_view base_class_name = alias_token.value(); // Remember the first identifier (base class name)
 			std::string_view member_name;
-			
+
 			while (peek() == "::"_tok) {
 				advance(); // consume '::'
-				
+
 				// Consume the next identifier, operator, or template
 				if (!peek().is_eof()) {
 					if (peek().is_identifier()) {
-						member_name = peek_info().value();  // Track last identifier as potential member name
+						member_name = peek_info().value(); // Track last identifier as potential member name
 						advance(); // consume identifier
-						
+
 						// Check for template arguments
 						if (peek() == "<"_tok) {
 							skip_template_arguments();
 							// After template args, the member name is whatever comes next
-							member_name = "";  // Reset - next identifier after :: will be the member
+							member_name = ""; // Reset - next identifier after :: will be the member
 						}
 					} else if (peek() == "operator"_tok) {
 						// using Base::operator Type; (conversion operator)
@@ -74,14 +81,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 				}
 			}
-			
+
 			// Check if this is an inheriting constructor: using Base::Base;
 			// Per C++ standard, inheriting constructors specifically require the member name
 			// to match the base class name. General using-declarations can import any member.
 			// Example: using Base<T>::Base;  // Inherits all Base constructors
 			//          using Base::member;     // Imports a specific member
 			bool is_inheriting_constructor = (member_name == base_class_name);
-			
+
 			// Register the imported member name in the struct parsing context
 			// This makes the member accessible by its simple name even when the
 			// base class is a dependent type (template) that can't be resolved yet
@@ -89,7 +96,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				if (!struct_parsing_context_stack_.empty()) {
 					StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 					struct_parsing_context_stack_.back().imported_members.push_back(member_handle);
-					
+
 					if (is_inheriting_constructor) {
 						FLASH_LOG(Parser, Debug, "Inheriting constructors from '", base_class_name, "' into struct parsing context");
 						// For inheriting constructors, we import the constructors from the base class
@@ -100,46 +107,46 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					}
 				}
 			}
-			
+
 			// Consume pack expansion '...' if present (C++17 using-declaration with pack expansion)
 			// e.g., using Base<Args>::member...;
 			if (peek() == "..."_tok) {
 				advance(); // consume '...'
 			}
-			
+
 			// Consume trailing semicolon
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
 			}
-			
+
 			// Discard the saved position - we successfully parsed the using-declaration
 			discard_saved_token(lookahead_pos);
 			return ParseResult::success();
 		}
-		
+
 		// Restore position - this is a type alias
 		restore_token_position(lookahead_pos);
-		
+
 		StringHandle alias_name = alias_token.handle();
 		advance(); // consume alias name
-		
+
 		// Skip C++ [[...]] and GCC __attribute__((...)) between alias name and '='
 		// e.g., using is_always_equal __attribute__((__deprecated__("..."))) = true_type;
 		// e.g., using result_type [[__deprecated__]] = size_t;
 		skip_cpp_attributes();
-		
+
 		// Check for '='
 		if (peek() != "="_tok) {
 			return ParseResult::error("Expected '=' after alias name", current_token_);
 		}
 		advance(); // consume '='
-		
+
 		// Parse the type
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error()) {
 			return type_result;
 		}
-		
+
 		if (!type_result.node().has_value()) {
 			return ParseResult::error("Expected type after '=' in type alias", current_token_);
 		}
@@ -147,12 +154,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Parse pointer/reference modifiers after the base type
 		// For example: using type = _Tp&; or using RvalueRef = T&&;
 		TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-		
+
 		// Parse postfix cv-qualifiers: _Tp const, _Tp volatile, _Tp const volatile
 		// This is the C++ postfix const/volatile syntax used in standard library headers
 		CVQualifier cv_qualifier = parse_cv_qualifiers();
 		type_spec.add_cv_qualifier(cv_qualifier);
-		
+
 		// Check for pointer-to-member type syntax: Type Class::*
 		// This is used in <type_traits> for result_of patterns
 		// Pattern: using _MemPtr = _Res _Class::*;
@@ -161,14 +168,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			auto saved_pos = save_token_position();
 			Token class_token = peek_info();
 			advance(); // consume potential class name
-			
+
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
 				if (peek() == "*"_tok) {
 					advance(); // consume '*'
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
-					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+					type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
 					type_spec.set_member_class_name(class_token.handle());
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
@@ -181,17 +188,17 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				restore_token_position(saved_pos);
 			}
 		}
-		
+
 		// Parse pointer declarators: * [const] [volatile] *...
 		while (peek() == "*"_tok) {
 			advance(); // consume '*'
-			
+
 			// Parse cv-qualifiers after pointer
 			CVQualifier ptr_cv = parse_cv_qualifiers();
 			type_spec.add_pointer_level(ptr_cv);
 		}
-		
-		// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...) 
+
+		// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...)
 		// Pattern: Type (&)() = lvalue reference to function returning Type
 		// Pattern: Type (&&)() = rvalue reference to function returning Type
 		// Pattern: Type (*)() = pointer to function returning Type
@@ -199,12 +206,12 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		if (peek() == "("_tok) {
 			auto func_type_saved_pos = save_token_position();
 			advance(); // consume '('
-			
+
 			// Check what's inside the parentheses: &, &&, or *
 			bool is_function_ref = false;
 			bool is_rvalue_function_ref = false;
 			bool is_function_ptr = false;
-			
+
 			if (!peek().is_eof()) {
 				if (peek() == "&&"_tok) {
 					is_rvalue_function_ref = true;
@@ -223,16 +230,16 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					advance(); // consume '*'
 				}
 			}
-			
+
 			// After &, &&, or *, expect ')'
 			if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
 			    peek() == ")"_tok) {
 				advance(); // consume ')'
-				
+
 				// Now expect '(' for the parameter list
 				if (peek() == "("_tok) {
 					advance(); // consume '('
-					
+
 					// Parse parameter list (can be empty or have parameters)
 					// For now, we'll skip the parameter list - we just need to recognize the syntax
 					// and accept it for type traits purposes
@@ -244,18 +251,18 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
 							param_types.push_back(param_type.type_index());
 						}
-						
+
 						// Handle pointer/reference/cv-qualifier modifiers after type
 						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
-							   peek() == "const"_tok || peek() == "volatile"_tok) {
+						       peek() == "const"_tok || peek() == "volatile"_tok) {
 							advance();
 						}
-						
+
 						// Handle pack expansion '...' (e.g., _Args...)
 						if (peek() == "..."_tok) {
 							advance(); // consume '...'
 						}
-						
+
 						// Check for comma
 						if (peek() == ","_tok) {
 							advance(); // consume ','
@@ -263,31 +270,31 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 							break;
 						}
 					}
-					
+
 					if (peek() == ")"_tok) {
 						advance(); // consume ')'
-						
+
 						// Successfully parsed function reference/pointer type!
 						// Mark the type accordingly
 						FunctionSignature func_sig;
 						func_sig.return_type_index = type_spec.type_index();
 						func_sig.parameter_type_indices = std::move(param_types);
-						
+
 						if (is_function_ptr) {
 							type_spec.add_pointer_level(CVQualifier::None);
 						}
 						type_spec.set_function_signature(func_sig);
-						
+
 						if (is_function_ref) {
-							type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
+							type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
 						} else if (is_rvalue_function_ref) {
-							type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
+							type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue reference
 						}
-						
-						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ", 
+
+						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ",
 						          is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
 						          " to function");
-						
+
 						// Discard saved position - we successfully parsed
 						discard_saved_token(func_type_saved_pos);
 					} else {
@@ -304,46 +311,46 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// The '(' was already consumed, we're looking at the first parameter type or ')'
 				std::vector<TypeIndex> param_types;
 				bool parsed_bare_function_type = false;
-				
+
 				while (!peek().is_eof() && peek() != ")"_tok) {
 					auto param_type_result = parse_type_specifier();
 					if (param_type_result.is_error() || !param_type_result.node().has_value()) {
 						break;
 					}
 					TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
-					
+
 					// Handle pointer/reference/cv-qualifier modifiers after type
 					consume_pointer_ref_modifiers(param_type);
-					
+
 					// Handle pack expansion '...' (e.g., _Args...)
 					if (peek() == "..."_tok) {
 						advance(); // consume '...'
 						param_type.set_pack_expansion(true);
 					}
-					
+
 					param_types.push_back(param_type.type_index());
-					
+
 					if (peek() == ","_tok) {
 						advance(); // consume ','
 					} else {
 						break;
 					}
 				}
-				
+
 				if (peek() == ")"_tok) {
 					advance(); // consume ')'
 					parsed_bare_function_type = true;
-					
+
 					FunctionSignature func_sig;
 					func_sig.return_type_index = type_spec.type_index();
 					func_sig.parameter_type_indices = std::move(param_types);
 					type_spec.set_function_signature(func_sig);
-					
+
 					FLASH_LOG(Parser, Debug, "Parsed bare function type in type alias");
-					
+
 					discard_saved_token(func_type_saved_pos);
 				}
-				
+
 				if (!parsed_bare_function_type) {
 					restore_token_position(func_type_saved_pos);
 				}
@@ -352,13 +359,13 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				restore_token_position(func_type_saved_pos);
 			}
 		}
-		
+
 		// Parse reference modifiers: & or &&
 		ReferenceQualifier ref_qual = parse_reference_qualifier();
-		FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)", 
-			StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
+		FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)",
+		                 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
 		type_spec.set_reference_qualifier(ref_qual);
-		
+
 		// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
 		while (peek() == "["_tok) {
 			advance(); // consume '['
@@ -378,21 +385,21 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 			}
 		}
-		
+
 		// Consume semicolon
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after type alias", current_token_);
 		}
-		
+
 		// Store the alias in the struct (if struct_ref provided)
 		if (struct_ref) {
 			struct_ref->add_type_alias(alias_name, *type_result.node(), current_access);
 		}
-		
+
 		// Also register it globally with qualified name (e.g., WithType::type)
 		// (re-get type_spec since we modified it above)
 		const TypeSpecifierNode& final_type_spec = type_result.node()->as<TypeSpecifierNode>();
-		
+
 		// Build qualified name if we're inside a struct.
 		// Walk struct_parsing_context_stack_ to build the full struct chain at any
 		// depth, then also register a namespace-prefixed version for ADL.
@@ -422,36 +429,36 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Also register namespace-qualified name "ns::Container::AliasStatus"
 				// so that ADL and type lookups work from outside the namespace.
 				StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-					current_ns, struct_relative_handle);
+				    current_ns, struct_relative_handle);
 				if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
 					getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 				}
 			}
 			return ParseResult::success();
 		}
-		
+
 		// Non-struct alias: register with the simple name (alias_name)
 		register_type_alias(qualified_alias_name, final_type_spec);
-		
+
 		return ParseResult::success();
 	}
-	
+
 	// For 'typedef', check if this is an inline struct/enum definition
 	// Pattern: typedef struct { ... } Alias;
 	// Pattern: typedef enum { ... } Alias;
-	if (!peek().is_eof() && 
+	if (!peek().is_eof() &&
 	    (peek() == "struct"_tok || peek() == "class"_tok || peek() == "enum"_tok)) {
 		// This is potentially an inline definition - use the full parse_typedef_declaration logic
 		// We already consumed 'typedef', so we need to restore it
 		// Actually, we can't restore easily, so let's handle it inline here
-		
+
 		bool is_enum = peek() == "enum"_tok;
 		bool is_struct = peek() == "struct"_tok || peek() == "class"_tok;
-		
+
 		// Look ahead to check if it's really an inline definition
 		auto saved_pos = save_token_position();
 		advance(); // consume struct/class/enum
-		
+
 		bool is_inline_definition = false;
 		if (!peek().is_eof()) {
 			// If next token is '{', it's definitely inline: typedef struct { ... } Alias;
@@ -466,61 +473,61 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 			}
 		}
-		
+
 		restore_token_position(saved_pos);
-		
+
 		if (is_inline_definition && is_struct) {
 			// Parse inline struct: typedef struct { ... } Alias; or typedef struct Name { ... } Alias;
 			bool is_class = peek() == "class"_tok;
 			advance(); // consume 'struct' or 'class'
-			
+
 			// Check if there's a struct name or if it's anonymous
 			std::string_view struct_name_view;
-			
+
 			if (peek().is_identifier()) {
 				struct_name_view = peek_info().value();
 				advance(); // consume struct name
 			} else {
 				// Anonymous struct - generate a unique name using StringBuilder for persistent storage
 				struct_name_view = StringBuilder()
-					.append("__anonymous_typedef_struct_")
-					.append(ast_nodes_.size())
-					.commit();
+				                       .append("__anonymous_typedef_struct_")
+				                       .append(ast_nodes_.size())
+				                       .commit();
 			}
-			
+
 			// Register the struct type early
 			StringHandle struct_name = StringTable::getOrInternStringHandle(struct_name_view);
 			TypeInfo& struct_type_info = add_struct_type(struct_name, gSymbolTable.get_current_namespace_handle());
 			TypeIndex struct_type_index = struct_type_info.type_index_;
 			// Create struct declaration node
 			auto [struct_node, struct_ref_inner] = emplace_node_ref<StructDeclarationNode>(struct_name, is_class);
-			
+
 			// Create StructTypeInfo
 			auto struct_info = std::make_unique<StructTypeInfo>(struct_name, is_class ? AccessSpecifier::Private : AccessSpecifier::Public, false, gSymbolTable.get_current_namespace_handle());
-			
+
 			// Expect opening brace
 			if (!consume("{"_tok)) {
 				return ParseResult::error("Expected '{' in struct definition", peek_info());
 			}
-			
+
 			// Parse struct members (simplified - just type and name)
 			AccessSpecifier member_access = struct_info->default_access;
 			size_t member_count = 0;
 			const size_t MAX_MEMBERS = 10000; // Safety limit
-			
+
 			while (!peek().is_eof() && peek() != "}"_tok && member_count < MAX_MEMBERS) {
 				member_count++;
-				
+
 				// Parse member type
 				auto member_type_result = parse_type_specifier();
 				if (member_type_result.is_error()) {
 					return member_type_result;
 				}
-				
+
 				if (!member_type_result.node().has_value()) {
 					return ParseResult::error("Expected type specifier in struct member", current_token_);
 				}
-				
+
 				// Handle pointer declarators with CV-qualifiers (e.g., "unsigned short const* _locale_pctype")
 				// Parse pointer declarators: * [const] [volatile] *...
 				TypeSpecifierNode& member_type_spec = member_type_result.node()->as<TypeSpecifierNode>();
@@ -530,14 +537,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto member_name_token = peek_info();
 				if (!member_name_token.kind().is_identifier()) {
 					FLASH_LOG(Parser, Debug, "Expected member name but got: type=",
-						!member_name_token.kind().is_eof() ? static_cast<int>(member_name_token.type()) : -1,
-						" value='", !member_name_token.kind().is_eof() ? member_name_token.value() : "NONE", "'");
+					          !member_name_token.kind().is_eof() ? static_cast<int>(member_name_token.type()) : -1,
+					          " value='", !member_name_token.kind().is_eof() ? member_name_token.value() : "NONE", "'");
 					return ParseResult::error("Expected member name in struct", member_name_token);
 				}
 				advance(); // consume the member name
 
 				std::optional<size_t> bitfield_width;
-				
+
 				// Handle bitfield declarations: unsigned int field:8;
 				if (peek() == ":"_tok) {
 					advance(); // consume ':'
@@ -558,7 +565,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Create member declaration
 				auto member_decl_node = emplace_node<DeclarationNode>(*member_type_result.node(), member_name_token);
 				struct_ref_inner.add_member(member_decl_node, member_access, std::nullopt, bitfield_width);
-				
+
 				// Handle comma-separated declarations
 				while (peek() == ","_tok) {
 					advance(); // consume ','
@@ -583,128 +590,125 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						}
 					}
 					auto next_decl = emplace_node<DeclarationNode>(
-						emplace_node<TypeSpecifierNode>(member_type_spec),
-						next_name
-					);
+					    emplace_node<TypeSpecifierNode>(member_type_spec),
+					    next_name);
 					struct_ref_inner.add_member(next_decl, member_access, std::nullopt, next_bitfield_width);
 				}
-				
+
 				// Expect semicolon
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after struct member", current_token_);
 				}
 			}
-			
+
 			if (member_count >= MAX_MEMBERS) {
 				return ParseResult::error("Struct has too many members (possible infinite loop detected)", current_token_);
 			}
-			
+
 			// Expect closing brace
 			if (!consume("}"_tok)) {
 				return ParseResult::error("Expected '}' after struct members", peek_info());
 			}
-			
+
 			// Calculate struct layout
 			for (const auto& member_decl : struct_ref_inner.members()) {
 				const DeclarationNode& decl = member_decl.declaration.as<DeclarationNode>();
 				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
-				
+
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-					member_type_spec, member_type_spec.type_index());
-				
+				    member_type_spec, member_type_spec.type_index());
+
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
-					member_name_handle,
-					member_type_spec.type_index(),
-					member_size_in_bits,
-					member_alignment,
-					member_access,
-					std::nullopt,
-					member_type_spec.reference_qualifier(),
-					member_type_spec.size_in_bits(),
-					false,
-					{},
-					static_cast<int>(member_type_spec.pointer_depth()),
-					member_decl.bitfield_width
-				);
+				    member_name_handle,
+				    member_type_spec.type_index(),
+				    member_size_in_bits,
+				    member_alignment,
+				    member_access,
+				    std::nullopt,
+				    member_type_spec.reference_qualifier(),
+				    member_type_spec.size_in_bits(),
+				    false,
+				    {},
+				    static_cast<int>(member_type_spec.pointer_depth()),
+				    member_decl.bitfield_width);
 			}
-			
+
 			// Finalize struct layout
 			if (!struct_info->finalize()) {
 				return ParseResult::error(struct_info->getFinalizationError(), Token());
 			}
-			
+
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
 			// Update type_size_ from the finalized struct's total size
 			if (struct_type_info.getStructInfo()) {
 				struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
 			}
-			
+
 			// Parse the typedef alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after struct definition", current_token_);
 			}
 			auto alias_name = alias_token.handle();
-			
+
 			// Consume semicolon
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after typedef", current_token_);
 			}
-			
+
 			// Create type specifier for the typedef
 			int struct_size_bits = 0;
 			if (const StructTypeInfo* finalized_struct_info = struct_type_info.getStructInfo()) {
 				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
 			}
 			TypeSpecifierNode type_spec(
-				struct_type_index.withCategory(TypeCategory::Struct),
-				struct_size_bits,
-				alias_token,
-				CVQualifier::None,
-				ReferenceQualifier::None
-			);
+			    struct_type_index.withCategory(TypeCategory::Struct),
+			    struct_size_bits,
+			    alias_token,
+			    CVQualifier::None,
+			    ReferenceQualifier::None);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
-			
+
 			// Store the alias in the struct (if struct_ref provided)
 			if (struct_ref) {
 				struct_ref->add_type_alias(alias_name, type_node, current_access);
 			}
-			
+
 			// Register the alias globally
 			register_type_alias(alias_name, type_spec);
-			
+
 			return ParseResult::success();
 		}
-		
+
 		if (is_inline_definition && is_enum) {
 			// Parse inline enum: typedef enum { ... } Alias;
 			advance(); // consume 'enum'
-			
+
 			// Check if there's an enum name or if it's anonymous
 			StringHandle enum_name;
-			
+
 			if (peek().is_identifier()) {
 				enum_name = peek_info().handle();
 				advance(); // consume enum name
 			} else {
 				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
 				enum_name = StringTable::getOrInternStringHandle(StringBuilder()
-					.append("__anonymous_typedef_enum_")
-					.append(ast_nodes_.size()));
+				                                                     .append("__anonymous_typedef_enum_")
+				                                                     .append(ast_nodes_.size()));
 			}
-			
+
 			// Register the enum type early
 			TypeInfo& enum_type_info = add_enum_type(enum_name, gSymbolTable.get_current_namespace_handle());
 			TypeIndex enum_type_index = enum_type_info.type_index_;
-			
+
 			// Create enum declaration node
 			bool is_scoped = false;
 			auto [enum_node, enum_ref] = emplace_node_ref<EnumDeclarationNode>(enum_name, is_scoped);
-			
+
 			// Check for underlying type specification (: type)
 			if (peek() == ":"_tok) {
 				advance(); // consume ':'
@@ -716,54 +720,56 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					enum_ref.set_underlying_type(*underlying_type_node);
 				}
 			}
-			
+
 			// Expect opening brace
 			if (!consume("{"_tok)) {
 				return ParseResult::error("Expected '{' in enum definition", peek_info());
 			}
-			
+
 			// Create enum type info
 			auto enum_info = std::make_unique<EnumTypeInfo>(enum_name, is_scoped);
-			
+
 			// Determine underlying type
 			int underlying_size = 32;
 			if (enum_ref.has_underlying_type()) {
 				const auto& type_spec_node = enum_ref.underlying_type()->as<TypeSpecifierNode>();
 				underlying_size = type_spec_node.size_in_bits();
 			}
-			
+
 			// Parse enumerators
 			int64_t next_value = 0;
 			size_t enumerator_count = 0;
 			const size_t MAX_ENUMERATORS = 10000; // Safety limit
-			
+
 			// Store enum info early so ConstExprEvaluator can look up values during parsing
 			enum_type_info.setEnumInfo(std::move(enum_info));
 			auto* live_enum_info = enum_type_info.getEnumInfo();
-			
+
 			// For scoped enums, push a temporary scope so that enumerator names
 			// are visible to subsequent value expressions (C++ §9.7.1/2)
 			if (is_scoped) {
 				gSymbolTable.enter_scope(ScopeType::Block);
 			}
-			
+
 			while (!peek().is_eof() && peek() != "}"_tok && enumerator_count < MAX_ENUMERATORS) {
 				enumerator_count++;
-				
+
 				auto enumerator_name_token = advance();
 				if (!enumerator_name_token.kind().is_identifier()) {
-					if (is_scoped) gSymbolTable.exit_scope();
+					if (is_scoped)
+						gSymbolTable.exit_scope();
 					return ParseResult::error("Expected enumerator name in enum", enumerator_name_token);
 				}
-				
+
 				int64_t value = next_value;
 				std::optional<ASTNode> enumerator_value;
-				
+
 				if (peek() == "="_tok) {
 					advance(); // consume '='
 					auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 					if (value_expr_result.is_error()) {
-						if (is_scoped) gSymbolTable.exit_scope();
+						if (is_scoped)
+							gSymbolTable.exit_scope();
 						return value_expr_result;
 					}
 					if (auto value_node = value_expr_result.node()) {
@@ -791,25 +797,25 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						}
 					}
 				}
-				
+
 				auto enumerator_node = emplace_node<EnumeratorNode>(enumerator_name_token, enumerator_value);
 				enum_ref.add_enumerator(enumerator_node);
 				// Phase 7B: Intern enumerator name and use StringHandle overload
 				StringHandle enumerator_name_handle = enumerator_name_token.handle();
 				live_enum_info->addEnumerator(enumerator_name_handle, value);
-				
+
 				// Add enumerator to current scope as DeclarationNode so codegen and
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-						enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
-						CVQualifier::None, ReferenceQualifier::None);
+					    enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+					    CVQualifier::None, ReferenceQualifier::None);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 				}
-				
+
 				next_value = value + 1;
-				
+
 				if (peek() == ","_tok) {
 					advance();
 					if (peek() == "}"_tok) {
@@ -819,41 +825,42 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 					break;
 				}
 			}
-			
+
 			if (enumerator_count >= MAX_ENUMERATORS) {
-				if (is_scoped) gSymbolTable.exit_scope();
+				if (is_scoped)
+					gSymbolTable.exit_scope();
 				return ParseResult::error("Enum has too many enumerators (possible infinite loop detected)", current_token_);
 			}
-			
+
 			// Pop temporary scope for scoped enums
 			if (is_scoped) {
 				gSymbolTable.exit_scope();
 			}
-			
+
 			// Expect closing brace
 			if (!consume("}"_tok)) {
 				return ParseResult::error("Expected '}' after enum enumerators", peek_info());
 			}
-			
+
 			// enum_info was already stored in gTypeInfo before the loop
-			
+
 			// Parse the typedef alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after enum definition", current_token_);
 			}
 			auto alias_name = alias_token.handle();
-			
+
 			// Consume semicolon
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after typedef", current_token_);
 			}
-			
+
 			// Create type specifier for the typedef
 			TypeSpecifierNode type_spec(TypeCategory::Enum, TypeQualifier::None, underlying_size, alias_token, CVQualifier::None);
 			type_spec.set_type_index(enum_type_index);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
-			
+
 			// Store the alias in the struct (if struct_ref provided)
 			if (struct_ref) {
 				struct_ref->add_type_alias(alias_name, type_node, current_access);
@@ -884,7 +891,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				if (!current_ns_name.empty() && original_enum_type_info) {
 					// Also register namespace-qualified name "ns::Container::Status"
 					StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-						current_ns, struct_relative_handle);
+					    current_ns, struct_relative_handle);
 					getTypesByNameMap().emplace(ns_qualified_handle, original_enum_type_info);
 				}
 
@@ -899,24 +906,24 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				}
 				return ParseResult::success();
 			}
-			
+
 			// Register the alias globally (non-struct context)
 			register_type_alias(alias_name, type_spec);
 			return ParseResult::success();
 		}
 	}
-	
+
 	// Simple typedef: typedef Type Alias;
 	// Parse the type
 	auto type_result = parse_type_specifier();
 	if (type_result.is_error()) {
 		return type_result;
 	}
-	
+
 	if (!type_result.node().has_value()) {
 		return ParseResult::error("Expected type after 'typedef'", current_token_);
 	}
-	
+
 	ASTNode type_node = *type_result.node();
 	TypeSpecifierNode type_spec = type_node.as<TypeSpecifierNode>();
 	consume_pointer_ref_modifiers(type_spec);
@@ -929,14 +936,14 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		SaveHandle saved_pos = save_token_position();
 		Token class_token = peek_info();
 		advance(); // consume potential class name
-		
+
 		if (peek() == "::"_tok) {
 			advance(); // consume '::'
 			if (peek() == "*"_tok) {
 				advance(); // consume '*'
 				// This is a pointer-to-member type: Type Class::*
 				// Mark the type as a pointer-to-member
-				type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+				type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
 				type_spec.set_member_class_name(class_token.handle());
 				FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef in member_type_alias: ", type_spec.token().value(), " ", class_token.value(), "::*");
 				discard_saved_token(saved_pos);
@@ -949,7 +956,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			restore_token_position(saved_pos);
 		}
 	}
-	
+
 	// Check for function pointer typedef: typedef ReturnType (*Name)(Params);
 	// Pattern: typedef void (*event_callback)(event e, ios_base& b, int i);
 	if (peek() == "("_tok) {
@@ -999,22 +1006,22 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	if (!alias_token.kind().is_identifier()) {
 		return ParseResult::error("Expected alias name in typedef", peek_info());
 	}
-	
+
 	auto alias_name = alias_token.handle();
 	advance(); // consume alias name
-	
+
 	// Skip C++11 attributes that may follow the alias name (e.g., typedef T name [[__deprecated__]];)
 	// This is a GNU extension where attributes can appear on the declarator in a typedef
 	skip_cpp_attributes();
-	
+
 	// Consume semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after typedef", current_token_);
 	}
-	
+
 	// Update type_node with modified type_spec (with pointers)
 	type_node = emplace_node<TypeSpecifierNode>(type_spec);
-	
+
 	// Store the alias in the struct (if struct_ref provided)
 	if (struct_ref) {
 		struct_ref->add_type_alias(alias_name, type_node, current_access);
@@ -1039,22 +1046,21 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 		if (!current_ns_name.empty()) {
 			StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-				current_ns, struct_relative_handle);
+			    current_ns, struct_relative_handle);
 			if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
 				getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 			}
 		}
 		return ParseResult::success();
 	}
-	
+
 	// Also register it globally (non-struct context)
 	register_type_alias(alias_name, type_spec);
-	
+
 	return ParseResult::success();
 }
 
-ParseResult Parser::parse_typedef_declaration()
-{
+ParseResult Parser::parse_typedef_declaration() {
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'typedef' keyword
@@ -1066,15 +1072,15 @@ ParseResult Parser::parse_typedef_declaration()
 	// Check if this is an inline struct/class definition: typedef struct { ... } alias;
 	// or typedef struct Name { ... } alias;
 	bool is_inline_struct = false;
-	bool is_inline_union = false;  // true when keyword was 'union' (affects member layout)
+	bool is_inline_union = false; // true when keyword was 'union' (affects member layout)
 	StringHandle struct_name_for_typedef;
-	TypeIndex struct_type_index {};
+	TypeIndex struct_type_index{};
 
 	// Check if this is an inline enum definition: typedef enum { ... } alias;
 	// or typedef enum _Name { ... } alias;
 	bool is_inline_enum = false;
 	StringHandle enum_name_for_typedef;
-	TypeIndex enum_type_index {};
+	TypeIndex enum_type_index{};
 
 	if (peek() == "enum"_tok) {
 		// Look ahead to see if this is an inline definition
@@ -1101,7 +1107,7 @@ ParseResult Parser::parse_typedef_declaration()
 			auto enum_name_token = peek_info();
 			advance(); // consume enum name
 
-			if (!peek().is_eof() && 
+			if (!peek().is_eof() &&
 			    (peek() == "{"_tok || peek() == ":"_tok)) {
 				// Pattern 2: typedef enum _Name { ... } alias;
 				// or typedef enum _Name : type { ... } alias;
@@ -1118,7 +1124,7 @@ ParseResult Parser::parse_typedef_declaration()
 			is_inline_enum = false;
 		}
 	} else if (!peek().is_eof() &&
-	    (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok)) {
+	           (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok)) {
 		// Look ahead to see if this is an inline definition
 		// Pattern 1: typedef struct { ... } alias;
 		// Pattern 2: typedef struct Name { ... } alias;
@@ -1219,7 +1225,8 @@ ParseResult Parser::parse_typedef_declaration()
 			// Parse enumerator name
 			auto enumerator_name_token = advance();
 			if (!enumerator_name_token.kind().is_identifier()) {
-				if (is_scoped) gSymbolTable.exit_scope();
+				if (is_scoped)
+					gSymbolTable.exit_scope();
 				return ParseResult::error("Expected enumerator name in enum", enumerator_name_token);
 			}
 
@@ -1233,14 +1240,15 @@ ParseResult Parser::parse_typedef_declaration()
 				// Parse constant expression
 				auto value_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (value_expr_result.is_error()) {
-					if (is_scoped) gSymbolTable.exit_scope();
+					if (is_scoped)
+						gSymbolTable.exit_scope();
 					return value_expr_result;
 				}
 
 				// Extract value from expression
 				if (auto value_node = value_expr_result.node()) {
 					enumerator_value = *value_node;
-					
+
 					bool value_extracted = false;
 					if (value_node->is<ExpressionNode>()) {
 						const auto& expr = value_node->as<ExpressionNode>();
@@ -1278,8 +1286,8 @@ ParseResult Parser::parse_typedef_declaration()
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
-					CVQualifier::None, ReferenceQualifier::None);
+				    enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+				    CVQualifier::None, ReferenceQualifier::None);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 			}
@@ -1330,17 +1338,15 @@ ParseResult Parser::parse_typedef_declaration()
 		auto [struct_node, struct_ref] = emplace_node_ref<StructDeclarationNode>(struct_name_for_typedef, false);
 
 		// Push struct parsing context
-		struct_parsing_context_stack_.push_back({
-			StringTable::getStringView(struct_name_for_typedef),
-			&struct_ref,
-			nullptr,
-			gSymbolTable.get_current_namespace_handle(),
-			{}
-		});
+		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef),
+		                                         &struct_ref,
+		                                         nullptr,
+		                                         gSymbolTable.get_current_namespace_handle(),
+		                                         {}});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
-		
+
 		// Update the struct parsing context with the local_struct_info for static member lookup
 		if (!struct_parsing_context_stack_.empty()) {
 			struct_parsing_context_stack_.back().local_struct_info = struct_info.get();
@@ -1369,7 +1375,7 @@ ParseResult Parser::parse_typedef_declaration()
 				SaveHandle saved_pos = save_token_position();
 				auto union_or_struct_keyword = advance(); // consume 'union' or 'struct'
 				bool is_union = (union_or_struct_keyword.value() == "union");
-				
+
 				if (peek() == "{"_tok) {
 					// Could be true anonymous union (union { ... };) or named anonymous (union { ... } name;)
 					// Peek ahead to determine which pattern
@@ -1381,48 +1387,48 @@ ParseResult Parser::parse_typedef_declaration()
 					}
 					// Restore position to the opening brace to parse the members
 					restore_token_position(brace_start_pos);
-					
+
 					// Now consume the opening brace
 					advance(); // consume '{'
-					
+
 					if (is_named_anonymous) {
 						// Named anonymous union/struct: union { ... } member_name;
 						// Create an anonymous type and parse members into it
-						
+
 						// Generate a unique name for the anonymous union/struct type
 						static int typedef_anonymous_type_counter = 0;
 						std::string_view anon_type_name = StringBuilder()
-							.append("__typedef_anonymous_")
-							.append(is_union ? "union_" : "struct_")
-							.append(static_cast<int64_t>(typedef_anonymous_type_counter++))
-							.commit();
+						                                      .append("__typedef_anonymous_")
+						                                      .append(is_union ? "union_" : "struct_")
+						                                      .append(static_cast<int64_t>(typedef_anonymous_type_counter++))
+						                                      .commit();
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
-						
+
 						// Create the anonymous struct/union type
 						TypeInfo& anon_type_info = add_struct_type(anon_type_name_handle, gSymbolTable.get_current_namespace_handle());
-						
+
 						// Create StructTypeInfo
 						auto anon_struct_info_ptr = std::make_unique<StructTypeInfo>(anon_type_name_handle, AccessSpecifier::Public, is_union, gSymbolTable.get_current_namespace_handle());
 						StructTypeInfo* anon_struct_info = anon_struct_info_ptr.get();
-						
+
 						// Parse all members using the recursive helper
 						ParseResult members_result = parse_anonymous_struct_union_members(anon_struct_info, anon_type_name);
 						if (members_result.is_error()) {
 							return members_result;
 						}
-						
+
 						// Expect closing brace
 						if (!consume("}"_tok)) {
 							return ParseResult::error("Expected '}' after named anonymous union/struct members in typedef", peek_info());
 						}
-						
+
 						// Calculate the layout for the anonymous type
 						if (is_union) {
 							// Union layout: all members at offset 0, size is max of all member sizes
 							size_t max_size = 0;
 							size_t max_alignment = 1;
 							for (auto& member : anon_struct_info->members) {
-								member.offset = 0;  // All union members at offset 0
+								member.offset = 0; // All union members at offset 0
 								if (member.size > max_size) {
 									max_size = member.size;
 								}
@@ -1454,10 +1460,10 @@ ParseResult Parser::parse_typedef_declaration()
 							anon_struct_info->total_size = current_offset;
 							anon_struct_info->alignment = max_alignment;
 						}
-						
+
 						// Set the struct info on the type info
 						anon_type_info.setStructInfo(std::move(anon_struct_info_ptr));
-						
+
 						// Now parse the member name(s) - handle comma-separated declarators
 						do {
 							// Parse declarator name and pointer levels
@@ -1466,41 +1472,41 @@ ParseResult Parser::parse_typedef_declaration()
 								advance(); // consume '*'
 								ptr_levels++;
 							}
-							
+
 							auto member_name_token = peek_info();
 							if (!member_name_token.kind().is_identifier()) {
 								return ParseResult::error("Expected member name after named anonymous union/struct in typedef", member_name_token);
 							}
 							advance(); // consume the member name
-							
+
 							// Create type specifier for the anonymous type
-							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None, 
-								static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword, CVQualifier::None);
+							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None,
+							                                 static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword, CVQualifier::None);
 							anon_type_spec.set_type_index(anon_type_info.type_index_);
 							for (int i = 0; i < ptr_levels; i++) {
 								anon_type_spec.add_pointer_level(CVQualifier::None);
 							}
-							
+
 							// Create declaration node
 							ASTNode type_node_for_member = emplace_node<TypeSpecifierNode>(anon_type_spec);
 							ASTNode member_decl_node = emplace_node<DeclarationNode>(type_node_for_member, member_name_token);
-							
+
 							// Add as member of enclosing struct
 							members.push_back({member_decl_node, current_access, std::nullopt});
 							struct_ref.add_member(member_decl_node, current_access, std::nullopt);
-							
+
 						} while (peek() == ","_tok && (advance(), true));
-						
+
 						// Expect semicolon after the member declarations
 						if (!consume(";"_tok)) {
 							return ParseResult::error("Expected ';' after named anonymous union/struct member in typedef", current_token_);
 						}
-						
+
 						discard_saved_token(saved_pos);
 						discard_saved_token(brace_start_pos);
-						continue;  // Skip to next member
+						continue; // Skip to next member
 					}
-					
+
 					// True anonymous union/struct - parse and flatten members (original code path)
 					// Parse all members of the anonymous union
 					std::vector<StructMemberDecl> anon_members;
@@ -1510,11 +1516,11 @@ ParseResult Parser::parse_typedef_declaration()
 						    (peek() == "union"_tok || peek() == "struct"_tok)) {
 							SaveHandle nested_saved_pos = save_token_position();
 							advance(); // consume 'union' or 'struct'
-							
+
 							if (peek() == "{"_tok) {
 								// Nested anonymous union - parse recursively
 								advance(); // consume '{'
-								
+
 								// Parse nested anonymous union members
 								while (!peek().is_eof() && peek() != "}"_tok) {
 									// Parse member type
@@ -1522,11 +1528,11 @@ ParseResult Parser::parse_typedef_declaration()
 									if (nested_member_type_result.is_error()) {
 										return nested_member_type_result;
 									}
-									
+
 									if (!nested_member_type_result.node().has_value()) {
 										return ParseResult::error("Expected type specifier in nested anonymous union", current_token_);
 									}
-									
+
 									// Handle pointer declarators
 									TypeSpecifierNode& nested_member_type_spec = nested_member_type_result.node()->as<TypeSpecifierNode>();
 									while (peek() == "*"_tok) {
@@ -1534,26 +1540,26 @@ ParseResult Parser::parse_typedef_declaration()
 										CVQualifier ptr_cv = parse_cv_qualifiers();
 										nested_member_type_spec.add_pointer_level(ptr_cv);
 									}
-									
+
 									// Parse member name
 									auto nested_member_name_token = peek_info();
 									if (!nested_member_name_token.kind().is_identifier()) {
 										return ParseResult::error("Expected member name in nested anonymous union", nested_member_name_token);
 									}
 									advance(); // consume the member name
-									
+
 									// Check for array declarator
 									std::vector<ASTNode> nested_array_dimensions;
 									while (peek() == "["_tok) {
 										advance(); // consume '['
-										
+
 										// Parse the array size expression
 										ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 										if (size_result.is_error()) {
 											return size_result;
 										}
 										nested_array_dimensions.push_back(*size_result.node());
-										
+
 										// Expect closing ']'
 										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 										    peek() != "]"_tok) {
@@ -1561,7 +1567,7 @@ ParseResult Parser::parse_typedef_declaration()
 										}
 										advance(); // consume ']'
 									}
-									
+
 									// Create member declaration for nested union member
 									ASTNode nested_member_decl_node;
 									if (!nested_array_dimensions.empty()) {
@@ -1571,23 +1577,23 @@ ParseResult Parser::parse_typedef_declaration()
 									}
 									// Flatten nested union members into outer union
 									anon_members.push_back({nested_member_decl_node, current_access, std::nullopt});
-									
+
 									// Expect semicolon
 									if (!consume(";"_tok)) {
 										return ParseResult::error("Expected ';' after nested anonymous union member", current_token_);
 									}
 								}
-								
+
 								// Expect closing brace for nested union
 								if (!consume("}"_tok)) {
 									return ParseResult::error("Expected '}' after nested anonymous union members", peek_info());
 								}
-								
+
 								// Expect semicolon after nested anonymous union
 								if (!consume(";"_tok)) {
 									return ParseResult::error("Expected ';' after nested anonymous union", current_token_);
 								}
-								
+
 								discard_saved_token(nested_saved_pos);
 								continue; // Continue with next member of outer union
 							} else {
@@ -1595,17 +1601,17 @@ ParseResult Parser::parse_typedef_declaration()
 								restore_token_position(nested_saved_pos);
 							}
 						}
-						
+
 						// Parse member type
 						auto anon_member_type_result = parse_type_specifier();
 						if (anon_member_type_result.is_error()) {
 							return anon_member_type_result;
 						}
-						
+
 						if (!anon_member_type_result.node().has_value()) {
 							return ParseResult::error("Expected type specifier in anonymous union", current_token_);
 						}
-						
+
 						// Handle pointer declarators
 						TypeSpecifierNode& anon_member_type_spec = anon_member_type_result.node()->as<TypeSpecifierNode>();
 						while (peek() == "*"_tok) {
@@ -1613,26 +1619,26 @@ ParseResult Parser::parse_typedef_declaration()
 							CVQualifier ptr_cv = parse_cv_qualifiers();
 							anon_member_type_spec.add_pointer_level(ptr_cv);
 						}
-						
+
 						// Parse member name
 						auto anon_member_name_token = peek_info();
 						if (!anon_member_name_token.kind().is_identifier()) {
 							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token);
 						}
 						advance(); // consume the member name
-						
+
 						// Check for array declarator
 						std::vector<ASTNode> anon_array_dimensions;
 						while (peek() == "["_tok) {
 							advance(); // consume '['
-							
+
 							// Parse the array size expression
 							ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 							if (size_result.is_error()) {
 								return size_result;
 							}
 							anon_array_dimensions.push_back(*size_result.node());
-							
+
 							// Expect closing ']'
 							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
 							    peek() != "]"_tok) {
@@ -1640,7 +1646,7 @@ ParseResult Parser::parse_typedef_declaration()
 							}
 							advance(); // consume ']'
 						}
-						
+
 						// Create member declaration
 						ASTNode anon_member_decl_node;
 						if (!anon_array_dimensions.empty()) {
@@ -1649,30 +1655,30 @@ ParseResult Parser::parse_typedef_declaration()
 							anon_member_decl_node = emplace_node<DeclarationNode>(*anon_member_type_result.node(), anon_member_name_token);
 						}
 						anon_members.push_back({anon_member_decl_node, current_access, std::nullopt});
-						
+
 						// Expect semicolon
 						if (!consume(";"_tok)) {
 							return ParseResult::error("Expected ';' after anonymous union member", current_token_);
 						}
 					}
-					
+
 					// Expect closing brace
 					if (!consume("}"_tok)) {
 						return ParseResult::error("Expected '}' after anonymous union members", peek_info());
 					}
-					
+
 					// Expect semicolon after anonymous union
 					if (!consume(";"_tok)) {
 						return ParseResult::error("Expected ';' after anonymous union", current_token_);
 					}
-					
+
 					// Flatten anonymous union members into parent struct
 					// All members of an anonymous union share the same offset
 					for (const auto& anon_member : anon_members) {
 						members.push_back(anon_member);
 						struct_ref.add_member(anon_member.declaration, anon_member.access, anon_member.default_initializer);
 					}
-					
+
 					discard_saved_token(saved_pos);
 					continue;
 				} else {
@@ -1680,7 +1686,7 @@ ParseResult Parser::parse_typedef_declaration()
 					restore_token_position(saved_pos);
 				}
 			}
-			
+
 			// Parse member declaration
 			auto member_type_result = parse_type_specifier();
 			if (member_type_result.is_error()) {
@@ -1795,9 +1801,8 @@ ParseResult Parser::parse_typedef_declaration()
 
 				// Create declaration with same type
 				auto next_member_decl = emplace_node<DeclarationNode>(
-					emplace_node<TypeSpecifierNode>(member_type_spec),
-					next_member_name
-				);
+				    emplace_node<TypeSpecifierNode>(member_type_spec),
+				    next_member_name);
 				members.push_back({next_member_decl, current_access, std::nullopt, additional_bitfield_width});
 				members.back().bitfield_width_expr = additional_bitfield_width_expr;
 				struct_ref.add_member(next_member_decl, current_access, std::nullopt, additional_bitfield_width, additional_bitfield_width_expr);
@@ -1824,7 +1829,7 @@ ParseResult Parser::parse_typedef_declaration()
 
 			// Calculate member size and alignment
 			auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-				member_type_spec, member_type_spec.type_index());
+			    member_type_spec, member_type_spec.type_index());
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
 			if (!member_type_spec.is_pointer() && !member_type_spec.is_reference() && !member_type_spec.is_rvalue_reference()) {
@@ -1843,19 +1848,18 @@ ParseResult Parser::parse_typedef_declaration()
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
-				member_name_handle,
-				member_type_spec.type_index(),
-				member_size,
-				member_alignment,
-				member_decl.access,
-				member_decl.default_initializer,
-				ref_qual,
-				referenced_size_bits,
-				false,
-				{},
-				static_cast<int>(member_type_spec.pointer_depth()),
-				member_decl.bitfield_width
-			);
+			    member_name_handle,
+			    member_type_spec.type_index(),
+			    member_size,
+			    member_alignment,
+			    member_decl.access,
+			    member_decl.default_initializer,
+			    ref_qual,
+			    referenced_size_bits,
+			    false,
+			    {},
+			    static_cast<int>(member_type_spec.pointer_depth()),
+			    member_decl.bitfield_width);
 		}
 
 		// Finalize struct layout (add padding)
@@ -1873,12 +1877,11 @@ ParseResult Parser::parse_typedef_declaration()
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
-			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
-			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
-			CVQualifier::None,
-			ReferenceQualifier::None
-		);
+		    struct_type_index.withCategory(TypeCategory::Struct),
+		    static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
+		    Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
+		    CVQualifier::None,
+		    ReferenceQualifier::None);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {
 		// Parse the underlying type normally
@@ -1897,7 +1900,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// Handle pointer/reference declarators (ptr-operator in C++20 grammar)
 		// consume_pointer_ref_modifiers handles *, cv-qualifiers, MSVC modifiers, &, &&
 		consume_pointer_ref_modifiers(type_spec);
-		
+
 		// Check for pointer-to-member type syntax: typedef Type Class::* alias;
 		// This is used in <type_traits> for result_of patterns
 		// Pattern: typedef _Res _Class::* _MemPtr;
@@ -1906,14 +1909,14 @@ ParseResult Parser::parse_typedef_declaration()
 			SaveHandle saved_pos = save_token_position();
 			Token class_token = peek_info();
 			advance(); // consume potential class name
-			
+
 			if (peek() == "::"_tok) {
 				advance(); // consume '::'
 				if (peek() == "*"_tok) {
 					advance(); // consume '*'
 					// This is a pointer-to-member type: Type Class::*
 					// Mark the type as a pointer-to-member
-					type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+					type_spec.add_pointer_level(CVQualifier::None); // Add pointer level
 					type_spec.set_member_class_name(class_token.handle());
 					FLASH_LOG(Parser, Debug, "Parsed pointer-to-member typedef: ", type_spec.token().value(), " ", class_token.value(), "::*");
 					discard_saved_token(saved_pos);
@@ -1936,32 +1939,32 @@ ParseResult Parser::parse_typedef_declaration()
 		// Peek ahead to check if this is a function pointer pattern
 		SaveHandle paren_saved = save_token_position();
 		advance(); // consume '('
-		
+
 		parse_calling_convention();
-		
+
 		if (peek() == "*"_tok) {
 			advance(); // consume '*'
-			
+
 			// Now expect the alias name identifier
 			skip_cpp_attributes();
 			skip_gcc_attributes();
 			if (peek().is_identifier()) {
 				function_pointer_alias_name = peek_info().value();
 				advance(); // consume alias name
-				
+
 				// Expect closing ')'
 				if (peek() == ")"_tok) {
 					advance(); // consume ')'
-					
+
 					// Now expect '(' for the parameter list
 					if (peek() == "("_tok) {
 						// This is a function pointer typedef!
 						is_function_pointer_typedef = true;
 						discard_saved_token(paren_saved);
-						
+
 						// Parse the parameter list
 						advance(); // consume '('
-						
+
 						// Skip the parameter list by counting parentheses
 						int paren_depth = 1;
 						while (paren_depth > 0 && !peek().is_eof()) {
@@ -1973,13 +1976,13 @@ ParseResult Parser::parse_typedef_declaration()
 							}
 							advance();
 						}
-						
+
 						// We've consumed through the closing ')' of the parameter list
 					}
 				}
 			}
 		}
-		
+
 		// If not a function pointer typedef, restore position
 		if (!is_function_pointer_typedef) {
 			restore_token_position(paren_saved);
@@ -1988,19 +1991,19 @@ ParseResult Parser::parse_typedef_declaration()
 
 	std::string_view alias_name;
 	std::optional<Token> alias_token;
-	
+
 	if (is_function_pointer_typedef) {
 		alias_name = function_pointer_alias_name;
 		// Create a synthetic token for the alias name (use file index 0 since it's synthetic)
 		alias_token = Token(Token::Type::Identifier, function_pointer_alias_name, 0, 0, 0);
-		
+
 		// For function pointer typedefs, create a proper FunctionPointer type
 		// The return type is in type_spec, create a function pointer type with it
 		TypeIndex return_type_index = type_spec.type_index();
-		
+
 		// Create a new TypeSpecifierNode for the function pointer (64-bit pointer)
 		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
-		
+
 		// Create a basic function signature with the return type
 		// Note: We don't have full parameter info here since we just skipped the param list
 		// This is a simplified implementation that handles the common case
@@ -2008,7 +2011,7 @@ ParseResult Parser::parse_typedef_declaration()
 		sig.return_type_index = return_type_index;
 		sig.linkage = Linkage::None;
 		fp_type.set_function_signature(sig);
-		
+
 		// Replace type_spec with the function pointer type
 		type_spec = fp_type;
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
@@ -2027,7 +2030,7 @@ ParseResult Parser::parse_typedef_declaration()
 		// This is a function type typedef
 		// Parse the parameter list by skipping to the closing ')'
 		advance(); // consume '('
-		
+
 		int paren_depth = 1;
 		while (paren_depth > 0 && !peek().is_eof()) {
 			auto token = peek_info();
@@ -2038,7 +2041,7 @@ ParseResult Parser::parse_typedef_declaration()
 			}
 			advance();
 		}
-		
+
 		// After consuming the closing ')', we should be at the semicolon
 		// (or potentially attribute specifiers, which we'll skip in the semicolon check)
 	}
@@ -2049,13 +2052,13 @@ ParseResult Parser::parse_typedef_declaration()
 		// Parse array dimensions
 		while (peek() == "["_tok) {
 			advance(); // consume '['
-			
+
 			// Parse the array size expression
 			ParseResult size_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (size_result.is_error()) {
 				return size_result;
 			}
-			
+
 			// Try to evaluate the array size using constexpr evaluator
 			size_t array_size = 0;
 			if (size_result.node().has_value()) {
@@ -2065,16 +2068,16 @@ ParseResult Parser::parse_typedef_declaration()
 					array_size = static_cast<size_t>(eval_result.as_int());
 				}
 			}
-			
+
 			// Add array dimension to the type specifier
 			type_spec.add_array_dimension(array_size);
-			
+
 			// Expect closing ']'
 			if (!consume("]"_tok)) {
 				return ParseResult::error("Expected ']' after array size in typedef", current_token_);
 			}
 		}
-		
+
 		// Update type_node with the array type
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	}
