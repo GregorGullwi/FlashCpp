@@ -4742,6 +4742,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			registerNestedMemberFunctionsForLazy(nested_struct, *nested_struct_info,
 												 instantiated_name, qualified_name, template_params, template_args_to_use);
 
+			// Mark nested struct as needing a trivial default constructor when it
+			// has no explicit constructors.  Without this, default member
+			// initializers (e.g. `int tag = N;`) are never applied because
+			// generateTrivialDefaultConstructors() skips types without the flag.
+			if (!nested_struct_info->hasAnyConstructor()) {
+				nested_struct_info->needs_default_constructor = true;
+			}
+
 			// Register the nested class in the type system
 			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));

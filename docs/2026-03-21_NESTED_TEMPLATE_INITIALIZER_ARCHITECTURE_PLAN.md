@@ -31,6 +31,152 @@ and Phase D (default member initializer normalization) remain future work.
 - Phase E: Remove the registry/name-based compatibility fallbacks once the
   new owner model is proven across the full test suite.
 
+## Investigation findings (2026-03-31)
+
+### Phase C blocker: static member function resolution during early normalization
+
+An attempt to add `normalizeStaticMemberInitializers()` — eagerly packing
+literal values during instantiation — was reverted because it exposed a
+pre-existing bug in constexpr evaluation during template substitution.
+
+**Reproducer** (existing passing test
+`test_identifier_binding_template_static_member_prefers_static_helper_ret42`):
+
+```cpp
+constexpr int helper() { return 7; }
+
+template <typename T>
+struct Box {
+    static constexpr int helper() { return static_cast<int>(sizeof(T)) + 38; }
+    static constexpr int value = helper();  // Should call Box::helper, not global
+};
+
+int main() { return Box<int>::value; }  // Expected: 42
+```
+
+During the existing substitution path at
+`Parser_Templates_Inst_ClassTemplate.cpp:~4456`, the `ConstExpr::Evaluator`
+resolves the unqualified `helper()` call to the **global** function (returning
+7) instead of the class-scoped static member function (returning 42).  Without
+early normalization, codegen re-evaluates with a fuller scope and gets 42.
+Locking in the wrong value during instantiation broke the test.
+
+**Root cause**: The `ConstExpr::EvaluationContext` created at substitution time
+does not include the class-scope member functions, so unqualified function calls
+resolve against global scope only.
+
+**Recommended fix**: Either populate the evaluation context with the struct's
+static member functions before evaluating, or restrict early normalization to
+initializers that do not contain `FunctionCallNode`.
+
+### Phase D bug: `needs_default_constructor` missing for nested structs
+
+**Reproducer**:
+
+```cpp
+template <int N>
+struct Outer {
+    struct Inner {
+        int tag = N;  // default member initializer references outer NTTP
+    };
+};
+
+int main() {
+    Outer<42>::Inner obj;
+    return obj.tag;  // Returns garbage instead of 42
+}
+```
+
+clang++ returns 42; FlashCpp returns a garbage value (e.g. 99 or 103).
+
+**Root cause analysis** (verified via `--log-level=Codegen:trace`):
+
+1. Template parameter substitution **works correctly**: the
+   `substituteTemplateParameters()` call at line 4651 of
+   `Parser_Templates_Inst_ClassTemplate.cpp` correctly replaces the
+   `TemplateParameterReferenceNode(N)` with `NumericLiteralNode(42)` in the
+   `default_initializer` stored on the `StructMember`.
+
+2. The bug is in **constructor generation**:
+   `needs_default_constructor` is set at line 6804 for the **outer** struct
+   and at line 1636 for **partial specialization** paths, but the **nested
+   class** processing path (lines 4582–4763) never sets it.
+
+3. `generateTrivialDefaultConstructors()` in
+   `IrGenerator_Visitors_TypeInit.cpp:1145` iterates all registered types
+   and only generates a trivial default constructor when
+   `struct_info->needs_default_constructor` is true (line 1178).  Because the
+   nested struct never has this flag set, no constructor is generated for it.
+
+4. The generated IR shows:
+   - `Outer$hash` gets a trivial constructor (but has 0 own members)
+   - `Inner` gets NO constructor at all
+   - `obj` is allocated on the stack but never initialized
+   - `obj.tag` reads uninitialized stack memory
+
+**Fix**: After finalizing the nested struct (line 4732) and registering it
+(line 4746), set `needs_default_constructor` on the nested StructTypeInfo:
+
+```cpp
+// After line 4747 (nested_type_info.setStructInfo)
+// Check if the nested class needs a default constructor
+{
+    const StructTypeInfo* nsi = nested_type_info.getStructInfo();
+    if (nsi && !nsi->hasAnyConstructor()) {
+        // Safe to const_cast here: we just moved this into nested_type_info
+        const_cast<StructTypeInfo*>(nsi)->needs_default_constructor = true;
+    }
+}
+```
+
+Alternatively, set it directly on `nested_struct_info` before the `std::move`
+at line 4747:
+
+```cpp
+// Before line 4747: set needs_default_constructor for nested class
+if (!nested_struct_info->hasAnyConstructor()) {
+    nested_struct_info->needs_default_constructor = true;
+}
+```
+
+This is the cleaner approach since `nested_struct_info` is still owned at that
+point.
+
+**Affected scope**: Any nested struct inside a template that:
+- has default member initializers (especially NTTP-dependent ones), AND
+- does not have an explicit constructor
+
+Non-template nested structs are unaffected (they take a different code path
+through the parser that sets the flag correctly).  Non-nested template structs
+are also unaffected (line 6804 handles them).
+
+### Additional test cases needed
+
+**Phase D tests** (to be committed alongside the fix):
+
+1. `test_template_nested_default_member_init_nttp_ret42.cpp` — the basic
+   reproducer above.
+2. `test_template_nested_default_member_init_sizeof_ret42.cpp` — default
+   initializer using `sizeof(T)` instead of NTTP.
+3. `test_template_nested_default_member_init_method_ret42.cpp` — nested
+   struct created via member function (exercises struct copy with default
+   init as well).
+4. `test_template_nested_default_member_init_aggregate_ret42.cpp` — brace-
+   initialized nested struct (`Outer<42>::Inner obj{}`; should still work
+   after the fix).
+
+### Verified working scenarios
+
+The following related scenarios already work correctly and should be preserved
+as non-regressions:
+
+- Non-template nested struct with default member init → **works**
+- Non-nested template struct with NTTP default member init → **works**
+- Nested template struct with `static constexpr` members depending on outer
+  NTTP → **works** (covered by `test_template_nested_inst_context_ret42`)
+- Aggregate-initialized nested template struct (`Inner obj{}`) → **works**
+  (aggregate init bypasses the default constructor path)
+
 ## Problem statement
 
 FlashCpp already instantiates templates during parsing, but it still allows some
