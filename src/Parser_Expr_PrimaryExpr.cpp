@@ -492,11 +492,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 
 			// Look up the operator function in the current struct type
 			const auto& member_ctx = member_function_context_stack_.back();
-			if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
-				TypeInfo& type_info = getTypeInfoMut(member_ctx.struct_type_index);
-				if (type_info.struct_info_) {
+			if (TypeInfo* type_info = tryGetTypeInfoMut(member_ctx.struct_type_index)) {
+				if (type_info->struct_info_) {
 					// Search for the operator member function
-					for (auto& member_func : type_info.struct_info_->member_functions) {
+					for (auto& member_func : type_info->struct_info_->member_functions) {
 						if (StringTable::getStringView(member_func.name) == operator_name) {
 							// Found the operator function - check if it's a FunctionDeclarationNode
 							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -1376,9 +1375,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// The target type is the i-th template parameter
 								// Substitute it with the actual argument
 								const TemplateTypeArg& arg = (*template_args)[i];
-								if (!arg.is_value && arg.type_index.index() < getTypeInfoCount()) {
+								if (!arg.is_value) {
+									const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+									if (!type_info) continue;
 									// It's a type argument - get the type name and create an identifier
-									StringHandle type_name_handle = getTypeInfo(arg.type_index).name();
+									StringHandle type_name_handle = type_info->name();
 									std::string_view type_name = StringTable::getStringView(type_name_handle);
 									FLASH_LOG_FORMAT(Templates, Debug, "Alias template parameter '{}' resolved to type '{}'", target_name, type_name);
 									
@@ -1866,9 +1867,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 				if (!found_member_function_in_context) {
 					// Get the struct's base classes and search recursively
 					TypeIndex struct_type_index = mf_ctx.struct_type_index;
-					if (struct_type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(struct_type_index);
-						const StructTypeInfo* struct_info = type_info.getStructInfo();
+					if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
+						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {
 							// Collect base classes to search (breadth-first to handle multiple inheritance)
 							std::vector<TypeIndex> base_classes_to_search;
@@ -1879,10 +1879,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							// Search through base classes
 							for (size_t i = 0; i < base_classes_to_search.size() && !found_member_function_in_context; ++i) {
 								TypeIndex base_idx = base_classes_to_search[i];
-								if (base_idx.index() >= getTypeInfoCount()) continue;
+								const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
+								if (!base_type_info) continue;
 								
-								const TypeInfo& base_type_info = getTypeInfo(base_idx);
-								const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 								if (!base_struct_info) continue;
 								
 								// Check member functions in this base class
@@ -2913,9 +2913,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					const StructTypeInfo* struct_info = member_func_ctx.local_struct_info;
 					
 					// Fall back to TypeInfo lookup if no local_struct_info
-					if (!struct_info && member_func_ctx.struct_type_index.is_valid() && member_func_ctx.struct_type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& struct_type_info = getTypeInfo(member_func_ctx.struct_type_index);
-						struct_info = struct_type_info.getStructInfo();
+					if (!struct_info) {
+						if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_func_ctx.struct_type_index))
+							struct_info = struct_type_info->getStructInfo();
 					}
 					
 					if (struct_info) {
@@ -3031,9 +3031,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 					if (!found) {
 						// Get the struct's base classes and search recursively
 						TypeIndex struct_type_index = mf_ctx.struct_type_index;
-						if (struct_type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(struct_type_index);
-							const StructTypeInfo* struct_info = type_info.getStructInfo();
+						if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
+							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info) {
 								// Collect base classes to search (breadth-first to handle multiple inheritance)
 								std::vector<TypeIndex> base_classes_to_search;
@@ -3044,10 +3043,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								// Search through base classes
 								for (size_t i = 0; i < base_classes_to_search.size() && !found; ++i) {
 									TypeIndex base_idx = base_classes_to_search[i];
-									if (base_idx.index() >= getTypeInfoCount()) continue;
+									const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
+									if (!base_type_info) continue;
 									
-									const TypeInfo& base_type_info = getTypeInfo(base_idx);
-									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+									const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 									if (!base_struct_info) continue;
 									
 									// Check member functions in this base class
@@ -3106,11 +3105,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 							TypeIndex type_idx = type_spec.type_index();
 							FLASH_LOG_FORMAT(Parser, Debug, "Checking if '{}' is lambda variable: type_idx={}, getTypeInfoCount()={}", 
 								identifier_token.value(), type_idx, getTypeInfoCount());
-							if (type_idx.index() < getTypeInfoCount()) {
-								const TypeInfo& type_info = getTypeInfo(type_idx);
-								if (type_info.struct_info_) {
+							if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+								if (type_info->struct_info_) {
 									// Check if the struct name starts with "__lambda_"
-									std::string_view type_name = StringTable::getStringView(type_info.struct_info_->name);
+									std::string_view type_name = StringTable::getStringView(type_info->struct_info_->name);
 									FLASH_LOG_FORMAT(Parser, Debug, "Type name for '{}': '{}', starts_with __lambda_: {}", 
 										identifier_token.value(), type_name, type_name.starts_with("__lambda_"));
 									if (type_name.starts_with("__lambda_")) {
@@ -4182,8 +4180,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											               concept_token.line(), concept_token.column(), concept_token.file_index());
 											auto dep_node = emplace_node<ExpressionNode>(IdentifierNode(dep_token));
 											template_arg_nodes.push_back(dep_node);
-										} else if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
-											std::string_view type_name = StringTable::getStringView(getTypeInfo(arg.type_index).name_);
+										} else if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+											std::string_view type_name = StringTable::getStringView(type_info->name_);
 											Token type_token(Token::Type::Identifier, type_name,
 											                concept_token.line(), concept_token.column(), concept_token.file_index());
 											auto type_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
@@ -4424,9 +4422,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 								if (!member_function_context_stack_.empty()) {
 									const auto& mf_ctx2 = member_function_context_stack_.back();
 									TypeIndex struct_type_index = mf_ctx2.struct_type_index;
-									if (struct_type_index.index() < getTypeInfoCount()) {
-										const TypeInfo& type_info = getTypeInfo(struct_type_index);
-										const StructTypeInfo* struct_info = type_info.getStructInfo();
+									if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
+										const StructTypeInfo* struct_info = type_info->getStructInfo();
 										if (struct_info) {
 											// Search through base classes for member template functions
 											std::vector<TypeIndex> base_classes_to_search;
@@ -4437,10 +4434,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 											StringHandle id_handle = identifier_token.handle();
 											for (size_t i = 0; i < base_classes_to_search.size() && !found_inherited_template; ++i) {
 												TypeIndex base_idx = base_classes_to_search[i];
-												if (base_idx.index() >= getTypeInfoCount()) continue;
+												const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
+												if (!base_type_info) continue;
 												
-												const TypeInfo& base_type_info = getTypeInfo(base_idx);
-												const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+												const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 												if (!base_struct_info) continue;
 												
 												// Check member functions in this base class for template functions
@@ -4892,13 +4889,12 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context)
 						isPlaceholderAutoType(type_node.type())) {
 						TypeIndex type_index = type_node.type_index();
 						FLASH_LOG_FORMAT(Parser, Debug, "Checking identifier '{}' for operator(): type_index={}", identifier_token.value(), type_index);
-						if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& type_info = getTypeInfo(type_index);
-							if (type_info.struct_info_) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+							if (type_info->struct_info_) {
 								FLASH_LOG_FORMAT(Parser, Debug, "Struct '{}' has {} member functions", 
-									StringTable::getStringView(type_info.struct_info_->name), type_info.struct_info_->member_functions.size());
+									StringTable::getStringView(type_info->struct_info_->name), type_info->struct_info_->member_functions.size());
 								// Check if struct has operator()
-								for (const auto& member_func : type_info.struct_info_->member_functions) {
+								for (const auto& member_func : type_info->struct_info_->member_functions) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Member function: is_operator={}, symbol='{}'", 
 										member_func.is_operator_overload(), member_func.operator_symbol());
 									if (member_func.operator_kind == OverloadableOperator::Call) {

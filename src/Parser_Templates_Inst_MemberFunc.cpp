@@ -309,9 +309,12 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			}
 			return { type_index, nullptr };
 		}
-		if (type_index.category() == TypeCategory::UserDefined && type_index.index() < getTypeInfoCount()) {
-			const TypeInfo& ti = getTypeInfo(type_index);
-			std::string_view tn = StringTable::getStringView(ti.name());
+		if (type_index.category() == TypeCategory::UserDefined) {
+			const TypeInfo* ti = tryGetTypeInfo(type_index);
+			if (!ti) {
+				return { type_index, nullptr };
+			}
+			std::string_view tn = StringTable::getStringView(ti->name());
 
 			// Check inner template params first
 			for (size_t i = 0; i < template_params.size(); ++i) {

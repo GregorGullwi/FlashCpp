@@ -36,12 +36,13 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
-	for (const auto& param : template_params) {
+	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			template_param_names.push_back(tparam.nameHandle());
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+				tparam.set_registered_type_index(type_info.type_index_);
 				template_scope.addParameter(&type_info);
 			}
 		}
@@ -153,12 +154,13 @@ ParseResult Parser::parse_member_variable_template(StructDeclarationNode& struct
 	
 	// Extract parameter names and register type parameters in one pass
 	FlashCpp::TemplateParameterScope template_scope;
-	for (const auto& param : template_params) {
+	for (auto& param : template_params) {
 		if (param.is<TemplateParameterNode>()) {
-			const TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
+			TemplateParameterNode& tparam = param.as<TemplateParameterNode>();
 			template_param_names.push_back(tparam.name());
 			if (tparam.kind() == TemplateParameterKind::Type) {
 				TypeInfo& type_info = add_user_type(tparam.nameHandle(), 0);
+				tparam.set_registered_type_index(type_info.type_index_);
 				template_scope.addParameter(&type_info);
 			}
 		}

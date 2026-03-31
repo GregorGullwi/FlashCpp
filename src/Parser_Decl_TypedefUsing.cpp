@@ -610,23 +610,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				
 				// Calculate member size and alignment
-				auto [member_size_in_bits, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
-				
-				// For struct types, get the actual size from TypeInfo
-				if (member_type_spec.category() == TypeCategory::Struct) {
-					TypeInfo* member_type_info = nullptr;
-					for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-		TypeInfo& ti = getTypeInfoMut(TypeIndex{_gti_i_});
-						if (ti.type_index_ == member_type_spec.type_index()) {
-							member_type_info = &ti;
-							break;
-						}
-					}
-					if (member_type_info && member_type_info->getStructInfo()) {
-						member_size_in_bits = member_type_info->getStructInfo()->total_size;
-						member_alignment = member_type_info->getStructInfo()->alignment;
-					}
-				}
+				auto [member_size_in_bits, member_alignment] = calculateResolvedMemberSizeAndAlignment(
+					member_type_spec, member_type_spec.type_index());
 				
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
@@ -882,10 +867,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				std::string_view current_ns_name = gNamespaceRegistry.getQualifiedName(current_ns);
 
 				// Look up the original enum TypeInfo by its type_index
-				TypeInfo* original_enum_type_info = nullptr;
-				if (enum_type_index.index() < getTypeInfoCount()) {
-					original_enum_type_info = &getTypeInfoMut(enum_type_index);
-				}
+				TypeInfo* original_enum_type_info = tryGetTypeInfoMut(enum_type_index);
 
 				StringBuilder chain_builder;
 				for (const auto& ctx : struct_parsing_context_stack_) {
@@ -1841,23 +1823,15 @@ ParseResult Parser::parse_typedef_declaration()
 			const TypeSpecifierNode& member_type_spec = decl.type_node().as<TypeSpecifierNode>();
 
 			// Calculate member size and alignment
-			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(member_type_spec);
+			auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
+				member_type_spec, member_type_spec.type_index());
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
-			if (member_type_spec.category() == TypeCategory::Struct) {
-				const TypeInfo* member_type_info = nullptr;
-				for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-					if (ti.type_index_ == member_type_spec.type_index()) {
-						member_type_info = &ti;
-						break;
-					}
-				}
-
-				if (member_type_info && member_type_info->getStructInfo()) {
-					member_size = member_type_info->getStructInfo()->total_size;
-					referenced_size_bits = static_cast<size_t>(member_type_info->getStructInfo()->total_size * 8);
-					member_alignment = member_type_info->getStructInfo()->alignment;
+			if (!member_type_spec.is_pointer() && !member_type_spec.is_reference() && !member_type_spec.is_rvalue_reference()) {
+				if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_spec.type_index())) {
+					member_size = member_struct_info->total_size;
+					referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+					member_alignment = member_struct_info->alignment;
 				}
 			}
 
@@ -2137,4 +2111,3 @@ ParseResult Parser::parse_typedef_declaration()
 	auto typedef_node = emplace_node<TypedefDeclarationNode>(type_node, *alias_token);
 	return saved_position.success(typedef_node);
 }
-

@@ -434,12 +434,12 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 			}
 
 			for (const auto& base : current_struct_info->base_classes) {
-				if (base.is_deferred || base.access != AccessSpecifier::Public || base.type_index.index() >= getTypeInfoCount()) {
+				if (base.is_deferred || base.access != AccessSpecifier::Public) {
 					continue;
 				}
 
-				const TypeInfo& base_type_info = getTypeInfo(base.type_index);
-				const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+				const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+				const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
 				if (!base_struct_info) {
 					continue;
 				}
@@ -448,7 +448,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0u;
 				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size == 0 ? throw_size : base_struct_info->total_size);
 
-				add_catchable_type(StringTable::getStringView(base_type_info.name()), base_properties, base_offset, -1, 0, base_size);
+				add_catchable_type(StringTable::getStringView(base_type_info->name()), base_properties, base_offset, -1, 0, base_size);
 
 				// Transitive catches through deeply nested virtual bases need their own
 				// CatchableType entries as well. Recurse through both virtual and

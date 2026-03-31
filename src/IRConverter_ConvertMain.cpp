@@ -650,9 +650,9 @@ std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWri
 					if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
 						// Built-in type - get name from TypeCategory
 						handler_info.type_name = getTypeName(handler.type_index.category());
-					} else if (handler.type_index.index() < getTypeInfoCount()) {
+					} else if (const TypeInfo* ti = tryGetTypeInfo(handler.type_index)) {
 						// User-defined type - get name from gTypeInfo
-						handler_info.type_name = StringTable::getStringView(getTypeInfo(handler.type_index).name());
+						handler_info.type_name = StringTable::getStringView(ti->name());
 					}
 				}
 
@@ -2158,8 +2158,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 										handled_by_typed_payload = true;
 									} else {
 										int catch_size_bits = 0;
-										if (catch_op->type_index.is_valid() && catch_op->type_index.index() < getTypeInfoCount()) {
-											catch_size_bits = getTypeInfo(catch_op->type_index).type_size_;
+										if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
+											catch_size_bits = ti->type_size_;
 										} else {
 											catch_size_bits = get_type_size_bits(catch_op->exceptionType());
 										}
@@ -4577,11 +4577,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 
 template<class TWriterClass>
 bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeIndex type_index, int object_offset, bool object_is_pointer, const TypedValue& source_arg, bool prefer_move)  {
-		if (!type_index.is_valid() || type_index.index() >= getTypeInfoCount()) {
+		const TypeInfo* type_info_ptr = tryGetTypeInfo(type_index);
+		if (!type_info_ptr) {
 			return false;
 		}
-
-		const TypeInfo& type_info = getTypeInfo(type_index);
+		const TypeInfo& type_info = *type_info_ptr;
 		const StructTypeInfo* struct_info = type_info.getStructInfo();
 		if (!struct_info) {
 			return false;
@@ -7295,8 +7295,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 						// Populate base class names for RTTI
 						for (const auto& base : struct_info->base_classes) {
-							if (base.type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& base_type = getTypeInfo(base.type_index);
+							if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
+								const TypeInfo& base_type = *base_ti;
 								if (base_type.isStruct()) {
 									const StructTypeInfo* base_struct = base_type.getStructInfo();
 									if (base_struct) {
@@ -14093,9 +14093,8 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 
 			if (is_builtin) {
 				type_size_bits = get_type_size_bits(catch_op.exceptionType());
-			} else if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(catch_op.type_index);
-				type_size_bits = type_info.type_size_;
+			} else if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
+				type_size_bits = ti->type_size_;
 			}
 			size_t type_size = type_size_bits / 8;
 
@@ -14245,8 +14244,8 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 				int catch_storage_bits = 64;
 				if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
-					if (catch_op.type_index.is_valid() && catch_op.type_index.index() < getTypeInfoCount()) {
-						catch_storage_bits = getTypeInfo(catch_op.type_index).type_size_;
+					if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
+						catch_storage_bits = ti->type_size_;
 					} else {
 						int builtin_size = get_type_size_bits(catch_op.exceptionType());
 						if (builtin_size > 0) {
@@ -14571,10 +14570,8 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 		size_t aligned_exception_size = (exception_size + 7) & ~7;
 
 			const StructTypeInfo* thrown_exception_struct_info = nullptr;
-			if (throw_op.type_index.index() < getTypeInfoCount()) {
-				const TypeInfo& thrown_type_info = getTypeInfo(throw_op.type_index);
-				thrown_exception_struct_info = thrown_type_info.getStructInfo();
-			}
+			if (const TypeInfo* ti = tryGetTypeInfo(throw_op.type_index))
+				thrown_exception_struct_info = ti->getStructInfo();
 
 			// Platform-specific exception handling
 			if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -14819,9 +14816,9 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				std::string throw_type_name;
 				std::string throw_destructor_symbol;
 					const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
-					if (thrown_struct_info && throw_op.type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& thrown_type_info = getTypeInfo(throw_op.type_index);
-						throw_type_name = std::string(StringTable::getStringView(thrown_type_info.name()));
+					if (thrown_struct_info) {
+						if (const TypeInfo* thrown_ti = tryGetTypeInfo(throw_op.type_index))
+							throw_type_name = std::string(StringTable::getStringView(thrown_ti->name()));
 						throw_destructor_symbol = buildDestructorMangledName(*thrown_struct_info);
 				} else {
 					throw_type_name = std::string(getTypeName(throw_op.exceptionType()));

@@ -616,9 +616,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Phase 2: Ensure the type is instantiated to Layout phase for sizeof
 				// This ensures size/alignment are computed for lazily instantiated classes
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-				if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
-					StringHandle type_name = getTypeInfo(type_spec.type_index()).name();
-					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+				if (type_spec.category() == TypeCategory::Struct) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+						StringHandle type_name = type_info->name();
+						instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+					}
 				}
 				
 				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
@@ -686,9 +688,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Phase 2: Ensure the type is instantiated to Layout phase for alignof
 			// This ensures size/alignment are computed for lazily instantiated classes
 			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().index() < getTypeInfoCount()) {
-				StringHandle type_name = getTypeInfo(type_spec.type_index()).name();
-				instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+			if (type_spec.category() == TypeCategory::Struct) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+					StringHandle type_name = type_info->name();
+					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
+				}
 			}
 			
 			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));

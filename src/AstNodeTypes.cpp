@@ -140,6 +140,20 @@ TypeInfo& getTypeInfoMut(TypeIndex idx) {
     return gTypeInfo[idx.index()];
 }
 
+const TypeInfo* tryGetTypeInfo(TypeIndex idx) {
+    if (!idx.is_valid() || idx.index() >= gTypeInfo.size()) {
+        return nullptr;
+    }
+    return &gTypeInfo[idx.index()];
+}
+
+TypeInfo* tryGetTypeInfoMut(TypeIndex idx) {
+    if (!idx.is_valid() || idx.index() >= gTypeInfo.size()) {
+        return nullptr;
+    }
+    return &gTypeInfo[idx.index()];
+}
+
 const TypeInfo* findTypeByName(StringHandle name) {
     auto it = gTypesByName.find(name);
     return it != gTypesByName.end() ? it->second : nullptr;

@@ -193,18 +193,17 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			// Enum types use format: W4<name>@@
 			// TypeAlias mangles the same as UserDefined (resolved struct/class reference)
 			// Get the type name from the global type registry
-			if (type_node.type_index().index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-				if (type_node.category() == TypeCategory::Enum) {
-					output += "W4";
-				} else {
-					output += 'V';
-				}
-				output += StringTable::getStringView(type_info.name());
-				output += "@@";
-			} else {
+			if (type_node.type_index().index() >= getTypeInfoCount()) {
 				throw CompileError("MSVC name mangling: unknown struct/enum type index — cannot generate valid symbol");
 			}
+			const TypeInfo& type_info = getTypeInfo(type_node.type_index());
+			if (type_node.category() == TypeCategory::Enum) {
+				output += "W4";
+			} else {
+				output += 'V';
+			}
+			output += StringTable::getStringView(type_info.name());
+			output += "@@";
 			break;
 		}
 		case TypeCategory::FunctionPointer: {
@@ -336,45 +335,44 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			// For structs/classes/enums, use the type name
 			// For nested types, we need to split the name into components
 			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
-			if (type_node.type_index().index() < getTypeInfoCount()) {
-				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-				auto struct_name = StringTable::getStringView(type_info.name());
-				
-				// Check if this is a nested class (contains "::")
-				if (struct_name.find("::") != std::string_view::npos) {
-					// Split and encode each component separately
-					size_t start = 0;
-					while (start < struct_name.size()) {
-						size_t end = struct_name.find("::", start);
-						if (end == std::string_view::npos) {
-							end = struct_name.size();
-						}
-						
-						std::string_view component = struct_name.substr(start, end - start);
-						if (!component.empty()) {
-							// Use "St" substitution for std namespace per Itanium C++ ABI
-							if (component == "std") {
-								output += "St";
-							} else {
-								output += std::to_string(component.size());
-								output += component;
-							}
-						}
-						
-						start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
+                       if (type_node.type_index().index() >= getTypeInfoCount()) {
+                               throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
+                       }
+                       const TypeInfo& type_info = getTypeInfo(type_node.type_index());
+                       auto struct_name = StringTable::getStringView(type_info.name());
+			
+			// Check if this is a nested class (contains "::")
+			if (struct_name.find("::") != std::string_view::npos) {
+				// Split and encode each component separately
+				size_t start = 0;
+				while (start < struct_name.size()) {
+					size_t end = struct_name.find("::", start);
+					if (end == std::string_view::npos) {
+						end = struct_name.size();
 					}
-				} else {
-					// Simple class name, encode as-is
-					// Check for "std" substitution
-					if (struct_name == "std") {
-						output += "St";
-					} else {
-						output += std::to_string(struct_name.size());
-						output += struct_name;
+					
+					std::string_view component = struct_name.substr(start, end - start);
+					if (!component.empty()) {
+						// Use "St" substitution for std namespace per Itanium C++ ABI
+						if (component == "std") {
+							output += "St";
+						} else {
+							output += std::to_string(component.size());
+							output += component;
+						}
 					}
+					
+					start = (end == struct_name.size()) ? end : end + 2;  // Skip "::"
 				}
 			} else {
-				throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
+				// Simple class name, encode as-is
+				// Check for "std" substitution
+				if (struct_name == "std") {
+					output += "St";
+				} else {
+					output += std::to_string(struct_name.size());
+					output += struct_name;
+				}
 			}
 			break;
 		}
@@ -643,14 +641,13 @@ inline void appendItaniumTypeTemplateArgs(
 				case TypeCategory::TypeAlias:
 				case TypeCategory::Enum: {
 					// For structs/classes/enums, use the type name from gTypeInfo
-					if (arg.type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(arg.type_index);
-						auto struct_name = StringTable::getStringView(type_info.name());
-						output += std::to_string(struct_name.size());
-						output += struct_name;
-					} else {
-						throw CompileError("Itanium name mangling: unknown struct/enum type index in template args — cannot generate valid symbol");
-					}
+                                       if (arg.type_index.index() >= getTypeInfoCount()) {
+                                               throw CompileError("Itanium name mangling: unknown struct/enum type index in template args — cannot generate valid symbol");
+                                        }
+                                       const TypeInfo& type_info = getTypeInfo(arg.type_index);
+                                       auto struct_name = StringTable::getStringView(type_info.name());
+					output += std::to_string(struct_name.size());
+					output += struct_name;
 					break;
 				}
 				case TypeCategory::FunctionPointer: {

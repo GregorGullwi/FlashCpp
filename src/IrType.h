@@ -56,14 +56,15 @@ IrType toIrType(TypeCategory cat);
 // rather than the defensive IrType::Struct fallback in toIrType(TypeCategory).
 inline IrType toIrType(TypeIndex type_index) {
 	TypeCategory cat = type_index.category();
-	if (cat == TypeCategory::TypeAlias && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		cat = getTypeInfo(type_index).category();
+	if (cat == TypeCategory::TypeAlias) {
+		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+			cat = ti->category();
+		}
 	}
 	return toIrType(cat);
 }
 
-// TypeInfo overload — delegates to category() which prefers the authoritative
-// TypeCategory embedded in type_index_ over the raw category_ field.
+// TypeInfo overload — delegates directly to the TypeCategory embedded in type_index_.
 inline IrType toIrType(const TypeInfo& ti) { return toIrType(ti.category()); }
 
 // ============================================================================

@@ -541,13 +541,15 @@ public:
 				}
 				
 				// If no member name was extracted, check the type name via type_index
-				if (!member_name.isValid() && first_arg.type_index.is_valid() && first_arg.type_index.index() < getTypeInfoCount()) {
-					std::string_view type_name = StringTable::getStringView(getTypeInfo(first_arg.type_index).name());
-					size_t scope_pos = type_name.rfind("::");
-					if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
-						std::string_view extracted_member = type_name.substr(scope_pos + 2);
-						member_name = StringTable::getOrInternStringHandle(extracted_member);
-						FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from type_name '", type_name, "'");
+				if (!member_name.isValid()) {
+					if (const TypeInfo* first_arg_ti = tryGetTypeInfo(first_arg.type_index)) {
+						std::string_view type_name = StringTable::getStringView(first_arg_ti->name());
+						size_t scope_pos = type_name.rfind("::");
+						if (scope_pos != std::string_view::npos && scope_pos + 2 < type_name.size()) {
+							std::string_view extracted_member = type_name.substr(scope_pos + 2);
+							member_name = StringTable::getOrInternStringHandle(extracted_member);
+							FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from type_name '", type_name, "'");
+						}
 					}
 				}
 				

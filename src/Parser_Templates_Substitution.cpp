@@ -146,8 +146,8 @@ ASTNode Parser::substituteTemplateParameters(
 						arg.cv_qualifier = parg.cv_qualifier;
 						
 						// Check if this arg is a template parameter that should be substituted
-						if (parg.type_index.index() < getTypeInfoCount()) {
-							std::string_view arg_type_name = StringTable::getStringView(getTypeInfo(parg.type_index).name());
+						if (const TypeInfo* parg_type_info = tryGetTypeInfo(parg.type_index)) {
+							std::string_view arg_type_name = StringTable::getStringView(parg_type_info->name());
 							for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
 								if (!template_params[p].is<TemplateParameterNode>()) continue;
 								const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
@@ -775,31 +775,32 @@ ASTNode Parser::substituteTemplateParameters(
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 					
 					// Check if this is a user-defined or struct type that matches a template parameter
-					if ((is_struct_type(type_spec.category())) && type_spec.type_index().index() < getTypeInfoCount()) {
-						const TypeInfo& type_info = getTypeInfo(type_spec.type_index());
-						std::string_view type_name = StringTable::getStringView(type_info.name());
-						
-						// Check if this type name matches a template parameter
-						for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-							const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-							if (tparam.name() == type_name) {
-								const TemplateTypeArg& arg = template_args[i];
-								
-								if (arg.isTypeArgument()) {
-									// Get the size of the concrete type in bytes
-									size_t type_size = get_type_size_bits(arg.category()) / 8;
+					if ((is_struct_type(type_spec.category()))) {
+						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+							std::string_view type_name = StringTable::getStringView(type_info->name());
+							
+							// Check if this type name matches a template parameter
+							for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+								if (tparam.name() == type_name) {
+									const TemplateTypeArg& arg = template_args[i];
 									
-									// Create an integer literal with the type size
-									StringBuilder size_builder;
-									std::string_view size_str = size_builder.append(type_size).commit();
-									Token literal_token(Token::Type::Literal, size_str, 
-									                   sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(), 
-									                   sizeof_expr.sizeof_token().file_index());
-									return emplace_node<ExpressionNode>(
-										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size), 
-										                  TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
+									if (arg.isTypeArgument()) {
+										// Get the size of the concrete type in bytes
+										size_t type_size = get_type_size_bits(arg.category()) / 8;
+										
+										// Create an integer literal with the type size
+										StringBuilder size_builder;
+										std::string_view size_str = size_builder.append(type_size).commit();
+										Token literal_token(Token::Type::Literal, size_str, 
+										                   sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(), 
+										                   sizeof_expr.sizeof_token().file_index());
+										return emplace_node<ExpressionNode>(
+											NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size), 
+											                  TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
+									}
+									break;
 								}
-								break;
 							}
 						}
 					}
@@ -898,15 +899,16 @@ ASTNode Parser::substituteTemplateParameters(
 				template_args);
 			if (substituted_type_index.category() != type_spec.type() || substituted_type_index != type_spec.type_index()) {
 				int substituted_size_bits = get_type_size_bits(substituted_type_index.category());
-				if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount() && getTypeInfo(substituted_type_index).type_size_ > 0) {
-					substituted_size_bits = getTypeInfo(substituted_type_index).type_size_;
+				if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index);
+					substituted_type_info && substituted_type_info->type_size_ > 0) {
+					substituted_size_bits = substituted_type_info->type_size_;
 				}
 				Token substituted_token = type_spec.token();
 				if (substituted_type_index.category() == TypeCategory::Struct || substituted_type_index.category() == TypeCategory::UserDefined) {
-					if (substituted_type_index.is_valid() && substituted_type_index.index() < getTypeInfoCount()) {
+					if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
 						substituted_token = Token(
 							Token::Type::Identifier,
-							StringTable::getStringView(getTypeInfo(substituted_type_index).name()),
+							StringTable::getStringView(substituted_type_info->name()),
 							type_spec.token().line(),
 							type_spec.token().column(),
 							type_spec.token().file_index());

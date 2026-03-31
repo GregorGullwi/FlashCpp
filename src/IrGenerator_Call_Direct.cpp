@@ -5,12 +5,12 @@
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
 const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
-	if (!type_idx.is_valid() || type_idx.index() >= getTypeInfoCount()) return nullptr;
-	const TypeInfo* ti = &getTypeInfo(type_idx);
+	const TypeInfo* ti = tryGetTypeInfo(type_idx);
+	if (!ti) return nullptr;
 	// Chase aliases up to 64 levels deep.
 	for (int depth = 0; depth < 64 && ti && !ti->getStructInfo(); ++depth) {
-		if (!ti->type_index_.is_valid() || ti->type_index_.index() >= getTypeInfoCount()) break;
-		ti = &getTypeInfo(ti->type_index_);
+		ti = tryGetTypeInfo(ti->type_index_);
+		if (!ti) break;
 	}
 	return ti;
 }
@@ -268,9 +268,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				}
 			}
 
-			if (func_type.category() == TypeCategory::Struct &&
-				func_type.type_index().is_valid() &&
-				func_type.type_index().index() < getTypeInfoCount()) {
+			if (func_type.category() == TypeCategory::Struct) {
 				// Check for a sema-pre-resolved operator() first.
 				const FunctionDeclarationNode* operator_call =
 					sema_ ? sema_->getResolvedOpCall(&functionCallNode) : nullptr;
@@ -279,7 +277,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				// not reached by the semantic pass (e.g. template instantiation paths
 				// that create FunctionCallNodes after sema has run).
 				if (!operator_call) {
-					const StructTypeInfo* struct_info = getTypeInfo(func_type.type_index()).getStructInfo();
+					const TypeInfo* func_type_info = tryGetTypeInfo(func_type.type_index());
+					const StructTypeInfo* struct_info = func_type_info ? func_type_info->getStructInfo() : nullptr;
 					if (struct_info) {
 						const FunctionDeclarationNode* sole_operator_call = nullptr;
 						size_t operator_call_count = 0;
@@ -522,14 +521,14 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (type_info->getStructInfo() != nullptr) {
 					return type_info;
 				}
-				if (!type_info->type_index_.is_valid() || type_info->type_index_.index() >= getTypeInfoCount()) {
+				const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+				if (!underlying) {
 					break;
 				}
-				const TypeInfo& underlying = getTypeInfo(type_info->type_index_);
-				if (&underlying == type_info) {
+				if (underlying == type_info) {
 					break;
 				}
-				type_info = &underlying;
+				type_info = underlying;
 				++alias_depth;
 			}
 
@@ -668,10 +667,9 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 					std::function<void(const StructTypeInfo*)> searchBaseClasses = [&](const StructTypeInfo* current_struct) {
 						for (const auto& base_spec : current_struct->base_classes) {
 							// Look up base class in gTypeInfo
-							if (base_spec.type_index.index() < getTypeInfoCount()) {
-								const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
-								if (base_type_info.isStruct()) {
-									const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+							if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+								if (base_type_info->isStruct()) {
+									const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 									if (base_struct_info) {
 										// Check member functions in base class
 										for (const auto& member_func : base_struct_info->member_functions) {
@@ -910,12 +908,11 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 						const StructTypeInfo* curr_struct = type_it->second->getStructInfo();
 						if (curr_struct) {
 							for (const auto& base_spec : curr_struct->base_classes) {
-								if (base_spec.type_index.index() < getTypeInfoCount()) {
-									const TypeInfo& base_type_info = getTypeInfo(base_spec.type_index);
-									if (base_type_info.isTemplateInstantiation() &&
-									StringTable::getStringView(base_type_info.baseTemplateName()) == base_template_name &&
-									base_type_info.isStruct()) {
-										const StructTypeInfo* base_struct_info = base_type_info.getStructInfo();
+								if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+									if (base_type_info->isTemplateInstantiation() &&
+									StringTable::getStringView(base_type_info->baseTemplateName()) == base_template_name &&
+									base_type_info->isStruct()) {
+										const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 										if (base_struct_info) {
 											for (const auto& member_func : base_struct_info->member_functions) {
 												if (member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -1145,17 +1142,16 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							from_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
-								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
+							if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 								const StructMemberFunction* conv_op = findConversionOperator(
-									src_type_info.getStructInfo(), param_type->type_index(), source_is_const);
+									src_type_info->getStructInfo(), param_type->type_index(), source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in function arg from ",
-										StringTable::getStringView(src_type_info.name()), " to parameter type");
+										StringTable::getStringView(src_type_info->name()), " to parameter type");
 									const int param_size = static_cast<int>(param_type->size_in_bits());
-									if (auto result = emitConversionOperatorCall(argumentIrOperands, src_type_info, *conv_op,
+									if (auto result = emitConversionOperatorCall(argumentIrOperands, *src_type_info, *conv_op,
 											param_type->type_index(), param_size,
 											functionCallNode.called_from())) {
 										argumentIrOperands = *result;
@@ -1208,9 +1204,8 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 				if (arg_type != param_base_type && param_base_type == TypeCategory::Struct && param_type->pointer_depth() == 0) {
 					TypeIndex param_type_index = param_type->type_index();
 
-					if (param_type_index.is_valid() && param_type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& target_type_info = getTypeInfo(param_type_index);
-						const StructTypeInfo* target_struct_info = target_type_info.getStructInfo();
+					if (const TypeInfo* target_type_info = tryGetTypeInfo(param_type_index)) {
+						const StructTypeInfo* target_struct_info = target_type_info->getStructInfo();
 
 						// Look for a converting constructor that takes the argument type
 						if (target_struct_info) {
@@ -1266,10 +1261,10 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 							// Emit error only when every matching converting constructor is explicit.
 							if (found_matching_ctor && !found_non_explicit_ctor) {
 								FLASH_LOG(General, Error, "Cannot use implicit conversion with explicit constructor for type '",
-									StringTable::getStringView(target_type_info.name()), "'");
+									StringTable::getStringView(target_type_info->name()), "'");
 								FLASH_LOG(General, Error, "  In function call at argument ", arg_index);
 								FLASH_LOG(General, Error, "  Use explicit construction: ",
-									StringTable::getStringView(target_type_info.name()), "(value)");
+										StringTable::getStringView(target_type_info->name()), "(value)");
 								throw CompileError("Cannot use implicit conversion with explicit constructor in function argument");
 							}
 						}
@@ -1278,20 +1273,19 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 
 				// Check if argument is struct type and parameter expects different type
 				if (arg_type == TypeCategory::Struct && arg_type != param_base_type && param_type->pointer_depth() == 0) {
-					if (arg_type_index.is_valid() && arg_type_index.index() < getTypeInfoCount()) {
-						const TypeInfo& source_type_info = getTypeInfo(arg_type_index);
+					if (const TypeInfo* source_type_info = tryGetTypeInfo(arg_type_index)) {
 						const int param_size = static_cast<int>(param_type->size_in_bits());
 
 						// Look for a conversion operator to the parameter type
 						const bool source_is_const = isExprConstQualified(argument);
 						const StructMemberFunction* conv_op = findConversionOperator(
-							source_type_info.getStructInfo(), param_type->type_index(), source_is_const);
+							source_type_info->getStructInfo(), param_type->type_index(), source_is_const);
 
 						if (conv_op) {
 							FLASH_LOG(Codegen, Debug, "Found conversion operator for function argument from ",
-								StringTable::getStringView(source_type_info.name()),
+								StringTable::getStringView(source_type_info->name()),
 								" to parameter type");
-							if (auto result = emitConversionOperatorCall(argumentIrOperands, source_type_info, *conv_op,
+							if (auto result = emitConversionOperatorCall(argumentIrOperands, *source_type_info, *conv_op,
 									param_type->type_index(), param_size, Token()))
 								argumentIrOperands = *result;
 						}

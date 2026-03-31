@@ -273,9 +273,8 @@
 							annotated_source_type == TypeCategory::Struct) {
 							// Sema annotated a user-defined conversion operator call
 							TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
-							if (source_type_idx.is_valid() && source_type_idx.index() < getTypeInfoCount()) {
-								const TypeInfo& src_type_info = getTypeInfo(source_type_idx);
-								const StructTypeInfo* src_struct_info = src_type_info.getStructInfo();
+							if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
+								const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
 								const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 								const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv))
 									& (static_cast<uint8_t>(CVQualifier::Const))) != 0;
@@ -283,8 +282,8 @@
 									src_struct_info, ret_type_idx, source_is_const);
 								if (conv_op) {
 									FLASH_LOG(Codegen, Debug, "Sema-annotated user-defined conversion in return from ",
-										StringTable::getStringView(src_type_info.name()), " to return type");
-									if (auto result = emitConversionOperatorCall(operands, src_type_info, *conv_op,
+										StringTable::getStringView(src_type_info->name()), " to return type");
+									if (auto result = emitConversionOperatorCall(operands, *src_type_info, *conv_op,
 											ret_type_idx, return_size, node.return_token())) {
 										operands = *result;
 										sema_applied_conversion = true;
@@ -312,9 +311,8 @@
 					if (expr_category == TypeCategory::Struct) {
 						TypeIndex expr_type_index = operands.type_index;
 
-						if (expr_type_index.is_valid() && expr_type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& source_type_info = getTypeInfo(expr_type_index);
-							const StructTypeInfo* source_struct_info = source_type_info.getStructInfo();
+						if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
+							const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
 							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 
 							// Look for a conversion operator to the return type
@@ -323,9 +321,9 @@
 
 							if (conv_op) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator in return statement from ",
-									StringTable::getStringView(source_type_info.name()),
+									StringTable::getStringView(source_type_info->name()),
 									" to return type");
-								if (auto result = emitConversionOperatorCall(operands, source_type_info, *conv_op,
+								if (auto result = emitConversionOperatorCall(operands, *source_type_info, *conv_op,
 										ret_type_idx, return_size, node.return_token()))
 									operands = *result;
 							} else {

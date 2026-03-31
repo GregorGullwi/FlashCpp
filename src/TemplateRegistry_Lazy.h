@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "TemplateRegistry.h"
 
@@ -874,8 +874,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 				// This is important for placeholder types like "Op<...>::type"
 				std::string_view full_type_name = type_name;
 				TypeIndex type_idx = type_spec.type_index();
-				if (type_idx.is_valid() && type_idx.index() < getTypeInfoCount()) {
-					full_type_name = StringTable::getStringView(getTypeInfo(type_idx).name_);
+				if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
+					full_type_name = StringTable::getStringView(type_idx_ti->name_);
 				}
 				
 				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
@@ -884,8 +884,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
 						const auto& arg = template_args[i];
-						if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
-							return static_cast<long long>((getTypeInfo(arg.type_index).type_size_ + 7) / 8);
+						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
+							return static_cast<long long>((arg_ti->type_size_ + 7) / 8);
 						}
 						long long size = static_cast<long long>(get_type_size_bits(arg.category()) / 8);
 						if (size > 0) {
@@ -947,8 +947,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 										if (member_part == "type") {
 											// For a simple type alias like HasType<T>::type = T,
 											// return the size of the template argument
-											if (pack_arg.type_index.is_valid() && pack_arg.type_index.index() < getTypeInfoCount()) {
-												long long size = static_cast<long long>((getTypeInfo(pack_arg.type_index).type_size_ + 7) / 8);
+											if (const TypeInfo* pack_arg_ti = tryGetTypeInfo(pack_arg.type_index)) {
+												long long size = static_cast<long long>((pack_arg_ti->type_size_ + 7) / 8);
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
 												return size;
 											}
@@ -973,9 +973,9 @@ inline std::optional<long long> evaluateConstraintExpression(
 					if (template_param_names[i] == type_name) {
 						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
-						if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
+						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
 							// type_size_ is in bits, convert to bytes
-							return static_cast<long long>((getTypeInfo(arg.type_index).type_size_ + 7) / 8);
+							return static_cast<long long>((arg_ti->type_size_ + 7) / 8);
 						}
 						// Fallback for primitive types without type_index (e.g., int, char, etc.)
 						// This handles cases where type_index is 0 but base_type is valid
@@ -1195,7 +1195,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 							auto type_it = getTypesByNameMap().find(type_handle);
 							if (type_it != getTypesByNameMap().end()) {
 								TemplateTypeArg type_arg;
-		type_arg.type_index = type_it->second->type_index_.withCategory(type_it->second->category_);
+								type_arg.type_index = type_it->second->type_index_;
 								concept_args.push_back(type_arg);
 							}
 						}

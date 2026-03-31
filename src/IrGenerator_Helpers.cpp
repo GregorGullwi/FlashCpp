@@ -345,9 +345,8 @@ size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
 	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
 	// path and get total_size instead of falling through to the scalar path.
 	if (isIrStructType(toIrType(type))) {
-		if (type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-			const TypeInfo& type_info = getTypeInfo(type_index);
-			if (const StructTypeInfo* struct_info = type_info.getStructInfo()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 				return struct_info->total_size;
 			}
 		}
@@ -376,9 +375,11 @@ TypeCategory AstToIr::getRuntimeValueType(TypeIndex semantic_type_index, Pointer
 
 	TypeCategory lowered_cat = resolve_type_alias(semantic_type_index);
 
-	if (lowered_cat == TypeCategory::Enum && semantic_type_index.is_valid() && semantic_type_index.index() < getTypeInfoCount()) {
-		if (const EnumTypeInfo* enum_info = getTypeInfo(semantic_type_index).getEnumInfo()) {
-			return enum_info->underlying_type;
+	if (lowered_cat == TypeCategory::Enum) {
+		if (const TypeInfo* ti = tryGetTypeInfo(semantic_type_index)) {
+			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
+				return enum_info->underlying_type;
+			}
 		}
 	}
 
@@ -393,20 +394,23 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 	TypeCategory lowered_cat = resolve_type_alias(type_index);
 	const TypeCategory semantic_cat = type_index.category();
 
-	if (lowered_cat == TypeCategory::Enum && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		const TypeInfo& type_info = getTypeInfo(type_index);
-		if (const EnumTypeInfo* enum_info = type_info.getEnumInfo()) {
-			return static_cast<int>(enum_info->underlying_size);
-		}
-		// Forward-declared enums / aliases may only have type_size_.
-		if (type_info.type_size_ > 0) {
-			return type_info.type_size_;
+	if (lowered_cat == TypeCategory::Enum) {
+		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
+				return static_cast<int>(enum_info->underlying_size);
+			}
+			// Forward-declared enums / aliases may only have type_size_.
+			if (ti->type_size_ > 0) {
+				return ti->type_size_;
+			}
 		}
 	}
 
-	if (semantic_cat == TypeCategory::UserDefined && type_index.is_valid() && type_index.index() < getTypeInfoCount()) {
-		if (getTypeInfo(type_index).type_size_ > 0) {
-			return getTypeInfo(type_index).type_size_;
+	if (semantic_cat == TypeCategory::UserDefined) {
+		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
+			if (ti->type_size_ > 0) {
+				return ti->type_size_;
+			}
 		}
 	}
 
@@ -418,7 +422,7 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const TypeSpeci
 		return std::nullopt;
 	}
 
-	if (!type_node.type_index().is_valid() || type_node.type_index().index() >= getTypeInfoCount()) {
+	if (!tryGetTypeInfo(type_node.type_index())) {
 		return std::nullopt;
 	}
 

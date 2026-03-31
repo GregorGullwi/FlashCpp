@@ -20,9 +20,10 @@ std::optional<ASTNode> Parser::tryResolveMemberFunctionTemplate(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.category())) return std::nullopt;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.index() >= getTypeInfoCount()) return std::nullopt;
-	auto struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
-	instantiateLazyClassToPhase(getTypeInfo(type_idx).name(), ClassInstantiationPhase::Full);
+	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	if (!type_info) return std::nullopt;
+	auto struct_name = StringTable::getStringView(type_info->name());
+	instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 	if (explicit_template_args.has_value()) {
 		return try_instantiate_member_function_template_explicit(struct_name, member_name, *explicit_template_args);
 	} else if (!arg_types.empty()) {
@@ -40,11 +41,12 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	const auto& type_spec = *type_opt;
 	if (!is_struct_type(type_spec.category())) return nullptr;
 	TypeIndex type_idx = type_spec.type_index();
-	if (type_idx.index() >= getTypeInfoCount()) return nullptr;
+	const TypeInfo* type_info = tryGetTypeInfo(type_idx);
+	if (!type_info) return nullptr;
 
-	StringHandle type_name = getTypeInfo(type_idx).name();
+	StringHandle type_name = type_info->name();
 	instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
-	const StructTypeInfo* struct_info = getTypeInfo(type_idx).getStructInfo();
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
 	if (!struct_info) return nullptr;
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
@@ -460,9 +462,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
 						const auto& member_ctx = member_function_context_stack_.back();
-						if (member_ctx.struct_type_index.index() < getTypeInfoCount()) {
-							const TypeInfo& struct_type_info = getTypeInfo(member_ctx.struct_type_index);
-							const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+						if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
+							const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 							if (struct_info) {
 								std::string_view member_name = member_access->member_name();
 								for (const auto& member : struct_info->members) {
@@ -974,9 +975,9 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 					          " type_index=", type_info->type_index_);
 					
 					// For type aliases, resolve to the actual type
-					if (type_info->isStruct() && type_info->type_index_.index() < getTypeInfoCount()) {
-						const TypeInfo& actual_type = getTypeInfo(type_info->type_index_);
-						const StructTypeInfo* struct_info = actual_type.getStructInfo();
+					if (type_info->isStruct()) {
+						const TypeInfo* actual_type = tryGetTypeInfo(type_info->type_index_);
+						const StructTypeInfo* struct_info = actual_type ? actual_type->getStructInfo() : nullptr;
 						if (struct_info) {
 							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 							FLASH_LOG(Parser, Debug, "Triggering lazy instantiation for ", 
@@ -1284,12 +1285,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
 							if (is_struct_type(type_spec.category())) {
 								TypeIndex type_idx = type_spec.type_index();
-								if (type_idx.index() < getTypeInfoCount()) {
-									object_struct_name = StringTable::getStringView(getTypeInfo(type_idx).name());
+								if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+									object_struct_name = StringTable::getStringView(type_info->name());
 									
 									// Phase 2: Ensure the struct is instantiated to Full phase for member access
 									// This ensures all members are instantiated before accessing them
-									StringHandle type_name = getTypeInfo(type_idx).name();
+									StringHandle type_name = type_info->name();
 									instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
 								}
 							}
@@ -1306,8 +1307,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context)
 				auto subst_it = sfinae_type_map_.find(obj_name_handle);
 				if (subst_it != sfinae_type_map_.end()) {
 					TypeIndex concrete_idx = subst_it->second;
-					if (concrete_idx.index() < getTypeInfoCount()) {
-						object_struct_name = StringTable::getStringView(getTypeInfo(concrete_idx).name());
+					if (const TypeInfo* concrete_type = tryGetTypeInfo(concrete_idx)) {
+						object_struct_name = StringTable::getStringView(concrete_type->name());
 					}
 				}
 				// Verify the member exists on the resolved struct

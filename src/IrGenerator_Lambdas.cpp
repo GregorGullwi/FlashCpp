@@ -32,10 +32,9 @@
 			if (type_it != getTypesByNameMap().end()) {
 				info.enclosing_struct_type_index = type_it->second->type_index_;
 			}
-		} else if (current_lambda_context_.enclosing_struct_type_index.is_valid() &&
-			current_lambda_context_.enclosing_struct_type_index.index() < getTypeInfoCount()) {
+		} else if (const TypeInfo* enclosing_type = tryGetTypeInfo(current_lambda_context_.enclosing_struct_type_index)) {
 			info.enclosing_struct_type_index = current_lambda_context_.enclosing_struct_type_index;
-			info.enclosing_struct_name = StringTable::getStringView(getTypeInfo(info.enclosing_struct_type_index).name());
+			info.enclosing_struct_name = StringTable::getStringView(enclosing_type->name());
 		}
 
 		info.lambda_body = lambda.body();
@@ -216,14 +215,7 @@
 						const StructMember* member = struct_info->findMember("__copy_this");
 						if (member && lambda_info.enclosing_struct_type_index.is_valid()) {
 							// Copy each member of the enclosing struct into __copy_this
-							const TypeInfo* enclosing_type = nullptr;
-							for (size_t _gti_i_ = 0; _gti_i_ < getTypeInfoCount(); ++_gti_i_) {
-			const TypeInfo& ti = getTypeInfo(TypeIndex{_gti_i_});
-								if (ti.type_index_ == lambda_info.enclosing_struct_type_index) {
-									enclosing_type = &ti;
-									break;
-								}
-							}
+							const TypeInfo* enclosing_type = tryGetTypeInfo(lambda_info.enclosing_struct_type_index);
 							if (enclosing_type && enclosing_type->getStructInfo()) {
 								const StructTypeInfo* enclosing_struct = enclosing_type->getStructInfo();
 								int copy_base_offset = static_cast<int>(member->offset);

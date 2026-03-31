@@ -725,8 +725,8 @@ public:
 					oss << type_info->name();
 				} else if (needs_type_index(arg_cat)) {
 					// Try to get the type name from gTypeInfo using type_index
-					if (arg.type_index.is_valid() && arg.type_index.index() < getTypeInfoCount()) {
-						oss << getTypeInfo(arg.type_index).name();
+					if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
+						oss << ti->name();
 					} else {
 						oss << "struct/enum";
 					}

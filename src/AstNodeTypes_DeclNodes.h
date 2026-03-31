@@ -732,13 +732,12 @@ struct QualifiedIdentifier {
 
 struct TypeInfo
 {
-	TypeInfo() : category_(TypeCategory::Void), type_index_(0) {}
-	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), category_(idx.category()), type_index_(idx), type_size_(type_size) {
+	TypeInfo() = default;
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
-	TypeCategory category_;
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -815,13 +814,9 @@ struct TypeInfo
 		template_args_ = std::move(args);
 	}
 
-	// Returns the TypeCategory embedded in type_index_. For types registered via
-	// add_struct_type / add_enum_type / register_type_alias / etc. this is always
-	// correct. For legacy TypeInfo entries built before Milestone 7 (TypeCategory
-	// embedding), category() falls back to category_.
+	// Returns the TypeCategory embedded in type_index_.
 	TypeCategory category() const {
-		TypeCategory cat = type_index_.category();
-		return (cat != TypeCategory::Invalid) ? cat : category_;
+		return type_index_.category();
 	}
 
 	// Helper methods for struct types
@@ -848,9 +843,7 @@ struct TypeInfo
 		enum_info_ = std::move(info);
 	}
 
-	// Classification helpers.
-	// typeEnum() / resolvedType() delegate to category() which prefers the
-	// authoritative TypeCategory embedded in type_index_ over raw category_.
+	// Classification helpers delegated through type_index_.
 	TypeCategory typeEnum()      const { return category(); }
 	TypeCategory resolvedType()  const { return category(); }
 	// isStructLike: true when this type (or the underlying type of an alias)
@@ -896,6 +889,8 @@ struct StringEqual {
 // Use these instead of accessing gTypeInfo / gTypesByName / gNativeTypes directly.
 const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
 TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
+const TypeInfo* tryGetTypeInfo(TypeIndex idx);    // nullable lookup; returns nullptr for invalid/out-of-range
+TypeInfo*       tryGetTypeInfoMut(TypeIndex idx); // nullable lookup; returns nullptr for invalid/out-of-range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
 const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
 TypeIndex       nativeTypeIndex(TypeCategory cat);  // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
@@ -1285,16 +1280,15 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	TypeCategory t = type_spec.type();
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
-		if (idx.is_valid() && idx.index() < getTypeInfoCount()) {
-			const TypeInfo& ti = getTypeInfo(idx);
-			if (const StructTypeInfo* si = ti.getStructInfo()) {
+		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
+			if (const StructTypeInfo* si = ti->getStructInfo()) {
 				return static_cast<int>(si->total_size * 8);
 			}
-			if (const EnumTypeInfo* ei = ti.getEnumInfo()) {
+			if (const EnumTypeInfo* ei = ti->getEnumInfo()) {
 				return static_cast<int>(ei->underlying_size);
 			}
-			if (ti.type_size_ > 0) {
-				return ti.type_size_;
+			if (ti->type_size_ > 0) {
+				return ti->type_size_;
 			}
 		}
 	} else {
