@@ -4829,6 +4829,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
+		// Ensure size is computed for primitive type aliases that were substituted from template parameters.
+		// When 'typedef T value_type' in a template is instantiated with T=long, the alias type category
+		// is correctly set to Long but size_in_bits may still be 0 from the unsubstituted pattern.
+		if (substituted_size == 0 && is_primitive_type(substituted_type)) {
+			substituted_size = get_type_size_bits(substituted_type);
+		}
+		// Also ensure the TypeIndex carries the correct category for primitive type aliases.
+		// The substituted_type_index may still point at the template parameter placeholder entry
+		// with an incorrect category, so stamp it with the resolved primitive category.
+		if (is_primitive_type(substituted_type) && substituted_type_index.category() != substituted_type) {
+			substituted_type_index = substituted_type_index.withCategory(substituted_type);
+		}
+
 		// Register the type alias in getTypesByNameMap()
 		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, TypeIndex{substituted_type_index}, substituted_size);
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {

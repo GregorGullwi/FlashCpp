@@ -4,30 +4,29 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 // Helper function to get TypeCategory and size for built-in type keywords
 // Used by both parse_type_specifier and functional-style cast parsing
 std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_info(std::string_view type_name) {
 	// Most types have fixed sizes, but 'long' size depends on target data model
 	static const std::unordered_map<std::string_view, std::pair<TypeCategory, unsigned char>> builtin_types = {
-		{"void", {TypeCategory::Void, 0}},
-		{"bool", {TypeCategory::Bool, 8}},
-		{"char", {TypeCategory::Char, 8}},
-		// Note: "wchar_t" is handled specially below due to target-dependent size (16 on Windows, 32 on Linux)
-		{"char8_t", {TypeCategory::Char8, 8}},         // C++20 UTF-8 character type
-		{"char16_t", {TypeCategory::Char16, 16}},      // C++11 UTF-16 character type
-		{"char32_t", {TypeCategory::Char32, 32}},      // C++11 UTF-32 character type
-		{"short", {TypeCategory::Short, 16}},
-		{"int", {TypeCategory::Int, 32}},
-		// Note: "long" is handled specially below due to target-dependent size
-		{"float", {TypeCategory::Float, 32}},
-		{"double", {TypeCategory::Double, 64}},
-		{"__int8", {TypeCategory::Char, 8}},
-		{"__int16", {TypeCategory::Short, 16}},
-		{"__int32", {TypeCategory::Int, 32}},
-		{"__int64", {TypeCategory::LongLong, 64}},
-		{"signed", {TypeCategory::Int, 32}},  // signed without type defaults to int
-		{"unsigned", {TypeCategory::UnsignedInt, 32}},  // unsigned without type defaults to unsigned int
+	    {"void", {TypeCategory::Void, 0}},
+	    {"bool", {TypeCategory::Bool, 8}},
+	    {"char", {TypeCategory::Char, 8}},
+	    // Note: "wchar_t" is handled specially below due to target-dependent size (16 on Windows, 32 on Linux)
+	    {"char8_t", {TypeCategory::Char8, 8}}, // C++20 UTF-8 character type
+	    {"char16_t", {TypeCategory::Char16, 16}}, // C++11 UTF-16 character type
+	    {"char32_t", {TypeCategory::Char32, 32}}, // C++11 UTF-32 character type
+	    {"short", {TypeCategory::Short, 16}},
+	    {"int", {TypeCategory::Int, 32}},
+	    // Note: "long" is handled specially below due to target-dependent size
+	    {"float", {TypeCategory::Float, 32}},
+	    {"double", {TypeCategory::Double, 64}},
+	    {"__int8", {TypeCategory::Char, 8}},
+	    {"__int16", {TypeCategory::Short, 16}},
+	    {"__int32", {TypeCategory::Int, 32}},
+	    {"__int64", {TypeCategory::LongLong, 64}},
+	    {"signed", {TypeCategory::Int, 32}}, // signed without type defaults to int
+	    {"unsigned", {TypeCategory::UnsignedInt, 32}}, // unsigned without type defaults to unsigned int
 	};
 
 	// Handle "long" specially since its size depends on target data model
@@ -41,7 +40,7 @@ std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_i
 	if (type_name == "wchar_t") {
 		return std::make_pair(TypeCategory::WChar, static_cast<unsigned char>(get_wchar_size_bits()));
 	}
-	
+
 	auto it = builtin_types.find(type_name);
 	if (it != builtin_types.end()) {
 		return it->second;
@@ -56,14 +55,14 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	if (current_token_.kind().is_eof() || current_token_.value() != "(") {
 		return ParseResult::error("Expected '(' for functional cast", type_token);
 	}
-	
+
 	advance(); // consume '('
-	
+
 	// Get type information first (needed for both empty and non-empty cases)
 	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
 	int type_size = 32;
-	
+
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
 		cast_type = builtin_type_info->first;
@@ -85,58 +84,56 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 			}
 		}
 	}
-	
+
 	// Check for empty parentheses: Type() is value initialization (zero for scalar types)
 	if (current_token_.value() == ")") {
 		advance(); // consume ')'
-		
+
 		// Create a zero literal of the appropriate type (value initialization)
 		Token zero_token(Token::Type::Literal, "0"sv, type_token.line(), type_token.column(), type_token.file_index());
-		
+
 		// Use 0.0 for floating point types, 0 for integral types
 		if (cast_type == TypeCategory::Double || cast_type == TypeCategory::Float) {
 			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size)
-			);
+			    NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size));
 			return ParseResult::success(zero_expr);
 		} else {
 			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, type_size)
-			);
+			    NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, type_size));
 			return ParseResult::success(zero_expr);
 		}
 	}
-	
+
 	// Parse the expression inside the parentheses
 	ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (expr_result.is_error()) {
 		return expr_result;
 	}
-	
+
 	// Check for pack expansion (...) after the expression
 	// This handles patterns like: int(__args...) in decltype contexts
 	std::optional<ASTNode> final_expr = expr_result.node();
 	if (peek() == "..."_tok) {
 		Token ellipsis_token = peek_info();
 		advance(); // consume '...'
-		
+
 		// Wrap the expression in a PackExpansionExprNode
 		if (final_expr.has_value()) {
 			final_expr = emplace_node<ExpressionNode>(
-				PackExpansionExprNode(*final_expr, ellipsis_token));
+			    PackExpansionExprNode(*final_expr, ellipsis_token));
 		}
 	}
-	
+
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after functional cast expression", current_token_);
 	}
-	
+
 	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
-	
+
 	// Create a static cast node (functional cast behaves like static_cast)
 	auto result = emplace_node<ExpressionNode>(
-		StaticCastNode(type_node, *final_expr, type_token));
-	
+	    StaticCastNode(type_node, *final_expr, type_token));
+
 	return ParseResult::success(result);
 }
 
@@ -145,21 +142,21 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 // Returns combined CVQualifier flags: None, Const, Volatile, or ConstVolatile
 CVQualifier Parser::parse_cv_qualifiers() {
 	CVQualifier cv = CVQualifier::None;
-	
+
 	while (true) {
 		if (peek() == "const"_tok) {
 			cv = static_cast<CVQualifier>(
-				static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Const));
+			    static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Const));
 			advance();
 		} else if (peek() == "volatile"_tok) {
 			cv = static_cast<CVQualifier>(
-				static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Volatile));
+			    static_cast<uint8_t>(cv) | static_cast<uint8_t>(CVQualifier::Volatile));
 			advance();
 		} else {
 			break;
 		}
 	}
-	
+
 	return cv;
 }
 
@@ -177,8 +174,7 @@ ReferenceQualifier Parser::parse_reference_qualifier() {
 	return ReferenceQualifier::None;
 }
 
-ParseResult Parser::parse_type_specifier()
-{
+ParseResult Parser::parse_type_specifier() {
 	// Add parsing depth check to prevent infinite loops
 	if (++parsing_depth_ > MAX_PARSING_DEPTH) {
 		--parsing_depth_;
@@ -186,19 +182,19 @@ ParseResult Parser::parse_type_specifier()
 		FLASH_LOG(Parser, Error, "Current token: ", current_token_.value());
 		return ParseResult::error("Maximum parsing depth exceeded - possible infinite loop", current_token_);
 	}
-	
+
 	// RAII guard to decrement depth on all exit paths
 	struct DepthGuard {
 		size_t& depth;
 		~DepthGuard() { --depth; }
 	} depth_guard{parsing_depth_};
-	
+
 	FLASH_LOG(Parser, Debug, "parse_type_specifier: Starting, current token: ", std::string(peek_info().value()));
-	
+
 	// Check for decltype or __typeof__/__typeof FIRST, before any other checks
 	// __typeof__ and __typeof are GCC extensions that work like decltype
 	// Note: decltype is a keyword (_tok), but __typeof__/__typeof are identifiers (string compare)
-	if (peek() == "decltype"_tok || 
+	if (peek() == "decltype"_tok ||
 	    (!peek().is_eof() && (peek_info().value() == "__typeof__" || peek_info().value() == "__typeof"))) {
 		return parse_decltype_specifier();
 	}
@@ -241,7 +237,7 @@ ParseResult Parser::parse_type_specifier()
 	// This check MUST come after skipping function specifiers to handle patterns like:
 	// "static decltype(_S_test_2<_Tp, _Up>(0))" which appear in standard library headers
 	// __typeof__ and __typeof are GCC extensions that work like decltype
-	if (peek() == "decltype"_tok || 
+	if (peek() == "decltype"_tok ||
 	    (!peek().is_eof() && (peek_info().value() == "__typeof__" || peek_info().value() == "__typeof"))) {
 		return parse_decltype_specifier();
 	}
@@ -281,7 +277,7 @@ ParseResult Parser::parse_type_specifier()
 			// Dependent type - return a placeholder that will be resolved during template instantiation
 			FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of dependent type, returning dependent placeholder");
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+			    TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
 		}
 
 		// Check if the argument is marked as a template parameter in current context
@@ -292,7 +288,7 @@ ParseResult Parser::parse_type_specifier()
 				if (arg_type_name == param_name) {
 					FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of template parameter '", arg_type_name, "', returning dependent placeholder");
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
+					    TypeCategory::UserDefined, TypeQualifier::None, 0, underlying_token, CVQualifier::None));
 				}
 			}
 		}
@@ -307,7 +303,7 @@ ParseResult Parser::parse_type_specifier()
 				int underlying_size = enum_info->underlying_size;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
+				    underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
 			}
 		}
 
@@ -319,14 +315,14 @@ ParseResult Parser::parse_type_specifier()
 			int underlying_size = enum_info->underlying_size;
 			FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
+			    underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
 		}
 
 		// For non-enum types in template context, return a placeholder
 		// The actual type will be resolved when the template is instantiated
 		FLASH_LOG(Templates, Debug, "parse_type_specifier: __underlying_type of non-enum or deferred, returning int placeholder");
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			TypeCategory::Int, TypeQualifier::None, 32, underlying_token, CVQualifier::None));
+		    TypeCategory::Int, TypeQualifier::None, 32, underlying_token, CVQualifier::None));
 	}
 
 	// Check for typename keyword (used in template-dependent contexts)
@@ -340,9 +336,9 @@ ParseResult Parser::parse_type_specifier()
 	}
 
 	if (peek().is_eof() ||
-		(!peek().is_keyword() && !peek().is_identifier() && peek() != "::"_tok)) {
+	    (!peek().is_keyword() && !peek().is_identifier() && peek() != "::"_tok)) {
 		return ParseResult::error("Expected type specifier",
-			peek().is_eof() ? Token() : peek_info());
+		                          peek().is_eof() ? Token() : peek_info());
 	}
 
 	size_t long_count = 0;
@@ -356,23 +352,19 @@ ParseResult Parser::parse_type_specifier()
 		auto k = peek();
 		if (k == "const"_tok) {
 			cv_qualifier = static_cast<CVQualifier>(
-				static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+			    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
 			advance();
-		}
-		else if (k == "volatile"_tok) {
+		} else if (k == "volatile"_tok) {
 			cv_qualifier = static_cast<CVQualifier>(
-				static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+			    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
 			advance();
-		}
-		else if (k == "long"_tok) {
+		} else if (k == "long"_tok) {
 			long_count++;
 			advance();
-		}
-		else if (k == "signed"_tok) {
+		} else if (k == "signed"_tok) {
 			qualifier = TypeQualifier::Signed;
 			advance();
-		}
-		else if (k == "unsigned"_tok) {
+		} else if (k == "unsigned"_tok) {
 			qualifier = TypeQualifier::Unsigned;
 			advance();
 		}
@@ -397,8 +389,7 @@ ParseResult Parser::parse_type_specifier()
 		         k == "__w64"_tok || k == "__unaligned"_tok ||
 		         k == "__uptr"_tok || k == "__sptr"_tok) {
 			advance();
-		}
-		else {
+		} else {
 			parsing_qualifiers = false;
 		}
 	}
@@ -413,26 +404,26 @@ ParseResult Parser::parse_type_specifier()
 
 	// Static type map for most types. "long" and "wchar_t" are handled specially below.
 	static const std::unordered_map<std::string_view, std::tuple<TypeCategory, size_t>>
-		type_map = {
-				{"void", {TypeCategory::Void, 0}},
-				{"bool", {TypeCategory::Bool, 8}},
-				{"char", {TypeCategory::Char, 8}},
-				// Note: "wchar_t" is handled specially due to target-dependent size (16 on Windows, 32 on Linux)
-				{"char8_t", {TypeCategory::Char8, 8}},         // C++20 UTF-8 character type
-				{"char16_t", {TypeCategory::Char16, 16}},      // C++11 UTF-16 character type
-				{"char32_t", {TypeCategory::Char32, 32}},      // C++11 UTF-32 character type
-				{"short", {TypeCategory::Short, 16}},
-				{"int", {TypeCategory::Int, 32}},
-				// Note: "long" is handled specially due to target-dependent size
-				{"float", {TypeCategory::Float, 32}},
-				{"double", {TypeCategory::Double, 64}},
-				{"auto", {TypeCategory::Auto, 0}},
-				// Microsoft-specific type keywords
-				{"__int8", {TypeCategory::Char, 8}},
-				{"__int16", {TypeCategory::Short, 16}},
-				{"__int32", {TypeCategory::Int, 32}},
-				{"__int64", {TypeCategory::LongLong, 64}},
-	};
+	    type_map = {
+	        {"void", {TypeCategory::Void, 0}},
+	        {"bool", {TypeCategory::Bool, 8}},
+	        {"char", {TypeCategory::Char, 8}},
+	        // Note: "wchar_t" is handled specially due to target-dependent size (16 on Windows, 32 on Linux)
+	        {"char8_t", {TypeCategory::Char8, 8}}, // C++20 UTF-8 character type
+	        {"char16_t", {TypeCategory::Char16, 16}}, // C++11 UTF-16 character type
+	        {"char32_t", {TypeCategory::Char32, 32}}, // C++11 UTF-32 character type
+	        {"short", {TypeCategory::Short, 16}},
+	        {"int", {TypeCategory::Int, 32}},
+	        // Note: "long" is handled specially due to target-dependent size
+	        {"float", {TypeCategory::Float, 32}},
+	        {"double", {TypeCategory::Double, 64}},
+	        {"auto", {TypeCategory::Auto, 0}},
+	        // Microsoft-specific type keywords
+	        {"__int8", {TypeCategory::Char, 8}},
+	        {"__int16", {TypeCategory::Short, 16}},
+	        {"__int32", {TypeCategory::Int, 32}},
+	        {"__int64", {TypeCategory::LongLong, 64}},
+	    };
 
 	TypeCategory type_cat = TypeCategory::UserDefined;
 	int type_size = 0;
@@ -446,7 +437,7 @@ ParseResult Parser::parse_type_specifier()
 			type_cat = TypeCategory::Long;
 			type_size = get_type_size_bits(TypeCategory::Long);
 			has_explicit_type = true;
-		// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
+			// Handle "wchar_t" specially due to target-dependent size (16 on Windows, 32 on Linux)
 		} else if (k == "wchar_t"_tok) {
 			type_cat = TypeCategory::WChar;
 			type_size = get_wchar_size_bits();
@@ -468,77 +459,71 @@ ParseResult Parser::parse_type_specifier()
 		// Apply signed/unsigned qualifier to integer types
 		if (qualifier == TypeQualifier::Unsigned) {
 			switch (type_cat) {
-				case TypeCategory::Char:
-					type_cat = TypeCategory::UnsignedChar;
-					type_size = 8;
-					break;
-				case TypeCategory::Short:
-					type_cat = TypeCategory::UnsignedShort;
-					type_size = 16;
-					break;
-				case TypeCategory::Int:
-					type_cat = TypeCategory::UnsignedInt;
-					type_size = 32;
-					break;
-				case TypeCategory::Long:
-					type_cat = TypeCategory::UnsignedLong;
-					type_size = get_type_size_bits(TypeCategory::UnsignedLong);
-					break;
-				default:
-					break;
+			case TypeCategory::Char:
+				type_cat = TypeCategory::UnsignedChar;
+				type_size = 8;
+				break;
+			case TypeCategory::Short:
+				type_cat = TypeCategory::UnsignedShort;
+				type_size = 16;
+				break;
+			case TypeCategory::Int:
+				type_cat = TypeCategory::UnsignedInt;
+				type_size = 32;
+				break;
+			case TypeCategory::Long:
+				type_cat = TypeCategory::UnsignedLong;
+				type_size = get_type_size_bits(TypeCategory::UnsignedLong);
+				break;
+			default:
+				break;
 			}
 		} else if (qualifier == TypeQualifier::Signed) {
 			// Explicitly signed types keep their current type but ensure correct size
 			switch (type_cat) {
-				case TypeCategory::Char:
-					type_size = 8;
-					break;
-				case TypeCategory::Short:
-					type_size = 16;
-					break;
-				case TypeCategory::Int:
-					type_size = 32;
-					break;
-				case TypeCategory::Long:
-					type_size = get_type_size_bits(TypeCategory::Long);
-					break;
-				default:
-					break;
+			case TypeCategory::Char:
+				type_size = 8;
+				break;
+			case TypeCategory::Short:
+				type_size = 16;
+				break;
+			case TypeCategory::Int:
+				type_size = 32;
+				break;
+			case TypeCategory::Long:
+				type_size = get_type_size_bits(TypeCategory::Long);
+				break;
+			default:
+				break;
 			}
 		}
 
 		if (long_count == 1) {
 			if (type_cat == TypeCategory::Float) {
 				type_size = sizeof(long double);
-			}
-			else if (type_cat == TypeCategory::Int) {
+			} else if (type_cat == TypeCategory::Int) {
 				// "long int" -> long
 				type_cat = TypeCategory::Long;
 				type_size = get_type_size_bits(TypeCategory::Long);
-			}
-			else if (type_cat == TypeCategory::UnsignedInt) {
+			} else if (type_cat == TypeCategory::UnsignedInt) {
 				// "long unsigned int" or "unsigned long int" -> unsigned long
 				type_cat = TypeCategory::UnsignedLong;
 				type_size = get_type_size_bits(TypeCategory::UnsignedLong);
-			}
-			else if (type_cat == TypeCategory::Long) {
+			} else if (type_cat == TypeCategory::Long) {
 				// "long long" -> long long
 				type_cat = TypeCategory::LongLong;
 				type_size = 64;
-			}
-			else if (type_cat == TypeCategory::UnsignedLong) {
+			} else if (type_cat == TypeCategory::UnsignedLong) {
 				// "long long unsigned" or "unsigned long long" -> unsigned long long
 				type_cat = TypeCategory::UnsignedLongLong;
 				type_size = 64;
 			}
-		}
-		else if (long_count == 2) {
+		} else if (long_count == 2) {
 			if (type_cat == TypeCategory::Int) {
 				// "long long int" -> long long
 				type_cat = TypeCategory::LongLong;
 				type_size = 64;
-			}
-			else if (type_cat == TypeCategory::UnsignedInt) {
+			} else if (type_cat == TypeCategory::UnsignedInt) {
 				// "unsigned long long int" or "long long unsigned int" -> unsigned long long
 				type_cat = TypeCategory::UnsignedLongLong;
 				type_size = 64;
@@ -561,23 +546,20 @@ ParseResult Parser::parse_type_specifier()
 		while (true) {
 			if (peek() == "const"_tok) {
 				cv_qualifier = static_cast<CVQualifier>(
-					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+				    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
 				advance();
-			}
-			else if (peek() == "volatile"_tok) {
+			} else if (peek() == "volatile"_tok) {
 				cv_qualifier = static_cast<CVQualifier>(
-					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+				    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
 				advance();
-			}
-			else {
+			} else {
 				break;
 			}
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type_cat, qualifier, type_size, type_keyword_token, cv_qualifier));
-	}
-	else if (qualifier != TypeQualifier::None || long_count > 0) {
+		    type_cat, qualifier, type_size, type_keyword_token, cv_qualifier));
+	} else if (qualifier != TypeQualifier::None || long_count > 0) {
 		// Handle cases like "unsigned", "signed", "long" without explicit type (defaults to int)
 		// But NOT "const" alone - that could be "const Widget" which needs to continue
 		// Examples: "unsigned" -> unsigned int, "signed" -> signed int, "long" -> long int
@@ -597,7 +579,7 @@ ParseResult Parser::parse_type_specifier()
 		}
 
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			type_cat, qualifier, type_size, Token(), cv_qualifier));
+		    type_cat, qualifier, type_size, Token(), cv_qualifier));
 	}
 	// If we only have CV-qualifiers (const/volatile) without unsigned/signed/long,
 	// continue parsing - could be "const Widget&", "const int*", etc.
@@ -628,22 +610,22 @@ ParseResult Parser::parse_type_specifier()
 
 		// Handle qualified names (e.g., std::type_info)
 		while (peek() == "::"_tok) {
-			advance();  // consume '::'
+			advance(); // consume '::'
 			// Handle ::template for dependent member templates
 			// Example: typename _Tp::template rebind<_Up>
 			if (peek() == "template"_tok) {
-				advance();  // consume 'template'
+				advance(); // consume 'template'
 			}
-			
+
 			if (!peek().is_identifier()) {
-				type_name_builder.reset();  // Discard the builder
+				type_name_builder.reset(); // Discard the builder
 				return ParseResult::error("Expected identifier after '::'",
 				                          peek().is_eof() ? Token() : peek_info());
 			}
 			type_name_builder.append("::"sv);
 			type_name_builder.append(peek_info().value());
-			type_name_token = peek_info();  // Update token for error reporting
-			advance();  // consume identifier
+			type_name_token = peek_info(); // Update token for error reporting
+			advance(); // consume identifier
 		}
 
 		StringHandle type_name_handle = StringTable::getOrInternStringHandle(type_name_builder.commit());
@@ -665,23 +647,23 @@ ParseResult Parser::parse_type_specifier()
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
 				type_size = 0;
 			}
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+			    struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 		}
 
 		// Forward declaration: struct not yet defined
 		// Create a placeholder type entry for it
 		// This allows pointers to undefined structs (e.g., struct Foo* ptr;)
 		TypeInfo& forward_decl_type = add_struct_type(type_name_handle, gSymbolTable.get_current_namespace_handle());
-		type_size = 0;  // Unknown size until defined
+		type_size = 0; // Unknown size until defined
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			forward_decl_type.type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+		    forward_decl_type.type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 	}
 	// Handle __builtin_va_list and __gnuc_va_list as GCC builtin types
 	// These are used in <cstdarg> and libstdc++ headers for variadic argument handling.
@@ -695,19 +677,18 @@ ParseResult Parser::parse_type_specifier()
 		auto type_it = getTypesByNameMap().find(type_name_handle);
 		if (type_it != getTypesByNameMap().end()) {
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				TypeCategory::UserDefined, TypeQualifier::None,
-				static_cast<int>(type_it->second->type_size_),
-				va_list_token, cv_qualifier));
+			    TypeCategory::UserDefined, TypeQualifier::None,
+			    static_cast<int>(type_it->second->type_size_),
+			    va_list_token, cv_qualifier));
 		}
 		// Fallback: treat as void*
 		TypeSpecifierNode va_list_type(TypeCategory::Void, TypeQualifier::None, 0, va_list_token, cv_qualifier);
 		va_list_type.add_pointer_level();
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(va_list_type));
-	}
-	else if (peek() == "::"_tok) {
+	} else if (peek() == "::"_tok) {
 		// Handle global-scope-qualified types like ::__gnu_debug::_Safe_iterator
 		// The '::' prefix denotes a type from the global namespace
-		advance();  // consume '::'
+		advance(); // consume '::'
 
 		if (!peek().is_identifier()) {
 			return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
@@ -723,9 +704,9 @@ ParseResult Parser::parse_type_specifier()
 
 		// Continue building qualified name (e.g., __gnu_debug::_Safe_iterator)
 		while (peek() == "::"_tok) {
-			advance();  // consume '::'
+			advance(); // consume '::'
 			if (peek() == "template"_tok) {
-				advance();  // consume 'template'
+				advance(); // consume 'template'
 			}
 			if (!peek().is_identifier()) {
 				type_name_builder.reset();
@@ -740,7 +721,7 @@ ParseResult Parser::parse_type_specifier()
 		// Update the token to carry the full qualified name (e.g., "__gnu_debug::_Safe_iterator")
 		// so that downstream consumers like FriendDeclarationNode get the complete type name.
 		type_name_token = Token(Token::Type::Identifier, type_name,
-			type_name_token.line(), type_name_token.column(), type_name_token.file_index());
+		                        type_name_token.line(), type_name_token.column(), type_name_token.file_index());
 
 		// Skip template arguments if present (e.g., __gnu_debug::_Safe_iterator<_Ite, _Seq, Tag>)
 		if (peek() == "<"_tok) {
@@ -751,10 +732,10 @@ ParseResult Parser::parse_type_specifier()
 		while (peek() == "const"_tok || peek() == "volatile"_tok) {
 			if (peek() == "const"_tok) {
 				cv_qualifier = static_cast<CVQualifier>(
-					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
+				    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Const));
 			} else {
 				cv_qualifier = static_cast<CVQualifier>(
-					static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
+				    static_cast<uint8_t>(cv_qualifier) | static_cast<uint8_t>(CVQualifier::Volatile));
 			}
 			advance();
 		}
@@ -774,25 +755,24 @@ ParseResult Parser::parse_type_specifier()
 					type_size_bits = static_cast<int>(struct_info->total_size * 8);
 				}
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					user_type_index.withCategory(TypeCategory::Struct), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
+				    user_type_index.withCategory(TypeCategory::Struct), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
 			} else {
 				// Use the type's own Type value (Enum, UserDefined, etc.)
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					user_type_index.withCategory(type_info->typeEnum()), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
+				    user_type_index.withCategory(type_info->typeEnum()), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
 			}
 		}
 
 		// Not found - create a placeholder type (forward declaration)
 		TypeInfo& forward_decl_type = add_struct_type(type_name_handle, gSymbolTable.get_current_namespace_handle());
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			forward_decl_type.type_index_.withCategory(TypeCategory::Struct), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
-	}
-	else if (peek().is_identifier()) {
+		    forward_decl_type.type_index_.withCategory(TypeCategory::Struct), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+	} else if (peek().is_identifier()) {
 		// Handle user-defined type (struct, class, or other user-defined types)
 		// Build qualified name using StringBuilder for efficiency
 		StringBuilder type_name_builder;
 		type_name_builder.append(peek_info().value());
-		Token type_name_token = peek_info();  // Save the token before consuming it
+		Token type_name_token = peek_info(); // Save the token before consuming it
 		Token last_qualified_token = type_name_token;
 		advance();
 
@@ -800,18 +780,18 @@ ParseResult Parser::parse_type_specifier()
 		// Also track if ::template was used (indicates dependent member template access)
 		bool has_explicit_template_keyword = false;
 		while (peek() == "::"_tok) {
-			advance();  // consume '::'
+			advance(); // consume '::'
 
 			// Handle ::template for dependent member templates
 			// Example: typename _Tp::template rebind<_Up>
 			// The 'template' keyword is a disambiguator for dependent contexts
 			if (peek() == "template"_tok) {
-				advance();  // consume 'template'
-				has_explicit_template_keyword = true;  // Remember that ::template was used
+				advance(); // consume 'template'
+				has_explicit_template_keyword = true; // Remember that ::template was used
 			}
-			
+
 			if (!peek().is_identifier()) {
-				type_name_builder.reset();  // Discard the builder
+				type_name_builder.reset(); // Discard the builder
 				return ParseResult::error("Expected identifier after '::'", peek().is_eof() ? Token() : peek_info());
 			}
 
@@ -853,10 +833,10 @@ ParseResult Parser::parse_type_specifier()
 				}
 
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
-					type_idx.withCategory(TypeCategory::UserDefined),
-					0,
-					last_qualified_token,
-					cv_qualifier, ReferenceQualifier::None));
+				    type_idx.withCategory(TypeCategory::UserDefined),
+				    0,
+				    last_qualified_token,
+				    cv_qualifier, ReferenceQualifier::None));
 			}
 		}
 
@@ -866,7 +846,7 @@ ParseResult Parser::parse_type_specifier()
 			// Before parsing < as template arguments, check if the type name is actually a template
 			// This prevents misinterpreting patterns like _R1::num < _R2::num> where < is comparison
 			bool should_parse_as_template = true;
-			
+
 			// If ::template was used, always parse < as template arguments
 			// This is the explicit template disambiguator for dependent contexts
 			if (has_explicit_template_keyword) {
@@ -877,26 +857,26 @@ ParseResult Parser::parse_type_specifier()
 				if (last_colon_pos != std::string_view::npos) {
 					// Extract the member name (part after the last ::)
 					std::string_view member_name = type_name.substr(last_colon_pos + 2);
-					
+
 					// Check if the member is a known template
 					auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-					
+
 					// Also check with the full qualified name
 					auto full_template_opt = gTemplateRegistry.lookupTemplate(type_name);
 					auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(type_name);
-					
-					bool member_is_template = member_template_opt.has_value() || 
+
+					bool member_is_template = member_template_opt.has_value() ||
 					                          member_var_template_opt.has_value() ||
 					                          full_template_opt.has_value() ||
 					                          full_var_template_opt.has_value();
-					
+
 					if (!member_is_template) {
 						// Member is NOT a known template
 						// Check if the base (before ::) is a template parameter - if so, this is dependent
 						// and we should NOT parse < as template arguments
 						std::string_view base_name = type_name.substr(0, last_colon_pos);
-						
+
 						// Check if base is a template parameter
 						bool base_is_template_param = false;
 						for (const auto& param_name : current_template_param_names_) {
@@ -905,20 +885,20 @@ ParseResult Parser::parse_type_specifier()
 								break;
 							}
 						}
-						
+
 						if (base_is_template_param) {
 							// Pattern like _R1::num where _R1 is a template parameter
 							// The member 'num' is likely a static data member, not a template
 							// Treat < as comparison operator
-							FLASH_LOG_FORMAT(Templates, Debug, 
-							    "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
-							    type_name);
+							FLASH_LOG_FORMAT(Templates, Debug,
+							                 "Qualified name '{}' has template param base and non-template member - treating '<' as comparison operator",
+							                 type_name);
 							should_parse_as_template = false;
 						}
 					}
 				}
 			}
-			
+
 			if (should_parse_as_template) {
 				template_args = parse_explicit_template_arguments();
 			}
@@ -930,44 +910,44 @@ ParseResult Parser::parse_type_specifier()
 				if (alias_opt.has_value()) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Found alias template for '{}', is_deferred={}", type_name, alias_opt->as<TemplateAliasNode>().is_deferred());
 					const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
-					
+
 					// Check for recursion: if we're already resolving this alias, return error
 					if (resolving_aliases_.find(type_name) != resolving_aliases_.end()) {
 						FLASH_LOG(Parser, Error, "Circular template alias dependency detected for '", type_name, "'");
 						return ParseResult::error("Circular template alias dependency", type_name_token);
 					}
-					
+
 					// Add this alias to the resolution stack
 					resolving_aliases_.insert(type_name);
-					
+
 					// RAII guard to ensure we remove the alias from the stack even if we return early
 					ScopeGuard alias_guard([this, type_name]() {
 						resolving_aliases_.erase(type_name);
 					});
-					
+
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
 					if (alias_node.is_deferred()) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
-						
+
 						// Build substituted template arguments by replacing alias parameters with concrete values
 						std::vector<TemplateTypeArg> substituted_args;
 						const auto& param_names = alias_node.template_param_names();
 						const auto& target_template_args = alias_node.target_template_args();
-						
+
 						// For each argument in the target template (e.g., bool, B in integral_constant<bool, B>)
 						for (size_t i = 0; i < target_template_args.size(); ++i) {
 							const ASTNode& arg_node = target_template_args[i];
-							
+
 							// Check if this argument is a type specifier
 							if (arg_node.is<TypeSpecifierNode>()) {
 								const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
-								
+
 								// Check if this type is one of the alias template parameters
 								// We check the token value, not type_index, because type_index may be 0 (placeholder) for template parameters
 								bool is_alias_param = false;
 								size_t alias_param_idx = 0;
-								
+
 								Token arg_token = arg_type.token();
 								if (arg_token.type() == Token::Type::Identifier) {
 									std::string_view arg_token_value = arg_token.value();
@@ -979,7 +959,7 @@ ParseResult Parser::parse_type_specifier()
 										}
 									}
 								}
-								
+
 								if (is_alias_param && alias_param_idx < template_args->size()) {
 									// This argument references an alias parameter - substitute it with the actual argument
 									// IMPORTANT: The alias argument might be a value (e.g., true), not a type
@@ -991,45 +971,45 @@ ParseResult Parser::parse_type_specifier()
 								}
 							}
 						}
-						
+
 						FLASH_LOG(Parser, Debug, "Instantiating '", alias_node.target_template_name(), "' with ", substituted_args.size(), " substituted arguments");
-						
+
 						// Debug: log the substituted arguments
 						for (size_t i = 0; i < substituted_args.size(); ++i) {
 							const auto& arg = substituted_args[i];
-							FLASH_LOG(Parser, Debug, "  Arg[", i, "]: is_value=", arg.is_value, 
-							          ", category=", static_cast<int>(arg.category()), 
+							FLASH_LOG(Parser, Debug, "  Arg[", i, "]: is_value=", arg.is_value,
+							          ", category=", static_cast<int>(arg.category()),
 							          ", value=", arg.value);
 						}
-						
+
 						// Instantiate the target template with substituted arguments
 						// First check if the target is itself a template alias (alias chaining)
 						auto target_alias_opt = gTemplateRegistry.lookup_alias_template(alias_node.target_template_name());
 						std::optional<ASTNode> instantiated_class;
-						
+
 						if (target_alias_opt.has_value()) {
 							// Target is a template alias - resolve it recursively
 							FLASH_LOG(Parser, Debug, "Target '", alias_node.target_template_name(), "' is a template alias - resolving recursively");
-							
+
 							const TemplateAliasNode& target_alias = target_alias_opt->as<TemplateAliasNode>();
-							
+
 							if (target_alias.is_deferred()) {
 								// Recursively instantiate through the target alias
 								// Build the substituted args for the target alias
 								const auto& target_param_names = target_alias.template_param_names();
 								const auto& target_target_args = target_alias.target_template_args();
 								std::vector<TemplateTypeArg> nested_substituted_args;
-								
+
 								for (size_t i = 0; i < target_target_args.size(); ++i) {
 									const ASTNode& arg_node = target_target_args[i];
-									
+
 									if (arg_node.is<TypeSpecifierNode>()) {
 										const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
-										
+
 										// Check if this arg references a parameter of the target alias
 										bool is_target_param = false;
 										size_t target_param_idx = 0;
-										
+
 										Token arg_token = arg_type.token();
 										if (arg_token.type() == Token::Type::Identifier) {
 											std::string_view arg_token_value = arg_token.value();
@@ -1041,7 +1021,7 @@ ParseResult Parser::parse_type_specifier()
 												}
 											}
 										}
-										
+
 										if (is_target_param && target_param_idx < substituted_args.size()) {
 											// Substitute with the argument we already substituted
 											nested_substituted_args.push_back(substituted_args[target_param_idx]);
@@ -1051,7 +1031,7 @@ ParseResult Parser::parse_type_specifier()
 										}
 									}
 								}
-								
+
 								FLASH_LOG(Parser, Debug, "Nested instantiation: '", target_alias.target_template_name(), "' with ", nested_substituted_args.size(), " args");
 								instantiated_class = try_instantiate_class_template(target_alias.target_template_name(), nested_substituted_args);
 							} else {
@@ -1062,13 +1042,13 @@ ParseResult Parser::parse_type_specifier()
 							// Target is a class template - instantiate directly
 							instantiated_class = try_instantiate_class_template(alias_node.target_template_name(), substituted_args);
 						}
-						
+
 						if (instantiated_class.has_value()) {
 							// Add to AST if it's a struct
 							if (instantiated_class->is<StructDeclarationNode>()) {
 								ast_nodes_.push_back(*instantiated_class);
 							}
-							
+
 							// Look up the instantiated type - need to determine the final template name
 							// If we went through alias chaining, use the struct name from the instantiated class
 							std::string_view instantiated_name;
@@ -1078,43 +1058,43 @@ ParseResult Parser::parse_type_specifier()
 							} else {
 								instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
 							}
-							
+
 							const TypeInfo* typeInfo = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
 							if (typeInfo != nullptr) {
 								TypeIndex type_idx = typeInfo->type_index_;
 								const TypeInfo& new_ti = getTypeInfo(type_idx);
-								
+
 								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
-								
+
 								// Check for member type access after alias template resolution
 								// Pattern: typename conditional_t<...>::type
 								if (peek() == "::"_tok) {
 									advance(); // consume '::'
-									
+
 									Token member_token = peek_info();
 									if (member_token.type() == Token::Type::Identifier) {
 										std::string_view member_name = member_token.value();
 										advance(); // consume member name
-										
+
 										// Build qualified type name
 										StringBuilder qualified_name_builder;
 										std::string_view qualified_type_name = qualified_name_builder
-											.append(instantiated_name)
-											.append("::")
-											.append(member_name)
-											.commit();
-										
+										                                           .append(instantiated_name)
+										                                           .append("::")
+										                                           .append(member_name)
+										                                           .commit();
+
 										FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias resolution");
-										
+
 										// Look up the member type
 										auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 										if (member_type_it != getTypesByNameMap().end()) {
 											const TypeInfo* member_type_info = member_type_it->second;
 											FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												member_type_info->type_index_.withCategory(member_type_info->typeEnum()), 
-												static_cast<unsigned char>(member_type_info->type_size_), 
-												member_token, cv_qualifier, ReferenceQualifier::None));
+											    member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+											    static_cast<unsigned char>(member_type_info->type_size_),
+											    member_token, cv_qualifier, ReferenceQualifier::None));
 										} else {
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
@@ -1124,47 +1104,46 @@ ParseResult Parser::parse_type_specifier()
 											placeholder_type.is_incomplete_instantiation_ = true;
 											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
+											    placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
 										}
 									}
 								}
-								
+
 								// Create the final type specifier
 								auto new_type_spec = emplace_node<TypeSpecifierNode>(
-									type_idx.withCategory(TypeCategory::Struct),
-									static_cast<unsigned char>(new_ti.type_size_),
-									Token(),
-									CVQualifier::None,
-									ReferenceQualifier::None
-								);
-								
+								    type_idx.withCategory(TypeCategory::Struct),
+								    static_cast<unsigned char>(new_ti.type_size_),
+								    Token(),
+								    CVQualifier::None,
+								    ReferenceQualifier::None);
+
 								return ParseResult::success(new_type_spec);
 							} else {
-							// Deferred instantiation didn't find the type, but this is often expected
-							// for complex template metaprogramming patterns (SFINAE, etc.)
-							// Fall through to simple alias handling
-							FLASH_LOG(Parser, Debug, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
+								// Deferred instantiation didn't find the type, but this is often expected
+								// for complex template metaprogramming patterns (SFINAE, etc.)
+								// Fall through to simple alias handling
+								FLASH_LOG(Parser, Debug, "Deferred instantiation: type '", instantiated_name, "' not found after instantiation at line ", type_name_token.line());
+							}
+						} else {
+							// try_instantiate_class_template returned nullopt, which is expected for
+							// dependent types and SFINAE patterns - fall through to simple alias handling
+							FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
 						}
-					} else {
-						// try_instantiate_class_template returned nullopt, which is expected for
-						// dependent types and SFINAE patterns - fall through to simple alias handling
-						FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
-						}
-						
+
 						// Fall through to simple alias handling if deferred instantiation failed or not applicable
 					}
-					
+
 					// Handle non-deferred aliases (e.g., template<typename T> using Ptr = T*)
 					// Substitute template arguments into the target type
 					TypeSpecifierNode instantiated_type = alias_node.target_type_node();
 					[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
 					const auto& param_names = alias_node.template_param_names();
-					
+
 					// Perform substitution for template parameters in the target type
 					for (size_t i = 0; i < template_args->size() && i < param_names.size(); ++i) {
 						const auto& arg = (*template_args)[i];
 						std::string_view param_name = param_names[i].view();
-						
+
 						// Check if the target type refers to this template parameter
 						// The target type will have TypeCategory::UserDefined and a type_index pointing to
 						// the TypeInfo we created for the template parameter
@@ -1175,20 +1154,20 @@ ParseResult Parser::parse_type_specifier()
 								is_template_param = true;
 							}
 						}
-						
+
 						if (is_template_param) {
 							// The target type is using this template parameter
 							if (arg.is_value) {
 								FLASH_LOG(Parser, Error, "Non-type template arguments not supported in alias templates yet");
 								return ParseResult::error("Non-type template arguments not supported in alias templates", type_name_token);
 							}
-							
+
 							// Save pointer/reference modifiers from target type
 							size_t ptr_depth = instantiated_type.pointer_depth();
 							bool is_ref = instantiated_type.is_reference();
 							bool is_rval_ref = instantiated_type.is_rvalue_reference();
 							CVQualifier cv = instantiated_type.cv_qualifier();
-							
+
 							// Get the size in bits for the argument type
 							int size_bits = 0;
 							if (is_struct_type(arg.category())) {
@@ -1199,61 +1178,60 @@ ParseResult Parser::parse_type_specifier()
 								// Use standard type sizes
 								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 							}
-							
+
 							// Create new type with substituted base type
 							instantiated_type = TypeSpecifierNode(
-								arg.type_index.withCategory(arg.typeEnum()),
-								size_bits,
-								Token(),  // No token for instantiated type
-								cv,
-								ReferenceQualifier::None
-							);
-							
+							    arg.type_index.withCategory(arg.typeEnum()),
+							    size_bits,
+							    Token(), // No token for instantiated type
+							    cv,
+							    ReferenceQualifier::None);
+
 							// Reapply pointer/reference modifiers from target type
 							// e.g., if target is T* and we substitute int for T, we get int*
 							for (size_t p = 0; p < ptr_depth; ++p) {
 								instantiated_type.add_pointer_level(CVQualifier::None);
 							}
 							if (is_rval_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue ref
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue ref
 							} else if (is_ref) {
-								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue ref
+								instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue ref
 							}
 						}
 					}
-					
+
 					// Check for member type access after alias template resolution
 					// Pattern: typename alias_template<...>::type
 					if (peek() == "::"_tok) {
 						advance(); // consume '::'
-						
+
 						Token member_token = peek_info();
 						if (member_token.type() == Token::Type::Identifier) {
 							std::string_view member_name = member_token.value();
 							advance(); // consume member name
-							
+
 							// Get the type name from instantiated_type to look up member
 							std::string_view base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
-							
+
 							// Build qualified type name
 							StringBuilder qualified_name_builder;
 							std::string_view qualified_type_name = qualified_name_builder
-								.append(base_type_name)
-								.append("::")
-								.append(member_name)
-								.commit();
-							
+							                                           .append(base_type_name)
+							                                           .append("::")
+							                                           .append(member_name)
+							                                           .commit();
+
 							FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after non-deferred alias resolution");
-							
+
 							// Look up the member type
 							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 							if (member_type_it != getTypesByNameMap().end()) {
 								const TypeInfo* member_type_info = member_type_it->second;
 								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									member_type_info->type_index_.withCategory(member_type_info->typeEnum()), 
-									static_cast<unsigned char>(member_type_info->type_size_), 
-									member_token, cv_qualifier, ReferenceQualifier::None));
+								    member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+								    static_cast<unsigned char>(member_type_info->type_size_),
+								    member_token, cv_qualifier, ReferenceQualifier::None));
 							} else {
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
@@ -1263,14 +1241,14 @@ ParseResult Parser::parse_type_specifier()
 								placeholder_type.is_incomplete_instantiation_ = true;
 								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
+								    placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
 							}
 						}
 					}
-					
+
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
-				
+
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
 				// When parsing a template body, if the type name is a template parameter (type or template template param),
 				// we should NOT try to instantiate it - it's a dependent type that will be resolved during instantiation
@@ -1283,26 +1261,26 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
-				
+
 				if (is_dependent_template_param) {
 					// This is a template parameter being used with template arguments (e.g., Op<Args...>)
 					// Check for nested type access (e.g., Op<Args...>::type) before returning early
 					if (peek() == "::"_tok) {
 						// Parse the nested type/member access
 						advance(); // consume '::'
-						
+
 						// Handle optional 'template' keyword for dependent contexts
 						if (peek() == "template"_tok) {
 							advance(); // consume 'template'
 						}
-						
+
 						// Get the nested identifier
 						if (!peek().is_identifier()) {
 							return ParseResult::error("Expected identifier after '::'", peek_info());
 						}
 						Token nested_token = peek_info();
 						advance(); // consume the identifier
-						
+
 						// Build a dependent type name: Op<Args...>::type
 						// For dependent types, we create a placeholder type that will be resolved during instantiation
 						StringBuilder dependent_type_builder;
@@ -1310,7 +1288,7 @@ ParseResult Parser::parse_type_specifier()
 						dependent_type_builder.append("<...>::");
 						dependent_type_builder.append(nested_token.value());
 						std::string_view dependent_type_name = dependent_type_builder.commit();
-						
+
 						// Create or look up a placeholder type for this dependent type
 						auto type_handle = StringTable::getOrInternStringHandle(dependent_type_name);
 						auto type_it = getTypesByNameMap().find(type_handle);
@@ -1327,17 +1305,16 @@ ParseResult Parser::parse_type_specifier()
 						} else {
 							type_idx = type_it->second->type_index_;
 						}
-						
+
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
-							type_idx.withCategory(TypeCategory::UserDefined),
-							0,  // Size unknown for dependent type
-							nested_token,
-							cv_qualifier,
-							ReferenceQualifier::None
-						);
+						    type_idx.withCategory(TypeCategory::UserDefined),
+						    0, // Size unknown for dependent type
+						    nested_token,
+						    cv_qualifier,
+						    ReferenceQualifier::None);
 						return ParseResult::success(type_spec_node);
 					}
-					
+
 					// No nested type access - create a dependent type reference
 					// This will be resolved during instantiation of the containing template
 					// When template args are present (e.g., TT<int> or TTT<Inner>), create a dependent
@@ -1350,7 +1327,7 @@ ParseResult Parser::parse_type_specifier()
 						auto existing = getTypesByNameMap().find(type_handle);
 						if (existing != getTypesByNameMap().end()) {
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								existing->second->type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
+							    existing->second->type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
 						}
 
 						// Create a new dependent placeholder with template instantiation metadata
@@ -1361,13 +1338,13 @@ ParseResult Parser::parse_type_specifier()
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);
 						type_info.setTemplateInstantiationInfo(
-							QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
-							template_args_info);
+						    QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
+						    template_args_info);
 						FLASH_LOG_FORMAT(Templates, Debug, "Created dependent template-template placeholder '{}' with {} args",
 						                 instantiated_name, template_args_info.size());
 
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
+						    type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
 					}
 
 					// Fallback: no template args - just reference the template parameter type
@@ -1375,12 +1352,11 @@ ParseResult Parser::parse_type_specifier()
 					if (type_it != getTypesByNameMap().end()) {
 						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &getTypeInfo(TypeIndex{0}))};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(
-							type_idx.withCategory(TypeCategory::UserDefined),
-							0,  // Size unknown for dependent type
-							type_name_token,
-							CVQualifier::None,
-							ReferenceQualifier::None
-						);
+						    type_idx.withCategory(TypeCategory::UserDefined),
+						    0, // Size unknown for dependent type
+						    type_name_token,
+						    CVQualifier::None,
+						    ReferenceQualifier::None);
 						return ParseResult::success(type_spec_node);
 					}
 				}
@@ -1396,7 +1372,7 @@ ParseResult Parser::parse_type_specifier()
 						    subst.concrete_template_name.isValid()) {
 							type_name = StringTable::getStringView(subst.concrete_template_name);
 							type_name_token = Token(Token::Type::Identifier, type_name,
-								type_name_token.line(), type_name_token.column(), type_name_token.file_index());
+							                        type_name_token.line(), type_name_token.column(), type_name_token.file_index());
 							FLASH_LOG(Templates, Debug, "Resolved template template param alias -> '", type_name, "'");
 							break;
 						}
@@ -1422,18 +1398,18 @@ ParseResult Parser::parse_type_specifier()
 					// Don't call try_instantiate_class_template - just continue to look up the type
 					// The variable template instantiation should happen in expression context, not type context
 				}
-				
+
 				std::optional<ASTNode> instantiated_class;
 				if (!var_template_check.has_value()) {
 					// Only try class template instantiation if this is NOT a variable template
 					instantiated_class = try_instantiate_class_template(type_name, *template_args);
 				}
-				
+
 				// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
 					ast_nodes_.push_back(*instantiated_class);
 				}
-				
+
 				// Fill in default template arguments to get the actual instantiated name
 				// (try_instantiate_class_template fills them internally, we need to do the same here)
 				std::vector<TemplateTypeArg> filled_template_args = *template_args;
@@ -1441,7 +1417,7 @@ ParseResult Parser::parse_type_specifier()
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 					const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 					const auto& template_params = template_class.template_parameters();
-					
+
 					// Fill in defaults for missing parameters
 					for (size_t i = filled_template_args.size(); i < template_params.size(); ++i) {
 						if (!template_params[i].is<TemplateParameterNode>()) {
@@ -1460,26 +1436,26 @@ ParseResult Parser::parse_type_specifier()
 							const ASTNode& default_node = param.default_value();
 							if (default_node.is<ExpressionNode>()) {
 								const ExpressionNode& expr = default_node.as<ExpressionNode>();
-								
+
 								// Helper lambda to build instantiated template name suffix
 								if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 									const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
-									
+
 									// Handle dependent static member access like is_arithmetic_void::value
 									if (!qual_id.namespace_handle().isGlobal()) {
 										std::string_view type_name_sv = gNamespaceRegistry.getName(qual_id.namespace_handle());
 										std::string_view member_name = qual_id.name();
-										
+
 										// Check if type_name is a dependent placeholder using TypeInfo-based detection
 										auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name_sv);
 										if (is_dependent_placeholder && !filled_template_args.empty()) {
-											
+
 											// Build the instantiated template name using hash-based naming
 											std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-											
+
 											// Try to instantiate the template
 											try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-											
+
 											// Look up the instantiated type
 											auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 											if (type_it != getTypesByNameMap().end()) {
@@ -1529,7 +1505,7 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
-				
+
 				// Whether instantiation succeeded or returned nullopt (for specializations),
 				// the type should now be registered. Look it up using filled args.
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
@@ -1538,7 +1514,7 @@ ParseResult Parser::parse_type_specifier()
 				if (instantiated_class.has_value() && instantiated_class->is<StructDeclarationNode>()) {
 					instantiated_name = StringTable::getStringView(instantiated_class->as<StructDeclarationNode>().name());
 				}
-				
+
 				// Check if any template arguments are dependent or pack expansions
 				// If so, we cannot instantiate the template, but we can still parse ::member syntax
 				// Check both filled_template_args (for is_dependent) and original template_args (for is_pack)
@@ -1586,7 +1562,7 @@ ParseResult Parser::parse_type_specifier()
 						FLASH_LOG_FORMAT(Templates, Debug, "Template '{}' not found in template body - treating as dependent", type_name);
 					}
 				}
-				
+
 				// Check for qualified name after template arguments: Template<T>::nested or Template<T>::type
 				if (peek() == "::"_tok) {
 					// Parse the qualified identifier path (e.g., Template<int>::Inner)
@@ -1596,7 +1572,7 @@ ParseResult Parser::parse_type_specifier()
 						FLASH_LOG(Parser, Error, "parse_qualified_identifier_after_template failed");
 						return qualified_result;
 					}
-					
+
 					// Build fully qualified type name using instantiated template name
 					const auto& qualified_node = asQualifiedIdentifier(*qualified_result.node());
 					// Get the qualified namespace name and append the identifier
@@ -1614,12 +1590,12 @@ ParseResult Parser::parse_type_specifier()
 					}
 					qualified_type_name_builder.append("::").append(qualified_node.identifier_token().value());
 					std::string_view qualified_type_name = qualified_type_name_builder.commit();
-					
+
 					// For dependent templates, if the qualified type is not found, check for template arguments
 					// before creating a placeholder
 					std::string_view member_name = qualified_node.identifier_token().value();
 					bool has_template_args = (peek() == "<"_tok);
-					
+
 					if (has_dependent_args) {
 						// Phase 4: Check for lazy nested type instantiation before lookup
 						// If this is a nested type (e.g., outer_int::inner), try lazy instantiation
@@ -1631,7 +1607,7 @@ ParseResult Parser::parse_type_specifier()
 								FLASH_LOG(Templates, Debug, "Used lazy nested type instantiation for: ", qualified_type_name);
 							}
 						}
-						
+
 						// Phase 3: Check for lazy type alias evaluation before lookup
 						// If this is a member type alias (e.g., remove_const_int::type), try lazy evaluation
 						StringHandle class_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
@@ -1642,7 +1618,7 @@ ParseResult Parser::parse_type_specifier()
 								FLASH_LOG(Templates, Debug, "Used lazy type alias evaluation for: ", qualified_type_name);
 							}
 						}
-						
+
 						auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == getTypesByNameMap().end()) {
 							// Type not found
@@ -1656,78 +1632,78 @@ ParseResult Parser::parse_type_specifier()
 								// Check if the member is a known template before parsing < as template arguments
 								auto member_template_opt = gTemplateRegistry.lookupTemplate(member_name);
 								auto member_var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
-								
+
 								// Also check with the full qualified name
 								auto full_template_opt = gTemplateRegistry.lookupTemplate(qualified_type_name);
 								auto full_var_template_opt = gTemplateRegistry.lookupVariableTemplate(qualified_type_name);
-								
-								bool member_is_template = member_template_opt.has_value() || 
+
+								bool member_is_template = member_template_opt.has_value() ||
 								                          member_var_template_opt.has_value() ||
 								                          full_template_opt.has_value() ||
 								                          full_var_template_opt.has_value();
-								
+
 								if (!member_is_template) {
 									// Member is NOT a known template, so < is likely a comparison operator
 									// Don't parse it as template arguments - create placeholder without template args
-									FLASH_LOG_FORMAT(Templates, Debug, 
-									    "Member '{}' is not a known template - treating '<' as comparison operator, not template args",
-									    member_name);
-									has_template_args = false;  // Reset flag to skip template arg parsing
+									FLASH_LOG_FORMAT(Templates, Debug,
+									                 "Member '{}' is not a known template - treating '<' as comparison operator, not template args",
+									                 member_name);
+									has_template_args = false; // Reset flag to skip template arg parsing
 								}
 							}
-							
+
 							if (has_template_args) {
 								// Parse template arguments for the member (e.g., type<_If, _Else>)
 								auto member_template_args = parse_explicit_template_arguments();
 								if (!member_template_args.has_value()) {
 									return ParseResult::error("Failed to parse template arguments for dependent member template", type_name_token);
 								}
-								
+
 								// Append template arguments to qualified_type_name
 								// For dependent types, include argument count for better debugging
 								StringBuilder extended_name_builder;
 								qualified_type_name = extended_name_builder
-									.append(qualified_type_name)
-									.append("<")
-									.append(member_template_args->size())
-									.append(" args>")
-									.commit();
+								                          .append(qualified_type_name)
+								                          .append("<")
+								                          .append(member_template_args->size())
+								                          .append(" args>")
+								                          .commit();
 							}
-							
+
 							// Handle further nested type access after member template arguments
 							// e.g., ::template rebind<_Tp>::other
 							while (peek() == "::"_tok) {
 								SaveHandle nested_pos = save_token_position();
 								advance(); // consume '::'
-								
+
 								// Handle optional 'template' keyword
 								if (peek() == "template"_tok) {
 									advance(); // consume 'template'
 								}
-								
+
 								if (peek().is_identifier()) {
 									std::string_view nested_member = peek_info().value();
 									advance(); // consume identifier
-									
+
 									StringBuilder nested_builder;
 									qualified_type_name = nested_builder
-										.append(qualified_type_name)
-										.append("::")
-										.append(nested_member)
-										.commit();
+									                          .append(qualified_type_name)
+									                          .append("::")
+									                          .append(nested_member)
+									                          .commit();
 									discard_saved_token(nested_pos);
-									
+
 									// Check for more template arguments on this nested member
 									if (peek() == "<"_tok) {
 										auto nested_tmpl_args = parse_explicit_template_arguments();
 										if (nested_tmpl_args.has_value()) {
 											StringBuilder tmpl_builder;
 											qualified_type_name = tmpl_builder
-												.append(qualified_type_name)
-												.append("<")
-												.append(nested_tmpl_args->size())
-												.append(" args>")
-												.commit();
+											                          .append(qualified_type_name)
+											                          .append("<")
+											                          .append(nested_tmpl_args->size())
+											                          .append(" args>")
+											                          .commit();
 										}
 									}
 								} else {
@@ -1735,27 +1711,27 @@ ParseResult Parser::parse_type_specifier()
 									break;
 								}
 							}
-							
+
 							// Create a placeholder for the dependent qualified type
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							TypeInfo& type_info = add_empty_type_entry();
-							type_info.type_size_ = 0;  // Unknown size for dependent type
+							type_info.type_size_ = 0; // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
 							getTypesByNameMap()[type_idx] = &type_info;
-							
+
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							    type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 						}
 						// If type IS found, continue with normal lookup below
 					}
-					
+
 					// Look up the fully qualified type (e.g., "Traits_int::nested")
 					auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 					if (qual_type_it != getTypesByNameMap().end()) {
 						const TypeInfo* type_info = qual_type_it->second;
-						
+
 						// Handle both struct types and type aliases
 						if (type_info->isStruct()) {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
@@ -1766,20 +1742,20 @@ ParseResult Parser::parse_type_specifier()
 								type_size = 0;
 							}
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							    type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 						} else {
 							// This is a type alias - return the aliased type
 							type_size = static_cast<unsigned char>(type_info->type_size_);
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->type_index_.withCategory(type_info->typeEnum()), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							    type_info->type_index_.withCategory(type_info->typeEnum()), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 						}
 					}
-					
+
 					// Check if this is a member class template (e.g., Outer<int>::Inner<int>)
 					if (has_template_args) {
 						StringHandle member_template_name_handle = StringTable::getOrInternStringHandle(qualified_type_name);
 						auto member_template_opt = gTemplateRegistry.lookupTemplate(StringTable::getStringView(member_template_name_handle));
-						
+
 						// Member templates are registered on the primary class template name (e.g., Outer::Inner),
 						// while lookups here use the instantiated name (e.g., Outer$hash::Inner).
 						// Fall back to the primary outer template name when available.
@@ -1788,25 +1764,25 @@ ParseResult Parser::parse_type_specifier()
 							if (parent_type_it != getTypesByNameMap().end() && parent_type_it->second->isTemplateInstantiation()) {
 								StringBuilder template_member_builder;
 								std::string_view template_member_name = template_member_builder.append(parent_type_it->second->baseTemplateName())
-									.append("::")
-									.append(member_name)
-									.commit();
+								                                            .append("::")
+								                                            .append(member_name)
+								                                            .commit();
 								member_template_name_handle = StringTable::getOrInternStringHandle(template_member_name);
 								member_template_opt = gTemplateRegistry.lookupTemplate(StringTable::getStringView(member_template_name_handle));
 							}
 						}
-						
+
 						if (member_template_opt.has_value() && member_template_opt->is<TemplateClassDeclarationNode>()) {
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
 								return ParseResult::error("Failed to parse template arguments for member class template", type_name_token);
 							}
-							
+
 							auto member_instantiated = try_instantiate_class_template(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							if (member_instantiated.has_value() && member_instantiated->is<StructDeclarationNode>()) {
 								ast_nodes_.push_back(*member_instantiated);
 							}
-							
+
 							std::string_view member_instantiated_name = get_instantiated_class_name(StringTable::getStringView(member_template_name_handle), *member_template_args);
 							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_instantiated_name));
 							if (member_type_it != getTypesByNameMap().end()) {
@@ -1818,24 +1794,24 @@ ParseResult Parser::parse_type_specifier()
 									}
 								}
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									member_type_info->type_index_.withCategory(member_type_info->typeEnum()), member_type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+								    member_type_info->type_index_.withCategory(member_type_info->typeEnum()), member_type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 							}
 							return ParseResult::error("Failed to resolve instantiated member class template type", type_name_token);
 						}
 					}
-					
+
 					// Check if this might be a member template alias (e.g., Template<int>::type<Args>)
 					// member_name and has_template_args already declared above
-					
+
 					// Check if the next token is '<', indicating template arguments for the member
 					if (has_template_args) {
 						// First try looking up with the instantiated name
 						// Note: qualified_type_name already includes ::member_name from line 6689
 						auto member_alias_opt = gTemplateRegistry.lookup_alias_template(qualified_type_name);
-						
+
 						// Keep a copy for error messages
 						std::string member_alias_name_str = std::string(qualified_type_name);
-						
+
 						// If not found, check if this instantiation came from a partial specialization pattern
 						if (!member_alias_opt.has_value()) {
 							auto pattern_name_opt = gTemplateRegistry.get_instantiation_pattern(StringTable::getOrInternStringHandle(instantiated_name));
@@ -1848,41 +1824,41 @@ ParseResult Parser::parse_type_specifier()
 								pattern_builder.reset();
 							}
 						}
-						
+
 						// If still not found, try with the base template name (for non-partial-spec cases)
 						// Instantiated names have patterns like "ClassName_int" or "ClassName_int_1"
 						// We need to find the original template name by progressively stripping suffixes
 						if (!member_alias_opt.has_value()) {
 							std::string_view base_template_name = instantiated_name;
-							
+
 							// Try progressively stripping '_suffix' patterns until we find a match
 							while (!member_alias_opt.has_value() && !base_template_name.empty()) {
 								size_t underscore_pos = base_template_name.find_last_of('_');
 								if (underscore_pos == std::string_view::npos) {
-									break;  // No more underscores to strip
+									break; // No more underscores to strip
 								}
-								
+
 								base_template_name = base_template_name.substr(0, underscore_pos);
 								if (base_template_name.empty()) {
 									break;
 								}
-								
+
 								StringBuilder base_builder;
 								std::string_view base_member_alias_name = base_builder.append(base_template_name).append("::").append(member_name).preview();
 								member_alias_opt = gTemplateRegistry.lookup_alias_template(base_member_alias_name);
 								base_builder.reset();
 							}
 						}
-						
+
 						if (member_alias_opt.has_value()) {
 							const TemplateAliasNode& alias_node = member_alias_opt->as<TemplateAliasNode>();
-							
+
 							// Parse template arguments for the member alias
 							auto member_template_args = parse_explicit_template_arguments();
 							if (!member_template_args.has_value()) {
 								return ParseResult::error("Failed to parse template arguments for member template alias: " + member_alias_name_str, type_name_token);
 							}
-							
+
 							// Instantiate the member template alias with the provided arguments
 							TypeSpecifierNode instantiated_type = alias_node.target_type_node();
 							[[maybe_unused]] const auto& template_params = alias_node.template_parameters();
@@ -1892,7 +1868,7 @@ ParseResult Parser::parse_type_specifier()
 							for (size_t i = 0; i < member_template_args->size() && i < param_names.size(); ++i) {
 								const auto& arg = (*member_template_args)[i];
 								std::string_view param_name = param_names[i].view();
-								
+
 								// Check if the target type refers to this template parameter
 								bool is_template_param = false;
 								if ((instantiated_type.category() == TypeCategory::UserDefined || instantiated_type.category() == TypeCategory::TypeAlias || instantiated_type.category() == TypeCategory::Template)) {
@@ -1901,21 +1877,20 @@ ParseResult Parser::parse_type_specifier()
 										is_template_param = true;
 									}
 								}
-								
+
 								if (is_template_param) {
 									// The target type is using this template parameter
 									if (arg.is_value) {
 										FLASH_LOG(Parser, Error, "Non-type template arguments not supported in member template aliases yet");
 										return ParseResult::error("Non-type template arguments not supported in member template aliases", type_name_token);
 									}
-									
+
 									// Save pointer/reference modifiers from target type
 									size_t ptr_depth = instantiated_type.pointer_depth();
 									bool is_ref = instantiated_type.is_reference();
 									bool is_rval_ref = instantiated_type.is_rvalue_reference();
 									CVQualifier cv_qual = instantiated_type.cv_qualifier();
-									
-									
+
 									// Get the size in bits for the argument type
 									int size_bits = 0;
 									if (is_struct_type(arg.category())) {
@@ -1927,24 +1902,23 @@ ParseResult Parser::parse_type_specifier()
 										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
 									}
 									FLASH_LOG_FORMAT(Parser, Debug, "Before substitution - arg.category={}, size_bits={}", static_cast<int>(arg.category()), size_bits);
-									
+
 									// Create new type with substituted base type
 									instantiated_type = TypeSpecifierNode(
-										arg.type_index.withCategory(arg.typeEnum()),
-										size_bits,
-										Token(),  // No token for instantiated type
-										cv_qual,
-										ReferenceQualifier::None
-									);
-									
+									    arg.type_index.withCategory(arg.typeEnum()),
+									    size_bits,
+									    Token(), // No token for instantiated type
+									    cv_qual,
+									    ReferenceQualifier::None);
+
 									// Reapply pointer/reference modifiers from target type
 									for (size_t p = 0; p < ptr_depth; ++p) {
 										instantiated_type.add_pointer_level(CVQualifier::None);
 									}
 									if (is_rval_ref) {
-										instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference);  // rvalue ref
+										instantiated_type.set_reference_qualifier(ReferenceQualifier::RValueReference); // rvalue ref
 									} else if (is_ref) {
-										instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue ref
+										instantiated_type.set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue ref
 									}
 								}
 							}
@@ -1952,19 +1926,18 @@ ParseResult Parser::parse_type_specifier()
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 						}
 					}
-					
+
 					// If we're in a template body and the instantiated name is an incomplete instantiation,
 					// this is likely a template-dependent nested type that can't be resolved yet.
 					StringHandle inst_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
 					auto inst_type_it = getTypesByNameMap().find(inst_name_handle);
-					bool inst_is_incomplete = inst_type_it != getTypesByNameMap().end()
-						&& inst_type_it->second->is_incomplete_instantiation_;
+					bool inst_is_incomplete = inst_type_it != getTypesByNameMap().end() && inst_type_it->second->is_incomplete_instantiation_;
 					if (parsing_template_depth_ > 0 && inst_is_incomplete) {
 						// Create a placeholder UserDefined type for template-dependent nested types
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							TypeIndex{}.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						    TypeIndex{}.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					}
-					
+
 					// SFINAE: If we're in a substitution context and can't find the nested type,
 					// this is a substitution failure, not a hard error
 					if (in_sfinae_context_) {
@@ -1975,12 +1948,12 @@ ParseResult Parser::parse_type_specifier()
 						std::string_view error_msg = error_builder.append("SFINAE substitution failure: ").append(qualified_type_name).commit();
 						return ParseResult::error(std::string(error_msg), type_name_token);
 					}
-					
+
 					StringBuilder error_builder;
 					std::string_view error_msg = error_builder.append("Unknown nested type: ").append(qualified_type_name).commit();
 					return ParseResult::error(std::string(error_msg), type_name_token);
 				}
-				
+
 				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 				if (inst_type_it != getTypesByNameMap().end()) {
 					const TypeInfo* existing_type = inst_type_it->second;
@@ -1993,11 +1966,11 @@ ParseResult Parser::parse_type_specifier()
 							type_size = 0;
 						}
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							existing_type->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						    existing_type->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							existing_type->type_index_.withCategory(existing_type->typeEnum()), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						    existing_type->type_index_.withCategory(existing_type->typeEnum()), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					}
 				}
 
@@ -2008,10 +1981,10 @@ ParseResult Parser::parse_type_specifier()
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
-					type_info.type_size_ = 0;  // Unknown size for dependent type
+					type_info.type_size_ = 0; // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
-					
+
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
 					// This is needed for deferred alias template detection
 					auto template_args_info = convertToTemplateArgInfo(template_args.value());
@@ -2020,7 +1993,7 @@ ParseResult Parser::parse_type_specifier()
 					                 type_name, template_args_info.size());
 
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					    type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 				}
 				// If type not found, fall through to error handling below
 			}
@@ -2031,7 +2004,7 @@ ParseResult Parser::parse_type_specifier()
 		if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 			const auto& template_class = template_opt->as<TemplateClassDeclarationNode>();
 			const auto& template_params = template_class.template_parameters();
-			
+
 			// Check if all parameters have defaults
 			bool all_have_defaults = true;
 			for (const auto& param_node : template_params) {
@@ -2043,12 +2016,12 @@ ParseResult Parser::parse_type_specifier()
 					}
 				}
 			}
-			
+
 			if (all_have_defaults) {
 				// Instantiate with empty args - defaults will be filled in
 				std::vector<TemplateTypeArg> empty_args;
 				auto instantiated_class = try_instantiate_class_template(type_name, empty_args);
-				
+
 				// Fill in default template arguments to get the actual instantiated name
 				// Helper lambda to build instantiated template name suffix
 				std::vector<TemplateTypeArg> filled_template_args;
@@ -2068,22 +2041,22 @@ ParseResult Parser::parse_type_specifier()
 						const ASTNode& default_node = param.default_value();
 						if (default_node.is<ExpressionNode>()) {
 							const ExpressionNode& expr = default_node.as<ExpressionNode>();
-							
+
 							if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 								const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
-								
-							if (!qual_id.namespace_handle().isGlobal()) {
-								std::string_view type_name_sv = gNamespaceRegistry.getName(qual_id.namespace_handle());
-								std::string_view member_name = qual_id.name();
-								
-								// Check for dependent placeholder using TypeInfo-based detection
-								auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name_sv);
-								if (is_dependent_placeholder && !filled_template_args.empty()) {
-									// Build the instantiated template name using hash-based naming
-									std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-										
+
+								if (!qual_id.namespace_handle().isGlobal()) {
+									std::string_view type_name_sv = gNamespaceRegistry.getName(qual_id.namespace_handle());
+									std::string_view member_name = qual_id.name();
+
+									// Check for dependent placeholder using TypeInfo-based detection
+									auto [is_dependent_placeholder, template_base_name] = isDependentTemplatePlaceholder(type_name_sv);
+									if (is_dependent_placeholder && !filled_template_args.empty()) {
+										// Build the instantiated template name using hash-based naming
+										std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
+
 										try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-										
+
 										auto type_it_inner = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 										if (type_it_inner != getTypesByNameMap().end()) {
 											const TypeInfo* type_info = type_it_inner->second;
@@ -2129,9 +2102,9 @@ ParseResult Parser::parse_type_specifier()
 						}
 					}
 				}
-				
+
 				std::string_view instantiated_name = get_instantiated_class_name(type_name, filled_template_args);
-				
+
 				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 				if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
 					const TypeInfo* struct_type_info = inst_type_it->second;
@@ -2143,7 +2116,7 @@ ParseResult Parser::parse_type_specifier()
 						type_size = 0;
 					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(
-						struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+					    struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 				}
 			}
 		}
@@ -2164,24 +2137,24 @@ ParseResult Parser::parse_type_specifier()
 					auto param_type_it = getTypesByNameMap().find(param_name);
 					if (param_type_it != getTypesByNameMap().end()) {
 						TypeIndex param_type_idx = param_type_it->second->type_index_;
-						FLASH_LOG_FORMAT(Templates, Debug, 
-							"parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}", 
-							type_name, param_type_idx);
+						FLASH_LOG_FORMAT(Templates, Debug,
+						                 "parse_type_specifier: '{}' is a template parameter, returning dependent type at index {}",
+						                 type_name, param_type_idx);
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							param_type_idx.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						    param_type_idx.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					} else {
 						// Template parameter not yet in getTypesByNameMap() - create a placeholder
 						// This can happen when parsing the template parameter list itself
-						FLASH_LOG_FORMAT(Templates, Debug, 
-							"parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder", 
-							type_name);
+						FLASH_LOG_FORMAT(Templates, Debug,
+						                 "parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder",
+						                 type_name);
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_size_ = 0;  // Unknown size for dependent type
+						type_info.type_size_ = 0; // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
 						getTypesByNameMap()[type_name_handle] = &type_info;
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+						    type_info.type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					}
 				}
 			}
@@ -2200,27 +2173,47 @@ ParseResult Parser::parse_type_specifier()
 		// member-function or struct-parsing context.
 		auto tryStructScopedTypeAlias = [&]() -> const TypeInfo* {
 			auto tryName = [&](std::string_view struct_name) -> const TypeInfo* {
-				if (struct_name.empty()) return nullptr;
+				if (struct_name.empty())
+					return nullptr;
 				StringBuilder sb;
 				StringHandle qualified = StringTable::getOrInternStringHandle(
-					sb.append(struct_name).append("::").append(type_name).commit());
+				    sb.append(struct_name).append("::").append(type_name).commit());
 				auto it = getTypesByNameMap().find(qualified);
-				if (it == getTypesByNameMap().end()) return nullptr;
+				if (it == getTypesByNameMap().end())
+					return nullptr;
 				const TypeInfo* info = it->second;
 				// Only accept concrete typedef entries (non-struct, non-placeholder)
-				if (info->isStruct() || info->is_incomplete_instantiation_) return nullptr;
+				if (info->isStruct() || info->is_incomplete_instantiation_)
+					return nullptr;
 				return info;
 			};
 			// Innermost member function context takes priority
 			for (auto it = member_function_context_stack_.rbegin();
-				 it != member_function_context_stack_.rend(); ++it) {
+			     it != member_function_context_stack_.rend(); ++it) {
 				std::string_view sname = StringTable::getStringView(it->struct_name);
-				if (const TypeInfo* found = tryName(sname)) return found;
+				if (const TypeInfo* found = tryName(sname))
+					return found;
+				// Also search base classes for inherited typedefs (e.g., Derived inherits from Base<T>)
+				if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
+					const TypeInfo* inherited = lookup_inherited_type_alias(
+					    it->struct_name, type_name_handle);
+					if (inherited)
+						return inherited;
+				}
 			}
 			// Then struct-parsing context stack
 			for (auto it = struct_parsing_context_stack_.rbegin();
-				 it != struct_parsing_context_stack_.rend(); ++it) {
-				if (const TypeInfo* found = tryName(it->struct_name)) return found;
+			     it != struct_parsing_context_stack_.rend(); ++it) {
+				if (const TypeInfo* found = tryName(it->struct_name))
+					return found;
+				// Also search base classes for inherited typedefs
+				if (it->local_struct_info && !it->local_struct_info->base_classes.empty()) {
+					StringHandle struct_name_handle = it->local_struct_info->getName();
+					const TypeInfo* inherited = lookup_inherited_type_alias(
+					    struct_name_handle, type_name_handle);
+					if (inherited)
+						return inherited;
+				}
 			}
 			return nullptr;
 		};
@@ -2229,7 +2222,7 @@ ParseResult Parser::parse_type_specifier()
 		const TypeInfo* type_info_ctx = struct_scoped ? struct_scoped : lookupTypeInCurrentContext(type_name_handle);
 		if (type_info_ctx && type_info_ctx->isStruct()) {
 			// This is a struct type (or a typedef to a struct type)
-			const TypeInfo* original_type_info = type_info_ctx;  // Keep reference to original for checking ref qualifiers
+			const TypeInfo* original_type_info = type_info_ctx; // Keep reference to original for checking ref qualifiers
 			const TypeInfo* struct_type_info = type_info_ctx;
 			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
@@ -2244,17 +2237,17 @@ ParseResult Parser::parse_type_specifier()
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
 				type_size = 0;
 			}
-			
+
 			// Create the TypeSpecifierNode for the struct
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
-			
+			    struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+
 			// If this is a type alias with reference qualifiers (e.g., using ReturnType = Value&&),
 			// we need to preserve those reference qualifiers on the returned TypeSpecifierNode
 			if (original_type_info->reference_qualifier_ != ReferenceQualifier::None) {
@@ -2263,7 +2256,7 @@ ParseResult Parser::parse_type_specifier()
 
 			// Also preserve pointer depth if the alias has pointers
 			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(original_type_info->pointer_depth_);
-			
+
 			return ParseResult::success(type_spec_node);
 		}
 
@@ -2277,20 +2270,21 @@ ParseResult Parser::parse_type_specifier()
 				type_size = enum_info->underlying_size;
 			} else {
 				// Enum is being defined but not yet finalized
-				type_size = 32;  // Default to int size
+				type_size = 32; // Default to int size
 			}
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
-				enum_type_info->type_index_.withCategory(TypeCategory::Enum), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+			    enum_type_info->type_index_.withCategory(TypeCategory::Enum), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 		}
 
 		// Otherwise, treat as generic user-defined type or typedef
 		// Look up the type_index if it's a registered type
-		TypeIndex user_type_index {};
+		TypeIndex user_type_index{};
 		TypeCategory resolved_type = TypeCategory::UserDefined;
 		if (type_info_ctx) {
 			user_type_index = type_info_ctx->type_index_;
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
-			bool is_typedef = (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+			bool is_typedef = type_info_ctx->isTypeAlias() ||
+			                  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
 			if (!is_typedef && type_info_ctx->function_signature_.has_value()) {
 				is_typedef = true;
@@ -2305,7 +2299,7 @@ ParseResult Parser::parse_type_specifier()
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
-					user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+				    user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
 				// Add reference qualifiers from typedef
 				if (type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
@@ -2329,7 +2323,7 @@ ParseResult Parser::parse_type_specifier()
 			}
 		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
-			user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+		    user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 	}
 
 	std::string error_msg = "Unexpected token in type specifier";
@@ -2341,8 +2335,7 @@ ParseResult Parser::parse_type_specifier()
 	return ParseResult::error(error_msg, peek().is_eof() ? Token() : peek_info());
 }
 
-ParseResult Parser::parse_decltype_specifier()
-{
+ParseResult Parser::parse_decltype_specifier() {
 	// Parse decltype(expr) or decltype(auto) or __typeof__(expr) type specifier
 	// Example: decltype(x + y) result = x + y;
 	// Example: decltype(auto) result = x + y;  // C++14 deduced return type
@@ -2362,7 +2355,7 @@ ParseResult Parser::parse_decltype_specifier()
 	// C++14: Check for decltype(auto) - special case for deduced return types
 	// decltype(auto) deduces the type preserving references and cv-qualifiers
 	if (keyword == "decltype" && peek() == "auto"_tok) {
-		advance();  // consume 'auto'
+		advance(); // consume 'auto'
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after 'decltype(auto)'", current_token_);
 		}
@@ -2396,7 +2389,8 @@ ParseResult Parser::parse_decltype_specifier()
 					paren_depth++;
 				} else if (peek() == ")"_tok) {
 					paren_depth--;
-					if (paren_depth == 0) break;  // Don't consume the final ')'
+					if (paren_depth == 0)
+						break; // Don't consume the final ')'
 				}
 				advance();
 			}
@@ -2428,10 +2422,12 @@ ParseResult Parser::parse_decltype_specifier()
 				restore_token_position(comma_expr_pos);
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
-					if (peek() == "("_tok) paren_depth++;
+					if (peek() == "("_tok)
+						paren_depth++;
 					else if (peek() == ")"_tok) {
 						paren_depth--;
-						if (paren_depth == 0) break;
+						if (paren_depth == 0)
+							break;
 					}
 					advance();
 				}
