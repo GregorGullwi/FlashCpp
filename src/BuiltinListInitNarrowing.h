@@ -156,10 +156,16 @@ inline bool integerConstantFitsTarget(const IntegerConstantValue& constant, Type
 }
 
 template <typename FloatT>
+template <typename FloatT>
 inline bool isIntegerConstantExactlyRepresentableInFloating(const IntegerConstantValue& constant) {
 	if (constant.is_signed) {
 		FloatT converted = static_cast<FloatT>(constant.signed_value);
 		if (!std::isfinite(converted)) {
+			return false;
+		}
+		// Guard against UB: back-conversion is only safe if converted is within [LLONG_MIN, LLONG_MAX]
+		if (converted < static_cast<FloatT>(std::numeric_limits<long long>::min()) ||
+			converted > static_cast<FloatT>(std::numeric_limits<long long>::max())) {
 			return false;
 		}
 		return static_cast<long long>(converted) == constant.signed_value;
@@ -167,6 +173,11 @@ inline bool isIntegerConstantExactlyRepresentableInFloating(const IntegerConstan
 
 	FloatT converted = static_cast<FloatT>(constant.unsigned_value);
 	if (!std::isfinite(converted)) {
+		return false;
+	}
+	// Guard against UB: back-conversion is only safe if converted is within [0, ULLONG_MAX]
+	if (converted < static_cast<FloatT>(0) ||
+		converted > static_cast<FloatT>(std::numeric_limits<unsigned long long>::max())) {
 		return false;
 	}
 	return static_cast<unsigned long long>(converted) == constant.unsigned_value;
