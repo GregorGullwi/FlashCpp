@@ -14,7 +14,6 @@ Link using clang and run to verify the return output.
 Try to reuse as much code as possible. Look in the same PR for similar code patterns and try to extract it into a function or a local lambda.
 For patterns that are used in different places in a compiler, like parsing attributes, skipping balanced braces, brackets, etc, search for existing helper functions and try to use those.
 Target warning-clean builds under both MSVC and clang. Use tab indentation, same-line braces, and keep includes grouped `<system>` before quotes.
-Run `clang-format -i` on every touched `.h` and `.cpp` file before each commit, using the repository `.clang-format`.
 Types (`AstToIr`, `ChunkedAnyVector`) use PascalCase; functions and methods stay camelCase.
 Prefer StringHandle primarily or `std::string_view` secondary for non-owning parameters, follow the existing enum/class organization, and reach for branchless patterns (conditional moves, bit masks) when they keep IR simpler.
 Prefer StringBuilder instead of using std::string concatenation, apart from when throwing exceptions, since we don't care about performance in that context.
