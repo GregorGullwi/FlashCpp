@@ -2173,11 +2173,18 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 									// Emit error only when every matching converting constructor is explicit.
 								if (found_matching_ctor && !found_non_explicit_ctor) {
-									FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
-											  StringTable::getStringView(type_info->name()), "'");
-									FLASH_LOG(General, Error, "  Use direct initialization: ",
-											  decl.identifier_token().value(), "(value) instead of = value");
-									throw CompileError("Cannot use copy initialization with explicit constructor");
+									const std::string_view target_name = StringTable::getStringView(type_info->name());
+									const bool suppress_explicit_ctor_error =
+										is_integer_type(init_type) && type_info->struct_info_ &&
+										type_info->struct_info_->total_size == 1 &&
+										isExactComparisonCategoryType(type_info->type_index_);
+									if (!suppress_explicit_ctor_error) {
+										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
+												  target_name, "'");
+										FLASH_LOG(General, Error, "  Use direct initialization: ",
+												  decl.identifier_token().value(), "(value) instead of = value");
+										throw CompileError("Cannot use copy initialization with explicit constructor");
+									}
 								}
 							}
 						}

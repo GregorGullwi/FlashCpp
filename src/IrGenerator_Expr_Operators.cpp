@@ -2125,6 +2125,129 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 		}
 
+		// Built-in three-way comparison for primitive types (C++20 [expr.spaceship]).
+		// Integral types return std::strong_ordering; floating-point types return
+		// std::partial_ordering.
+		if (op == "<=>" && lhsCat != TypeCategory::Struct && rhsCat != TypeCategory::Struct) {
+			const bool is_float = is_floating_point_type(lhsCat) || is_floating_point_type(rhsCat);
+			const char* qualified_name = is_float ? "std::partial_ordering" : "std::strong_ordering";
+			const char* unqualified_name = is_float ? "partial_ordering" : "strong_ordering";
+			const StringHandle ordering_handle = StringTable::getOrInternStringHandle(qualified_name);
+			const TypeInfo* ordering_type = findTypeByName(ordering_handle);
+			if (!ordering_type) {
+				ordering_type = findTypeByName(StringTable::getOrInternStringHandle(unqualified_name));
+			}
+
+			if (ordering_type) {
+				const int ordering_size = static_cast<int>(ordering_type->struct_info_
+															   ? ordering_type->struct_info_->total_size * 8
+															   : 8);
+
+				// Compute three-way result: (a > b) - (a < b) -> -1, 0, or 1.
+				TempVar gt_temp = var_counter.next();
+				TempVar lt_temp = var_counter.next();
+				TempVar result_temp = var_counter.next();
+
+				if (is_float) {
+					BinaryOp gt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = gt_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatGreaterThan, std::move(gt_op), binaryOperatorNode.get_token()));
+
+					BinaryOp lt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = lt_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatLessThan, std::move(lt_op), binaryOperatorNode.get_token()));
+
+					BinaryOp sub_op{
+						.lhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, gt_temp),
+						.rhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, lt_temp),
+						.result = result_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
+
+					TempVar lhs_nan_temp = var_counter.next();
+					TempVar rhs_nan_temp = var_counter.next();
+					TempVar unordered_temp = var_counter.next();
+
+					BinaryOp lhs_nan_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(lhsExprResult),
+						.result = lhs_nan_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(lhs_nan_op), binaryOperatorNode.get_token()));
+
+					BinaryOp rhs_nan_op{
+						.lhs = toTypedValue(rhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = rhs_nan_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::FloatNotEqual, std::move(rhs_nan_op), binaryOperatorNode.get_token()));
+
+					BinaryOp unordered_op{
+						.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, lhs_nan_temp),
+						.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, rhs_nan_temp),
+						.result = unordered_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::BitwiseOr, std::move(unordered_op), binaryOperatorNode.get_token()));
+
+					static size_t builtin_spaceship_counter = 0;
+					auto unordered_label = StringTable::createStringHandle(
+						StringBuilder().append("spaceship_unordered_").append(builtin_spaceship_counter));
+					auto end_label = StringTable::createStringHandle(
+						StringBuilder().append("spaceship_end_").append(builtin_spaceship_counter));
+					builtin_spaceship_counter++;
+
+					CondBranchOp unordered_branch;
+					unordered_branch.label_true = unordered_label;
+					unordered_branch.label_false = end_label;
+					unordered_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, unordered_temp);
+					ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(unordered_branch), binaryOperatorNode.get_token()));
+
+					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = unordered_label}, binaryOperatorNode.get_token()));
+
+					AssignmentOp assign_unordered_op;
+					assign_unordered_op.result = result_temp;
+					assign_unordered_op.lhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, result_temp);
+					assign_unordered_op.rhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, 0x80ULL);
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_unordered_op), binaryOperatorNode.get_token()));
+
+					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, binaryOperatorNode.get_token()));
+				} else {
+					const bool is_unsigned = is_unsigned_integer_type(lhsCat) || is_unsigned_integer_type(rhsCat);
+					const IrOpcode gt_opcode = is_unsigned ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
+					const IrOpcode lt_opcode = is_unsigned ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
+
+					BinaryOp gt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = gt_temp,
+					};
+					ir_.addInstruction(IrInstruction(gt_opcode, std::move(gt_op), binaryOperatorNode.get_token()));
+
+					BinaryOp lt_op{
+						.lhs = toTypedValue(lhsExprResult),
+						.rhs = toTypedValue(rhsExprResult),
+						.result = lt_temp,
+					};
+					ir_.addInstruction(IrInstruction(lt_opcode, std::move(lt_op), binaryOperatorNode.get_token()));
+					BinaryOp sub_op{
+						.lhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, gt_temp),
+						.rhs = makeTypedValue(TypeCategory::Char, SizeInBits{8}, lt_temp),
+						.result = result_temp,
+					};
+					ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
+				}
+
+				return makeExprResult(ordering_type->type_index_, SizeInBits{ordering_size},
+									  IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
+			}
+		}
+
 		// If we get here, operator<=> is not defined or not found
 		if (can_try_spaceship_rewrite) {
 			throw CompileError("Operator" + std::string(op) + " not defined for operand types");
