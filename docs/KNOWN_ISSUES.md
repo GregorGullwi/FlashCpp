@@ -176,21 +176,6 @@ they represent true C++ violations (not evaluator gaps), then the existing enfor
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
 
-## Function pointer stored in a template struct — indirect call IR error
-
-Instantiating a template struct whose member is a typedef'd or `using`-alias function
-pointer, then calling through that member, triggers an IR conversion error:
-
-> IR conversion failed for node 'call': Function pointer member missing
-> function_signature for indirect call return type
-
-The struct's `StructMember::function_signature` is not populated for function-pointer
-members that arrive via template instantiation, so `IrGenerator_Call_Indirect.cpp` throws
-an `InternalError` and skips the function body.  The resulting object file has no code for
-the function, causing a runtime crash (signal 11) if the caller is linked.
-
-**Workaround:** Use a non-template struct holding the function pointer.
-
 ## `function_signature` propagation from unsubstituted orig type is a no-op for template parameters
 
 Several code paths in `Parser_Templates_Inst_Deduction.cpp` copy `function_signature`
