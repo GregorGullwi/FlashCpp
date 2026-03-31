@@ -48,10 +48,10 @@ std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_i
 	return std::nullopt;
 }
 
-// Helper function to parse built-in type construction:
+// Helper function to parse built-in functional-style construction syntax:
 // Type(expression), Type(), Type{expression}, or Type{}.
-// This consolidates the logic for parsing built-in type construction from both
-// keyword and identifier contexts.
+// This consolidates the logic for built-in type construction from both keyword
+// and identifier contexts.
 ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
 	// Expect '(' or '{' after type name
 	if (current_token_.kind().is_eof() ||
@@ -91,14 +91,19 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 	}
 
+	auto make_constructor_call = [&](ChunkedVector<ASTNode>&& args) -> ParseResult {
+		auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
+		auto result = emplace_node<ExpressionNode>(
+			ConstructorCallNode(type_node, std::move(args), type_token));
+		return ParseResult::success(result);
+	};
+
 	// Check for empty constructor syntax: Type() / Type{} value-initializes to zero.
 	if (current_token_.value() == closing_delimiter) {
 		advance(); // consume ')' or '}'
 
-		auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
 		ChunkedVector<ASTNode> args;
-		auto result = emplace_node<ExpressionNode>(ConstructorCallNode(type_node, std::move(args), type_token));
-		return ParseResult::success(result);
+		return make_constructor_call(std::move(args));
 	}
 
 	// Parse the expression inside the parentheses
@@ -131,15 +136,13 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 	}
 
-	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
-
 	if (is_brace_init) {
 		ChunkedVector<ASTNode> args;
 		args.push_back(*final_expr);
-		auto result = emplace_node<ExpressionNode>(
-			ConstructorCallNode(type_node, std::move(args), type_token));
-		return ParseResult::success(result);
+		return make_constructor_call(std::move(args));
 	}
+
+	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
 
 	// Create a static cast node (functional cast behaves like static_cast)
 	auto result = emplace_node<ExpressionNode>(
