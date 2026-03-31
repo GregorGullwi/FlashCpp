@@ -37,187 +37,206 @@ THE SOFTWARE.
 namespace COFFI {
 //-------------------------------------------------------------------------
 //! Class for accessing the strings table.
-class coffi_strings : public virtual string_to_name_provider {
-public:
-	//---------------------------------------------------------------------
-	coffi_strings() : strings_{}, strings_reserved_{0} { clean_strings(); }
+class coffi_strings : public virtual string_to_name_provider
+{
+  public:
+    //---------------------------------------------------------------------
+    coffi_strings() : strings_{}, strings_reserved_{0} { clean_strings(); }
 
-	//---------------------------------------------------------------------
-	//! Discards the copy constructor
-	coffi_strings(const coffi_strings&) = delete;
+    //---------------------------------------------------------------------
+    //! Discards the copy constructor
+    coffi_strings(const coffi_strings&) = delete;
 
-	//---------------------------------------------------------------------
-	virtual ~coffi_strings() {
-		clean_strings();
-		strings_.reset();
-	}
+    //---------------------------------------------------------------------
+    virtual ~coffi_strings()
+    {
+        clean_strings();
+        strings_.reset();
+    }
 
-	//---------------------------------------------------------------------
-	uint32_t get_strings_size() const {
-		if (!strings_) {
-			return 0;
-		}
-		return *reinterpret_cast<uint32_t*>(strings_.get());
-	}
+    //---------------------------------------------------------------------
+    uint32_t get_strings_size() const
+    {
+        if (!strings_) {
+            return 0;
+        }
+        return *reinterpret_cast<uint32_t*>(strings_.get());
+    }
 
-	//---------------------------------------------------------------------
-	void set_strings_size(uint32_t value) {
-		if (!strings_) {
-			return;
-		}
-		*reinterpret_cast<uint32_t*>(strings_.get()) = value;
-	}
+    //---------------------------------------------------------------------
+    void set_strings_size(uint32_t value)
+    {
+        if (!strings_) {
+            return;
+        }
+        *reinterpret_cast<uint32_t*>(strings_.get()) = value;
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc string_to_name_provider::string_to_name()
-	virtual std::string string_to_name(const char* str) const {
-		return string_to_name_internal(str, false);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc string_to_name_provider::string_to_name()
+    virtual std::string string_to_name(const char* str) const
+    {
+        return string_to_name_internal(str, false);
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc string_to_name_provider::section_string_to_name()
-	virtual std::string section_string_to_name(const char* str) const {
-		return string_to_name_internal(str, true);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc string_to_name_provider::section_string_to_name()
+    virtual std::string section_string_to_name(const char* str) const
+    {
+        return string_to_name_internal(str, true);
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc string_to_name_provider::name_to_string()
-	virtual void name_to_string(std::string_view name, char* str) {
-		return name_to_string_internal(name, str, false);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc string_to_name_provider::name_to_string()
+    virtual void name_to_string(std::string_view name, char* str)
+    {
+        return name_to_string_internal(name, str, false);
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc string_to_name_provider::name_to_section_string()
-	virtual void name_to_section_string(std::string_view name, char* str) {
-		return name_to_string_internal(name, str, true);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc string_to_name_provider::name_to_section_string()
+    virtual void name_to_section_string(std::string_view name, char* str)
+    {
+        return name_to_string_internal(name, str, true);
+    }
 
-	//---------------------------------------------------------------------
-	virtual const char* get_strings() const { return strings_.get(); }
+    //---------------------------------------------------------------------
+    virtual const char* get_strings() const { return strings_.get(); }
 
-	//---------------------------------------------------------------------
-	virtual void set_strings(const char* str, uint32_t size) {
-		std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(size);
-		if (new_strings) {
-			std::copy(str, str + size, new_strings.get());
-			strings_ = std::move(new_strings);
-			strings_reserved_ = size;
-			set_strings_size(size);
-		}
-	}
+    //---------------------------------------------------------------------
+    virtual void set_strings(const char* str, uint32_t size)
+    {
+        std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(size);
+        if (new_strings) {
+            std::copy(str, str + size, new_strings.get());
+            strings_          = std::move(new_strings);
+            strings_reserved_ = size;
+            set_strings_size(size);
+        }
+    }
 
-	//---------------------------------------------------------------------
-protected:
-	//---------------------------------------------------------------------
-	void clean_strings() {
-		if (strings_) {
-			strings_.reset();
-		}
-		strings_ = std::make_unique<char[]>(4);
-		strings_reserved_ = 4;
-		set_strings_size(4);
-	}
+    //---------------------------------------------------------------------
+  protected:
+    //---------------------------------------------------------------------
+    void clean_strings()
+    {
+        if (strings_) {
+            strings_.reset();
+        }
+        strings_          = std::make_unique<char[]>(4);
+        strings_reserved_ = 4;
+        set_strings_size(4);
+    }
 
-	//---------------------------------------------------------------------
-	bool load_strings(std::istream& stream, const coff_header* header) {
-		clean_strings();
+    //---------------------------------------------------------------------
+    bool load_strings(std::istream& stream, const coff_header* header)
+    {
+        clean_strings();
 
-		if (header->get_symbol_table_offset() == 0) {
-			return true;
-		}
+        if (header->get_symbol_table_offset() == 0) {
+            return true;
+        }
 
-		uint32_t strings_offset =
-			header->get_symbol_table_offset() +
-			header->get_symbols_count() * sizeof(symbol_record);
-		stream.seekg(strings_offset);
-		stream.read(strings_.get(), 4);
-		std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(get_strings_size());
-		if (!new_strings) {
-			return false;
-		}
-		strings_reserved_ = get_strings_size();
-		stream.seekg(strings_offset);
-		stream.read(new_strings.get(), get_strings_size());
-		if (stream.gcount() !=
-			static_cast<std::streamsize>(get_strings_size())) {
-			return false;
-		}
-		strings_ = std::move(new_strings);
-		return true;
-	}
+        uint32_t strings_offset =
+            header->get_symbol_table_offset() +
+            header->get_symbols_count() * sizeof(symbol_record);
+        stream.seekg(strings_offset);
+        stream.read(strings_.get(), 4);
+        std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(get_strings_size());
+        if (!new_strings) {
+            return false;
+        }
+        strings_reserved_ = get_strings_size();
+        stream.seekg(strings_offset);
+        stream.read(new_strings.get(), get_strings_size());
+        if (stream.gcount() !=
+            static_cast<std::streamsize>(get_strings_size())) {
+            return false;
+        }
+        strings_ = std::move(new_strings);
+        return true;
+    }
 
-	//---------------------------------------------------------------------
-	void save_strings(std::ostream& stream) const {
-		if (strings_.get()) { // && get_strings_size() > 4) { - Gregor: Always save string tables, even empty ones
-			stream.write(strings_.get(), get_strings_size());
-		}
-	}
+    //---------------------------------------------------------------------
+    void save_strings(std::ostream& stream) const
+    {
+        if (strings_.get()) { // && get_strings_size() > 4) { - Gregor: Always save string tables, even empty ones
+            stream.write(strings_.get(), get_strings_size());
+        }
+    }
 
-	//---------------------------------------------------------------------
-	virtual std::string string_to_name_internal(const char* str,
-												bool is_section) const {
-		std::string ret;
+    //---------------------------------------------------------------------
+    virtual std::string string_to_name_internal(const char* str,
+                                                bool        is_section) const
+    {
+        std::string ret;
 
-		if (*(uint32_t*)str == 0 && strings_) {
-			uint32_t off = *(uint32_t*)(str + sizeof(uint32_t));
-			ret = strings_.get() + off;
-		} else if (is_section && str[0] == '/') {
-			int32_t off = std::atol(str + 1);
-			ret = strings_.get() + off;
-		} else {
-			char dst[COFFI_NAME_SIZE + 1];
-			dst[COFFI_NAME_SIZE] = 0;
-			std::strncpy(dst, str, COFFI_NAME_SIZE);
-			ret = std::string(dst);
-		}
+        if (*(uint32_t*)str == 0 && strings_) {
+            uint32_t off = *(uint32_t*)(str + sizeof(uint32_t));
+            ret          = strings_.get() + off;
+        }
+        else if (is_section && str[0] == '/') {
+            int32_t off = std::atol(str + 1);
+            ret         = strings_.get() + off;
+        }
+        else {
+            char dst[COFFI_NAME_SIZE + 1];
+            dst[COFFI_NAME_SIZE] = 0;
+            std::strncpy(dst, str, COFFI_NAME_SIZE);
+            ret = std::string(dst);
+        }
 
-		return ret;
-	}
+        return ret;
+    }
 
-	//---------------------------------------------------------------------
-	virtual void
-	name_to_string_internal(std::string_view name, char* str, bool is_section) {
-		size_t size = name.size();
-		if (size > COFFI_NAME_SIZE) {
-			uint32_t offset = get_strings_size();
-			uint32_t size_with_null = narrow_cast<uint32_t>(size) + 1;  // +1 for null terminator
-			if (get_strings_size() + size_with_null > strings_reserved_) {
-				uint32_t new_strings_reserved =
-					2 * (strings_reserved_ + size_with_null);
-				std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(new_strings_reserved);
-				if (!new_strings) {
-					offset = 0;
-					size = 0;
-				} else {
-					strings_reserved_ = new_strings_reserved;
-					std::copy(strings_.get(), strings_.get() + get_strings_size(),
-							  new_strings.get());
-					strings_ = std::move(new_strings);
-				}
-			}
-			// Copy string data (without null terminator from string_view)
-			std::copy(name.data(), name.data() + size,
-					  strings_.get() + get_strings_size());
-			// Add null terminator
-			strings_[get_strings_size() + size] = '\0';
-			set_strings_size(get_strings_size() + size_with_null);
-			if (is_section) {
-				str[0] = '/';
-				std::string s = std::to_string(offset);
-				std::strncpy(str + 1, s.c_str(), COFFI_NAME_SIZE - 1);
-			} else {
-				*(uint32_t*)str = 0;
-				*((uint32_t*)str + 1) = offset;
-			}
-		} else {
-			std::fill_n(str, COFFI_NAME_SIZE, '\0');
-			std::copy(name.begin(), name.end(), str);
-		}
-	}
+    //---------------------------------------------------------------------
+    virtual void
+    name_to_string_internal(std::string_view name, char* str, bool is_section)
+    {
+        size_t size = name.size();
+        if (size > COFFI_NAME_SIZE) {
+            uint32_t offset = get_strings_size();
+            uint32_t size_with_null = narrow_cast<uint32_t>(size) + 1;  // +1 for null terminator
+            if (get_strings_size() + size_with_null > strings_reserved_) {
+                uint32_t new_strings_reserved =
+                    2 * (strings_reserved_ + size_with_null);
+                std::unique_ptr<char[]> new_strings = std::make_unique<char[]>(new_strings_reserved);
+                if (!new_strings) {
+                    offset = 0;
+                    size   = 0;
+                }
+                else {
+                    strings_reserved_ = new_strings_reserved;
+                    std::copy(strings_.get(), strings_.get() + get_strings_size(),
+                              new_strings.get());
+                    strings_ = std::move(new_strings);
+                }
+            }
+            // Copy string data (without null terminator from string_view)
+            std::copy(name.data(), name.data() + size,
+                      strings_.get() + get_strings_size());
+            // Add null terminator
+            strings_[get_strings_size() + size] = '\0';
+            set_strings_size(get_strings_size() + size_with_null);
+            if (is_section) {
+                str[0]        = '/';
+                std::string s = std::to_string(offset);
+                std::strncpy(str + 1, s.c_str(), COFFI_NAME_SIZE - 1);
+            }
+            else {
+                *(uint32_t*)str       = 0;
+                *((uint32_t*)str + 1) = offset;
+            }
+        }
+        else {
+            std::fill_n(str, COFFI_NAME_SIZE, '\0');
+            std::copy(name.begin(), name.end(), str);
+        }
+    }
 
-	//---------------------------------------------------------------------
-	std::unique_ptr<char[]> strings_;
-	uint32_t strings_reserved_;
+    //---------------------------------------------------------------------
+    std::unique_ptr<char[]> strings_;
+    uint32_t                strings_reserved_;
 };
 
 } // namespace COFFI

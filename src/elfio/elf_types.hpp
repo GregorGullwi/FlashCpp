@@ -29,21 +29,21 @@ THE SOFTWARE.
 namespace ELFIO {
 #endif
 
-using Elf_Half = std::uint16_t;
-using Elf_Word = std::uint32_t;
-using Elf_Sword = std::int32_t;
-using Elf_Xword = std::uint64_t;
+using Elf_Half   = std::uint16_t;
+using Elf_Word   = std::uint32_t;
+using Elf_Sword  = std::int32_t;
+using Elf_Xword  = std::uint64_t;
 using Elf_Sxword = std::int64_t;
 
 using Elf32_Addr = std::uint32_t;
-using Elf32_Off = std::uint32_t;
+using Elf32_Off  = std::uint32_t;
 using Elf64_Addr = std::uint64_t;
-using Elf64_Off = std::uint64_t;
+using Elf64_Off  = std::uint64_t;
 
-using Elf32_Half = Elf_Half;
-using Elf64_Half = Elf_Half;
-using Elf32_Word = Elf_Word;
-using Elf64_Word = Elf_Word;
+using Elf32_Half  = Elf_Half;
+using Elf64_Half  = Elf_Half;
+using Elf32_Word  = Elf_Word;
+using Elf64_Word  = Elf_Word;
 using Elf32_Sword = Elf_Sword;
 using Elf64_Sword = Elf_Sword;
 
@@ -51,13 +51,13 @@ using Elf64_Sword = Elf_Sword;
 // ELF Header Constants
 
 // File type
-constexpr Elf_Half ET_NONE = 0;
-constexpr Elf_Half ET_REL = 1;
-constexpr Elf_Half ET_EXEC = 2;
-constexpr Elf_Half ET_DYN = 3;
-constexpr Elf_Half ET_CORE = 4;
-constexpr Elf_Half ET_LOOS = 0xFE00;
-constexpr Elf_Half ET_HIOS = 0xFEFF;
+constexpr Elf_Half ET_NONE   = 0;
+constexpr Elf_Half ET_REL    = 1;
+constexpr Elf_Half ET_EXEC   = 2;
+constexpr Elf_Half ET_DYN    = 3;
+constexpr Elf_Half ET_CORE   = 4;
+constexpr Elf_Half ET_LOOS   = 0xFE00;
+constexpr Elf_Half ET_HIOS   = 0xFEFF;
 constexpr Elf_Half ET_LOPROC = 0xFF00;
 constexpr Elf_Half ET_HIPROC = 0xFFFF;
 
@@ -323,21 +323,21 @@ constexpr Elf_Half EM_S12Z              = 0x4DEF; // Freescale S12Z
 // clang-format on
 
 // File version
-constexpr unsigned char EV_NONE = 0;
+constexpr unsigned char EV_NONE    = 0;
 constexpr unsigned char EV_CURRENT = 1;
 
 // Identification index
-constexpr unsigned char EI_MAG0 = 0;
-constexpr unsigned char EI_MAG1 = 1;
-constexpr unsigned char EI_MAG2 = 2;
-constexpr unsigned char EI_MAG3 = 3;
-constexpr unsigned char EI_CLASS = 4;
-constexpr unsigned char EI_DATA = 5;
-constexpr unsigned char EI_VERSION = 6;
-constexpr unsigned char EI_OSABI = 7;
+constexpr unsigned char EI_MAG0       = 0;
+constexpr unsigned char EI_MAG1       = 1;
+constexpr unsigned char EI_MAG2       = 2;
+constexpr unsigned char EI_MAG3       = 3;
+constexpr unsigned char EI_CLASS      = 4;
+constexpr unsigned char EI_DATA       = 5;
+constexpr unsigned char EI_VERSION    = 6;
+constexpr unsigned char EI_OSABI      = 7;
 constexpr unsigned char EI_ABIVERSION = 8;
-constexpr unsigned char EI_PAD = 9;
-constexpr unsigned char EI_NIDENT = 16;
+constexpr unsigned char EI_PAD        = 9;
+constexpr unsigned char EI_NIDENT     = 16;
 
 // Magic number
 constexpr unsigned char ELFMAG0 = 0x7F;
@@ -347,8 +347,8 @@ constexpr unsigned char ELFMAG3 = 'F';
 
 // File class
 constexpr unsigned char ELFCLASSNONE = 0;
-constexpr unsigned char ELFCLASS32 = 1;
-constexpr unsigned char ELFCLASS64 = 2;
+constexpr unsigned char ELFCLASS32   = 1;
+constexpr unsigned char ELFCLASS64   = 2;
 
 // Encoding
 constexpr unsigned char ELFDATANONE = 0;
@@ -399,198 +399,198 @@ constexpr Elf_Word EF_AMDGPU_MACH = 0x0ff; // AMDGPU processor selection mask.
 // enabled for all code contained in the ELF.
 constexpr Elf_Word EF_AMDGPU_XNACK = 0x100;
 
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V2 = 0x01;
-constexpr Elf_Word EF_AMDGPU_FEATURE_TRAP_HANDLER_V2 = 0x02;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V3 = 0x100;
-constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_V3 = 0x200;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V4 = 0x300;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_UNSUPPORTED_V4 = 0x000;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_ANY_V4 = 0x100;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_OFF_V4 = 0x200;
-constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_ON_V4 = 0x300;
-constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_V4 = 0xc00;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V2               = 0x01;
+constexpr Elf_Word EF_AMDGPU_FEATURE_TRAP_HANDLER_V2        = 0x02;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V3               = 0x100;
+constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_V3             = 0x200;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_V4               = 0x300;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_UNSUPPORTED_V4   = 0x000;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_ANY_V4           = 0x100;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_OFF_V4           = 0x200;
+constexpr Elf_Word EF_AMDGPU_FEATURE_XNACK_ON_V4            = 0x300;
+constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_V4             = 0xc00;
 constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_UNSUPPORTED_V4 = 0x000;
-constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_ANY_V4 = 0x400;
-constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_OFF_V4 = 0x800;
-constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_ON_V4 = 0xc00;
+constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_ANY_V4         = 0x400;
+constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_OFF_V4         = 0x800;
+constexpr Elf_Word EF_AMDGPU_FEATURE_SRAMECC_ON_V4          = 0xc00;
 
 // AMDGPU processors
-constexpr Elf_Word EF_AMDGPU_MACH_NONE = 0x000; // Unspecified processor.
-constexpr Elf_Word EF_AMDGPU_MACH_R600_R600 = 0x001;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_R630 = 0x002;
+constexpr Elf_Word EF_AMDGPU_MACH_NONE       = 0x000; // Unspecified processor.
+constexpr Elf_Word EF_AMDGPU_MACH_R600_R600  = 0x001;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_R630  = 0x002;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RS880 = 0x003;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RV670 = 0x004;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RV710 = 0x005;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RV730 = 0x006;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RV770 = 0x007;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_CEDAR = 0x008;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_CYPRESS = 0x009;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_JUNIPER = 0x00a;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_REDWOOD = 0x00b;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_SUMO = 0x00c;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_BARTS = 0x00d;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_CAICOS = 0x00e;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_CAYMAN = 0x00f;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_TURKS = 0x010;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_CYPRESS        = 0x009;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_JUNIPER        = 0x00a;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_REDWOOD        = 0x00b;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_SUMO           = 0x00c;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_BARTS          = 0x00d;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_CAICOS         = 0x00e;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_CAYMAN         = 0x00f;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_TURKS          = 0x010;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_RESERVED_FIRST = 0x011;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_RESERVED_LAST = 0x01f;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_RESERVED_LAST  = 0x01f;
 constexpr Elf_Word EF_AMDGPU_MACH_R600_FIRST = EF_AMDGPU_MACH_R600_R600;
-constexpr Elf_Word EF_AMDGPU_MACH_R600_LAST = EF_AMDGPU_MACH_R600_TURKS;
+constexpr Elf_Word EF_AMDGPU_MACH_R600_LAST  = EF_AMDGPU_MACH_R600_TURKS;
 
 // AMDGCN-based processors.
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX600 = 0x020;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX601 = 0x021;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX700 = 0x022;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX701 = 0x023;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX702 = 0x024;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX703 = 0x025;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX704 = 0x026;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX600        = 0x020;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX601        = 0x021;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX700        = 0x022;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX701        = 0x023;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX702        = 0x024;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX703        = 0x025;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX704        = 0x026;
 constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_RESERVED_0X27 = 0x027;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX801 = 0x028;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX802 = 0x029;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX803 = 0x02a;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX810 = 0x02b;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX900 = 0x02c;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX902 = 0x02d;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX904 = 0x02e;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX906 = 0x02f;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX908 = 0x030;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX909 = 0x031;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX90C = 0x032;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1010 = 0x033;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1011 = 0x034;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1012 = 0x035;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1030 = 0x036;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1031 = 0x037;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1032 = 0x038;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1033 = 0x039;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX602 = 0x03a;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX705 = 0x03b;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX805 = 0x03c;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX801        = 0x028;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX802        = 0x029;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX803        = 0x02a;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX810        = 0x02b;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX900        = 0x02c;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX902        = 0x02d;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX904        = 0x02e;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX906        = 0x02f;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX908        = 0x030;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX909        = 0x031;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX90C        = 0x032;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1010       = 0x033;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1011       = 0x034;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1012       = 0x035;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1030       = 0x036;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1031       = 0x037;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1032       = 0x038;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1033       = 0x039;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX602        = 0x03a;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX705        = 0x03b;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX805        = 0x03c;
 constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_RESERVED_0X3D = 0x03d;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1034 = 0x03e;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX90A = 0x03f;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1034       = 0x03e;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX90A        = 0x03f;
 constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_RESERVED_0X40 = 0x040;
 constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_RESERVED_0X41 = 0x041;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1013 = 0x042;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_GFX1013       = 0x042;
 // First/last AMDGCN-based processors.
 constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_FIRST = EF_AMDGPU_MACH_AMDGCN_GFX600;
-constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_LAST = EF_AMDGPU_MACH_AMDGCN_GFX1013;
+constexpr Elf_Word EF_AMDGPU_MACH_AMDGCN_LAST  = EF_AMDGPU_MACH_AMDGCN_GFX1013;
 
 /////////////////////
 // Sections constants
 
 // Section indexes
-constexpr Elf_Word SHN_UNDEF = 0;
+constexpr Elf_Word SHN_UNDEF     = 0;
 constexpr Elf_Word SHN_LORESERVE = 0xFF00;
-constexpr Elf_Word SHN_LOPROC = 0xFF00;
-constexpr Elf_Word SHN_HIPROC = 0xFF1F;
-constexpr Elf_Word SHN_LOOS = 0xFF20;
-constexpr Elf_Word SHN_HIOS = 0xFF3F;
-constexpr Elf_Word SHN_ABS = 0xFFF1;
-constexpr Elf_Word SHN_COMMON = 0xFFF2;
-constexpr Elf_Word SHN_XINDEX = 0xFFFF;
+constexpr Elf_Word SHN_LOPROC    = 0xFF00;
+constexpr Elf_Word SHN_HIPROC    = 0xFF1F;
+constexpr Elf_Word SHN_LOOS      = 0xFF20;
+constexpr Elf_Word SHN_HIOS      = 0xFF3F;
+constexpr Elf_Word SHN_ABS       = 0xFFF1;
+constexpr Elf_Word SHN_COMMON    = 0xFFF2;
+constexpr Elf_Word SHN_XINDEX    = 0xFFFF;
 constexpr Elf_Word SHN_HIRESERVE = 0xFFFF;
 
 // Section types
-constexpr Elf_Word SHT_NULL = 0;
-constexpr Elf_Word SHT_PROGBITS = 1;
-constexpr Elf_Word SHT_SYMTAB = 2;
-constexpr Elf_Word SHT_STRTAB = 3;
-constexpr Elf_Word SHT_RELA = 4;
-constexpr Elf_Word SHT_HASH = 5;
-constexpr Elf_Word SHT_DYNAMIC = 6;
-constexpr Elf_Word SHT_NOTE = 7;
-constexpr Elf_Word SHT_NOBITS = 8;
-constexpr Elf_Word SHT_REL = 9;
-constexpr Elf_Word SHT_SHLIB = 10;
-constexpr Elf_Word SHT_DYNSYM = 11;
-constexpr Elf_Word SHT_INIT_ARRAY = 14;
-constexpr Elf_Word SHT_FINI_ARRAY = 15;
-constexpr Elf_Word SHT_PREINIT_ARRAY = 16;
-constexpr Elf_Word SHT_GROUP = 17;
-constexpr Elf_Word SHT_SYMTAB_SHNDX = 18;
-constexpr Elf_Word SHT_GNU_ATTRIBUTES = 0x6ffffff5;
-constexpr Elf_Word SHT_GNU_HASH = 0x6ffffff6;
-constexpr Elf_Word SHT_GNU_LIBLIST = 0x6ffffff7;
-constexpr Elf_Word SHT_CHECKSUM = 0x6ffffff8;
-constexpr Elf_Word SHT_LOSUNW = 0x6ffffffa;
-constexpr Elf_Word SHT_SUNW_move = 0x6ffffffa;
-constexpr Elf_Word SHT_SUNW_COMDAT = 0x6ffffffb;
-constexpr Elf_Word SHT_SUNW_syminfo = 0x6ffffffc;
-constexpr Elf_Word SHT_GNU_verdef = 0x6ffffffd;
-constexpr Elf_Word SHT_GNU_verneed = 0x6ffffffe;
-constexpr Elf_Word SHT_GNU_versym = 0x6fffffff;
-constexpr Elf_Word SHT_LOOS = 0x60000000;
-constexpr Elf_Word SHT_HIOS = 0x6fffffff;
-constexpr Elf_Word SHT_LOPROC = 0x70000000;
-constexpr Elf_Word SHT_ARM_EXIDX = 0x70000001;
-constexpr Elf_Word SHT_ARM_PREEMPTMAP = 0x70000002;
-constexpr Elf_Word SHT_ARM_ATTRIBUTES = 0x70000003;
-constexpr Elf_Word SHT_ARM_DEBUGOVERLAY = 0x70000004;
+constexpr Elf_Word SHT_NULL               = 0;
+constexpr Elf_Word SHT_PROGBITS           = 1;
+constexpr Elf_Word SHT_SYMTAB             = 2;
+constexpr Elf_Word SHT_STRTAB             = 3;
+constexpr Elf_Word SHT_RELA               = 4;
+constexpr Elf_Word SHT_HASH               = 5;
+constexpr Elf_Word SHT_DYNAMIC            = 6;
+constexpr Elf_Word SHT_NOTE               = 7;
+constexpr Elf_Word SHT_NOBITS             = 8;
+constexpr Elf_Word SHT_REL                = 9;
+constexpr Elf_Word SHT_SHLIB              = 10;
+constexpr Elf_Word SHT_DYNSYM             = 11;
+constexpr Elf_Word SHT_INIT_ARRAY         = 14;
+constexpr Elf_Word SHT_FINI_ARRAY         = 15;
+constexpr Elf_Word SHT_PREINIT_ARRAY      = 16;
+constexpr Elf_Word SHT_GROUP              = 17;
+constexpr Elf_Word SHT_SYMTAB_SHNDX       = 18;
+constexpr Elf_Word SHT_GNU_ATTRIBUTES     = 0x6ffffff5;
+constexpr Elf_Word SHT_GNU_HASH           = 0x6ffffff6;
+constexpr Elf_Word SHT_GNU_LIBLIST        = 0x6ffffff7;
+constexpr Elf_Word SHT_CHECKSUM           = 0x6ffffff8;
+constexpr Elf_Word SHT_LOSUNW             = 0x6ffffffa;
+constexpr Elf_Word SHT_SUNW_move          = 0x6ffffffa;
+constexpr Elf_Word SHT_SUNW_COMDAT        = 0x6ffffffb;
+constexpr Elf_Word SHT_SUNW_syminfo       = 0x6ffffffc;
+constexpr Elf_Word SHT_GNU_verdef         = 0x6ffffffd;
+constexpr Elf_Word SHT_GNU_verneed        = 0x6ffffffe;
+constexpr Elf_Word SHT_GNU_versym         = 0x6fffffff;
+constexpr Elf_Word SHT_LOOS               = 0x60000000;
+constexpr Elf_Word SHT_HIOS               = 0x6fffffff;
+constexpr Elf_Word SHT_LOPROC             = 0x70000000;
+constexpr Elf_Word SHT_ARM_EXIDX          = 0x70000001;
+constexpr Elf_Word SHT_ARM_PREEMPTMAP     = 0x70000002;
+constexpr Elf_Word SHT_ARM_ATTRIBUTES     = 0x70000003;
+constexpr Elf_Word SHT_ARM_DEBUGOVERLAY   = 0x70000004;
 constexpr Elf_Word SHT_ARM_OVERLAYSECTION = 0x70000005;
-constexpr Elf_Word SHT_X86_64_UNWIND = 0x70000001; // x86-64 exception handling unwind info
-constexpr Elf_Word SHT_HIPROC = 0x7FFFFFFF;
-constexpr Elf_Word SHT_LOUSER = 0x80000000;
+constexpr Elf_Word SHT_X86_64_UNWIND      = 0x70000001; // x86-64 exception handling unwind info
+constexpr Elf_Word SHT_HIPROC             = 0x7FFFFFFF;
+constexpr Elf_Word SHT_LOUSER             = 0x80000000;
 // Used by Nintendo Wii U
-constexpr Elf_Word SHT_RPL_EXPORTS = 0x80000001;
-constexpr Elf_Word SHT_RPL_IMPORTS = 0x80000002;
-constexpr Elf_Word SHT_RPL_CRCS = 0x80000003;
+constexpr Elf_Word SHT_RPL_EXPORTS  = 0x80000001;
+constexpr Elf_Word SHT_RPL_IMPORTS  = 0x80000002;
+constexpr Elf_Word SHT_RPL_CRCS     = 0x80000003;
 constexpr Elf_Word SHT_RPL_FILEINFO = 0x80000004;
-constexpr Elf_Word SHT_HIUSER = 0xFFFFFFFF;
+constexpr Elf_Word SHT_HIUSER       = 0xFFFFFFFF;
 
 // Section attribute flags
-constexpr Elf_Xword SHF_WRITE = 0x1;
-constexpr Elf_Xword SHF_ALLOC = 0x2;
-constexpr Elf_Xword SHF_EXECINSTR = 0x4;
-constexpr Elf_Xword SHF_MERGE = 0x10;
-constexpr Elf_Xword SHF_STRINGS = 0x20;
-constexpr Elf_Xword SHF_INFO_LINK = 0x40;
-constexpr Elf_Xword SHF_LINK_ORDER = 0x80;
+constexpr Elf_Xword SHF_WRITE            = 0x1;
+constexpr Elf_Xword SHF_ALLOC            = 0x2;
+constexpr Elf_Xword SHF_EXECINSTR        = 0x4;
+constexpr Elf_Xword SHF_MERGE            = 0x10;
+constexpr Elf_Xword SHF_STRINGS          = 0x20;
+constexpr Elf_Xword SHF_INFO_LINK        = 0x40;
+constexpr Elf_Xword SHF_LINK_ORDER       = 0x80;
 constexpr Elf_Xword SHF_OS_NONCONFORMING = 0x100;
-constexpr Elf_Xword SHF_GROUP = 0x200;
-constexpr Elf_Xword SHF_TLS = 0x400;
-constexpr Elf_Xword SHF_COMPRESSED = 0x800;
-constexpr Elf_Xword SHF_GNU_RETAIN = 0x200000;
-constexpr Elf_Xword SHF_GNU_MBIND = 0x01000000;
+constexpr Elf_Xword SHF_GROUP            = 0x200;
+constexpr Elf_Xword SHF_TLS              = 0x400;
+constexpr Elf_Xword SHF_COMPRESSED       = 0x800;
+constexpr Elf_Xword SHF_GNU_RETAIN       = 0x200000;
+constexpr Elf_Xword SHF_GNU_MBIND        = 0x01000000;
 // flag used in Nintendo RPX/RPL to indicate section data is compressed
 constexpr Elf_Xword SHF_RPX_DEFLATE = 0x08000000;
-constexpr Elf_Xword SHF_MASKOS = 0x0FF00000;
-constexpr Elf_Xword SHF_MIPS_GPREL = 0x10000000;
-constexpr Elf_Xword SHF_ORDERED = 0x40000000;
-constexpr Elf_Xword SHF_EXCLUDE = 0x80000000;
-constexpr Elf_Xword SHF_MASKPROC = 0xF0000000;
+constexpr Elf_Xword SHF_MASKOS      = 0x0FF00000;
+constexpr Elf_Xword SHF_MIPS_GPREL  = 0x10000000;
+constexpr Elf_Xword SHF_ORDERED     = 0x40000000;
+constexpr Elf_Xword SHF_EXCLUDE     = 0x80000000;
+constexpr Elf_Xword SHF_MASKPROC    = 0xF0000000;
 
 // Section group flags
-constexpr Elf_Word GRP_COMDAT = 0x1;
-constexpr Elf_Word GRP_MASKOS = 0x0ff00000;
+constexpr Elf_Word GRP_COMDAT   = 0x1;
+constexpr Elf_Word GRP_MASKOS   = 0x0ff00000;
 constexpr Elf_Word GRP_MASKPROC = 0xf0000000;
 
 // Symbol binding
-constexpr unsigned char STB_LOCAL = 0;
-constexpr unsigned char STB_GLOBAL = 1;
-constexpr unsigned char STB_WEAK = 2;
-constexpr unsigned char STB_LOOS = 10;
-constexpr unsigned char STB_HIOS = 12;
+constexpr unsigned char STB_LOCAL    = 0;
+constexpr unsigned char STB_GLOBAL   = 1;
+constexpr unsigned char STB_WEAK     = 2;
+constexpr unsigned char STB_LOOS     = 10;
+constexpr unsigned char STB_HIOS     = 12;
 constexpr unsigned char STB_MULTIDEF = 13;
-constexpr unsigned char STB_LOPROC = 13;
-constexpr unsigned char STB_HIPROC = 15;
+constexpr unsigned char STB_LOPROC   = 13;
+constexpr unsigned char STB_HIPROC   = 15;
 
 // Values of note segment descriptor types for core files
-constexpr Elf_Word NT_PRSTATUS = 1; // Contains copy of prstatus struct
-constexpr Elf_Word NT_FPREGSET = 2; // Contains copy of fpregset struct
-constexpr Elf_Word NT_PRPSINFO = 3; // Contains copy of prpsinfo struct
+constexpr Elf_Word NT_PRSTATUS   = 1; // Contains copy of prstatus struct
+constexpr Elf_Word NT_FPREGSET   = 2; // Contains copy of fpregset struct
+constexpr Elf_Word NT_PRPSINFO   = 3; // Contains copy of prpsinfo struct
 constexpr Elf_Word NT_TASKSTRUCT = 4; // Contains copy of task struct
-constexpr Elf_Word NT_AUXV = 6; // Contains copy of Elfxx_auxv_t
-constexpr Elf_Word NT_SIGINFO = 0x53494749; // Fields of siginfo_t.
-constexpr Elf_Word NT_FILE = 0x46494c45; // Description of mapped files.
+constexpr Elf_Word NT_AUXV       = 6; // Contains copy of Elfxx_auxv_t
+constexpr Elf_Word NT_SIGINFO    = 0x53494749; // Fields of siginfo_t.
+constexpr Elf_Word NT_FILE       = 0x46494c45; // Description of mapped files.
 
 // Note segments for core files on dir-style procfs systems.
-constexpr Elf_Word NT_PSTATUS = 10; // Has a struct pstatus
-constexpr Elf_Word NT_FPREGS = 12; // Has a struct fpregset
-constexpr Elf_Word NT_PSINFO = 13; // Has a struct psinfo
-constexpr Elf_Word NT_LWPSTATUS = 16; // Has a struct lwpstatus_t
-constexpr Elf_Word NT_LWPSINFO = 17; // Has a struct lwpsinfo_t
+constexpr Elf_Word NT_PSTATUS      = 10; // Has a struct pstatus
+constexpr Elf_Word NT_FPREGS       = 12; // Has a struct fpregset
+constexpr Elf_Word NT_PSINFO       = 13; // Has a struct psinfo
+constexpr Elf_Word NT_LWPSTATUS    = 16; // Has a struct lwpstatus_t
+constexpr Elf_Word NT_LWPSINFO     = 17; // Has a struct lwpsinfo_t
 constexpr Elf_Word NT_WIN32PSTATUS = 18; // Has a struct win32_pstatus
 
 // clang-format off
@@ -705,23 +705,23 @@ constexpr Elf_Word NT_GNU_BUILD_ATTRIBUTE_OPEN = 0x100;
 constexpr Elf_Word NT_GNU_BUILD_ATTRIBUTE_FUNC = 0x101;
 
 // Symbol types
-constexpr Elf_Word STT_NOTYPE = 0;
-constexpr Elf_Word STT_OBJECT = 1;
-constexpr Elf_Word STT_FUNC = 2;
-constexpr Elf_Word STT_SECTION = 3;
-constexpr Elf_Word STT_FILE = 4;
-constexpr Elf_Word STT_COMMON = 5;
-constexpr Elf_Word STT_TLS = 6;
-constexpr Elf_Word STT_LOOS = 10;
+constexpr Elf_Word STT_NOTYPE            = 0;
+constexpr Elf_Word STT_OBJECT            = 1;
+constexpr Elf_Word STT_FUNC              = 2;
+constexpr Elf_Word STT_SECTION           = 3;
+constexpr Elf_Word STT_FILE              = 4;
+constexpr Elf_Word STT_COMMON            = 5;
+constexpr Elf_Word STT_TLS               = 6;
+constexpr Elf_Word STT_LOOS              = 10;
 constexpr Elf_Word STT_AMDGPU_HSA_KERNEL = 10;
-constexpr Elf_Word STT_HIOS = 12;
-constexpr Elf_Word STT_LOPROC = 13;
-constexpr Elf_Word STT_HIPROC = 15;
+constexpr Elf_Word STT_HIOS              = 12;
+constexpr Elf_Word STT_LOPROC            = 13;
+constexpr Elf_Word STT_HIPROC            = 15;
 
 // Symbol visibility
-constexpr unsigned char STV_DEFAULT = 0;
-constexpr unsigned char STV_INTERNAL = 1;
-constexpr unsigned char STV_HIDDEN = 2;
+constexpr unsigned char STV_DEFAULT   = 0;
+constexpr unsigned char STV_INTERNAL  = 1;
+constexpr unsigned char STV_HIDDEN    = 2;
 constexpr unsigned char STV_PROTECTED = 3;
 
 // Undefined name
@@ -729,755 +729,773 @@ constexpr Elf_Word STN_UNDEF = 0;
 
 // Relocation types
 //   X86
-constexpr unsigned R_386_NONE = 0;
-constexpr unsigned R_X86_64_NONE = 0;
-constexpr unsigned R_AMDGPU_NONE = 0;
-constexpr unsigned R_386_32 = 1;
-constexpr unsigned R_X86_64_64 = 1;
-constexpr unsigned R_AMDGPU_ABS32_LO = 1;
-constexpr unsigned R_386_PC32 = 2;
-constexpr unsigned R_X86_64_PC32 = 2;
-constexpr unsigned R_AMDGPU_ABS32_HI = 2;
-constexpr unsigned R_386_GOT32 = 3;
-constexpr unsigned R_X86_64_GOT32 = 3;
-constexpr unsigned R_AMDGPU_ABS64 = 3;
-constexpr unsigned R_386_PLT32 = 4;
-constexpr unsigned R_X86_64_PLT32 = 4;
-constexpr unsigned R_AMDGPU_REL32 = 4;
-constexpr unsigned R_386_COPY = 5;
-constexpr unsigned R_X86_64_COPY = 5;
-constexpr unsigned R_AMDGPU_REL64 = 5;
-constexpr unsigned R_386_GLOB_DAT = 6;
-constexpr unsigned R_X86_64_GLOB_DAT = 6;
-constexpr unsigned R_AMDGPU_ABS32 = 6;
-constexpr unsigned R_386_JMP_SLOT = 7;
-constexpr unsigned R_X86_64_JUMP_SLOT = 7;
-constexpr unsigned R_AMDGPU_GOTPCREL = 7;
-constexpr unsigned R_386_RELATIVE = 8;
-constexpr unsigned R_X86_64_RELATIVE = 8;
-constexpr unsigned R_AMDGPU_GOTPCREL32_LO = 8;
-constexpr unsigned R_386_GOTOFF = 9;
-constexpr unsigned R_X86_64_GOTPCREL = 9;
-constexpr unsigned R_AMDGPU_GOTPCREL32_HI = 9;
-constexpr unsigned R_386_GOTPC = 10;
-constexpr unsigned R_X86_64_32 = 10;
-constexpr unsigned R_AMDGPU_REL32_LO = 10;
-constexpr unsigned R_386_32PLT = 11;
-constexpr unsigned R_X86_64_32S = 11;
-constexpr unsigned R_AMDGPU_REL32_HI = 11;
-constexpr unsigned R_X86_64_16 = 12;
-constexpr unsigned R_X86_64_PC16 = 13;
-constexpr unsigned R_AMDGPU_RELATIVE64 = 13;
-constexpr unsigned R_386_TLS_TPOFF = 14;
-constexpr unsigned R_X86_64_8 = 14;
-constexpr unsigned R_386_TLS_IE = 15;
-constexpr unsigned R_X86_64_PC8 = 15;
-constexpr unsigned R_386_TLS_GOTIE = 16;
-constexpr unsigned R_X86_64_DTPMOD64 = 16;
-constexpr unsigned R_386_TLS_LE = 17;
-constexpr unsigned R_X86_64_DTPOFF64 = 17;
-constexpr unsigned R_386_TLS_GD = 18;
-constexpr unsigned R_X86_64_TPOFF64 = 18;
-constexpr unsigned R_386_TLS_LDM = 19;
-constexpr unsigned R_X86_64_TLSGD = 19;
-constexpr unsigned R_386_16 = 20;
-constexpr unsigned R_X86_64_TLSLD = 20;
-constexpr unsigned R_386_PC16 = 21;
-constexpr unsigned R_X86_64_DTPOFF32 = 21;
-constexpr unsigned R_386_8 = 22;
-constexpr unsigned R_X86_64_GOTTPOFF = 22;
-constexpr unsigned R_386_PC8 = 23;
-constexpr unsigned R_X86_64_TPOFF32 = 23;
-constexpr unsigned R_386_TLS_GD_32 = 24;
-constexpr unsigned R_X86_64_PC64 = 24;
-constexpr unsigned R_386_TLS_GD_PUSH = 25;
-constexpr unsigned R_X86_64_GOTOFF64 = 25;
-constexpr unsigned R_386_TLS_GD_CALL = 26;
-constexpr unsigned R_X86_64_GOTPC32 = 26;
-constexpr unsigned R_386_TLS_GD_POP = 27;
-constexpr unsigned R_X86_64_GOT64 = 27;
-constexpr unsigned R_386_TLS_LDM_32 = 28;
-constexpr unsigned R_X86_64_GOTPCREL64 = 28;
-constexpr unsigned R_386_TLS_LDM_PUSH = 29;
-constexpr unsigned R_X86_64_GOTPC64 = 29;
-constexpr unsigned R_386_TLS_LDM_CALL = 30;
-constexpr unsigned R_X86_64_GOTPLT64 = 30;
-constexpr unsigned R_386_TLS_LDM_POP = 31;
-constexpr unsigned R_X86_64_PLTOFF64 = 31;
-constexpr unsigned R_386_TLS_LDO_32 = 32;
-constexpr unsigned R_386_TLS_IE_32 = 33;
-constexpr unsigned R_386_TLS_LE_32 = 34;
+constexpr unsigned R_386_NONE               = 0;
+constexpr unsigned R_X86_64_NONE            = 0;
+constexpr unsigned R_AMDGPU_NONE            = 0;
+constexpr unsigned R_386_32                 = 1;
+constexpr unsigned R_X86_64_64              = 1;
+constexpr unsigned R_AMDGPU_ABS32_LO        = 1;
+constexpr unsigned R_386_PC32               = 2;
+constexpr unsigned R_X86_64_PC32            = 2;
+constexpr unsigned R_AMDGPU_ABS32_HI        = 2;
+constexpr unsigned R_386_GOT32              = 3;
+constexpr unsigned R_X86_64_GOT32           = 3;
+constexpr unsigned R_AMDGPU_ABS64           = 3;
+constexpr unsigned R_386_PLT32              = 4;
+constexpr unsigned R_X86_64_PLT32           = 4;
+constexpr unsigned R_AMDGPU_REL32           = 4;
+constexpr unsigned R_386_COPY               = 5;
+constexpr unsigned R_X86_64_COPY            = 5;
+constexpr unsigned R_AMDGPU_REL64           = 5;
+constexpr unsigned R_386_GLOB_DAT           = 6;
+constexpr unsigned R_X86_64_GLOB_DAT        = 6;
+constexpr unsigned R_AMDGPU_ABS32           = 6;
+constexpr unsigned R_386_JMP_SLOT           = 7;
+constexpr unsigned R_X86_64_JUMP_SLOT       = 7;
+constexpr unsigned R_AMDGPU_GOTPCREL        = 7;
+constexpr unsigned R_386_RELATIVE           = 8;
+constexpr unsigned R_X86_64_RELATIVE        = 8;
+constexpr unsigned R_AMDGPU_GOTPCREL32_LO   = 8;
+constexpr unsigned R_386_GOTOFF             = 9;
+constexpr unsigned R_X86_64_GOTPCREL        = 9;
+constexpr unsigned R_AMDGPU_GOTPCREL32_HI   = 9;
+constexpr unsigned R_386_GOTPC              = 10;
+constexpr unsigned R_X86_64_32              = 10;
+constexpr unsigned R_AMDGPU_REL32_LO        = 10;
+constexpr unsigned R_386_32PLT              = 11;
+constexpr unsigned R_X86_64_32S             = 11;
+constexpr unsigned R_AMDGPU_REL32_HI        = 11;
+constexpr unsigned R_X86_64_16              = 12;
+constexpr unsigned R_X86_64_PC16            = 13;
+constexpr unsigned R_AMDGPU_RELATIVE64      = 13;
+constexpr unsigned R_386_TLS_TPOFF          = 14;
+constexpr unsigned R_X86_64_8               = 14;
+constexpr unsigned R_386_TLS_IE             = 15;
+constexpr unsigned R_X86_64_PC8             = 15;
+constexpr unsigned R_386_TLS_GOTIE          = 16;
+constexpr unsigned R_X86_64_DTPMOD64        = 16;
+constexpr unsigned R_386_TLS_LE             = 17;
+constexpr unsigned R_X86_64_DTPOFF64        = 17;
+constexpr unsigned R_386_TLS_GD             = 18;
+constexpr unsigned R_X86_64_TPOFF64         = 18;
+constexpr unsigned R_386_TLS_LDM            = 19;
+constexpr unsigned R_X86_64_TLSGD           = 19;
+constexpr unsigned R_386_16                 = 20;
+constexpr unsigned R_X86_64_TLSLD           = 20;
+constexpr unsigned R_386_PC16               = 21;
+constexpr unsigned R_X86_64_DTPOFF32        = 21;
+constexpr unsigned R_386_8                  = 22;
+constexpr unsigned R_X86_64_GOTTPOFF        = 22;
+constexpr unsigned R_386_PC8                = 23;
+constexpr unsigned R_X86_64_TPOFF32         = 23;
+constexpr unsigned R_386_TLS_GD_32          = 24;
+constexpr unsigned R_X86_64_PC64            = 24;
+constexpr unsigned R_386_TLS_GD_PUSH        = 25;
+constexpr unsigned R_X86_64_GOTOFF64        = 25;
+constexpr unsigned R_386_TLS_GD_CALL        = 26;
+constexpr unsigned R_X86_64_GOTPC32         = 26;
+constexpr unsigned R_386_TLS_GD_POP         = 27;
+constexpr unsigned R_X86_64_GOT64           = 27;
+constexpr unsigned R_386_TLS_LDM_32         = 28;
+constexpr unsigned R_X86_64_GOTPCREL64      = 28;
+constexpr unsigned R_386_TLS_LDM_PUSH       = 29;
+constexpr unsigned R_X86_64_GOTPC64         = 29;
+constexpr unsigned R_386_TLS_LDM_CALL       = 30;
+constexpr unsigned R_X86_64_GOTPLT64        = 30;
+constexpr unsigned R_386_TLS_LDM_POP        = 31;
+constexpr unsigned R_X86_64_PLTOFF64        = 31;
+constexpr unsigned R_386_TLS_LDO_32         = 32;
+constexpr unsigned R_386_TLS_IE_32          = 33;
+constexpr unsigned R_386_TLS_LE_32          = 34;
 constexpr unsigned R_X86_64_GOTPC32_TLSDESC = 34;
-constexpr unsigned R_386_TLS_DTPMOD32 = 35;
-constexpr unsigned R_X86_64_TLSDESC_CALL = 35;
-constexpr unsigned R_386_TLS_DTPOFF32 = 36;
-constexpr unsigned R_X86_64_TLSDESC = 36;
-constexpr unsigned R_386_TLS_TPOFF32 = 37;
-constexpr unsigned R_X86_64_IRELATIVE = 37;
-constexpr unsigned R_386_SIZE32 = 38;
-constexpr unsigned R_386_TLS_GOTDESC = 39;
-constexpr unsigned R_386_TLS_DESC_CALL = 40;
-constexpr unsigned R_386_TLS_DESC = 41;
-constexpr unsigned R_386_IRELATIVE = 42;
-constexpr unsigned R_386_GOT32X = 43;
-constexpr unsigned R_X86_64_GNU_VTINHERIT = 250;
-constexpr unsigned R_X86_64_GNU_VTENTRY = 251;
+constexpr unsigned R_386_TLS_DTPMOD32       = 35;
+constexpr unsigned R_X86_64_TLSDESC_CALL    = 35;
+constexpr unsigned R_386_TLS_DTPOFF32       = 36;
+constexpr unsigned R_X86_64_TLSDESC         = 36;
+constexpr unsigned R_386_TLS_TPOFF32        = 37;
+constexpr unsigned R_X86_64_IRELATIVE       = 37;
+constexpr unsigned R_386_SIZE32             = 38;
+constexpr unsigned R_386_TLS_GOTDESC        = 39;
+constexpr unsigned R_386_TLS_DESC_CALL      = 40;
+constexpr unsigned R_386_TLS_DESC           = 41;
+constexpr unsigned R_386_IRELATIVE          = 42;
+constexpr unsigned R_386_GOT32X             = 43;
+constexpr unsigned R_X86_64_GNU_VTINHERIT   = 250;
+constexpr unsigned R_X86_64_GNU_VTENTRY     = 251;
 //   Arm
-constexpr unsigned R_ARM_NONE = 0;
-constexpr unsigned R_ARM_PC24 = 1;
-constexpr unsigned R_ARM_ABS32 = 2;
-constexpr unsigned R_ARM_REL32 = 3;
-constexpr unsigned R_ARM_CALL = 28;
-constexpr unsigned R_ARM_JUMP24 = 29;
-constexpr unsigned R_ARM_TARGET1 = 38;
-constexpr unsigned R_ARM_V4BX = 40;
-constexpr unsigned R_ARM_PREL31 = 42;
-constexpr unsigned R_ARM_MOVW_ABS_NC = 43;
-constexpr unsigned R_ARM_MOVT_ABS = 44;
+constexpr unsigned R_ARM_NONE         = 0;
+constexpr unsigned R_ARM_PC24         = 1;
+constexpr unsigned R_ARM_ABS32        = 2;
+constexpr unsigned R_ARM_REL32        = 3;
+constexpr unsigned R_ARM_CALL         = 28;
+constexpr unsigned R_ARM_JUMP24       = 29;
+constexpr unsigned R_ARM_TARGET1      = 38;
+constexpr unsigned R_ARM_V4BX         = 40;
+constexpr unsigned R_ARM_PREL31       = 42;
+constexpr unsigned R_ARM_MOVW_ABS_NC  = 43;
+constexpr unsigned R_ARM_MOVT_ABS     = 44;
 constexpr unsigned R_ARM_MOVW_PREL_NC = 45;
-constexpr unsigned R_ARM_MOVT_PREL = 46;
+constexpr unsigned R_ARM_MOVT_PREL    = 46;
 constexpr unsigned R_ARM_ALU_PC_G0_NC = 57;
 constexpr unsigned R_ARM_ALU_PC_G1_NC = 59;
-constexpr unsigned R_ARM_LDR_PC_G2 = 63;
+constexpr unsigned R_ARM_LDR_PC_G2    = 63;
 //   Arm thumb
-constexpr unsigned R_ARM_THM_CALL = 10;
-constexpr unsigned R_ARM_THM_JUMP24 = 30;
-constexpr unsigned R_ARM_THM_MOVW_ABS_NC = 47;
-constexpr unsigned R_ARM_THM_MOVT_ABS = 48;
+constexpr unsigned R_ARM_THM_CALL         = 10;
+constexpr unsigned R_ARM_THM_JUMP24       = 30;
+constexpr unsigned R_ARM_THM_MOVW_ABS_NC  = 47;
+constexpr unsigned R_ARM_THM_MOVT_ABS     = 48;
 constexpr unsigned R_ARM_THM_MOVW_PREL_NC = 49;
-constexpr unsigned R_ARM_THM_MOVT_PREL = 50;
+constexpr unsigned R_ARM_THM_MOVT_PREL    = 50;
 //   AArch64
-constexpr unsigned R_AARCH64_NONE = 0;
-constexpr unsigned R_AARCH64_P32_ABS32 = 1;
-constexpr unsigned R_AARCH64_P32_COPY = 180;
-constexpr unsigned R_AARCH64_P32_GLOB_DAT = 181;
-constexpr unsigned R_AARCH64_P32_JUMP_SLOT = 182;
-constexpr unsigned R_AARCH64_P32_RELATIVE = 183;
-constexpr unsigned R_AARCH64_P32_TLS_DTPMOD = 184;
-constexpr unsigned R_AARCH64_P32_TLS_DTPREL = 185;
-constexpr unsigned R_AARCH64_P32_TLS_TPREL = 186;
-constexpr unsigned R_AARCH64_P32_TLSDESC = 187;
-constexpr unsigned R_AARCH64_P32_IRELATIVE = 188;
-constexpr unsigned R_AARCH64_ABS64 = 257;
-constexpr unsigned R_AARCH64_ABS32 = 258;
-constexpr unsigned R_AARCH64_ABS16 = 259;
-constexpr unsigned R_AARCH64_PREL64 = 260;
-constexpr unsigned R_AARCH64_PREL32 = 261;
-constexpr unsigned R_AARCH64_PREL16 = 262;
-constexpr unsigned R_AARCH64_MOVW_UABS_G0 = 263;
-constexpr unsigned R_AARCH64_MOVW_UABS_G0_NC = 264;
-constexpr unsigned R_AARCH64_MOVW_UABS_G1 = 265;
-constexpr unsigned R_AARCH64_MOVW_UABS_G1_NC = 266;
-constexpr unsigned R_AARCH64_MOVW_UABS_G2 = 267;
-constexpr unsigned R_AARCH64_MOVW_UABS_G2_NC = 268;
-constexpr unsigned R_AARCH64_MOVW_UABS_G3 = 269;
-constexpr unsigned R_AARCH64_MOVW_SABS_G0 = 270;
-constexpr unsigned R_AARCH64_MOVW_SABS_G1 = 271;
-constexpr unsigned R_AARCH64_MOVW_SABS_G2 = 272;
-constexpr unsigned R_AARCH64_LD_PREL_LO19 = 273;
-constexpr unsigned R_AARCH64_ADR_PREL_LO21 = 274;
-constexpr unsigned R_AARCH64_ADR_PREL_PG_HI21 = 275;
-constexpr unsigned R_AARCH64_ADR_PREL_PG_HI21_NC = 276;
-constexpr unsigned R_AARCH64_ADD_ABS_LO12_NC = 277;
-constexpr unsigned R_AARCH64_LDST8_ABS_LO12_NC = 278;
-constexpr unsigned R_AARCH64_TSTBR14 = 279;
-constexpr unsigned R_AARCH64_CONDBR19 = 280;
-constexpr unsigned R_AARCH64_JUMP26 = 282;
-constexpr unsigned R_AARCH64_CALL26 = 283;
-constexpr unsigned R_AARCH64_LDST16_ABS_LO12_NC = 284;
-constexpr unsigned R_AARCH64_LDST32_ABS_LO12_NC = 285;
-constexpr unsigned R_AARCH64_LDST64_ABS_LO12_NC = 286;
-constexpr unsigned R_AARCH64_MOVW_PREL_G0 = 287;
-constexpr unsigned R_AARCH64_MOVW_PREL_G0_NC = 288;
-constexpr unsigned R_AARCH64_MOVW_PREL_G1 = 289;
-constexpr unsigned R_AARCH64_MOVW_PREL_G1_NC = 290;
-constexpr unsigned R_AARCH64_MOVW_PREL_G2 = 291;
-constexpr unsigned R_AARCH64_MOVW_PREL_G2_NC = 292;
-constexpr unsigned R_AARCH64_MOVW_PREL_G3 = 293;
-constexpr unsigned R_AARCH64_LDST128_ABS_LO12_NC = 299;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G0 = 300;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G0_NC = 301;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G1 = 302;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G1_NC = 303;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G2 = 304;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G2_NC = 305;
-constexpr unsigned R_AARCH64_MOVW_GOTOFF_G3 = 306;
-constexpr unsigned R_AARCH64_GOTREL64 = 307;
-constexpr unsigned R_AARCH64_GOTREL32 = 308;
-constexpr unsigned R_AARCH64_GOT_LD_PREL19 = 309;
-constexpr unsigned R_AARCH64_LD64_GOTOFF_LO15 = 310;
-constexpr unsigned R_AARCH64_ADR_GOT_PAGE = 311;
-constexpr unsigned R_AARCH64_LD64_GOT_LO12_NC = 312;
-constexpr unsigned R_AARCH64_LD64_GOTPAGE_LO15 = 313;
-constexpr unsigned R_AARCH64_TLSGD_ADR_PREL21 = 512;
-constexpr unsigned R_AARCH64_TLSGD_ADR_PAGE21 = 513;
-constexpr unsigned R_AARCH64_TLSGD_ADD_LO12_NC = 514;
-constexpr unsigned R_AARCH64_TLSGD_MOVW_G1 = 515;
-constexpr unsigned R_AARCH64_TLSGD_MOVW_G0_NC = 516;
-constexpr unsigned R_AARCH64_TLSLD_ADR_PREL21 = 517;
-constexpr unsigned R_AARCH64_TLSLD_ADR_PAGE21 = 518;
-constexpr unsigned R_AARCH64_TLSLD_ADD_LO12_NC = 519;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_G1 = 520;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_G0_NC = 521;
-constexpr unsigned R_AARCH64_TLSLD_LD_PREL19 = 522;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G2 = 523;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G1 = 524;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G1_NC = 525;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G0 = 526;
-constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G0_NC = 527;
-constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_HI12 = 528;
-constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_LO12 = 529;
-constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_LO12_NC = 530;
-constexpr unsigned R_AARCH64_TLSLD_LDST8_DTPREL_LO12 = 531;
-constexpr unsigned R_AARCH64_TLSLD_LDST8_DTPREL_LO12_NC = 532;
-constexpr unsigned R_AARCH64_TLSLD_LDST16_DTPREL_LO12 = 533;
-constexpr unsigned R_AARCH64_TLSLD_LDST16_DTPREL_LO12_NC = 534;
-constexpr unsigned R_AARCH64_TLSLD_LDST32_DTPREL_LO12 = 535;
-constexpr unsigned R_AARCH64_TLSLD_LDST32_DTPREL_LO12_NC = 536;
-constexpr unsigned R_AARCH64_TLSLD_LDST64_DTPREL_LO12 = 537;
-constexpr unsigned R_AARCH64_TLSLD_LDST64_DTPREL_LO12_NC = 538;
-constexpr unsigned R_AARCH64_TLSIE_MOVW_GOTTPREL_G1 = 539;
-constexpr unsigned R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC = 540;
-constexpr unsigned R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 = 541;
-constexpr unsigned R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC = 542;
-constexpr unsigned R_AARCH64_TLSIE_LD_GOTTPREL_PREL19 = 543;
-constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G2 = 544;
-constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G1 = 545;
-constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G1_NC = 546;
-constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G0 = 547;
-constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G0_NC = 548;
-constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_HI12 = 549;
-constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_LO12 = 550;
-constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_LO12_NC = 551;
-constexpr unsigned R_AARCH64_TLSLE_LDST8_TPREL_LO12 = 552;
-constexpr unsigned R_AARCH64_TLSLE_LDST8_TPREL_LO12_NC = 553;
-constexpr unsigned R_AARCH64_TLSLE_LDST16_TPREL_LO12 = 554;
-constexpr unsigned R_AARCH64_TLSLE_LDST16_TPREL_LO12_NC = 555;
-constexpr unsigned R_AARCH64_TLSLE_LDST32_TPREL_LO12 = 556;
-constexpr unsigned R_AARCH64_TLSLE_LDST32_TPREL_LO12_NC = 557;
-constexpr unsigned R_AARCH64_TLSLE_LDST64_TPREL_LO12 = 558;
-constexpr unsigned R_AARCH64_TLSLE_LDST64_TPREL_LO12_NC = 559;
-constexpr unsigned R_AARCH64_TLSDESC_LD_PREL19 = 560;
-constexpr unsigned R_AARCH64_TLSDESC_ADR_PREL21 = 561;
-constexpr unsigned R_AARCH64_TLSDESC_ADR_PAGE21 = 562;
-constexpr unsigned R_AARCH64_TLSDESC_LD64_LO12 = 563;
-constexpr unsigned R_AARCH64_TLSDESC_ADD_LO12 = 564;
-constexpr unsigned R_AARCH64_TLSDESC_OFF_G1 = 565;
-constexpr unsigned R_AARCH64_TLSDESC_OFF_G0_NC = 566;
-constexpr unsigned R_AARCH64_TLSDESC_LDR = 567;
-constexpr unsigned R_AARCH64_TLSDESC_ADD = 568;
-constexpr unsigned R_AARCH64_TLSDESC_CALL = 569;
-constexpr unsigned R_AARCH64_TLSLE_LDST128_TPREL_LO12 = 570;
-constexpr unsigned R_AARCH64_TLSLE_LDST128_TPREL_LO12_NC = 571;
-constexpr unsigned R_AARCH64_TLSLD_LDST128_DTPREL_LO12 = 572;
+constexpr unsigned R_AARCH64_NONE                         = 0;
+constexpr unsigned R_AARCH64_P32_ABS32                    = 1;
+constexpr unsigned R_AARCH64_P32_COPY                     = 180;
+constexpr unsigned R_AARCH64_P32_GLOB_DAT                 = 181;
+constexpr unsigned R_AARCH64_P32_JUMP_SLOT                = 182;
+constexpr unsigned R_AARCH64_P32_RELATIVE                 = 183;
+constexpr unsigned R_AARCH64_P32_TLS_DTPMOD               = 184;
+constexpr unsigned R_AARCH64_P32_TLS_DTPREL               = 185;
+constexpr unsigned R_AARCH64_P32_TLS_TPREL                = 186;
+constexpr unsigned R_AARCH64_P32_TLSDESC                  = 187;
+constexpr unsigned R_AARCH64_P32_IRELATIVE                = 188;
+constexpr unsigned R_AARCH64_ABS64                        = 257;
+constexpr unsigned R_AARCH64_ABS32                        = 258;
+constexpr unsigned R_AARCH64_ABS16                        = 259;
+constexpr unsigned R_AARCH64_PREL64                       = 260;
+constexpr unsigned R_AARCH64_PREL32                       = 261;
+constexpr unsigned R_AARCH64_PREL16                       = 262;
+constexpr unsigned R_AARCH64_MOVW_UABS_G0                 = 263;
+constexpr unsigned R_AARCH64_MOVW_UABS_G0_NC              = 264;
+constexpr unsigned R_AARCH64_MOVW_UABS_G1                 = 265;
+constexpr unsigned R_AARCH64_MOVW_UABS_G1_NC              = 266;
+constexpr unsigned R_AARCH64_MOVW_UABS_G2                 = 267;
+constexpr unsigned R_AARCH64_MOVW_UABS_G2_NC              = 268;
+constexpr unsigned R_AARCH64_MOVW_UABS_G3                 = 269;
+constexpr unsigned R_AARCH64_MOVW_SABS_G0                 = 270;
+constexpr unsigned R_AARCH64_MOVW_SABS_G1                 = 271;
+constexpr unsigned R_AARCH64_MOVW_SABS_G2                 = 272;
+constexpr unsigned R_AARCH64_LD_PREL_LO19                 = 273;
+constexpr unsigned R_AARCH64_ADR_PREL_LO21                = 274;
+constexpr unsigned R_AARCH64_ADR_PREL_PG_HI21             = 275;
+constexpr unsigned R_AARCH64_ADR_PREL_PG_HI21_NC          = 276;
+constexpr unsigned R_AARCH64_ADD_ABS_LO12_NC              = 277;
+constexpr unsigned R_AARCH64_LDST8_ABS_LO12_NC            = 278;
+constexpr unsigned R_AARCH64_TSTBR14                      = 279;
+constexpr unsigned R_AARCH64_CONDBR19                     = 280;
+constexpr unsigned R_AARCH64_JUMP26                       = 282;
+constexpr unsigned R_AARCH64_CALL26                       = 283;
+constexpr unsigned R_AARCH64_LDST16_ABS_LO12_NC           = 284;
+constexpr unsigned R_AARCH64_LDST32_ABS_LO12_NC           = 285;
+constexpr unsigned R_AARCH64_LDST64_ABS_LO12_NC           = 286;
+constexpr unsigned R_AARCH64_MOVW_PREL_G0                 = 287;
+constexpr unsigned R_AARCH64_MOVW_PREL_G0_NC              = 288;
+constexpr unsigned R_AARCH64_MOVW_PREL_G1                 = 289;
+constexpr unsigned R_AARCH64_MOVW_PREL_G1_NC              = 290;
+constexpr unsigned R_AARCH64_MOVW_PREL_G2                 = 291;
+constexpr unsigned R_AARCH64_MOVW_PREL_G2_NC              = 292;
+constexpr unsigned R_AARCH64_MOVW_PREL_G3                 = 293;
+constexpr unsigned R_AARCH64_LDST128_ABS_LO12_NC          = 299;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G0               = 300;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G0_NC            = 301;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G1               = 302;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G1_NC            = 303;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G2               = 304;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G2_NC            = 305;
+constexpr unsigned R_AARCH64_MOVW_GOTOFF_G3               = 306;
+constexpr unsigned R_AARCH64_GOTREL64                     = 307;
+constexpr unsigned R_AARCH64_GOTREL32                     = 308;
+constexpr unsigned R_AARCH64_GOT_LD_PREL19                = 309;
+constexpr unsigned R_AARCH64_LD64_GOTOFF_LO15             = 310;
+constexpr unsigned R_AARCH64_ADR_GOT_PAGE                 = 311;
+constexpr unsigned R_AARCH64_LD64_GOT_LO12_NC             = 312;
+constexpr unsigned R_AARCH64_LD64_GOTPAGE_LO15            = 313;
+constexpr unsigned R_AARCH64_TLSGD_ADR_PREL21             = 512;
+constexpr unsigned R_AARCH64_TLSGD_ADR_PAGE21             = 513;
+constexpr unsigned R_AARCH64_TLSGD_ADD_LO12_NC            = 514;
+constexpr unsigned R_AARCH64_TLSGD_MOVW_G1                = 515;
+constexpr unsigned R_AARCH64_TLSGD_MOVW_G0_NC             = 516;
+constexpr unsigned R_AARCH64_TLSLD_ADR_PREL21             = 517;
+constexpr unsigned R_AARCH64_TLSLD_ADR_PAGE21             = 518;
+constexpr unsigned R_AARCH64_TLSLD_ADD_LO12_NC            = 519;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_G1                = 520;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_G0_NC             = 521;
+constexpr unsigned R_AARCH64_TLSLD_LD_PREL19              = 522;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G2         = 523;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G1         = 524;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G1_NC      = 525;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G0         = 526;
+constexpr unsigned R_AARCH64_TLSLD_MOVW_DTPREL_G0_NC      = 527;
+constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_HI12        = 528;
+constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_LO12        = 529;
+constexpr unsigned R_AARCH64_TLSLD_ADD_DTPREL_LO12_NC     = 530;
+constexpr unsigned R_AARCH64_TLSLD_LDST8_DTPREL_LO12      = 531;
+constexpr unsigned R_AARCH64_TLSLD_LDST8_DTPREL_LO12_NC   = 532;
+constexpr unsigned R_AARCH64_TLSLD_LDST16_DTPREL_LO12     = 533;
+constexpr unsigned R_AARCH64_TLSLD_LDST16_DTPREL_LO12_NC  = 534;
+constexpr unsigned R_AARCH64_TLSLD_LDST32_DTPREL_LO12     = 535;
+constexpr unsigned R_AARCH64_TLSLD_LDST32_DTPREL_LO12_NC  = 536;
+constexpr unsigned R_AARCH64_TLSLD_LDST64_DTPREL_LO12     = 537;
+constexpr unsigned R_AARCH64_TLSLD_LDST64_DTPREL_LO12_NC  = 538;
+constexpr unsigned R_AARCH64_TLSIE_MOVW_GOTTPREL_G1       = 539;
+constexpr unsigned R_AARCH64_TLSIE_MOVW_GOTTPREL_G0_NC    = 540;
+constexpr unsigned R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21    = 541;
+constexpr unsigned R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC  = 542;
+constexpr unsigned R_AARCH64_TLSIE_LD_GOTTPREL_PREL19     = 543;
+constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G2          = 544;
+constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G1          = 545;
+constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G1_NC       = 546;
+constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G0          = 547;
+constexpr unsigned R_AARCH64_TLSLE_MOVW_TPREL_G0_NC       = 548;
+constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_HI12         = 549;
+constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_LO12         = 550;
+constexpr unsigned R_AARCH64_TLSLE_ADD_TPREL_LO12_NC      = 551;
+constexpr unsigned R_AARCH64_TLSLE_LDST8_TPREL_LO12       = 552;
+constexpr unsigned R_AARCH64_TLSLE_LDST8_TPREL_LO12_NC    = 553;
+constexpr unsigned R_AARCH64_TLSLE_LDST16_TPREL_LO12      = 554;
+constexpr unsigned R_AARCH64_TLSLE_LDST16_TPREL_LO12_NC   = 555;
+constexpr unsigned R_AARCH64_TLSLE_LDST32_TPREL_LO12      = 556;
+constexpr unsigned R_AARCH64_TLSLE_LDST32_TPREL_LO12_NC   = 557;
+constexpr unsigned R_AARCH64_TLSLE_LDST64_TPREL_LO12      = 558;
+constexpr unsigned R_AARCH64_TLSLE_LDST64_TPREL_LO12_NC   = 559;
+constexpr unsigned R_AARCH64_TLSDESC_LD_PREL19            = 560;
+constexpr unsigned R_AARCH64_TLSDESC_ADR_PREL21           = 561;
+constexpr unsigned R_AARCH64_TLSDESC_ADR_PAGE21           = 562;
+constexpr unsigned R_AARCH64_TLSDESC_LD64_LO12            = 563;
+constexpr unsigned R_AARCH64_TLSDESC_ADD_LO12             = 564;
+constexpr unsigned R_AARCH64_TLSDESC_OFF_G1               = 565;
+constexpr unsigned R_AARCH64_TLSDESC_OFF_G0_NC            = 566;
+constexpr unsigned R_AARCH64_TLSDESC_LDR                  = 567;
+constexpr unsigned R_AARCH64_TLSDESC_ADD                  = 568;
+constexpr unsigned R_AARCH64_TLSDESC_CALL                 = 569;
+constexpr unsigned R_AARCH64_TLSLE_LDST128_TPREL_LO12     = 570;
+constexpr unsigned R_AARCH64_TLSLE_LDST128_TPREL_LO12_NC  = 571;
+constexpr unsigned R_AARCH64_TLSLD_LDST128_DTPREL_LO12    = 572;
 constexpr unsigned R_AARCH64_TLSLD_LDST128_DTPREL_LO12_NC = 573;
-constexpr unsigned R_AARCH64_COPY = 1024;
-constexpr unsigned R_AARCH64_GLOB_DAT = 1025;
-constexpr unsigned R_AARCH64_JUMP_SLOT = 1026;
-constexpr unsigned R_AARCH64_RELATIVE = 1027;
-constexpr unsigned R_AARCH64_TLS_DTPMOD = 1028;
-constexpr unsigned R_AARCH64_TLS_DTPMOD64 = 1028;
-constexpr unsigned R_AARCH64_TLS_DTPREL = 1029;
-constexpr unsigned R_AARCH64_TLS_DTPREL64 = 1029;
-constexpr unsigned R_AARCH64_TLS_TPREL = 1030;
-constexpr unsigned R_AARCH64_TLS_TPREL64 = 1030;
-constexpr unsigned R_AARCH64_TLSDESC = 1031;
+constexpr unsigned R_AARCH64_COPY                         = 1024;
+constexpr unsigned R_AARCH64_GLOB_DAT                     = 1025;
+constexpr unsigned R_AARCH64_JUMP_SLOT                    = 1026;
+constexpr unsigned R_AARCH64_RELATIVE                     = 1027;
+constexpr unsigned R_AARCH64_TLS_DTPMOD                   = 1028;
+constexpr unsigned R_AARCH64_TLS_DTPMOD64                 = 1028;
+constexpr unsigned R_AARCH64_TLS_DTPREL                   = 1029;
+constexpr unsigned R_AARCH64_TLS_DTPREL64                 = 1029;
+constexpr unsigned R_AARCH64_TLS_TPREL                    = 1030;
+constexpr unsigned R_AARCH64_TLS_TPREL64                  = 1030;
+constexpr unsigned R_AARCH64_TLSDESC                      = 1031;
 //   RISC-V
-constexpr unsigned R_RISCV_NONE = 0;
-constexpr unsigned R_RISCV_32 = 1;
-constexpr unsigned R_RISCV_64 = 2;
-constexpr unsigned R_RISCV_RELATIVE = 3;
-constexpr unsigned R_RISCV_COPY = 4;
-constexpr unsigned R_RISCV_JUMP_SLOT = 5;
-constexpr unsigned R_RISCV_TLS_DTPMOD32 = 6;
-constexpr unsigned R_RISCV_TLS_DTPMOD64 = 7;
-constexpr unsigned R_RISCV_TLS_DTPREL32 = 8;
-constexpr unsigned R_RISCV_TLS_DTPREL64 = 9;
-constexpr unsigned R_RISCV_TLS_TPREL32 = 10;
-constexpr unsigned R_RISCV_TLS_TPREL64 = 11;
-constexpr unsigned R_RISCV_BRANCH = 16;
-constexpr unsigned R_RISCV_JAL = 17;
-constexpr unsigned R_RISCV_CALL = 18;
-constexpr unsigned R_RISCV_CALL_PLT = 19;
-constexpr unsigned R_RISCV_GOT_HI20 = 20;
-constexpr unsigned R_RISCV_TLS_GOT_HI20 = 21;
-constexpr unsigned R_RISCV_TLS_GD_HI20 = 22;
-constexpr unsigned R_RISCV_PCREL_HI20 = 23;
-constexpr unsigned R_RISCV_PCREL_LO12_I = 24;
-constexpr unsigned R_RISCV_PCREL_LO12_S = 25;
-constexpr unsigned R_RISCV_HI20 = 26;
-constexpr unsigned R_RISCV_LO12_I = 27;
-constexpr unsigned R_RISCV_LO12_S = 28;
-constexpr unsigned R_RISCV_TPREL_HI20 = 29;
-constexpr unsigned R_RISCV_TPREL_LO12_I = 30;
-constexpr unsigned R_RISCV_TPREL_LO12_S = 31;
-constexpr unsigned R_RISCV_TPREL_ADD = 32;
-constexpr unsigned R_RISCV_ADD8 = 33;
-constexpr unsigned R_RISCV_ADD16 = 34;
-constexpr unsigned R_RISCV_ADD32 = 35;
-constexpr unsigned R_RISCV_ADD64 = 36;
-constexpr unsigned R_RISCV_SUB8 = 37;
-constexpr unsigned R_RISCV_SUB16 = 38;
-constexpr unsigned R_RISCV_SUB32 = 39;
-constexpr unsigned R_RISCV_SUB64 = 40;
+constexpr unsigned R_RISCV_NONE          = 0;
+constexpr unsigned R_RISCV_32            = 1;
+constexpr unsigned R_RISCV_64            = 2;
+constexpr unsigned R_RISCV_RELATIVE      = 3;
+constexpr unsigned R_RISCV_COPY          = 4;
+constexpr unsigned R_RISCV_JUMP_SLOT     = 5;
+constexpr unsigned R_RISCV_TLS_DTPMOD32  = 6;
+constexpr unsigned R_RISCV_TLS_DTPMOD64  = 7;
+constexpr unsigned R_RISCV_TLS_DTPREL32  = 8;
+constexpr unsigned R_RISCV_TLS_DTPREL64  = 9;
+constexpr unsigned R_RISCV_TLS_TPREL32   = 10;
+constexpr unsigned R_RISCV_TLS_TPREL64   = 11;
+constexpr unsigned R_RISCV_BRANCH        = 16;
+constexpr unsigned R_RISCV_JAL           = 17;
+constexpr unsigned R_RISCV_CALL          = 18;
+constexpr unsigned R_RISCV_CALL_PLT      = 19;
+constexpr unsigned R_RISCV_GOT_HI20      = 20;
+constexpr unsigned R_RISCV_TLS_GOT_HI20  = 21;
+constexpr unsigned R_RISCV_TLS_GD_HI20   = 22;
+constexpr unsigned R_RISCV_PCREL_HI20    = 23;
+constexpr unsigned R_RISCV_PCREL_LO12_I  = 24;
+constexpr unsigned R_RISCV_PCREL_LO12_S  = 25;
+constexpr unsigned R_RISCV_HI20          = 26;
+constexpr unsigned R_RISCV_LO12_I        = 27;
+constexpr unsigned R_RISCV_LO12_S        = 28;
+constexpr unsigned R_RISCV_TPREL_HI20    = 29;
+constexpr unsigned R_RISCV_TPREL_LO12_I  = 30;
+constexpr unsigned R_RISCV_TPREL_LO12_S  = 31;
+constexpr unsigned R_RISCV_TPREL_ADD     = 32;
+constexpr unsigned R_RISCV_ADD8          = 33;
+constexpr unsigned R_RISCV_ADD16         = 34;
+constexpr unsigned R_RISCV_ADD32         = 35;
+constexpr unsigned R_RISCV_ADD64         = 36;
+constexpr unsigned R_RISCV_SUB8          = 37;
+constexpr unsigned R_RISCV_SUB16         = 38;
+constexpr unsigned R_RISCV_SUB32         = 39;
+constexpr unsigned R_RISCV_SUB64         = 40;
 constexpr unsigned R_RISCV_GNU_VTINHERIT = 41;
-constexpr unsigned R_RISCV_GNU_VTENTRY = 42;
-constexpr unsigned R_RISCV_ALIGN = 43;
-constexpr unsigned R_RISCV_RVC_BRANCH = 44;
-constexpr unsigned R_RISCV_RVC_JUMP = 45;
-constexpr unsigned R_RISCV_RVC_LUI = 46;
-constexpr unsigned R_RISCV_RELAX = 51;
-constexpr unsigned R_RISCV_SUB6 = 52;
-constexpr unsigned R_RISCV_SET6 = 53;
-constexpr unsigned R_RISCV_SET8 = 54;
-constexpr unsigned R_RISCV_SET16 = 55;
-constexpr unsigned R_RISCV_SET32 = 56;
-constexpr unsigned R_RISCV_32_PCREL = 57;
-constexpr unsigned R_RISCV_IRELATIVE = 58;
+constexpr unsigned R_RISCV_GNU_VTENTRY   = 42;
+constexpr unsigned R_RISCV_ALIGN         = 43;
+constexpr unsigned R_RISCV_RVC_BRANCH    = 44;
+constexpr unsigned R_RISCV_RVC_JUMP      = 45;
+constexpr unsigned R_RISCV_RVC_LUI       = 46;
+constexpr unsigned R_RISCV_RELAX         = 51;
+constexpr unsigned R_RISCV_SUB6          = 52;
+constexpr unsigned R_RISCV_SET6          = 53;
+constexpr unsigned R_RISCV_SET8          = 54;
+constexpr unsigned R_RISCV_SET16         = 55;
+constexpr unsigned R_RISCV_SET32         = 56;
+constexpr unsigned R_RISCV_32_PCREL      = 57;
+constexpr unsigned R_RISCV_IRELATIVE     = 58;
 
 // Segment types
-constexpr Elf_Word PT_NULL = 0;
-constexpr Elf_Word PT_LOAD = 1;
-constexpr Elf_Word PT_DYNAMIC = 2;
-constexpr Elf_Word PT_INTERP = 3;
-constexpr Elf_Word PT_NOTE = 4;
-constexpr Elf_Word PT_SHLIB = 5;
-constexpr Elf_Word PT_PHDR = 6;
-constexpr Elf_Word PT_TLS = 7;
-constexpr Elf_Word PT_LOOS = 0X60000000;
+constexpr Elf_Word PT_NULL         = 0;
+constexpr Elf_Word PT_LOAD         = 1;
+constexpr Elf_Word PT_DYNAMIC      = 2;
+constexpr Elf_Word PT_INTERP       = 3;
+constexpr Elf_Word PT_NOTE         = 4;
+constexpr Elf_Word PT_SHLIB        = 5;
+constexpr Elf_Word PT_PHDR         = 6;
+constexpr Elf_Word PT_TLS          = 7;
+constexpr Elf_Word PT_LOOS         = 0X60000000;
 constexpr Elf_Word PT_GNU_EH_FRAME = 0X6474E550; // Frame unwind information
-constexpr Elf_Word PT_GNU_STACK = 0X6474E551; // Stack flags
-constexpr Elf_Word PT_GNU_RELRO = 0X6474E552; // Read only after relocs
+constexpr Elf_Word PT_GNU_STACK    = 0X6474E551; // Stack flags
+constexpr Elf_Word PT_GNU_RELRO    = 0X6474E552; // Read only after relocs
 constexpr Elf_Word PT_GNU_PROPERTY = 0X6474E553; // GNU property
 constexpr Elf_Word PT_GNU_MBIND_LO = 0X6474E555; // Mbind segments start
 constexpr Elf_Word PT_GNU_MBIND_HI = 0X6474F554; // Mbind segments finish
-constexpr Elf_Word PT_PAX_FLAGS = 0X65041580;
+constexpr Elf_Word PT_PAX_FLAGS    = 0X65041580;
 constexpr Elf_Word PT_OPENBSD_RANDOMIZE = 0X65A3DBE6;
-constexpr Elf_Word PT_OPENBSD_WXNEEDED = 0X65A3DBE7;
-constexpr Elf_Word PT_OPENBSD_BOOTDATA = 0X65A41BE6;
-constexpr Elf_Word PT_SUNWBSS = 0X6FFFFFFA;
-constexpr Elf_Word PT_SUNWSTACK = 0X6FFFFFFB;
-constexpr Elf_Word PT_HIOS = 0X6FFFFFFF;
-constexpr Elf_Word PT_LOPROC = 0X70000000;
-constexpr Elf_Word PT_HIPROC = 0X7FFFFFFF;
+constexpr Elf_Word PT_OPENBSD_WXNEEDED  = 0X65A3DBE7;
+constexpr Elf_Word PT_OPENBSD_BOOTDATA  = 0X65A41BE6;
+constexpr Elf_Word PT_SUNWBSS           = 0X6FFFFFFA;
+constexpr Elf_Word PT_SUNWSTACK         = 0X6FFFFFFB;
+constexpr Elf_Word PT_HIOS              = 0X6FFFFFFF;
+constexpr Elf_Word PT_LOPROC            = 0X70000000;
+constexpr Elf_Word PT_HIPROC            = 0X7FFFFFFF;
 
 // Segment flags
-constexpr Elf_Word PF_X = 1;			 // Execute
-constexpr Elf_Word PF_W = 2;			 // Write
-constexpr Elf_Word PF_R = 4;			 // Read
-constexpr Elf_Word PF_MASKOS = 0x0ff00000; // Unspecified
+constexpr Elf_Word PF_X        = 1;          // Execute
+constexpr Elf_Word PF_W        = 2;          // Write
+constexpr Elf_Word PF_R        = 4;          // Read
+constexpr Elf_Word PF_MASKOS   = 0x0ff00000; // Unspecified
 constexpr Elf_Word PF_MASKPROC = 0xf0000000; // Unspecified
 
 // Dynamic Array Tags
-constexpr Elf_Word DT_NULL = 0;
-constexpr Elf_Word DT_NEEDED = 1;
-constexpr Elf_Word DT_PLTRELSZ = 2;
-constexpr Elf_Word DT_PLTGOT = 3;
-constexpr Elf_Word DT_HASH = 4;
-constexpr Elf_Word DT_STRTAB = 5;
-constexpr Elf_Word DT_SYMTAB = 6;
-constexpr Elf_Word DT_RELA = 7;
-constexpr Elf_Word DT_RELASZ = 8;
-constexpr Elf_Word DT_RELAENT = 9;
-constexpr Elf_Word DT_STRSZ = 10;
-constexpr Elf_Word DT_SYMENT = 11;
-constexpr Elf_Word DT_INIT = 12;
-constexpr Elf_Word DT_FINI = 13;
-constexpr Elf_Word DT_SONAME = 14;
-constexpr Elf_Word DT_RPATH = 15;
-constexpr Elf_Word DT_SYMBOLIC = 16;
-constexpr Elf_Word DT_REL = 17;
-constexpr Elf_Word DT_RELSZ = 18;
-constexpr Elf_Word DT_RELENT = 19;
-constexpr Elf_Word DT_PLTREL = 20;
-constexpr Elf_Word DT_DEBUG = 21;
-constexpr Elf_Word DT_TEXTREL = 22;
-constexpr Elf_Word DT_JMPREL = 23;
-constexpr Elf_Word DT_BIND_NOW = 24;
-constexpr Elf_Word DT_INIT_ARRAY = 25;
-constexpr Elf_Word DT_FINI_ARRAY = 26;
-constexpr Elf_Word DT_INIT_ARRAYSZ = 27;
-constexpr Elf_Word DT_FINI_ARRAYSZ = 28;
-constexpr Elf_Word DT_RUNPATH = 29;
-constexpr Elf_Word DT_FLAGS = 30;
-constexpr Elf_Word DT_ENCODING = 32;
-constexpr Elf_Word DT_PREINIT_ARRAY = 32;
+constexpr Elf_Word DT_NULL            = 0;
+constexpr Elf_Word DT_NEEDED          = 1;
+constexpr Elf_Word DT_PLTRELSZ        = 2;
+constexpr Elf_Word DT_PLTGOT          = 3;
+constexpr Elf_Word DT_HASH            = 4;
+constexpr Elf_Word DT_STRTAB          = 5;
+constexpr Elf_Word DT_SYMTAB          = 6;
+constexpr Elf_Word DT_RELA            = 7;
+constexpr Elf_Word DT_RELASZ          = 8;
+constexpr Elf_Word DT_RELAENT         = 9;
+constexpr Elf_Word DT_STRSZ           = 10;
+constexpr Elf_Word DT_SYMENT          = 11;
+constexpr Elf_Word DT_INIT            = 12;
+constexpr Elf_Word DT_FINI            = 13;
+constexpr Elf_Word DT_SONAME          = 14;
+constexpr Elf_Word DT_RPATH           = 15;
+constexpr Elf_Word DT_SYMBOLIC        = 16;
+constexpr Elf_Word DT_REL             = 17;
+constexpr Elf_Word DT_RELSZ           = 18;
+constexpr Elf_Word DT_RELENT          = 19;
+constexpr Elf_Word DT_PLTREL          = 20;
+constexpr Elf_Word DT_DEBUG           = 21;
+constexpr Elf_Word DT_TEXTREL         = 22;
+constexpr Elf_Word DT_JMPREL          = 23;
+constexpr Elf_Word DT_BIND_NOW        = 24;
+constexpr Elf_Word DT_INIT_ARRAY      = 25;
+constexpr Elf_Word DT_FINI_ARRAY      = 26;
+constexpr Elf_Word DT_INIT_ARRAYSZ    = 27;
+constexpr Elf_Word DT_FINI_ARRAYSZ    = 28;
+constexpr Elf_Word DT_RUNPATH         = 29;
+constexpr Elf_Word DT_FLAGS           = 30;
+constexpr Elf_Word DT_ENCODING        = 32;
+constexpr Elf_Word DT_PREINIT_ARRAY   = 32;
 constexpr Elf_Word DT_PREINIT_ARRAYSZ = 33;
-constexpr Elf_Word DT_MAXPOSTAGS = 34;
-constexpr Elf_Word DT_LOOS = 0x6000000D;
-constexpr Elf_Word DT_HIOS = 0x6ffff000;
-constexpr Elf_Word DT_GNU_HASH = 0x6ffffef5;
-constexpr Elf_Word DT_TLSDESC_PLT = 0x6ffffef6;
-constexpr Elf_Word DT_TLSDESC_GOT = 0x6ffffef7;
-constexpr Elf_Word DT_GNU_CONFLICT = 0x6ffffef8;
-constexpr Elf_Word DT_GNU_LIBLIST = 0x6ffffef9;
-constexpr Elf_Word DT_CONFIG = 0x6ffffefa;
-constexpr Elf_Word DT_DEPAUDIT = 0x6ffffefb;
-constexpr Elf_Word DT_AUDIT = 0x6ffffefc;
-constexpr Elf_Word DT_PLTPAD = 0x6ffffefd;
-constexpr Elf_Word DT_MOVETAB = 0x6ffffefe;
-constexpr Elf_Word DT_SYMINFO = 0x6ffffeff;
-constexpr Elf_Word DT_ADDRRNGHI = 0x6ffffeff;
-constexpr Elf_Word DT_VERSYM = 0x6ffffff0;
-constexpr Elf_Word DT_RELACOUNT = 0x6ffffff9;
-constexpr Elf_Word DT_RELCOUNT = 0x6ffffffa;
-constexpr Elf_Word DT_FLAGS_1 = 0x6ffffffb;
-constexpr Elf_Word DT_VERDEF = 0x6ffffffc;
-constexpr Elf_Word DT_VERDEFNUM = 0x6ffffffd;
-constexpr Elf_Word DT_VERNEED = 0x6ffffffe;
-constexpr Elf_Word DT_VERNEEDNUM = 0x6fffffff;
-constexpr Elf_Word DT_LOPROC = 0x70000000;
-constexpr Elf_Word DT_HIPROC = 0x7FFFFFFF;
+constexpr Elf_Word DT_MAXPOSTAGS      = 34;
+constexpr Elf_Word DT_LOOS            = 0x6000000D;
+constexpr Elf_Word DT_HIOS            = 0x6ffff000;
+constexpr Elf_Word DT_GNU_HASH        = 0x6ffffef5;
+constexpr Elf_Word DT_TLSDESC_PLT     = 0x6ffffef6;
+constexpr Elf_Word DT_TLSDESC_GOT     = 0x6ffffef7;
+constexpr Elf_Word DT_GNU_CONFLICT    = 0x6ffffef8;
+constexpr Elf_Word DT_GNU_LIBLIST     = 0x6ffffef9;
+constexpr Elf_Word DT_CONFIG          = 0x6ffffefa;
+constexpr Elf_Word DT_DEPAUDIT        = 0x6ffffefb;
+constexpr Elf_Word DT_AUDIT           = 0x6ffffefc;
+constexpr Elf_Word DT_PLTPAD          = 0x6ffffefd;
+constexpr Elf_Word DT_MOVETAB         = 0x6ffffefe;
+constexpr Elf_Word DT_SYMINFO         = 0x6ffffeff;
+constexpr Elf_Word DT_ADDRRNGHI       = 0x6ffffeff;
+constexpr Elf_Word DT_VERSYM          = 0x6ffffff0;
+constexpr Elf_Word DT_RELACOUNT       = 0x6ffffff9;
+constexpr Elf_Word DT_RELCOUNT        = 0x6ffffffa;
+constexpr Elf_Word DT_FLAGS_1         = 0x6ffffffb;
+constexpr Elf_Word DT_VERDEF          = 0x6ffffffc;
+constexpr Elf_Word DT_VERDEFNUM       = 0x6ffffffd;
+constexpr Elf_Word DT_VERNEED         = 0x6ffffffe;
+constexpr Elf_Word DT_VERNEEDNUM      = 0x6fffffff;
+constexpr Elf_Word DT_LOPROC          = 0x70000000;
+constexpr Elf_Word DT_HIPROC          = 0x7FFFFFFF;
 
 // DT_FLAGS values
-constexpr Elf_Word DF_ORIGIN = 0x1;
-constexpr Elf_Word DF_SYMBOLIC = 0x2;
-constexpr Elf_Word DF_TEXTREL = 0x4;
-constexpr Elf_Word DF_BIND_NOW = 0x8;
+constexpr Elf_Word DF_ORIGIN     = 0x1;
+constexpr Elf_Word DF_SYMBOLIC   = 0x2;
+constexpr Elf_Word DF_TEXTREL    = 0x4;
+constexpr Elf_Word DF_BIND_NOW   = 0x8;
 constexpr Elf_Word DF_STATIC_TLS = 0x10;
 
 // Legal values for d_tag (dynamic entry type).
-constexpr Elf_Word AT_NULL = 0;	// End of vector
-constexpr Elf_Word AT_IGNORE = 1;  // Entry should be ignored
-constexpr Elf_Word AT_EXECFD = 2;  // File descriptor of program
-constexpr Elf_Word AT_PHDR = 3;	// Program headers for program
-constexpr Elf_Word AT_PHENT = 4;	 // Size of program header entry
-constexpr Elf_Word AT_PHNUM = 5;	 // Number of program headers
-constexpr Elf_Word AT_PAGESZ = 6;  // System page size
-constexpr Elf_Word AT_BASE = 7;	// Base address of interpreter
-constexpr Elf_Word AT_FLAGS = 8;	 // Flags
-constexpr Elf_Word AT_ENTRY = 9;	 // Entry point of program
-constexpr Elf_Word AT_NOTELF = 10; // Program is not ELF
-constexpr Elf_Word AT_UID = 11; // Real uid
-constexpr Elf_Word AT_EUID = 12; // Effective uid
-constexpr Elf_Word AT_GID = 13; // Real gid
-constexpr Elf_Word AT_EGID = 14; // Effective gid
-constexpr Elf_Word AT_CLKTCK = 17; // Frequency of times()
-constexpr Elf_Word AT_PLATFORM = 15; // String identifying platform.
-constexpr Elf_Word AT_HWCAP = 16; // Hints about processor capabilities.
-constexpr Elf_Word AT_FPUCW = 18; // Used FPU control word.
-constexpr Elf_Word AT_DCACHEBSIZE = 19; // Data cache block size.
-constexpr Elf_Word AT_ICACHEBSIZE = 20; // Instruction cache block size.
-constexpr Elf_Word AT_UCACHEBSIZE = 21; // Unified cache block size.
-constexpr Elf_Word AT_IGNOREPPC = 22; // Entry should be ignored.
-constexpr Elf_Word AT_SECURE = 23; // Boolean, was exec setuid-like?
+constexpr Elf_Word AT_NULL          = 0;  // End of vector
+constexpr Elf_Word AT_IGNORE        = 1;  // Entry should be ignored
+constexpr Elf_Word AT_EXECFD        = 2;  // File descriptor of program
+constexpr Elf_Word AT_PHDR          = 3;  // Program headers for program
+constexpr Elf_Word AT_PHENT         = 4;  // Size of program header entry
+constexpr Elf_Word AT_PHNUM         = 5;  // Number of program headers
+constexpr Elf_Word AT_PAGESZ        = 6;  // System page size
+constexpr Elf_Word AT_BASE          = 7;  // Base address of interpreter
+constexpr Elf_Word AT_FLAGS         = 8;  // Flags
+constexpr Elf_Word AT_ENTRY         = 9;  // Entry point of program
+constexpr Elf_Word AT_NOTELF        = 10; // Program is not ELF
+constexpr Elf_Word AT_UID           = 11; // Real uid
+constexpr Elf_Word AT_EUID          = 12; // Effective uid
+constexpr Elf_Word AT_GID           = 13; // Real gid
+constexpr Elf_Word AT_EGID          = 14; // Effective gid
+constexpr Elf_Word AT_CLKTCK        = 17; // Frequency of times()
+constexpr Elf_Word AT_PLATFORM      = 15; // String identifying platform.
+constexpr Elf_Word AT_HWCAP         = 16; // Hints about processor capabilities.
+constexpr Elf_Word AT_FPUCW         = 18; // Used FPU control word.
+constexpr Elf_Word AT_DCACHEBSIZE   = 19; // Data cache block size.
+constexpr Elf_Word AT_ICACHEBSIZE   = 20; // Instruction cache block size.
+constexpr Elf_Word AT_UCACHEBSIZE   = 21; // Unified cache block size.
+constexpr Elf_Word AT_IGNOREPPC     = 22; // Entry should be ignored.
+constexpr Elf_Word AT_SECURE        = 23; // Boolean, was exec setuid-like?
 constexpr Elf_Word AT_BASE_PLATFORM = 24; // String identifying real platforms.
-constexpr Elf_Word AT_RANDOM = 25; // Address of 16 random bytes.
-constexpr Elf_Word AT_HWCAP2 = 26; // More hints about processor capabilities.
-constexpr Elf_Word AT_EXECFN = 31; // Filename of executable.
+constexpr Elf_Word AT_RANDOM        = 25; // Address of 16 random bytes.
+constexpr Elf_Word AT_HWCAP2  = 26; // More hints about processor capabilities.
+constexpr Elf_Word AT_EXECFN  = 31; // Filename of executable.
 constexpr Elf_Word AT_SYSINFO = 32; // EP to the system call in the vDSO.
 constexpr Elf_Word AT_SYSINFO_EHDR = 33; // Start of the ELF header of the vDSO.
-constexpr Elf_Word AT_L1I_CACHESHAPE = 34;
-constexpr Elf_Word AT_L1D_CACHESHAPE = 35;
-constexpr Elf_Word AT_L2_CACHESHAPE = 36;
-constexpr Elf_Word AT_L3_CACHESHAPE = 37;
-constexpr Elf_Word AT_L1I_CACHESIZE = 40;
+constexpr Elf_Word AT_L1I_CACHESHAPE    = 34;
+constexpr Elf_Word AT_L1D_CACHESHAPE    = 35;
+constexpr Elf_Word AT_L2_CACHESHAPE     = 36;
+constexpr Elf_Word AT_L3_CACHESHAPE     = 37;
+constexpr Elf_Word AT_L1I_CACHESIZE     = 40;
 constexpr Elf_Word AT_L1I_CACHEGEOMETRY = 41;
-constexpr Elf_Word AT_L1D_CACHESIZE = 42;
+constexpr Elf_Word AT_L1D_CACHESIZE     = 42;
 constexpr Elf_Word AT_L1D_CACHEGEOMETRY = 43;
-constexpr Elf_Word AT_L2_CACHESIZE = 44;
-constexpr Elf_Word AT_L2_CACHEGEOMETRY = 45;
-constexpr Elf_Word AT_L3_CACHESIZE = 46;
+constexpr Elf_Word AT_L2_CACHESIZE      = 44;
+constexpr Elf_Word AT_L2_CACHEGEOMETRY  = 45;
+constexpr Elf_Word AT_L3_CACHESIZE      = 46;
 
 // ELF file header
-struct Elf32_Ehdr {
-	// Identification bytes
-	unsigned char e_ident[EI_NIDENT];
-	// Object file type
-	Elf_Half e_type;
-	// Architecture
-	Elf_Half e_machine;
-	// Object file version
-	Elf_Word e_version;
-	// Entry point virtual address
-	Elf32_Addr e_entry;
-	// Program header table file offset
-	Elf32_Off e_phoff;
-	// Section header table file offset
-	Elf32_Off e_shoff;
-	// Processor-specific flags
-	Elf_Word e_flags;
-	// ELF header size in bytes
-	Elf_Half e_ehsize;
-	// Program header table entry size
-	Elf_Half e_phentsize;
-	// Program header table entry count
-	Elf_Half e_phnum;
-	// Section header table entry size
-	Elf_Half e_shentsize;
-	// Section header table entry count
-	Elf_Half e_shnum;
-	// Section header string table index
-	Elf_Half e_shstrndx;
+struct Elf32_Ehdr
+{
+    // Identification bytes
+    unsigned char e_ident[EI_NIDENT];
+    // Object file type
+    Elf_Half e_type;
+    // Architecture
+    Elf_Half e_machine;
+    // Object file version
+    Elf_Word e_version;
+    // Entry point virtual address
+    Elf32_Addr e_entry;
+    // Program header table file offset
+    Elf32_Off e_phoff;
+    // Section header table file offset
+    Elf32_Off e_shoff;
+    // Processor-specific flags
+    Elf_Word e_flags;
+    // ELF header size in bytes
+    Elf_Half e_ehsize;
+    // Program header table entry size
+    Elf_Half e_phentsize;
+    // Program header table entry count
+    Elf_Half e_phnum;
+    // Section header table entry size
+    Elf_Half e_shentsize;
+    // Section header table entry count
+    Elf_Half e_shnum;
+    // Section header string table index
+    Elf_Half e_shstrndx;
 };
 
-struct Elf64_Ehdr {
-	// Identification bytes
-	unsigned char e_ident[EI_NIDENT];
-	// Object file type
-	Elf_Half e_type;
-	// Architecture
-	Elf_Half e_machine;
-	// Object file version
-	Elf_Word e_version;
-	// Entry point virtual address
-	Elf64_Addr e_entry;
-	// Program header table file offset
-	Elf64_Off e_phoff;
-	// Section header table file offset
-	Elf64_Off e_shoff;
-	// Processor-specific flags
-	Elf_Word e_flags;
-	// ELF header size in bytes
-	Elf_Half e_ehsize;
-	// Program header table entry size
-	Elf_Half e_phentsize;
-	// Program header table entry count
-	Elf_Half e_phnum;
-	// Section header table entry size
-	Elf_Half e_shentsize;
-	// Section header table entry count
-	Elf_Half e_shnum;
-	// Section header string table index
-	Elf_Half e_shstrndx;
+struct Elf64_Ehdr
+{
+    // Identification bytes
+    unsigned char e_ident[EI_NIDENT];
+    // Object file type
+    Elf_Half e_type;
+    // Architecture
+    Elf_Half e_machine;
+    // Object file version
+    Elf_Word e_version;
+    // Entry point virtual address
+    Elf64_Addr e_entry;
+    // Program header table file offset
+    Elf64_Off e_phoff;
+    // Section header table file offset
+    Elf64_Off e_shoff;
+    // Processor-specific flags
+    Elf_Word e_flags;
+    // ELF header size in bytes
+    Elf_Half e_ehsize;
+    // Program header table entry size
+    Elf_Half e_phentsize;
+    // Program header table entry count
+    Elf_Half e_phnum;
+    // Section header table entry size
+    Elf_Half e_shentsize;
+    // Section header table entry count
+    Elf_Half e_shnum;
+    // Section header string table index
+    Elf_Half e_shstrndx;
 };
 
 // Section header
-struct Elf32_Shdr {
-	// Section name (string table index)
-	Elf_Word sh_name;
-	// Section type
-	Elf_Word sh_type;
-	// Section flags
-	Elf_Word sh_flags;
-	// Section virtual address at execution
-	Elf32_Addr sh_addr;
-	// Section file offset
-	Elf32_Off sh_offset;
-	// Section size in bytes
-	Elf_Word sh_size;
-	// Link to another section
-	Elf_Word sh_link;
-	// Additional section information
-	Elf_Word sh_info;
-	// Section alignment
-	Elf_Word sh_addralign;
-	// Entry size if section holds table
-	Elf_Word sh_entsize;
+struct Elf32_Shdr
+{
+    // Section name (string table index)
+    Elf_Word sh_name;
+    // Section type
+    Elf_Word sh_type;
+    // Section flags
+    Elf_Word sh_flags;
+    // Section virtual address at execution
+    Elf32_Addr sh_addr;
+    // Section file offset
+    Elf32_Off sh_offset;
+    // Section size in bytes
+    Elf_Word sh_size;
+    // Link to another section
+    Elf_Word sh_link;
+    // Additional section information
+    Elf_Word sh_info;
+    // Section alignment
+    Elf_Word sh_addralign;
+    // Entry size if section holds table
+    Elf_Word sh_entsize;
 };
 
-struct Elf64_Shdr {
-	// Section name (string table index)
-	Elf_Word sh_name;
-	// Section type
-	Elf_Word sh_type;
-	// Section flags
-	Elf_Xword sh_flags;
-	// Section virtual address at execution
-	Elf64_Addr sh_addr;
-	// Section file offset
-	Elf64_Off sh_offset;
-	// Section size in bytes
-	Elf_Xword sh_size;
-	// Link to another section
-	Elf_Word sh_link;
-	// Additional section information
-	Elf_Word sh_info;
-	// Section alignment
-	Elf_Xword sh_addralign;
-	// Entry size if section holds table
-	Elf_Xword sh_entsize;
+struct Elf64_Shdr
+{
+    // Section name (string table index)
+    Elf_Word sh_name;
+    // Section type
+    Elf_Word sh_type;
+    // Section flags
+    Elf_Xword sh_flags;
+    // Section virtual address at execution
+    Elf64_Addr sh_addr;
+    // Section file offset
+    Elf64_Off sh_offset;
+    // Section size in bytes
+    Elf_Xword sh_size;
+    // Link to another section
+    Elf_Word sh_link;
+    // Additional section information
+    Elf_Word sh_info;
+    // Section alignment
+    Elf_Xword sh_addralign;
+    // Entry size if section holds table
+    Elf_Xword sh_entsize;
 };
 
 // Segment header
-struct Elf32_Phdr {
-	// Segment type
-	Elf_Word p_type;
-	// Segment file offset
-	Elf32_Off p_offset;
-	// Segment virtual address at execution
-	Elf32_Addr p_vaddr;
-	// Segment physical address
-	Elf32_Addr p_paddr;
-	// Segment size in file
-	Elf_Word p_filesz;
-	// Segment size in memory
-	Elf_Word p_memsz;
-	// Segment flags
-	Elf_Word p_flags;
-	// Segment alignment
-	Elf_Word p_align;
+struct Elf32_Phdr
+{
+    // Segment type
+    Elf_Word p_type;
+    // Segment file offset
+    Elf32_Off p_offset;
+    // Segment virtual address at execution
+    Elf32_Addr p_vaddr;
+    // Segment physical address
+    Elf32_Addr p_paddr;
+    // Segment size in file
+    Elf_Word p_filesz;
+    // Segment size in memory
+    Elf_Word p_memsz;
+    // Segment flags
+    Elf_Word p_flags;
+    // Segment alignment
+    Elf_Word p_align;
 };
 
-struct Elf64_Phdr {
-	// Segment type
-	Elf_Word p_type;
-	// Segment flags
-	Elf_Word p_flags;
-	// Segment file offset
-	Elf64_Off p_offset;
-	// Segment virtual address at execution
-	Elf64_Addr p_vaddr;
-	// Segment physical address
-	Elf64_Addr p_paddr;
-	// Segment size in file
-	Elf_Xword p_filesz;
-	// Segment size in memory
-	Elf_Xword p_memsz;
-	// Segment alignment
-	Elf_Xword p_align;
+struct Elf64_Phdr
+{
+    // Segment type
+    Elf_Word p_type;
+    // Segment flags
+    Elf_Word p_flags;
+    // Segment file offset
+    Elf64_Off p_offset;
+    // Segment virtual address at execution
+    Elf64_Addr p_vaddr;
+    // Segment physical address
+    Elf64_Addr p_paddr;
+    // Segment size in file
+    Elf_Xword p_filesz;
+    // Segment size in memory
+    Elf_Xword p_memsz;
+    // Segment alignment
+    Elf_Xword p_align;
 };
 
 // Symbol table entry
-struct Elf32_Sym {
-	// Symbol name (string table index)
-	Elf_Word st_name;
-	// Symbol value
-	Elf32_Addr st_value;
-	// Symbol size
-	Elf_Word st_size;
-	// Symbol type and binding attributes
-	unsigned char st_info;
-	// Symbol visibility
-	unsigned char st_other;
-	// Section index
-	Elf_Half st_shndx;
+struct Elf32_Sym
+{
+    // Symbol name (string table index)
+    Elf_Word st_name;
+    // Symbol value
+    Elf32_Addr st_value;
+    // Symbol size
+    Elf_Word st_size;
+    // Symbol type and binding attributes
+    unsigned char st_info;
+    // Symbol visibility
+    unsigned char st_other;
+    // Section index
+    Elf_Half st_shndx;
 };
 
-struct Elf64_Sym {
-	// Symbol name (string table index)
-	Elf_Word st_name;
-	// Symbol type and binding attributes
-	unsigned char st_info;
-	// Symbol visibility
-	unsigned char st_other;
-	// Section index
-	Elf_Half st_shndx;
-	// Symbol value
-	Elf64_Addr st_value;
-	// Symbol size
-	Elf_Xword st_size;
+struct Elf64_Sym
+{
+    // Symbol name (string table index)
+    Elf_Word st_name;
+    // Symbol type and binding attributes
+    unsigned char st_info;
+    // Symbol visibility
+    unsigned char st_other;
+    // Section index
+    Elf_Half st_shndx;
+    // Symbol value
+    Elf64_Addr st_value;
+    // Symbol size
+    Elf_Xword st_size;
 };
 
-#define ELF_ST_BIND(i) ((i) >> 4)
-#define ELF_ST_TYPE(i) ((i) & 0xf)
-#define ELF_ST_INFO(b, t) (((b) << 4) + ((t) & 0xf))
+#define ELF_ST_BIND( i )    ( ( i ) >> 4 )
+#define ELF_ST_TYPE( i )    ( ( i ) & 0xf )
+#define ELF_ST_INFO( b, t ) ( ( ( b ) << 4 ) + ( ( t ) & 0xf ) )
 
-#define ELF_ST_VISIBILITY(o) ((o) & 0x3)
+#define ELF_ST_VISIBILITY( o ) ( ( o ) & 0x3 )
 
 // Relocation entries
-struct Elf32_Rel {
-	// Location to apply the relocation action
-	Elf32_Addr r_offset;
-	// Relocation type and symbol index
-	Elf_Word r_info;
+struct Elf32_Rel
+{
+    // Location to apply the relocation action
+    Elf32_Addr r_offset;
+    // Relocation type and symbol index
+    Elf_Word r_info;
 };
 
-struct Elf32_Rela {
-	// Location to apply the relocation action
-	Elf32_Addr r_offset;
-	// Relocation type and symbol index
-	Elf_Word r_info;
-	// Constant addend used to compute the value
-	Elf_Sword r_addend;
+struct Elf32_Rela
+{
+    // Location to apply the relocation action
+    Elf32_Addr r_offset;
+    // Relocation type and symbol index
+    Elf_Word r_info;
+    // Constant addend used to compute the value
+    Elf_Sword r_addend;
 };
 
-struct Elf64_Rel {
-	// Location to apply the relocation action
-	Elf64_Addr r_offset;
-	// Relocation type and symbol index
-	Elf_Xword r_info;
+struct Elf64_Rel
+{
+    // Location to apply the relocation action
+    Elf64_Addr r_offset;
+    // Relocation type and symbol index
+    Elf_Xword r_info;
 };
 
-struct Elf64_Rela {
-	// Location to apply the relocation action
-	Elf64_Addr r_offset;
-	// Relocation type and symbol index
-	Elf_Xword r_info;
-	// Constant addend used to compute the value
-	Elf_Sxword r_addend;
+struct Elf64_Rela
+{
+    // Location to apply the relocation action
+    Elf64_Addr r_offset;
+    // Relocation type and symbol index
+    Elf_Xword r_info;
+    // Constant addend used to compute the value
+    Elf_Sxword r_addend;
 };
 
-#define ELF32_R_SYM(i) ((i) >> 8)
-#define ELF32_R_TYPE(i) ((unsigned char)(i))
-#define ELF32_R_INFO(s, t) (((s) << 8) + (unsigned char)(t))
+#define ELF32_R_SYM( i )     ( ( i ) >> 8 )
+#define ELF32_R_TYPE( i )    ( (unsigned char)( i ) )
+#define ELF32_R_INFO( s, t ) ( ( ( s ) << 8 ) + (unsigned char)( t ) )
 
-#define ELF64_R_SYM(i) ((i) >> 32)
-#define ELF64_R_TYPE(i) ((i) & 0xffffffffL)
-#define ELF64_R_INFO(s, t) \
-	((((std::int64_t)(s)) << 32) + ((t) & 0xffffffffL))
+#define ELF64_R_SYM( i )  ( ( i ) >> 32 )
+#define ELF64_R_TYPE( i ) ( ( i ) & 0xffffffffL )
+#define ELF64_R_INFO( s, t ) \
+    ( ( ( ( std::int64_t )( s ) ) << 32 ) + ( ( t ) & 0xffffffffL ) )
 
 // Dynamic structure
-struct Elf32_Dyn {
-	// Dynamic entry type
-	Elf_Sword d_tag;
-	union {
-		// Integer value
-		Elf_Word d_val;
-		// Address value
-		Elf32_Addr d_ptr;
-	} d_un;
+struct Elf32_Dyn
+{
+    // Dynamic entry type
+    Elf_Sword d_tag;
+    union {
+        // Integer value
+        Elf_Word d_val;
+        // Address value
+        Elf32_Addr d_ptr;
+    } d_un;
 };
 
-struct Elf64_Dyn {
-	// Dynamic entry type
-	Elf_Sxword d_tag;
-	union {
-		// Integer value
-		Elf_Xword d_val;
-		// Address value
-		Elf64_Addr d_ptr;
-	} d_un;
+struct Elf64_Dyn
+{
+    // Dynamic entry type
+    Elf_Sxword d_tag;
+    union {
+        // Integer value
+        Elf_Xword d_val;
+        // Address value
+        Elf64_Addr d_ptr;
+    } d_un;
 };
 
-struct Elfxx_Verdef {
-	// Version revision
-	Elf_Half vd_version;
-	// Version information flags
-	Elf_Half vd_flags;
-	// Version index
-	Elf_Half vd_ndx;
-	// Number of associated aux entries
-	Elf_Half vd_cnt;
-	// Version name hash value
-	Elf_Word vd_hash;
-	// Offset to verdaux array
-	Elf_Word vd_aux;
-	// Offset to next verdef entry
-	Elf_Word vd_next;
+struct Elfxx_Verdef
+{
+    // Version revision
+    Elf_Half vd_version;
+    // Version information flags
+    Elf_Half vd_flags;
+    // Version index
+    Elf_Half vd_ndx;
+    // Number of associated aux entries
+    Elf_Half vd_cnt;
+    // Version name hash value
+    Elf_Word vd_hash;
+    // Offset to verdaux array
+    Elf_Word vd_aux;
+    // Offset to next verdef entry
+    Elf_Word vd_next;
 };
 
-struct Elfxx_Verdaux {
-	// Version or dependency name
-	Elf_Word vda_name;
-	// Offset to next verdaux entry
-	Elf_Word vda_next;
+struct Elfxx_Verdaux
+{
+    // Version or dependency name
+    Elf_Word vda_name;
+    // Offset to next verdaux entry
+    Elf_Word vda_next;
 };
 
-struct Elfxx_Verneed {
-	// Version of structure
-	Elf_Half vn_version;
-	// Number of associated aux entries
-	Elf_Half vn_cnt;
-	// Offset to file name string
-	Elf_Word vn_file;
-	// Offset to vernaux array
-	Elf_Word vn_aux;
-	// Offset to next verneed entry
-	Elf_Word vn_next;
+struct Elfxx_Verneed
+{
+    // Version of structure
+    Elf_Half vn_version;
+    // Number of associated aux entries
+    Elf_Half vn_cnt;
+    // Offset to file name string
+    Elf_Word vn_file;
+    // Offset to vernaux array
+    Elf_Word vn_aux;
+    // Offset to next verneed entry
+    Elf_Word vn_next;
 };
 
-struct Elfxx_Vernaux {
-	// Hash value of dependency name
-	Elf_Word vna_hash;
-	// Dependency information flags
-	Elf_Half vna_flags;
-	// Dependency index
-	Elf_Half vna_other;
-	// Dependency name string offset
-	Elf_Word vna_name;
-	// Offset to next vernaux entry
-	Elf_Word vna_next;
+struct Elfxx_Vernaux
+{
+    // Hash value of dependency name
+    Elf_Word vna_hash;
+    // Dependency information flags
+    Elf_Half vna_flags;
+    // Dependency index
+    Elf_Half vna_other;
+    // Dependency name string offset
+    Elf_Word vna_name;
+    // Offset to next vernaux entry
+    Elf_Word vna_next;
 };
 
 // ELF auxiliary vectors, they are usually run-time information
@@ -1494,46 +1512,50 @@ struct Elfxx_Vernaux {
 // I assume auxiliary vectors could be also used to get
 // more information about the ELF binary at run-time in future.
 // The main purpose is also for ELF injectors.
-struct Elf32_auxv {
-	// Entry type
-	std::uint32_t a_type; // Entry type
+struct Elf32_auxv
+{
+    // Entry type
+    std::uint32_t a_type; // Entry type
 
-	union {
-		// Integer value, usually a pointer
-		std::uint32_t a_val; // Integer value, usually a pointer
-	} a_un;
+    union {
+        // Integer value, usually a pointer
+        std::uint32_t a_val; // Integer value, usually a pointer
+    } a_un;
 };
 
-struct Elf64_auxv {
-	// Entry type
-	std::uint64_t a_type; // Entry type
+struct Elf64_auxv
+{
+    // Entry type
+    std::uint64_t a_type; // Entry type
 
-	union {
-		// Integer value, usually a pointer
-		std::uint64_t a_val; // Integer value, usually a pointer
-	} a_un;
+    union {
+        // Integer value, usually a pointer
+        std::uint64_t a_val; // Integer value, usually a pointer
+    } a_un;
 };
 
-struct Elf32_Chdr {
-	// The compression algorithm used
-	Elf32_Word ch_type; // The compression algorithm used
-	// The size, in	bytes, of the uncompressed section data
-	Elf32_Word ch_size; //The size, in	bytes, of the uncompressed section data
-	// The address alignment of the	uncompressed section data
-	Elf32_Word
-		ch_addralign; // The address alignment of the	uncompressed section data
+struct Elf32_Chdr
+{
+    // The compression algorithm used
+    Elf32_Word ch_type; // The compression algorithm used
+    // The size, in	bytes, of the uncompressed section data
+    Elf32_Word ch_size; //The size, in	bytes, of the uncompressed section data
+    // The address alignment of the	uncompressed section data
+    Elf32_Word
+        ch_addralign; // The address alignment of the	uncompressed section data
 };
 
-struct Elf64_Chdr {
-	//The compression algorithm used
-	Elf64_Word ch_type; //The compression algorithm used
-	// Reserved
-	Elf64_Word ch_reserved; // Reserved
-	//The size, in	bytes, of the uncompressed section data
-	Elf_Xword ch_size; //The size, in	bytes, of the uncompressed section data
-	//The address alignment of the	uncompressed section data
-	Elf_Xword
-		ch_addralign; //The address alignment of the	uncompressed section data
+struct Elf64_Chdr
+{
+    //The compression algorithm used
+    Elf64_Word ch_type; //The compression algorithm used
+    // Reserved
+    Elf64_Word ch_reserved; // Reserved
+    //The size, in	bytes, of the uncompressed section data
+    Elf_Xword ch_size; //The size, in	bytes, of the uncompressed section data
+    //The address alignment of the	uncompressed section data
+    Elf_Xword
+        ch_addralign; //The address alignment of the	uncompressed section data
 };
 
 #ifdef __cplusplus

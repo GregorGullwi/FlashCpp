@@ -49,165 +49,178 @@ using gsl::narrow_cast;
 namespace COFFI {
 
 //! Class for accessing an image data directory
-class directory {
-public:
-	//------------------------------------------------------------------------------
-	directory(uint32_t index) : data_{}, index_{index} {}
+class directory
+{
+  public:
+    //------------------------------------------------------------------------------
+    directory(uint32_t index) : data_{}, index_{index} {}
 
-	//------------------------------------------------------------------------------
-	//! Discards the copy constructor
-	directory(const directory&) = delete;
+    //------------------------------------------------------------------------------
+    //! Discards the copy constructor
+    directory(const directory&) = delete;
 
-	virtual ~directory() { clean(); }
-	//------------------------------------------------------------------------------
-	//! @accessors{directory}
-	COFFI_GET_SET_ACCESS(uint32_t, virtual_address);
-	COFFI_GET_SET_ACCESS(uint32_t, size);
+    virtual ~directory() { clean(); }
+    //------------------------------------------------------------------------------
+    //! @accessors{directory}
+    COFFI_GET_SET_ACCESS(uint32_t, virtual_address);
+    COFFI_GET_SET_ACCESS(uint32_t, size);
 
-	COFFI_GET_SIZEOF();
-	//! @endaccessors
+    COFFI_GET_SIZEOF();
+    //! @endaccessors
 
-	uint32_t get_index() const { return index_; }
+    uint32_t get_index() const { return index_; }
 
-	//------------------------------------------------------------------------------
-	const char* get_data() const { return data_.get(); }
+    //------------------------------------------------------------------------------
+    const char* get_data() const { return data_.get(); }
 
-	//------------------------------------------------------------------------------
-	void set_data(const char* data, uint32_t size) {
-		if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
-			(index_ != DIRECTORY_BOUND_IMPORT)) {
-			return;
-		}
+    //------------------------------------------------------------------------------
+    void set_data(const char* data, uint32_t size)
+    {
+        if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
+            (index_ != DIRECTORY_BOUND_IMPORT)) {
+            return;
+        }
 
-		clean();
-		if (!data) {
-			set_size(0);
-			return;
-		}
+        clean();
+        if (!data) {
+            set_size(0);
+            return;
+        }
 
-		std::unique_ptr<char[]> temp_buffer = std::make_unique<char[]>(size);
-		if (!temp_buffer) {
-			set_size(0);
-			return;
-		}
-		std::copy(data, data + size, temp_buffer.get());
-		data_ = std::move(temp_buffer);
-		set_size(size);
-	}
+        std::unique_ptr<char[]> temp_buffer = std::make_unique<char[]>(size);
+        if (!temp_buffer) {
+            set_size(0);
+            return;
+        }
+        std::copy(data, data + size, temp_buffer.get());
+        data_ = std::move(temp_buffer);
+        set_size(size);
+    }
 
-	//------------------------------------------------------------------------------
-	uint32_t get_data_filesize() const {
-		if ((index_ == DIRECTORY_CERTIFICATE_TABLE) ||
-			(index_ == DIRECTORY_BOUND_IMPORT)) {
-			return get_size();
-		}
-		return 0;
-	}
+    //------------------------------------------------------------------------------
+    uint32_t get_data_filesize() const
+    {
+        if ((index_ == DIRECTORY_CERTIFICATE_TABLE) ||
+            (index_ == DIRECTORY_BOUND_IMPORT)) {
+            return get_size();
+        }
+        return 0;
+    }
 
-	//------------------------------------------------------------------------------
-	bool load(std::istream& stream) {
-		clean();
-		stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-		if (stream.gcount() != sizeof(header)) {
-			return false;
-		}
-		return true;
-	}
+    //------------------------------------------------------------------------------
+    bool load(std::istream& stream)
+    {
+        clean();
+        stream.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (stream.gcount() != sizeof(header)) {
+            return false;
+        }
+        return true;
+    }
 
-	//------------------------------------------------------------------------------
-	bool load_data(std::istream& stream) {
-		if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
-			(index_ != DIRECTORY_BOUND_IMPORT)) {
-			return true;
-		}
-		if ((get_size() > 0) && (get_virtual_address() != 0)) {
-			std::unique_ptr<char[]> temp_buffer = std::make_unique<char[]>(get_size());
-			stream.seekg(get_virtual_address());
-			stream.read(temp_buffer.get(), get_size());
-			if (stream.gcount() != static_cast<int>(get_size())) {
-				return false;
-			}
-			data_ = std::move(temp_buffer);
-		}
-		return true;
-	}
+    //------------------------------------------------------------------------------
+    bool load_data(std::istream& stream)
+    {
+        if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
+            (index_ != DIRECTORY_BOUND_IMPORT)) {
+            return true;
+        }
+        if ((get_size() > 0) && (get_virtual_address() != 0)) {
+            std::unique_ptr<char[]> temp_buffer = std::make_unique<char[]>(get_size());
+            stream.seekg(get_virtual_address());
+            stream.read(temp_buffer.get(), get_size());
+            if (stream.gcount() != static_cast<int>(get_size())) {
+                return false;
+            }
+            data_ = std::move(temp_buffer);
+        }
+        return true;
+    }
 
-	//---------------------------------------------------------------------
-	void save(std::ostream& stream) const {
-		stream.write(reinterpret_cast<const char*>(&header), sizeof(header));
-	}
+    //---------------------------------------------------------------------
+    void save(std::ostream& stream) const
+    {
+        stream.write(reinterpret_cast<const char*>(&header), sizeof(header));
+    }
 
-	void save_data(std::ostream& stream) const {
-		if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
-			(index_ != DIRECTORY_BOUND_IMPORT)) {
-			return;
-		}
-		if (data_ && get_size() > 0) {
-			stream.write(data_.get(), get_size());
-		}
-	}
+    void save_data(std::ostream& stream) const
+    {
+        if ((index_ != DIRECTORY_CERTIFICATE_TABLE) &&
+            (index_ != DIRECTORY_BOUND_IMPORT)) {
+            return;
+        }
+        if (data_ && get_size() > 0) {
+            stream.write(data_.get(), get_size());
+        }
+    }
 
-	//------------------------------------------------------------------------------
-	void clean() {
-		if (data_) {
-			data_.reset();
-		}
-	}
+    //------------------------------------------------------------------------------
+    void clean()
+    {
+        if (data_) {
+            data_.reset();
+        }
+    }
 
-private:
-	image_data_directory header{};
-	std::unique_ptr<const char[]> data_;
-	uint32_t index_;
+  private:
+    image_data_directory          header{};
+    std::unique_ptr<const char[]> data_;
+    uint32_t                      index_;
 };
 
 /*! @brief List of image data directories
  *
  *  It is implemented as a vector of @ref directory pointers.
  */
-class directories : public unique_ptr_collection<directory> {
-public:
-	explicit directories(sections_provider* scn) : scn_{scn} {}
+class directories : public unique_ptr_collection<directory>
+{
+  public:
+    explicit directories(sections_provider* scn) : scn_{scn} {}
 
-	//! Discards the copy constructor
-	directories(const directories&) = delete;
+    //! Discards the copy constructor
+    directories(const directories&) = delete;
 
-	bool load(std::istream& stream) {
-		for (uint32_t i = 0;
-			 i < scn_->get_win_header()->get_number_of_rva_and_sizes(); ++i) {
-			std::unique_ptr<directory> d = std::make_unique<directory>(i);
-			if (!d->load(stream)) {
-				return false;
-			}
-			append(std::move(d));
-		}
-		return true;
-	}
+    bool load(std::istream& stream)
+    {
+        for (uint32_t i = 0;
+             i < scn_->get_win_header()->get_number_of_rva_and_sizes(); ++i) {
+            std::unique_ptr<directory> d = std::make_unique<directory>(i);
+            if (!d->load(stream)) {
+                return false;
+            }
+            append(std::move(d));
+        }
+        return true;
+    }
 
-	bool load_data(std::istream& stream) {
-		for (auto& d : *this) {
-			if (!d.load_data(stream)) {
-				return false;
-			}
-		}
-		return true;
-	}
+    bool load_data(std::istream& stream)
+    {
+        for (auto& d : *this) {
+            if (!d.load_data(stream)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
-	void save(std::ostream& stream) const {
-		for (const auto& d : *this) {
-			d.save(stream);
-		}
-	}
+    void save(std::ostream& stream) const
+    {
+        for (const auto& d : *this) {
+            d.save(stream);
+        }
+    }
 
-	uint32_t get_sizeof() const {
-		if (get_count() > 0) {
-			return narrow_cast<uint32_t>(get_count() * (*begin()).get_sizeof());
-		}
+    uint32_t get_sizeof() const
+    {
+        if (get_count() > 0) {
+            return narrow_cast<uint32_t>(get_count() * (*begin()).get_sizeof());
+        }
 
-		return 0;
-	}
+        return 0;
+    }
 
-protected:
-	sections_provider* scn_;
+  protected:
+    sections_provider* scn_;
 };
 
 } // namespace COFFI

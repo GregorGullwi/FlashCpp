@@ -47,203 +47,222 @@ namespace COFFI {
 
 //-------------------------------------------------------------------------
 //! Class for accessing a COFF symbol.
-class symbol {
-public:
-	//---------------------------------------------------------------------
-	symbol(string_to_name_provider* stn) : index_(0), stn_{stn} {
-		std::fill_n(reinterpret_cast<char*>(&header), sizeof(header), '\0');
-	}
+class symbol
+{
+  public:
+    //---------------------------------------------------------------------
+    symbol(string_to_name_provider* stn) : index_(0), stn_{stn}
+    {
+        std::fill_n(reinterpret_cast<char*>(&header), sizeof(header), '\0');
+    }
 
-	//---------------------------------------------------------------------
-	//! @accessors{symbol}
-	COFFI_GET_SET_ACCESS(uint32_t, value);
-	COFFI_GET_SET_ACCESS(uint16_t, section_number);
-	COFFI_GET_SET_ACCESS(uint16_t, type);
-	COFFI_GET_SET_ACCESS(uint8_t, storage_class);
-	COFFI_GET_SET_ACCESS(uint8_t, aux_symbols_number);
-	//! @endaccessors
+    //---------------------------------------------------------------------
+    //! @accessors{symbol}
+    COFFI_GET_SET_ACCESS(uint32_t, value);
+    COFFI_GET_SET_ACCESS(uint16_t, section_number);
+    COFFI_GET_SET_ACCESS(uint16_t, type);
+    COFFI_GET_SET_ACCESS(uint8_t, storage_class);
+    COFFI_GET_SET_ACCESS(uint8_t, aux_symbols_number);
+    //! @endaccessors
 
-	//---------------------------------------------------------------------
-	uint32_t get_index() const { return index_; }
+    //---------------------------------------------------------------------
+    uint32_t get_index() const { return index_; }
 
-	//---------------------------------------------------------------------
-	void set_index(uint32_t index) { index_ = index; }
+    //---------------------------------------------------------------------
+    void set_index(uint32_t index) { index_ = index; }
 
-	//------------------------------------------------------------------------------
-	const std::string get_name() const {
-		return stn_->string_to_name(header.name);
-	}
+    //------------------------------------------------------------------------------
+    const std::string get_name() const
+    {
+        return stn_->string_to_name(header.name);
+    }
 
-	//---------------------------------------------------------------------
-	void set_name(std::string_view value) {
-		stn_->name_to_string(value, header.name);
-	}
+    //---------------------------------------------------------------------
+    void set_name(std::string_view value)
+    {
+        stn_->name_to_string(value, header.name);
+    }
 
-	//---------------------------------------------------------------------
-	const std::vector<auxiliary_symbol_record>& get_auxiliary_symbols() const {
-		return auxs;
-	}
+    //---------------------------------------------------------------------
+    const std::vector<auxiliary_symbol_record>& get_auxiliary_symbols() const
+    {
+        return auxs;
+    }
 
-	//---------------------------------------------------------------------
-	std::vector<auxiliary_symbol_record>& get_auxiliary_symbols() {
-		return auxs;
-	}
+    //---------------------------------------------------------------------
+    std::vector<auxiliary_symbol_record>& get_auxiliary_symbols()
+    {
+        return auxs;
+    }
 
-	//---------------------------------------------------------------------
-	bool load(std::istream& stream) {
-		stream.read(reinterpret_cast<char*>(&header), sizeof(header));
-		if (stream.gcount() != sizeof(header)) {
-			return false;
-		}
+    //---------------------------------------------------------------------
+    bool load(std::istream& stream)
+    {
+        stream.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (stream.gcount() != sizeof(header)) {
+            return false;
+        }
 
-		for (uint8_t i = 0; i < get_aux_symbols_number(); ++i) {
-			auxiliary_symbol_record a;
-			stream.read(reinterpret_cast<char*>(&a), sizeof(symbol_record));
-			if (stream.gcount() != sizeof(symbol_record)) {
-				return false;
-			}
-			auxs.push_back(a);
-		}
-		return true;
-	}
+        for (uint8_t i = 0; i < get_aux_symbols_number(); ++i) {
+            auxiliary_symbol_record a;
+            stream.read(reinterpret_cast<char*>(&a), sizeof(symbol_record));
+            if (stream.gcount() != sizeof(symbol_record)) {
+                return false;
+            }
+            auxs.push_back(a);
+        }
+        return true;
+    }
 
-	//---------------------------------------------------------------------
-	void save(std::ostream& stream) {
-		set_aux_symbols_number(narrow_cast<uint8_t>(auxs.size()));
-		stream.write(reinterpret_cast<char*>(&header), sizeof(header));
-		for (auto const& aux : auxs) {
-			stream.write(reinterpret_cast<char const*>(&aux),
-						 sizeof(symbol_record));
-		}
-	}
+    //---------------------------------------------------------------------
+    void save(std::ostream& stream)
+    {
+        set_aux_symbols_number(narrow_cast<uint8_t>(auxs.size()));
+        stream.write(reinterpret_cast<char*>(&header), sizeof(header));
+        for (auto const& aux : auxs) {
+            stream.write(reinterpret_cast<char const*>(&aux),
+                         sizeof(symbol_record));
+        }
+    }
 
-	//---------------------------------------------------------------------
-protected:
-	symbol_record header;
-	std::vector<auxiliary_symbol_record> auxs;
-	uint32_t index_;
-	string_to_name_provider* stn_;
+    //---------------------------------------------------------------------
+  protected:
+    symbol_record                        header;
+    std::vector<auxiliary_symbol_record> auxs;
+    uint32_t                             index_;
+    string_to_name_provider*             stn_;
 };
 
 //-------------------------------------------------------------------------
 //! Class for accessing the symbol table.
 class coffi_symbols : public virtual symbol_provider,
-					  public virtual string_to_name_provider {
-public:
-	//---------------------------------------------------------------------
-	coffi_symbols() {}
+                      public virtual string_to_name_provider
+{
+  public:
+    //---------------------------------------------------------------------
+    coffi_symbols() {}
 
-	//---------------------------------------------------------------------
-	~coffi_symbols() { clean_symbols(); }
+    //---------------------------------------------------------------------
+    ~coffi_symbols() { clean_symbols(); }
 
-	//---------------------------------------------------------------------
-	//! @copydoc symbol_provider::get_symbol(uint32_t)
-	virtual symbol* get_symbol(uint32_t index) {
-		return (symbol*)((const coffi_symbols*)this)->get_symbol(index);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc symbol_provider::get_symbol(uint32_t)
+    virtual symbol* get_symbol(uint32_t index)
+    {
+        return (symbol*)((const coffi_symbols*)this)->get_symbol(index);
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc symbol_provider::get_symbol(uint32_t)
-	virtual const symbol* get_symbol(uint32_t index) const {
-		uint32_t L = 0;
-		uint32_t R = narrow_cast<uint32_t>(symbols_.size()) - 1;
-		while (L <= R) {
-			uint32_t m = (L + R) / 2;
-			if (symbols_[m].get_index() < index) {
-				L = m + 1;
-			} else if (symbols_[m].get_index() > index) {
-				R = m - 1;
-			} else {
-				return &(symbols_[m]);
-			}
-		}
-		return nullptr;
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc symbol_provider::get_symbol(uint32_t)
+    virtual const symbol* get_symbol(uint32_t index) const
+    {
+        uint32_t L = 0;
+        uint32_t R = narrow_cast<uint32_t>(symbols_.size()) - 1;
+        while (L <= R) {
+            uint32_t m = (L + R) / 2;
+            if (symbols_[m].get_index() < index) {
+                L = m + 1;
+            }
+            else if (symbols_[m].get_index() > index) {
+                R = m - 1;
+            }
+            else {
+                return &(symbols_[m]);
+            }
+        }
+        return nullptr;
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc symbol_provider::get_symbol(std::string_view)
-	virtual symbol* get_symbol(std::string_view name) {
-		return (symbol*)((const coffi_symbols*)this)->get_symbol(name);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc symbol_provider::get_symbol(std::string_view)
+    virtual symbol* get_symbol(std::string_view name)
+    {
+        return (symbol*)((const coffi_symbols*)this)->get_symbol(name);
+    }
 
-	//---------------------------------------------------------------------
-	//! @copydoc symbol_provider::get_symbol(std::string_view)
-	virtual const symbol* get_symbol(std::string_view name) const {
-		for (auto s = symbols_.begin(); s != symbols_.end(); s++) {
-			if (s->get_name() == name) {
-				return &(*s);
-			}
-		}
-		return nullptr;
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc symbol_provider::get_symbol(std::string_view)
+    virtual const symbol* get_symbol(std::string_view name) const
+    {
+        for (auto s = symbols_.begin(); s != symbols_.end(); s++) {
+            if (s->get_name() == name) {
+                return &(*s);
+            }
+        }
+        return nullptr;
+    }
 
-	//---------------------------------------------------------------------
-	std::vector<symbol>* get_symbols() { return &symbols_; }
+    //---------------------------------------------------------------------
+    std::vector<symbol>* get_symbols() { return &symbols_; }
 
-	//---------------------------------------------------------------------
-	const std::vector<symbol>* get_symbols() const { return &symbols_; }
+    //---------------------------------------------------------------------
+    const std::vector<symbol>* get_symbols() const { return &symbols_; }
 
-	//---------------------------------------------------------------------
-	//! @copydoc symbol_provider::add_symbol()
-	symbol* add_symbol(std::string_view name) {
-		uint32_t index = 0;
-		if (symbols_.size() > 0) {
-			index = (symbols_.end() - 1)->get_index() + 1 +
-					narrow_cast<uint32_t>(
-						(symbols_.end() - 1)->get_auxiliary_symbols().size());
-		}
-		symbol s{this};
-		s.set_index(index);
-		s.set_name(name);
-		symbols_.push_back(s);
-		return &*(symbols_.end() - 1);
-	}
+    //---------------------------------------------------------------------
+    //! @copydoc symbol_provider::add_symbol()
+    symbol* add_symbol(std::string_view name)
+    {
+        uint32_t index = 0;
+        if (symbols_.size() > 0) {
+            index = (symbols_.end() - 1)->get_index() + 1 +
+                    narrow_cast<uint32_t>(
+                        (symbols_.end() - 1)->get_auxiliary_symbols().size());
+        }
+        symbol s{this};
+        s.set_index(index);
+        s.set_name(name);
+        symbols_.push_back(s);
+        return &*(symbols_.end() - 1);
+    }
 
-	//---------------------------------------------------------------------
-protected:
-	//---------------------------------------------------------------------
-	void clean_symbols() { symbols_.clear(); }
+    //---------------------------------------------------------------------
+  protected:
+    //---------------------------------------------------------------------
+    void clean_symbols() { symbols_.clear(); }
 
-	//---------------------------------------------------------------------
-	bool load_symbols(std::istream& stream, const coff_header* header) {
-		if (header->get_symbol_table_offset() == 0) {
-			return true;
-		}
+    //---------------------------------------------------------------------
+    bool load_symbols(std::istream& stream, const coff_header* header)
+    {
+        if (header->get_symbol_table_offset() == 0) {
+            return true;
+        }
 
-		stream.seekg(header->get_symbol_table_offset());
-		for (uint32_t i = 0; i < header->get_symbols_count(); ++i) {
-			symbol s{this};
-			if (!s.load(stream)) {
-				return false;
-			}
-			s.set_index(i);
-			i += narrow_cast<uint32_t>(s.get_auxiliary_symbols().size());
-			symbols_.push_back(s);
-		}
+        stream.seekg(header->get_symbol_table_offset());
+        for (uint32_t i = 0; i < header->get_symbols_count(); ++i) {
+            symbol s{this};
+            if (!s.load(stream)) {
+                return false;
+            }
+            s.set_index(i);
+            i += narrow_cast<uint32_t>(s.get_auxiliary_symbols().size());
+            symbols_.push_back(s);
+        }
 
-		return true;
-	}
+        return true;
+    }
 
-	//---------------------------------------------------------------------
-	void save_symbols(std::ostream& stream) {
-		for (auto s : symbols_) {
-			s.save(stream);
-		}
-	}
+    //---------------------------------------------------------------------
+    void save_symbols(std::ostream& stream)
+    {
+        for (auto s : symbols_) {
+            s.save(stream);
+        }
+    }
 
-	//---------------------------------------------------------------------
-	uint32_t get_symbols_filesize() {
-		uint32_t filesize = 0;
-		for (auto s : symbols_) {
-			filesize +=
-				sizeof(symbol_record) *
-				(1 + narrow_cast<uint32_t>(s.get_auxiliary_symbols().size()));
-		}
-		return filesize;
-	}
+    //---------------------------------------------------------------------
+    uint32_t get_symbols_filesize()
+    {
+        uint32_t filesize = 0;
+        for (auto s : symbols_) {
+            filesize +=
+                sizeof(symbol_record) *
+                (1 + narrow_cast<uint32_t>(s.get_auxiliary_symbols().size()));
+        }
+        return filesize;
+    }
 
-	//---------------------------------------------------------------------
-	std::vector<symbol> symbols_;
+    //---------------------------------------------------------------------
+    std::vector<symbol> symbols_;
 };
 
 } // namespace COFFI
