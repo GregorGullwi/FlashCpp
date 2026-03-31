@@ -1,10 +1,6 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4
-# clang-format does not use ContinuationIndentWidth for standalone `//` comment
-# indentation. With ReflowComments disabled below, it may still normalize comment
-# lines to the surrounding code indent, so this setting should not be relied on
-# to preserve wrapped line-comment indentation.
 ContinuationIndentWidth: 4
 UseTab: Always
 BreakBeforeBraces: Attach

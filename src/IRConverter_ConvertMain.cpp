@@ -9609,7 +9609,8 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatNotEqual(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point not equal comparison");
 
-	// Use SSE comiss/comisd for comparison.
+	// IEEE/C++ `!=` is true for unordered comparisons too. Combine SETNE with
+	// SETP (unordered) via OR to implement that behavior.
 	if (ctx.operand_type == TypeCategory::Float) {
 		auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
@@ -9636,7 +9637,6 @@ void IrToObjConverter<TWriterClass>::handleFloatNotEqual(const IrInstruction& in
 	std::array<uint8_t, 4> movzx_unordered_inst = {unordered_movzx.rex_prefix, 0x0F, 0xB6, unordered_movzx.modrm_byte};
 	textSectionData.insert(textSectionData.end(), movzx_unordered_inst.begin(), movzx_unordered_inst.end());
 
-	// IEEE/C++ `!=` is true for unordered comparisons too, so combine SETNE with SETP.
 	emitBinaryOpInstruction(0x09, unordered_reg, bool_reg, 64);
 	regAlloc.release(unordered_reg);
 
