@@ -557,6 +557,7 @@ public:
 		const VariableDeclarationNode* var_decl = nullptr;
 		const std::optional<ASTNode>* initializer = nullptr;
 		TypeIndex declared_type_index{};
+		std::optional<EvalResult> materialized_value;	// Phase C: pre-materialized from constant bytes
 	};
 
 	struct ExtractedIdentifier {

@@ -1972,10 +1972,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	// Phase 7B: Intern static member name and use StringHandle overload
 						StringHandle static_member_name_handle = StringTable::getOrInternStringHandle(StringTable::getStringView(static_member.getName()));
+
+	// Substitute nested type references in static member type.
+	// For static members whose type is a nested class of the pattern template
+	// (e.g., `static constexpr Payload data`), we need to remap the type_index
+	// to the instantiated nested class and use its finalized size.
+						TypeIndex substituted_type_index = static_member.type_index;
+						size_t substituted_size = static_member.size;
+						if (static_member.type_index.category() == TypeCategory::Struct) {
+							TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
+							original_type_spec.set_type_index(static_member.type_index);
+							TypeIndex new_type_index = substitute_template_parameter(
+								original_type_spec, template_params, template_args);
+							if (new_type_index != static_member.type_index) {
+								substituted_type_index = new_type_index;
+								substituted_size = get_substituted_type_size_bytes(new_type_index);
+							} else if (substituted_size == 0) {
+	// The type wasn't a template parameter, but might be a nested class
+	// whose instantiated form is registered under the qualified name.
+								StringBuilder qualified_nested_sb;
+								if (const TypeInfo* orig_ti = tryGetTypeInfo(static_member.type_index)) {
+									std::string_view orig_name = StringTable::getStringView(orig_ti->name());
+	// Replace pattern prefix with instantiated prefix
+	// e.g., "Container::Payload" -> "Container$hash::Payload"
+									std::string_view pattern_prefix = template_name;
+									if (orig_name.starts_with(pattern_prefix) &&
+										orig_name.size() > pattern_prefix.size() &&
+										orig_name[pattern_prefix.size()] == ':') {
+										qualified_nested_sb.append(StringTable::getStringView(instantiated_name))
+											.append(orig_name.substr(pattern_prefix.size()));
+										StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_nested_sb.commit());
+										auto type_it = getTypesByNameMap().find(qualified_handle);
+										if (type_it != getTypesByNameMap().end()) {
+											substituted_type_index = type_it->second->type_index_;
+											if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
+												substituted_size = nested_si->total_size;
+											}
+										}
+									}
+								}
+							}
+						}
+
 						struct_info->addStaticMember(
 							static_member_name_handle,
-							static_member.type_index,
-							static_member.size,
+							substituted_type_index,
+							substituted_size,
 							static_member.alignment,
 							static_member.access,
 							substituted_initializer,
@@ -4921,6 +4963,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
  // Finalize the struct layout
+ // Phase C fixup: update static members whose type references a nested class that
+ // was registered after the static members were initially copied from the pattern.
+ // At copy time (line ~1686), nested types hadn't been instantiated yet, so their
+ // type_index and size were still from the unfinalized pattern.
+	for (auto& sm : struct_info->static_members) {
+		if (sm.size == 0 && sm.type_index.category() == TypeCategory::Struct) {
+			if (const TypeInfo* orig_ti = tryGetTypeInfo(sm.type_index)) {
+				std::string_view orig_name = StringTable::getStringView(orig_ti->name());
+				std::string_view inst_name_sv = StringTable::getStringView(instantiated_name);
+				if (orig_name.starts_with(template_name) &&
+					orig_name.size() > template_name.size() &&
+					orig_name[template_name.size()] == ':') {
+					std::string_view suffix = orig_name.substr(template_name.size());
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(inst_name_sv).append(suffix).commit());
+					auto type_it = getTypesByNameMap().find(qualified_handle);
+					if (type_it != getTypesByNameMap().end()) {
+						sm.type_index = type_it->second->type_index_;
+						if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
+							sm.size = nested_si->total_size;
+						}
+						FLASH_LOG(Templates, Debug, "Fixed up static member '", sm.getName(),
+								  "' type to '", StringTable::getStringView(qualified_handle),
+								  "', size=", sm.size);
+					}
+				}
+			}
+		}
+	}
+
 	bool finalize_success;
 	if (!struct_info->base_classes.empty()) {
 		finalize_success = struct_info->finalizeWithBases();

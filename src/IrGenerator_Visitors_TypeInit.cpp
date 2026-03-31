@@ -626,6 +626,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (static_member.initializer->is<InitializerListNode>()) {
 						if (static_member.type_index.category() == TypeCategory::Struct) {
 							if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
+								FLASH_LOG(Codegen, Debug, "Aggregate static member '", qualified_name,
+										  "': struct total_size=", static_struct_info->total_size,
+										  ", members=", static_struct_info->members.size(),
+										  ", type_index=", static_member.type_index.index());
 								op.init_data.resize(static_struct_info->total_size, 0);
 								auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
 									unsigned long long leaf_value = 0;
@@ -658,7 +662,20 @@ void AstToIr::generateStaticMemberDeclarations() {
 									return 0;
 								};
 								fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
-								FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "'");
+								FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
+
+	// Phase C: immediately write-back aggregate bytes so subsequent
+	// static members can reference them via constexpr evaluation.
+								if (!op.init_data.empty()) {
+									if (StructStaticMember* mutable_member =
+											const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
+										NormalizedInitializer ni;
+										ni.kind = NormalizedInitializer::Kind::ConstantBytes;
+										ni.constant_bytes = op.init_data;
+										mutable_member->normalized_init = std::move(ni);
+										FLASH_LOG(Codegen, Debug, "Wrote back aggregate NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
+									}
+								}
 							} else {
 								FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
 								zero_initialize();
