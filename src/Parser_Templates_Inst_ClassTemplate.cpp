@@ -117,6 +117,10 @@ static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 	if (substituted_type_index.category() != TypeCategory::FunctionPointer &&
 		substituted_type_index.category() != TypeCategory::MemberFunctionPointer)
 		return std::nullopt;
+	// Use the original declaration-site type_spec here. In several instantiation paths
+	// the substituted TypeSpecifierNode is freshly reconstructed from TypeIndex and does
+	// not carry function_signature, so the live metadata source is either the original
+	// type node or the bound TemplateTypeArg for a dependent placeholder such as "F".
 	if (type_spec.has_function_signature())
 		return type_spec.function_signature();
 
