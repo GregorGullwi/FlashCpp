@@ -28,7 +28,7 @@ struct TransparentStringHash {
 	size_t operator()(std::string_view str) const { return hash_type{}(str); }
 	size_t operator()(const std::string& str) const { return hash_type{}(str); }
 	size_t operator()(StringHandle sh) const {
-	// Hash the string content, not the handle value, to enable heterogeneous lookup
+		// Hash the string content, not the handle value, to enable heterogeneous lookup
 		return hash_type{}(StringTable::getStringView(sh));
 	}
 };
@@ -38,27 +38,27 @@ struct TransparentStringHash {
 struct TransparentStringEqual {
 	using is_transparent = void;
 
- // StringHandle == StringHandle
+	// StringHandle == StringHandle
 	bool operator()(StringHandle lhs, StringHandle rhs) const {
 		return lhs == rhs;
 	}
 
- // StringHandle == string_view
+	// StringHandle == string_view
 	bool operator()(StringHandle lhs, std::string_view rhs) const {
 		return lhs == rhs;
 	}
 
- // string_view == StringHandle
+	// string_view == StringHandle
 	bool operator()(std::string_view lhs, StringHandle rhs) const {
 		return rhs == lhs;
 	}
 
- // string_view == string_view
+	// string_view == string_view
 	bool operator()(std::string_view lhs, std::string_view rhs) const {
 		return lhs == rhs;
 	}
 
- // std::string == anything
+	// std::string == anything
 	bool operator()(const std::string& lhs, std::string_view rhs) const {
 		return std::string_view(lhs) == rhs;
 	}
@@ -120,10 +120,10 @@ struct TemplateArgumentValue {
 	TypeIndex type_index{};	// TypeCategory is embedded in the index (replaces raw Type field)
 	int64_t value = 0;
 
- // Returns the TypeCategory derived from the embedded TypeCategory.
+	// Returns the TypeCategory derived from the embedded TypeCategory.
 	TypeCategory typeEnum() const { return type_index.category(); }
 
- // Factory methods
+	// Factory methods
 	static TemplateArgumentValue makeType(TypeIndex idx) {
 		TemplateArgumentValue v;
 		v.type_index = idx;
@@ -138,9 +138,9 @@ struct TemplateArgumentValue {
 	}
 
 	bool operator==(const TemplateArgumentValue& other) const {
-	// TypeIndex::operator== compares only the index_ slot, not the embedded
-	// category.  We must check category explicitly to distinguish e.g. Type::Int
-	// from Type::Float when both are stored with index_==0 (no gTypeInfo entry).
+		// TypeIndex::operator== compares only the index_ slot, not the embedded
+		// category.  We must check category explicitly to distinguish e.g. Type::Int
+		// from Type::Float when both are stored with index_==0 (no gTypeInfo entry).
 		return type_index.category() == other.type_index.category() &&
 			   type_index == other.type_index &&
 			   value == other.value;
@@ -167,30 +167,30 @@ struct TemplateTypeArg {
 	std::optional<size_t> array_size;  // Known array size if available
 	MemberPointerKind member_pointer_kind;
 
- // For non-type template parameters
+	// For non-type template parameters
 	bool is_value;  // true if this represents a value instead of a type
 	int64_t value;  // the value for non-type parameters
 
- // For variadic templates (parameter packs)
+	// For variadic templates (parameter packs)
 	bool is_pack;  // true if this represents a parameter pack (typename... Args)
 
- // For dependent types (types that depend on template parameters)
+	// For dependent types (types that depend on template parameters)
 	bool is_dependent;  // true if this type depends on uninstantiated template parameters
 	StringHandle dependent_name;	 // name of the dependent template parameter or type name (set when is_dependent is true)
 
- // For template template parameters (e.g., template<typename...> class Op)
+	// For template template parameters (e.g., template<typename...> class Op)
 	bool is_template_template_arg;  // true if this is a template template argument
 	StringHandle template_name_handle;  // name of the template (e.g., "HasType")
 
- // For function pointer types: stores the full function signature
+	// For function pointer types: stores the full function signature
 	std::optional<FunctionSignature> function_signature;
 
- // --- Accessors ---
- // Returns the TypeCategory embedded in type_index.
+	// --- Accessors ---
+	// Returns the TypeCategory embedded in type_index.
 	TypeCategory category() const noexcept { return type_index.category(); }
- // Returns the TypeCategory — replaces legacy Type accessor.
+	// Returns the TypeCategory — replaces legacy Type accessor.
 	TypeCategory typeEnum() const noexcept { return type_index.category(); }
- // Set the type (updates type_index category without changing the index slot).
+	// Set the type (updates type_index category without changing the index slot).
 	void setType(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 	void setCategory(TypeCategory cat) noexcept { type_index.setCategory(cat); }
 
@@ -199,7 +199,7 @@ struct TemplateTypeArg {
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool isTypeArgument() const { return !is_value && !is_template_template_arg; }
 
- // Builds a TypeIndex with category directly.
+	// Builds a TypeIndex with category directly.
 	static TypeIndex makeTypeIndex(TypeIndex idx) noexcept {
 		return idx;
 	}
@@ -214,15 +214,15 @@ struct TemplateTypeArg {
 		}
 	}
 
- // Constructor for non-type template parameters (default int type)
+	// Constructor for non-type template parameters (default int type)
 	explicit TemplateTypeArg(int64_t val)
 		: type_index(nativeTypeIndex(TypeCategory::Int)), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_size(std::nullopt), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
- // Constructor for non-type template parameters with explicit type
+	// Constructor for non-type template parameters with explicit type
 	TemplateTypeArg(int64_t val, TypeCategory category)
 		: type_index(TypeIndex{0, category}), ref_qualifier(ReferenceQualifier::None), pointer_depth(0), pointer_cv_qualifiers(), cv_qualifier(CVQualifier::None), is_array(false), array_size(std::nullopt), member_pointer_kind(MemberPointerKind::None), is_value(true), value(val), is_pack(false), is_dependent(false), is_template_template_arg(false), template_name_handle() {}
 
- // Factory methods
+	// Factory methods
 	static TemplateTypeArg makeType(TypeIndex idx) {
 		TemplateTypeArg arg;
 		arg.type_index = makeTypeIndex(idx);
@@ -244,10 +244,10 @@ struct TemplateTypeArg {
 		return arg;
 	}
 
- // Hash for use in maps (used by InstantiationQueue and SpecializationKey)
+	// Hash for use in maps (used by InstantiationQueue and SpecializationKey)
 	size_t hash() const {
-	// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
-	// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
+		// Normalize Bool/Int to Int to match operator== which treats them as interchangeable
+		// for value parameters. This maintains the invariant: a == b → hash(a) == hash(b).
 		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
 										 ? TypeCategory::Int
 										 : category();
@@ -278,21 +278,21 @@ struct TemplateTypeArg {
 	}
 
 	bool operator==(const TemplateTypeArg& other) const {
-	// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
-	// For primitive types like int, float, etc., the type_index should be ignored
+		// Only compare type_index for user-defined types (Struct, Enum, UserDefined)
+		// For primitive types like int, float, etc., the type_index should be ignored
 		bool type_index_match = true;
 		if (type_index.needsTypeIndex()) {
 			type_index_match = (type_index == other.type_index);
 		}
 
-	// NOTE: is_pack is intentionally NOT compared here.
-	// The is_pack flag indicates whether this arg came from a pack expansion,
-	// but for type matching purposes (specialization lookup, pattern matching),
-	// is_pack should be ignored. For example, when looking up ns::sum<int>
-	// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
-	// has is_pack=true but should still match the specialization which has is_pack=false.
+		// NOTE: is_pack is intentionally NOT compared here.
+		// The is_pack flag indicates whether this arg came from a pack expansion,
+		// but for type matching purposes (specialization lookup, pattern matching),
+		// is_pack should be ignored. For example, when looking up ns::sum<int>
+		// from a pack expansion ns::sum<Args...> where Args=int, the lookup arg
+		// has is_pack=true but should still match the specialization which has is_pack=false.
 
-	// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
+		// For non-type value parameters, Bool and Int are interchangeable (C++ allows bool as non-type template parameter)
 		bool category_match = (category() == other.category());
 		if (!category_match && is_value && other.is_value) {
 			bool this_is_bool_or_int = (category() == TypeCategory::Bool || category() == TypeCategory::Int);
@@ -317,7 +317,7 @@ struct TemplateTypeArg {
 			  (!is_template_template_arg || template_name_handle == other.template_name_handle)))
 			return false;
 
-	// Compare function_signature to distinguish e.g. int(*)(int) from int(*)(double)
+		// Compare function_signature to distinguish e.g. int(*)(int) from int(*)(double)
 		if (function_signature.has_value() != other.function_signature.has_value())
 			return false;
 		if (function_signature.has_value()) {
@@ -327,31 +327,31 @@ struct TemplateTypeArg {
 		return true;
 	}
 
- // Helper method to check if this is a parameter pack
+	// Helper method to check if this is a parameter pack
 	bool isParameterPack() const {
 		return is_pack;
 	}
 
- // Get reference qualifier as enum
+	// Get reference qualifier as enum
 	ReferenceQualifier reference_qualifier() const {
 		return ref_qualifier;
 	}
 
- // Get string representation for mangling
+	// Get string representation for mangling
 	std::string toString() const {
 		if (is_value) {
-	// For boolean values, use "true" or "false" instead of "1" or "0"
-	// This is important for template specialization matching
+			// For boolean values, use "true" or "false" instead of "1" or "0"
+			// This is important for template specialization matching
 			if (category() == TypeCategory::Bool) {
 				return value != 0 ? "true" : "false";
 			}
-	// For non-boolean values, return the numeric value as string
+			// For non-boolean values, return the numeric value as string
 			return std::to_string(value);
 		}
 
 		std::string result;
 
-	// Add const/volatile prefix if present
+		// Add const/volatile prefix if present
 		if ((static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
 			result += "C";  // const
 		}
@@ -359,7 +359,7 @@ struct TemplateTypeArg {
 			result += "V";  // volatile
 		}
 
-	// Add base type name - for dependent types, use dependent_name if available
+		// Add base type name - for dependent types, use dependent_name if available
 		if (is_dependent && dependent_name.isValid()) {
 			result += StringTable::getStringView(dependent_name);
 		} else {
@@ -410,13 +410,13 @@ struct TemplateTypeArg {
 			case TypeCategory::TypeAlias:
 			case TypeCategory::Struct:
 			case TypeCategory::Enum:
-		// For user-defined types, look up the name from gTypeInfo
+					// For user-defined types, look up the name from gTypeInfo
 				result += StringTable::getStringView(getTypeInfo(type_index).name());
 				break;
 			case TypeCategory::FunctionPointer:
 			case TypeCategory::MemberFunctionPointer: {
-		// Encode function pointer types using their signature to avoid
-		// collisions between e.g. int(*)(int) and int(*)(double).
+					// Encode function pointer types using their signature to avoid
+					// collisions between e.g. int(*)(int) and int(*)(double).
 				result += (category() == TypeCategory::MemberFunctionPointer) ? "MFP(" : "FP(";
 				if (function_signature.has_value()) {
 					const auto& sig = *function_signature;
@@ -440,7 +440,7 @@ struct TemplateTypeArg {
 			}
 		}
 
-	// Add pointer markers
+		// Add pointer markers
 		for (size_t i = 0; i < pointer_depth; ++i) {
 			result += "P";  // P for pointer
 		}
@@ -460,7 +460,7 @@ struct TemplateTypeArg {
 			result += "MPF";
 		}
 
-	// Add reference markers
+		// Add reference markers
 		if (ref_qualifier == ReferenceQualifier::RValueReference) {
 			result += "RR";	// rvalue reference
 		} else if (ref_qualifier == ReferenceQualifier::LValueReference) {
@@ -470,11 +470,11 @@ struct TemplateTypeArg {
 		return result;
 	}
 
- // Get hash-based string representation for mangling (unambiguous)
- // Uses the same hash algorithm as TemplateTypeArgHash for consistency
+	// Get hash-based string representation for mangling (unambiguous)
+	// Uses the same hash algorithm as TemplateTypeArgHash for consistency
 	std::string toHashString() const {
-	// Compute hash using the same algorithm as TemplateTypeArgHash
-	// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		// Compute hash using the same algorithm as TemplateTypeArgHash
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
 		TypeCategory effective_cat = (is_value && (category() == TypeCategory::Bool || category() == TypeCategory::Int))
 										 ? TypeCategory::Int
 										 : category();
@@ -502,7 +502,7 @@ struct TemplateTypeArg {
 			hash ^= FlashCpp::hashFunctionSignatureIdentity(*function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
 
-	// Convert to hex string
+		// Convert to hex string
 		char buf[17];
 		snprintf(buf, sizeof(buf), "%016zx", hash);
 		return std::string(buf);
@@ -512,12 +512,12 @@ struct TemplateTypeArg {
 // Hash function for TemplateTypeArg
 struct TemplateTypeArgHash {
 	size_t operator()(const TemplateTypeArg& arg) const {
-	// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
+		// Normalize Bool/Int to Int (matches operator== interchangeability for value parameters)
 		TypeCategory effective_cat = (arg.is_value && (arg.category() == TypeCategory::Bool || arg.category() == TypeCategory::Int))
 										 ? TypeCategory::Int
 										 : arg.category();
 		size_t hash = std::hash<uint8_t>{}(static_cast<uint8_t>(effective_cat));
-	// Only include type_index in hash for user-defined types (to match operator==)
+		// Only include type_index in hash for user-defined types (to match operator==)
 		if (arg.type_index.needsTypeIndex()) {
 			hash ^= std::hash<size_t>{}(arg.type_index.index()) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
@@ -540,7 +540,7 @@ struct TemplateTypeArgHash {
 		if (arg.function_signature.has_value()) {
 			hash ^= FlashCpp::hashFunctionSignatureIdentity(*arg.function_signature) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		}
-	// NOTE: is_pack is intentionally NOT included in the hash to match operator==
+		// NOTE: is_pack is intentionally NOT included in the hash to match operator==
 		return hash;
 	}
 };
@@ -564,7 +564,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 		deduced.ref_qualifier = ReferenceQualifier::None;
 	if (pattern_arg.pointer_depth > 0 && deduced.pointer_depth >= pattern_arg.pointer_depth) {
 		deduced.pointer_depth -= pattern_arg.pointer_depth;
-	// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
+		// Strip the first pattern_arg.pointer_depth CV qualifiers by rebuilding the vector
 		InlineVector<CVQualifier, 4> remaining;
 		for (size_t pd = pattern_arg.pointer_depth; pd < deduced.pointer_cv_qualifiers.size(); ++pd) {
 			remaining.push_back(deduced.pointer_cv_qualifiers[pd]);
@@ -575,7 +575,7 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 		deduced.is_array = false;
 		deduced.array_size = std::nullopt;
 	}
- // Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
+	// Strip cv_qualifier contributed by the pattern (e.g., const T → T=int, not T=const int)
 	if (pattern_arg.cv_qualifier != CVQualifier::None) {
 		deduced.cv_qualifier = static_cast<CVQualifier>(
 			static_cast<uint8_t>(deduced.cv_qualifier) & ~static_cast<uint8_t>(pattern_arg.cv_qualifier));
@@ -621,7 +621,7 @@ inline TypeIndexArg makeTypeIndexArg(const TemplateTypeArg& arg) {
 	result.cv_qualifier = arg.cv_qualifier;
 	result.ref_qualifier = arg.reference_qualifier();
 	result.pointer_depth = std::min(arg.pointer_depth, uint8_t(255));
- // Include array info - critical for differentiating T[] from T[N] from T
+	// Include array info - critical for differentiating T[] from T[N] from T
 	result.is_array = arg.is_array;
 	result.array_size = arg.array_size;
 	result.function_signature = arg.function_signature;
@@ -640,13 +640,13 @@ inline TemplateInstantiationKey makeInstantiationKey(
 
 	for (const auto& arg : args) {
 		if (arg.is_value) {
-	// Non-type template argument
+			// Non-type template argument
 			key.value_args.push_back(arg.value);
 		} else if (arg.is_template_template_arg) {
-	// Template template argument
+			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);
 		} else {
-	// Type template argument
+			// Type template argument
 			key.type_args.push_back(makeTypeIndexArg(arg));
 		}
 	}

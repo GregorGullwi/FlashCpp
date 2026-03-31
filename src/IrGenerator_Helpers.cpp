@@ -3,17 +3,17 @@
 
 void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {
-	// If try-cleanup capture is active and this is the target scope depth,
-	// record vars in LIFO order before emitting their destructors.
+		// If try-cleanup capture is active and this is the target scope depth,
+		// record vars in LIFO order before emitting their destructors.
 		if (capture_try_cleanup_ && scope_stack_.size() == capture_try_cleanup_depth_) {
 			for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
 				captured_try_cleanup_vars_.push_back(*it);
 			}
 		}
-	// Generate destructor calls for all variables in this scope (in reverse order)
+		// Generate destructor calls for all variables in this scope (in reverse order)
 		const auto& scope_vars = scope_stack_.back();
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
-	// Generate destructor call
+			// Generate destructor call
 			DestructorCallOp dtor_op;
 			dtor_op.struct_name = StringTable::getOrInternStringHandle(it->struct_name);
 			dtor_op.object = StringTable::getOrInternStringHandle(it->variable_name);
@@ -41,10 +41,10 @@ void AstToIr::emitActiveCatchScopeDestructors() {
 		return;
 	}
 
- // The try-depth match answers whether this throw/rethrow is leaving an active
- // catch context at all. Once it is, frontend-emitted cleanup must cover the
- // full active catch chain because Windows catch-body locals are not yet
- // modeled as first-class unwind actions in the FH3 unwind map.
+	// The try-depth match answers whether this throw/rethrow is leaving an active
+	// catch context at all. Once it is, frontend-emitted cleanup must cover the
+	// full active catch chain because Windows catch-body locals are not yet
+	// modeled as first-class unwind actions in the FH3 unwind map.
 	size_t catch_scope_base_depth = catch_scope_stack_.front().base_depth;
 
 	if (scope_stack_.size() <= catch_scope_base_depth) {
@@ -66,25 +66,25 @@ void AstToIr::exitFunctionScope() {
 	if (scope_stack_.empty())
 		return;
 
- // Capture vars in LIFO order for the cleanup LP, but only those with destructors
+	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
 	pending_function_cleanup_vars_.clear();
 	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
 		pending_function_cleanup_vars_.push_back({StringTable::getOrInternStringHandle(it->struct_name),
 												  StringTable::getOrInternStringHandle(it->variable_name)});
 	}
 
- // Call normal exitScope to emit destructor IR instructions
+	// Call normal exitScope to emit destructor IR instructions
 	exitScope();
 }
 
 void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
- // Always emit FunctionCleanupLP when either:
- // (a) There are function-scope local vars with destructors (the common case), OR
- // (b) The function has typed catch handlers (function_has_typed_catch_ flag).
- //     On ELF, ElfCatchNoMatch emits a forward reference to __elf_no_match_lp_<n>
- //     that must be resolved by handleFunctionCleanupLP().  On Windows, the
- //     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
- //     with empty cleanup_vars is also a no-op there (early return in the handler).
+	// Always emit FunctionCleanupLP when either:
+	// (a) There are function-scope local vars with destructors (the common case), OR
+	// (b) The function has typed catch handlers (function_has_typed_catch_ flag).
+	//     On ELF, ElfCatchNoMatch emits a forward reference to __elf_no_match_lp_<n>
+	//     that must be resolved by handleFunctionCleanupLP().  On Windows, the
+	//     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
+	//     with empty cleanup_vars is also a no-op there (early return in the handler).
 	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_)
 		return;
 
@@ -123,10 +123,10 @@ void AstToIr::emitAndClearFullExpressionTempDestructors() {
 }
 
 void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
- // Emit destructor calls for all variables in scopes from the current innermost scope
- // down to (but not including) target_depth, in LIFO order (innermost scope first).
- // Does NOT modify scope_stack_ — the normal exitScope() calls will still run later
- // (emitting dead code after the jump), which is harmless.
+	// Emit destructor calls for all variables in scopes from the current innermost scope
+	// down to (but not including) target_depth, in LIFO order (innermost scope first).
+	// Does NOT modify scope_stack_ — the normal exitScope() calls will still run later
+	// (emitting dead code after the jump), which is harmless.
 	for (size_t scope_index = scope_stack_.size(); scope_index > target_depth; --scope_index) {
 		const auto& scope_vars = scope_stack_[scope_index - 1];
 		for (auto it = scope_vars.rbegin(); it != scope_vars.rend(); ++it) {
@@ -146,15 +146,15 @@ void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
 void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	if (node.is<LabelStatementNode>()) {
 		const auto& label = node.as<LabelStatementNode>();
-	// getOrInternStringHandle accepts string_view directly — no extra allocation needed.
+		// getOrInternStringHandle accepts string_view directly — no extra allocation needed.
 		label_scope_depth_map_[StringTable::getOrInternStringHandle(label.label_name())] = depth;
 	} else if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
-	// Mirror the scope-creation rule from visitBlockNode: a block whose statements
-	// are ALL VariableDeclarationNodes (two or more) does NOT push a new scope.
+		// Mirror the scope-creation rule from visitBlockNode: a block whose statements
+		// are ALL VariableDeclarationNodes (two or more) does NOT push a new scope.
 		bool only_var_decls = true;
 		size_t var_decl_count = 0;
-	// Single pass: gather the scope-creation predicate AND recurse into children.
+		// Single pass: gather the scope-creation predicate AND recurse into children.
 		block.get_statements().visit([&](const ASTNode& stmt) {
 			if (stmt.is<VariableDeclarationNode>())
 				var_decl_count++;
@@ -168,29 +168,29 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		});
 	} else if (node.is<IfStatementNode>()) {
 		const auto& if_stmt = node.as<IfStatementNode>();
-	// if / if constexpr: then/else bodies are BlockNodes which manage their own scope.
+		// if / if constexpr: then/else bodies are BlockNodes which manage their own scope.
 		prescanLabels(if_stmt.get_then_statement(), depth);
 		if (if_stmt.has_else()) {
 			prescanLabels(*if_stmt.get_else_statement(), depth);
 		}
 	} else if (node.is<ForStatementNode>()) {
-	// visitForStatementNode (IrGenerator_Stmt_Control.cpp) calls enterScope() explicitly
-	// before visiting the body, adding one scope level for the for-init variables.
-	// The body is then a BlockNode which adds another level of its own.
-	// Passing depth + 1 here lets the BlockNode branch above handle that second increment.
+		// visitForStatementNode (IrGenerator_Stmt_Control.cpp) calls enterScope() explicitly
+		// before visiting the body, adding one scope level for the for-init variables.
+		// The body is then a BlockNode which adds another level of its own.
+		// Passing depth + 1 here lets the BlockNode branch above handle that second increment.
 		prescanLabels(node.as<ForStatementNode>().get_body_statement(), depth + 1);
 	} else if (node.is<WhileStatementNode>()) {
-	// visitWhileStatementNode does NOT call enterScope(); the body BlockNode does.
+		// visitWhileStatementNode does NOT call enterScope(); the body BlockNode does.
 		prescanLabels(node.as<WhileStatementNode>().get_body_statement(), depth);
 	} else if (node.is<DoWhileStatementNode>()) {
 		prescanLabels(node.as<DoWhileStatementNode>().get_body_statement(), depth);
 	} else if (node.is<RangedForStatementNode>()) {
-	// Ranged-for does NOT call enterScope() — the body BlockNode handles scope.
+		// Ranged-for does NOT call enterScope() — the body BlockNode handles scope.
 		prescanLabels(node.as<RangedForStatementNode>().get_body_statement(), depth);
 	} else if (node.is<SwitchStatementNode>()) {
-	// The switch visitor iterates the body block's children inline without calling
-	// enterScope(), so we must NOT let the body go through the BlockNode handler
-	// (which would increment depth).  Instead, iterate children at the current depth.
+		// The switch visitor iterates the body block's children inline without calling
+		// enterScope(), so we must NOT let the body go through the BlockNode handler
+		// (which would increment depth).  Instead, iterate children at the current depth.
 		const auto& body = node.as<SwitchStatementNode>().get_body();
 		if (body.is<BlockNode>()) {
 			body.as<BlockNode>().get_statements().visit([&](const ASTNode& stmt) {
@@ -201,8 +201,8 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		const auto& case_node = node.as<CaseLabelNode>();
 		if (case_node.has_statement()) {
 			ASTNode case_stmt = *case_node.get_statement();
-	// The switch visitor unwraps case-body BlockNodes inline (no enterScope),
-	// so mirror that here: iterate the block's children at the same depth.
+			// The switch visitor unwraps case-body BlockNodes inline (no enterScope),
+			// so mirror that here: iterate the block's children at the same depth.
 			if (case_stmt.is<BlockNode>()) {
 				case_stmt.as<BlockNode>().get_statements().visit([&](const ASTNode& s) {
 					prescanLabels(s, depth);
@@ -225,14 +225,14 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		}
 	} else if (node.is<TryStatementNode>()) {
 		const auto& try_stmt = node.as<TryStatementNode>();
-	// Both the try block and each catch body are BlockNodes that manage their own scopes.
+		// Both the try block and each catch body are BlockNodes that manage their own scopes.
 		prescanLabels(try_stmt.try_block(), depth);
 		for (const auto& catch_node : try_stmt.catch_clauses()) {
 			prescanLabels(catch_node.as<CatchClauseNode>().body(), depth);
 		}
 	}
- // All other node types (expressions, plain declarations, break, continue, return,
- // goto, case values, etc.) cannot contain LabelStatementNodes — no recursion needed.
+	// All other node types (expressions, plain declarations, break, continue, return,
+	// goto, case values, etc.) cannot contain LabelStatementNodes — no recursion needed.
 }
 
 // Helper functions to emit store instructions
@@ -287,12 +287,12 @@ void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee
 	DereferenceStoreOp store_op;
 	store_op.value = value;
 
- // Populate pointer TypedValue
+	// Populate pointer TypedValue
 	store_op.pointer.setType(pointee_type);
 	store_op.pointer.type_index = TypeIndex{0, pointee_type};
 	store_op.pointer.size_in_bits = SizeInBits{64};	// Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
- // Convert std::variant<StringHandle, TempVar> to IrValue
+	// Convert std::variant<StringHandle, TempVar> to IrValue
 	if (const auto* string = std::get_if<StringHandle>(&pointer)) {
 		store_op.pointer.value = *string;
 	} else {
@@ -318,21 +318,21 @@ const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std:
 // Used for pointer arithmetic (++/-- operators need sizeof(pointee_type))
 size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
 	const TypeCategory type = type_index.category();
- // Use IrType to catch both TypeCategory::Struct and TypeCategory::UserDefined (which maps
- // to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
- // path and get total_size instead of falling through to the scalar path.
+	// Use IrType to catch both TypeCategory::Struct and TypeCategory::UserDefined (which maps
+	// to IrType::Struct) so that typedef-to-struct aliases use the struct-layout
+	// path and get total_size instead of falling through to the scalar path.
 	if (isIrStructType(toIrType(type))) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
 				return struct_info->total_size;
 			}
 		}
-	// TypeCategory::Struct must always have a valid StructInfo; reaching here for
-	// a genuine Struct is a compiler bug.  TypeCategory::UserDefined may be a
-	// typedef to a primitive, so fall through to the generic path.
+		// TypeCategory::Struct must always have a valid StructInfo; reaching here for
+		// a genuine Struct is a compiler bug.  TypeCategory::UserDefined may be a
+		// typedef to a primitive, so fall through to the generic path.
 		assert(type != TypeCategory::Struct && "TypeCategory::Struct without valid StructInfo is a compiler bug");
 	}
- // Non-struct path: size the runtime value representation for a non-pointer.
+	// Non-struct path: size the runtime value representation for a non-pointer.
 	return static_cast<size_t>(getRuntimeValueSizeBits(type_index, size_in_bits, PointerDepth{}) / 8);
 }
 
@@ -376,7 +376,7 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
 				return static_cast<int>(enum_info->underlying_size);
 			}
-	// Forward-declared enums / aliases may only have type_size_.
+			// Forward-declared enums / aliases may only have type_size_.
 			if (ti->type_size_ > 0) {
 				return ti->type_size_;
 			}

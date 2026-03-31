@@ -55,9 +55,9 @@ public:
 		auto& chunk = data.back();
 		std::size_t offset = (chunk.size() + alignment - 1) & ~(alignment - 1);
 
-	// Ensure we don't exceed the reserved capacity
+		// Ensure we don't exceed the reserved capacity
 		if (offset + size > chunk.capacity()) {
-	// Start a new chunk if this one can't fit the object
+			// Start a new chunk if this one can't fit the object
 			data.emplace_back().reserve(ChunkSize);
 			auto& new_chunk = data.back();
 			offset = (new_chunk.size() + alignment - 1) & ~(alignment - 1);
@@ -124,8 +124,8 @@ public:
 		  data(&memory_resource)
 #endif
 	{
-	// Note: std::deque doesn't have reserve(), but that's okay
-	// It will allocate blocks as needed
+		// Note: std::deque doesn't have reserve(), but that's okay
+		// It will allocate blocks as needed
 		for (size_t i = 0, e = other.size(); i < e; ++i) {
 			push_back(other[i]);
 		}
@@ -144,8 +144,8 @@ public:
 	ChunkedVector& operator=(const ChunkedVector& other) {
 		if (this != &other) {
 			data.clear();
-	// Note: std::deque doesn't have reserve(), but that's okay
-	// It will allocate blocks as needed
+			// Note: std::deque doesn't have reserve(), but that's okay
+			// It will allocate blocks as needed
 			for (size_t i = 0, e = other.size(); i < e; ++i) {
 				push_back(other[i]);
 			}
@@ -179,20 +179,20 @@ public:
 	}
 
 	T& operator[](std::size_t index) {
-	// Precondition: data must not be empty and index must be valid
+		// Precondition: data must not be empty and index must be valid
 		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
 
-	// O(1) access: calculate chunk and element indices directly
+		// O(1) access: calculate chunk and element indices directly
 		std::size_t chunk_idx = index / ChunkSize;
 		std::size_t elem_idx = index % ChunkSize;
 		return data[chunk_idx][elem_idx];
 	}
 
 	const T& operator[](std::size_t index) const {
-	// Precondition: data must not be empty and index must be valid
+		// Precondition: data must not be empty and index must be valid
 		assert(!data.empty() && "ChunkedVector::operator[] called on empty container");
 
-	// O(1) access: calculate chunk and element indices directly
+		// O(1) access: calculate chunk and element indices directly
 		std::size_t chunk_idx = index / ChunkSize;
 		std::size_t elem_idx = index % ChunkSize;
 		return data[chunk_idx][elem_idx];
@@ -212,8 +212,8 @@ public:
 		data.clear();
 	}
 
- // Note: ChunkedVector doesn't provide data() because elements are not contiguous
- // Use operator[], iterators, or visit() instead
+	// Note: ChunkedVector doesn't provide data() because elements are not contiguous
+	// Use operator[], iterators, or visit() instead
 
 	template <typename Visitor>
 	void visit(Visitor&& visitor) {

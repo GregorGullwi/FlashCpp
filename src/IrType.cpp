@@ -2,7 +2,7 @@
 
 IrType toIrType(TypeCategory cat) {
 	switch (cat) {
-	// All integer-like types map to IrType::Integer
+		// All integer-like types map to IrType::Integer
 	case TypeCategory::Bool:
 	case TypeCategory::Char:
 	case TypeCategory::UnsignedChar:
@@ -20,12 +20,12 @@ IrType toIrType(TypeCategory cat) {
 	case TypeCategory::UnsignedLongLong:
 		return IrType::Integer;
 
-	// Enums lower to Integer — width/signedness stay in the existing metadata
-	// fields instead of multiplying IrType variants by size and signedness.
+		// Enums lower to Integer — width/signedness stay in the existing metadata
+		// fields instead of multiplying IrType variants by size and signedness.
 	case TypeCategory::Enum:
 		return IrType::Integer;
 
-	// Floating point types
+		// Floating point types
 	case TypeCategory::Float:
 		return IrType::Float;
 	case TypeCategory::Double:
@@ -33,21 +33,21 @@ IrType toIrType(TypeCategory cat) {
 	case TypeCategory::LongDouble:
 		return IrType::LongDouble;
 
-	// Aggregate / user-defined types
+		// Aggregate / user-defined types
 	case TypeCategory::Struct:
 	case TypeCategory::UserDefined:
 		return IrType::Struct;
 
-	// TypeAlias must not reach this pure-category overload — the
-	// toIrType(TypeIndex) overload resolves aliases through getTypeInfo()
-	// first.  Hitting this case means a TypeAlias category leaked into a
-	// code path that only has a TypeCategory (no TypeIndex to resolve from),
-	// which is a compiler bug.
+		// TypeAlias must not reach this pure-category overload — the
+		// toIrType(TypeIndex) overload resolves aliases through getTypeInfo()
+		// first.  Hitting this case means a TypeAlias category leaked into a
+		// code path that only has a TypeCategory (no TypeIndex to resolve from),
+		// which is a compiler bug.
 	case TypeCategory::TypeAlias:
 		assert(false && "TypeCategory::TypeAlias must be resolved before reaching toIrType(TypeCategory)");
 		return IrType::Void;
 
-	// Pointer-like types
+		// Pointer-like types
 	case TypeCategory::FunctionPointer:
 		return IrType::FunctionPointer;
 	case TypeCategory::MemberFunctionPointer:
@@ -55,16 +55,16 @@ IrType toIrType(TypeCategory cat) {
 	case TypeCategory::MemberObjectPointer:
 		return IrType::MemberObjectPointer;
 
-	// Special types
+		// Special types
 	case TypeCategory::Nullptr:
 		return IrType::Nullptr;
 	case TypeCategory::Void:
 		return IrType::Void;
 
-	// These must not reach IR — they must be resolved before codegen.
-	// During the transition period, we still tolerate some semantic-only
-	// forms to preserve existing runtime behavior until their lowering moves
-	// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
+		// These must not reach IR — they must be resolved before codegen.
+		// During the transition period, we still tolerate some semantic-only
+		// forms to preserve existing runtime behavior until their lowering moves
+		// earlier in the pipeline (ideally a semantic pass, not parser/codegen).
 	case TypeCategory::Auto:
 	case TypeCategory::DeclTypeAuto:
 		return IrType::Integer;

@@ -69,7 +69,7 @@ void ElfFileWriter::add_local_variable(const std::string& name, uint32_t type_in
 	v.name = name;
 	v.cv_type_index = type_index;
 	const auto& loc = locations[0];
- // Prefer stack offset if available (loc.offset != 0 for initialized vars in ELF path)
+	// Prefer stack offset if available (loc.offset != 0 for initialized vars in ELF path)
 	if (loc.type == CodeView::VariableLocation::REGISTER && loc.offset != 0) {
 		v.is_register = false;
 		v.stack_off = loc.offset;
@@ -99,20 +99,20 @@ void ElfFileWriter::update_function_length(const std::string_view mangled_name, 
 	if (debug_has_current_ && debug_current_func_.name == mangled_name) {
 		debug_current_func_.length = code_length;
 	}
- // Always update the symbol size using the actual mangled name
+	// Always update the symbol size using the actual mangled name
 	updateSymbolSize(std::string(mangled_name), code_length);
 }
 
 void ElfFileWriter::set_function_debug_range([[maybe_unused]] const std::string_view manged_name, [[maybe_unused]] uint32_t prologue_size, [[maybe_unused]] uint32_t epilogue_size) {
- // Not required for DWARF
+	// Not required for DWARF
 }
 
 void ElfFileWriter::finalize_current_function() {
- // Not required for DWARF
+	// Not required for DWARF
 }
 
 void ElfFileWriter::finalize_debug_info() {
- // Save last function
+	// Save last function
 	if (debug_has_current_) {
 		debug_functions_.push_back(std::move(debug_current_func_));
 		debug_has_current_ = false;

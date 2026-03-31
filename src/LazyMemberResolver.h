@@ -40,7 +40,7 @@ struct MemberLookupKey {
 // Hash function for MemberLookupKey
 struct MemberLookupKeyHash {
 	size_t operator()(const MemberLookupKey& key) const {
-	// Combine hashes
+		// Combine hashes
 		size_t h1 = std::hash<TypeIndex>{}(key.type_index);
 		size_t h2 = std::hash<StringHandle>{}(key.member_name);
 		return h1 ^ (h2 << 1);
@@ -50,23 +50,23 @@ struct MemberLookupKeyHash {
 // Phase 2: Lazy member resolver with caching and cycle detection
 class LazyMemberResolver {
 private:
- // Cache of resolved members
+	// Cache of resolved members
 	std::unordered_map<MemberLookupKey, MemberResolutionResult, MemberLookupKeyHash> cache_;
 
- // Types currently being resolved (for cycle detection)
+	// Types currently being resolved (for cycle detection)
 	std::unordered_set<MemberLookupKey, MemberLookupKeyHash> in_progress_;
 
- // Statistics for debugging/profiling
+	// Statistics for debugging/profiling
 	size_t cache_hits_ = 0;
 	size_t cache_misses_ = 0;
 	size_t cycles_detected_ = 0;
 
 public:
- // Resolve a member with caching and cycle detection
+	// Resolve a member with caching and cycle detection
 	MemberResolutionResult resolve(TypeIndex type_index, StringHandle member_name) {
 		MemberLookupKey key{type_index, member_name};
 
-	// Check cache first
+		// Check cache first
 		auto cache_it = cache_.find(key);
 		if (cache_it != cache_.end()) {
 			++cache_hits_;
@@ -77,28 +77,28 @@ public:
 
 		++cache_misses_;
 
-	// Check for cycles
+		// Check for cycles
 		if (in_progress_.contains(key)) {
 			++cycles_detected_;
 			return MemberResolutionResult();	 // Cycle detected, return not found
 		}
 
-	// Mark as in progress
+		// Mark as in progress
 		in_progress_.insert(key);
 
-	// Perform the actual resolution
+		// Perform the actual resolution
 		MemberResolutionResult result = resolveInternal(type_index, member_name);
 
-	// Remove from in-progress
+		// Remove from in-progress
 		in_progress_.erase(key);
 
-	// Cache the result (even if not found, to avoid repeated lookups)
+		// Cache the result (even if not found, to avoid repeated lookups)
 		cache_[key] = result;
 
 		return result;
 	}
 
- // Clear the cache (useful for testing or when type system changes)
+	// Clear the cache (useful for testing or when type system changes)
 	void clearCache() {
 		cache_.clear();
 		cache_hits_ = 0;
@@ -106,7 +106,7 @@ public:
 		cycles_detected_ = 0;
 	}
 
- // Get cache statistics
+	// Get cache statistics
 	struct Statistics {
 		size_t cache_hits;
 		size_t cache_misses;
@@ -124,9 +124,9 @@ public:
 	}
 
 private:
- // Internal resolution logic
+	// Internal resolution logic
 	MemberResolutionResult resolveInternal(TypeIndex type_index, StringHandle member_name) {
-	// Validate type index
+		// Validate type index
 		const TypeInfo* type_info = tryGetTypeInfo(type_index);
 		if (!type_info) {
 			return MemberResolutionResult();
@@ -138,8 +138,8 @@ private:
 			return MemberResolutionResult();
 		}
 
-	// Use BFS to handle inheritance, avoiding the recursive approach
-	// that can cause issues with complex template hierarchies
+		// Use BFS to handle inheritance, avoiding the recursive approach
+		// that can cause issues with complex template hierarchies
 		std::queue<std::pair<const StructTypeInfo*, size_t>> to_visit;
 		std::unordered_set<const StructTypeInfo*> visited;
 
@@ -149,13 +149,13 @@ private:
 			auto [current_struct, current_offset] = to_visit.front();
 			to_visit.pop();
 
-	// Skip if already visited (cycle prevention at struct level)
+			// Skip if already visited (cycle prevention at struct level)
 			if (visited.contains(current_struct)) {
 				continue;
 			}
 			visited.insert(current_struct);
 
-	// Check direct members
+			// Check direct members
 			for (const auto& member : current_struct->members) {
 				if (member.getName() == member_name) {
 					return MemberResolutionResult(
@@ -166,7 +166,7 @@ private:
 				}
 			}
 
-	// Add base classes to the queue
+			// Add base classes to the queue
 			for (const auto& base : current_struct->base_classes) {
 				if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index)) {
 					const StructTypeInfo* base_info = base_type->getStructInfo();
@@ -178,7 +178,7 @@ private:
 			}
 		}
 
-	// Not found
+		// Not found
 		return MemberResolutionResult();
 	}
 };

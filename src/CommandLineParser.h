@@ -81,8 +81,8 @@ public:
 				continue;
 			}
 
-	// On Windows, allow both - and / for options
-	// On Unix/Linux, only allow - (to avoid treating absolute paths like /home/... as options)
+			// On Windows, allow both - and / for options
+			// On Unix/Linux, only allow - (to avoid treating absolute paths like /home/... as options)
 			bool isOption = false;
 #if defined(_WIN32) || defined(_WIN64)
 			isOption = arg.size() >= 2 && (arg[0] == '-' || arg[0] == '/');
@@ -91,9 +91,9 @@ public:
 #endif
 
 			if (isOption) {
-	// Handle both - and / prefixes for options (Windows compatibility)
+				// Handle both - and / prefixes for options (Windows compatibility)
 				if (arg.size() >= 3 && arg[1] == '-') {
-		// Option with long name, e.g. --option=value (only with -)
+					// Option with long name, e.g. --option=value (only with -)
 					auto equal_pos = arg.find('=');
 					if (equal_pos == std::string_view::npos) {
 						optionValues_[arg.substr(2)] = std::monostate{};
@@ -101,14 +101,14 @@ public:
 						optionValues_[arg.substr(2, equal_pos - 2)] = arg.substr(equal_pos + 1);
 					}
 				} else {
-		// Option with short name, e.g. -I value or /I value
-		// Also handle concatenated format: /Ipath or -Ipath
+					// Option with short name, e.g. -I value or /I value
+					// Also handle concatenated format: /Ipath or -Ipath
 					std::string_view option_part = arg.substr(1);
 
-		// Check if this is an include directory flag
+					// Check if this is an include directory flag
 					if (option_part.size() >= 1 && option_part[0] == 'I') {
 						if (option_part.size() == 1) {
-		// Format: /I path (space-separated)
+							// Format: /I path (space-separated)
 							if (i + 1 < argc) {
 								std::string_view nextArg = argv[++i];
 
@@ -126,12 +126,12 @@ public:
 								}
 							}
 						} else {
-		// Format: /Ipath (concatenated)
+							// Format: /Ipath (concatenated)
 							std::string_view path = option_part.substr(1);
 							context.addIncludeDir(path);
 						}
 					} else if (isKnownFlag(arg.substr(1))) {
-		// Known flags don't take a value
+						// Known flags don't take a value
 						optionValues_[arg.substr(1)] = std::monostate{};
 					} else if (i + 1 >= argc) {
 						optionValues_[arg.substr(1)] = std::monostate{};
@@ -165,7 +165,7 @@ public:
 		return inputFileArgs_;
 	}
 
- // Print help text to stdout, derived from the constexpr option tables.
+	// Print help text to stdout, derived from the constexpr option tables.
 	static void printHelp() {
 		static constexpr size_t kHelpColumnWidth = 36;
 
@@ -183,7 +183,7 @@ public:
 			left += opt.name;
 
 			if (!opt.value_hint.empty()) {
-	// Long options (--) only support =value syntax; short options (-) use space
+				// Long options (--) only support =value syntax; short options (-) use space
 				left += (opt.name.size() > 1) ? '=' : ' ';
 				left += opt.value_hint;
 			}
@@ -209,7 +209,7 @@ public:
 			print_option(opt);
 		}
 
-	// Build log-level detail block from the constexpr tables in Log.h
+		// Build log-level detail block from the constexpr tables in Log.h
 		std::cout << "\nLog levels: ";
 		bool first = true;
 		for (const auto& lv : FlashCpp::all_log_levels) {
@@ -230,8 +230,8 @@ public:
 	}
 
 private:
- // Helper to check if an option is a known flag (doesn't take a value).
- // Derived from the all_cli_flags constexpr table.
+	// Helper to check if an option is a known flag (doesn't take a value).
+	// Derived from the all_cli_flags constexpr table.
 	static bool isKnownFlag(std::string_view flag) {
 		return std::ranges::any_of(all_cli_flags, [flag](const auto& entry) { return entry.name == flag; });
 	}

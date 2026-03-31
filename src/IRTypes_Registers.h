@@ -50,7 +50,7 @@ struct SizedRegister {
 	SizedRegister(X64Register r, SizeInBits size, bool sign = false)
 		: reg(r), size_in_bits(size), is_signed(sign) {}
 
- // Convenience constructors for common cases
+	// Convenience constructors for common cases
 	static SizedRegister ptr(X64Register r) { return {r, 64, false}; }
 	static SizedRegister i64(X64Register r) { return {r, 64, true}; }
 	static SizedRegister i32(X64Register r) { return {r, 32, true}; }
@@ -74,7 +74,7 @@ struct SizedStackSlot {
 	SizedStackSlot(int32_t off, SizeInBits size, bool sign = false)
 		: offset(off), size_in_bits(size), is_signed(sign) {}
 
- // Convenience constructors for common cases
+	// Convenience constructors for common cases
 	static SizedStackSlot ptr(int32_t off) { return {off, 64, false}; }
 	static SizedStackSlot i64(int32_t off) { return {off, 64, true}; }
 	static SizedStackSlot i32(int32_t off) { return {off, 32, true}; }
@@ -88,7 +88,7 @@ struct SizedStackSlot {
 
 template <size_t N>
 constexpr auto make_temp_string() {
- // Max: "temp_" + 3-digit number + '\0'
+	// Max: "temp_" + 3-digit number + '\0'
 	std::array<char, 10> buf{};
 	buf[0] = 't';
 	buf[1] = 'e';
@@ -130,7 +130,7 @@ constexpr auto raw_temp_names = make_temp_array<256>();
 constexpr auto make_view_array() {
 	std::array<std::string_view, raw_temp_names.size()> result{};
 	for (size_t i = 0; i < raw_temp_names.size(); ++i) {
-	// Views into raw array
+		// Views into raw array
 		result[i] = std::string_view{raw_temp_names[i].data()};
 	}
 	return result;
@@ -146,12 +146,12 @@ struct TempVar {
 		return TempVar(++var_number);
 	}
 	std::string_view name() const {
-	// temp_name_array is 0-indexed, indexed by var_number - 1
-	// var_number=0 is a sentinel (invalid/uninitialized), return empty string
+		// temp_name_array is 0-indexed, indexed by var_number - 1
+		// var_number=0 is a sentinel (invalid/uninitialized), return empty string
 		if (var_number == 0) {
 			return ""; // Sentinel value - no valid name
 		}
-	// Bounds check - temp_name_array has 256 entries (0-255)
+		// Bounds check - temp_name_array has 256 entries (0-255)
 		if (var_number - 1 >= 256) {
 			FLASH_LOG(General, Error, "TempVar::name() - var_number out of bounds: ", var_number, " (max is 256)");
 			return "temp_INVALID"; // Return a safe fallback
@@ -179,16 +179,16 @@ struct TempVar {
 // ============================================================================
 
 enum class ValueCategory : uint8_t {
- // lvalue - has identity and cannot be moved from
- // Examples: variables, array elements, struct members, dereferenced pointers
+	// lvalue - has identity and cannot be moved from
+	// Examples: variables, array elements, struct members, dereferenced pointers
 	LValue,
 
- // xvalue - has identity and can be moved from (expiring value)
- // Examples: std::move(x), a.m where a is rvalue, array[i] where array is rvalue
+	// xvalue - has identity and can be moved from (expiring value)
+	// Examples: std::move(x), a.m where a is rvalue, array[i] where array is rvalue
 	XValue,
 
- // prvalue - pure rvalue, no identity
- // Examples: literals (42, 3.14), function returns by value, arithmetic operations
+	// prvalue - pure rvalue, no identity
+	// Examples: literals (42, 3.14), function returns by value, arithmetic operations
 	PRValue
 };
 
@@ -208,81 +208,81 @@ struct LValueInfo {
 
 	Kind kind;
 
- // Base object (variable name or temp var)
+	// Base object (variable name or temp var)
 	std::variant<StringHandle, TempVar> base;
 
- // Offset in bytes from base (for members, array elements)
+	// Offset in bytes from base (for members, array elements)
 	int offset;
 
- // For nested access (e.g., arr[i].member), pointer to parent lvalue info
- // Using raw pointer to avoid circular dependency and keep it lightweight
+	// For nested access (e.g., arr[i].member), pointer to parent lvalue info
+	// Using raw pointer to avoid circular dependency and keep it lightweight
 	const LValueInfo* parent = nullptr;
 
- // Additional metadata for specific kinds (optional to keep structure lightweight)
- // For Member: the member name
+	// Additional metadata for specific kinds (optional to keep structure lightweight)
+	// For Member: the member name
 	std::optional<StringHandle> member_name;
 
- // For ArrayElement: the computed index value
- // Can be a constant (unsigned long long), TempVar, or StringHandle
+	// For ArrayElement: the computed index value
+	// Can be a constant (unsigned long long), TempVar, or StringHandle
 	std::optional<IrValue> array_index;
 
- // For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
+	// For ArrayElement: whether the array base is a pointer (int* arr) or array (int arr[])
 	bool is_pointer_to_array = false;
 
- // For Member: whether the base object is a pointer (ptr->member) or direct object (obj.member)
- // When true, handleMemberStore should dereference the pointer before accessing the member
+	// For Member: whether the base object is a pointer (ptr->member) or direct object (obj.member)
+	// When true, handleMemberStore should dereference the pointer before accessing the member
 	bool is_pointer_to_member = false;
 
- // For bitfield members: width in bits and bit offset within storage unit
+	// For bitfield members: width in bits and bit offset within storage unit
 	std::optional<size_t> bitfield_width;
 	size_t bitfield_bit_offset = 0;
 
- // Constructor for simple cases
+	// Constructor for simple cases
 	LValueInfo(Kind k, std::variant<StringHandle, TempVar> b, int off = 0)
 		: kind(k), base(b), offset(off) {}
 };
 
 // Metadata attached to TempVar for value category tracking
 struct TempVarMetadata {
- // Value category of this temporary
+	// Value category of this temporary
 	ValueCategory category = ValueCategory::PRValue;
 
- // If this is an lvalue or xvalue, information about its storage location
+	// If this is an lvalue or xvalue, information about its storage location
 	std::optional<LValueInfo> lvalue_info;
 
- // Whether this temp represents an address (pointer) rather than a value
- // Helps distinguish between &x (address-of) vs x (value)
+	// Whether this temp represents an address (pointer) rather than a value
+	// Helps distinguish between &x (address-of) vs x (value)
 	bool is_address = false;
 
- // Whether this temp holds an address-only value (from AddressOf/AddressOfMember)
- // Unlike true references, address-only values should NOT be implicitly dereferenced
+	// Whether this temp holds an address-only value (from AddressOf/AddressOfMember)
+	// Unlike true references, address-only values should NOT be implicitly dereferenced
 	bool holds_address_only = false;
 
- // Whether this temp is the result of std::move or similar
+	// Whether this temp is the result of std::move or similar
 	bool is_move_result = false;
 
- // RVO/NRVO (Return Value Optimization) tracking
- // C++17 mandates copy elision for prvalues used to initialize objects of the same type,
- // which includes function returns, direct initialization, and other contexts
+	// RVO/NRVO (Return Value Optimization) tracking
+	// C++17 mandates copy elision for prvalues used to initialize objects of the same type,
+	// which includes function returns, direct initialization, and other contexts
 	bool is_return_value = false;		  // True if this is a return value (for RVO detection)
 	bool eligible_for_rvo = false;	   // True if this prvalue can be constructed directly in destination
 	bool eligible_for_nrvo = false;		// True if this named variable can use NRVO
 
- // Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
- // These are used by IRConverter when loading values through references
+	// Fields previously tracked in IndirectStorageInfo (for reference/pointer dereferencing)
+	// These are used by IRConverter when loading values through references
 	TypeIndex value_type_index{};
 	IrType ir_type = IrType::Integer;  // Phase 4: parallel ir_type field for TempVar metadata
 	SizeInBits value_size_bits;
 	bool is_rvalue_reference = false;
 
- // Accessors for the value type
+	// Accessors for the value type
 	TypeCategory valueType() const { return value_type_index.category(); }
 	TypeCategory valueCategory() const { return value_type_index.category(); }
 
- // Constructor
+	// Constructor
 	TempVarMetadata() = default;
 
- // Helper to create lvalue metadata
+	// Helper to create lvalue metadata
 	static TempVarMetadata makeLValue(LValueInfo lv_info, TypeCategory cat, int size_bits) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::LValue;
@@ -293,7 +293,7 @@ struct TempVarMetadata {
 		return meta;
 	}
 
- // Helper to create xvalue metadata
+	// Helper to create xvalue metadata
 	static TempVarMetadata makeXValue(LValueInfo lv_info, TypeCategory cat, int size_bits) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::XValue;
@@ -305,14 +305,14 @@ struct TempVarMetadata {
 		return meta;
 	}
 
- // Helper to create prvalue metadata
+	// Helper to create prvalue metadata
 	static TempVarMetadata makePRValue() {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
 		return meta;
 	}
 
- // Helper to create prvalue metadata eligible for RVO (C++17 mandatory copy elision)
+	// Helper to create prvalue metadata eligible for RVO (C++17 mandatory copy elision)
 	static TempVarMetadata makeRVOEligiblePRValue() {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::PRValue;
@@ -320,7 +320,7 @@ struct TempVarMetadata {
 		return meta;
 	}
 
- // Helper to create metadata for named return value (NRVO candidate)
+	// Helper to create metadata for named return value (NRVO candidate)
 	static TempVarMetadata makeNRVOCandidate(LValueInfo lv_info) {
 		TempVarMetadata meta;
 		meta.category = ValueCategory::LValue;
@@ -329,7 +329,7 @@ struct TempVarMetadata {
 		return meta;
 	}
 
- // Helper to create reference metadata (for compatibility with IndirectStorageInfo)
+	// Helper to create reference metadata (for compatibility with IndirectStorageInfo)
 	static TempVarMetadata makeReference(TypeIndex value_type_index_param, SizeInBits size_bits, ValueCategory value_category) {
 		TempVarMetadata meta;
 		meta.category = value_category;
@@ -342,9 +342,9 @@ struct TempVarMetadata {
 		return meta;
 	}
 
- // Helper to create address-only metadata (for AddressOf/AddressOfMember results)
- // Address-only values should NOT be implicitly dereferenced.
- // Pass ValueCategory::XValue for rvalue-reference address-only values (e.g. function returning T&&)
+	// Helper to create address-only metadata (for AddressOf/AddressOfMember results)
+	// Address-only values should NOT be implicitly dereferenced.
+	// Pass ValueCategory::XValue for rvalue-reference address-only values (e.g. function returning T&&)
 	static TempVarMetadata makeAddressOnly(TypeIndex value_type_index_param, SizeInBits size_bits, ValueCategory value_category) {
 		TempVarMetadata meta;
 		meta.category = value_category;

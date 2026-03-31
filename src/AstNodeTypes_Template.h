@@ -11,15 +11,15 @@ enum class TemplateParameterKind {
 // Template parameter node - represents a single template parameter
 class TemplateParameterNode {
 public:
- // Type parameter: template<typename T> or template<class T>
+	// Type parameter: template<typename T> or template<class T>
 	TemplateParameterNode(StringHandle name, Token token)
 		: kind_(TemplateParameterKind::Type), name_(name), token_(token) {}
 
- // Non-type parameter: template<int N>
+	// Non-type parameter: template<int N>
 	TemplateParameterNode(StringHandle name, ASTNode type_node, Token token)
 		: kind_(TemplateParameterKind::NonType), name_(name), type_node_(type_node), token_(token) {}
 
- // Template template parameter: template<template<typename> class Container>
+	// Template template parameter: template<template<typename> class Container>
 	TemplateParameterNode(StringHandle name, std::vector<ASTNode> nested_params, Token token)
 		: kind_(TemplateParameterKind::Template), name_(name), nested_params_(std::move(nested_params)), token_(token) {}
 
@@ -30,28 +30,28 @@ public:
 	TypeIndex registered_type_index() const { return registered_type_index_; }
 	void set_registered_type_index(TypeIndex type_index) { registered_type_index_ = type_index; }
 
- // For non-type parameters
+	// For non-type parameters
 	bool has_type() const { return type_node_.has_value(); }
 	ASTNode type_node() const { return type_node_.value(); }
 
- // For template template parameters
+	// For template template parameters
 	const std::vector<ASTNode>& nested_parameters() const { return nested_params_; }
 
- // For default arguments (future enhancement)
+	// For default arguments (future enhancement)
 	bool has_default() const { return default_value_.has_value(); }
 	ASTNode default_value() const { return default_value_.value(); }
 	void set_default_value(ASTNode value) { default_value_ = value; }
 
- // For variadic templates (parameter packs)
+	// For variadic templates (parameter packs)
 	bool is_variadic() const { return is_variadic_; }
 	void set_variadic(bool variadic) { is_variadic_ = variadic; }
 
- // For concept constraints (C++20)
+	// For concept constraints (C++20)
 	bool has_concept_constraint() const { return concept_constraint_.has_value(); }
 	std::string_view concept_constraint() const { return concept_constraint_.value(); }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 
- // For concept template arguments (e.g., Concept<U> T stores {U})
+	// For concept template arguments (e.g., Concept<U> T stores {U})
 	const std::vector<ASTNode>& concept_args() const { return concept_args_; }
 	void set_concept_args(std::vector<ASTNode> args) { concept_args_ = std::move(args); }
 	bool has_concept_args() const { return !concept_args_.empty(); }
@@ -84,7 +84,7 @@ public:
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
- // Get the underlying FunctionDeclarationNode
+	// Get the underlying FunctionDeclarationNode
 	FunctionDeclarationNode& function_decl_node() {
 		return function_declaration_.as<FunctionDeclarationNode>();
 	}
@@ -139,7 +139,7 @@ public:
 					  ASTNode target_type)
 		: template_parameters_(std::move(template_params)), template_param_names_(std::move(param_names)), alias_name_(alias_name), target_type_(target_type), is_deferred_(false) {}
 
- // Constructor for deferred template instantiation (Option 1)
+	// Constructor for deferred template instantiation (Option 1)
 	TemplateAliasNode(InlineVector<ASTNode, 4> template_params,
 					  InlineVector<StringHandle, 4> param_names,
 					  StringHandle alias_name,
@@ -153,12 +153,12 @@ public:
 	std::string_view alias_name() const { return alias_name_.view(); }
 	ASTNode target_type() const { return target_type_; }
 
- // Deferred instantiation support
+	// Deferred instantiation support
 	bool is_deferred() const { return is_deferred_; }
 	std::string_view target_template_name() const { return target_template_name_.view(); }
 	const std::vector<ASTNode>& target_template_args() const { return target_template_args_; }
 
- // Get the underlying TypeSpecifierNode
+	// Get the underlying TypeSpecifierNode
 	TypeSpecifierNode& target_type_node() {
 		return target_type_.as<TypeSpecifierNode>();
 	}
@@ -172,7 +172,7 @@ private:
 	StringHandle alias_name_;  // The name of the alias (e.g., "Ptr")
 	ASTNode target_type_;  // TypeSpecifierNode - the target type (e.g., T*)
 
- // Deferred instantiation (Option 1: cleaner than string parsing)
+	// Deferred instantiation (Option 1: cleaner than string parsing)
 	bool is_deferred_;  // True if target is a template with unresolved parameters
 	StringHandle target_template_name_;	// Template name (e.g., "integral_constant")
 	std::vector<ASTNode> target_template_args_;	// Unevaluated argument AST nodes
@@ -215,7 +215,7 @@ public:
 	const InlineVector<ASTNode, 4>& template_parameters() const { return template_parameters_; }
 	ASTNode variable_declaration() const { return variable_declaration_; }
 
- // Get the underlying VariableDeclarationNode
+	// Get the underlying VariableDeclarationNode
 	VariableDeclarationNode& variable_decl_node() {
 		return variable_declaration_.as<VariableDeclarationNode>();
 	}
@@ -381,8 +381,8 @@ public:
 		parameter_nodes_.push_back(parameter_node);
 	}
 
- // Update parameter nodes from the definition (to use definition's parameter names)
- // C++ allows declaration and definition to have different parameter names
+	// Update parameter nodes from the definition (to use definition's parameter names)
+	// C++ allows declaration and definition to have different parameter names
 	void update_parameter_nodes_from_definition(const std::vector<ASTNode>& definition_params) {
 		if (definition_params.size() != parameter_nodes_.size()) {
 			return; // Signature mismatch - shouldn't happen after validation
@@ -417,30 +417,30 @@ public:
 		return true;
 	}
 
- // Pre-computed mangled name for consistent access across all compiler stages
+	// Pre-computed mangled name for consistent access across all compiler stages
 	void set_mangled_name(std::string_view name) { mangled_name_ = name; }
 	std::string_view mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return !mangled_name_.empty(); }
 
- // noexcept specifier support
+	// noexcept specifier support
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
 
- // explicit specifier support (for future use)
+	// explicit specifier support (for future use)
 	void set_explicit(bool is_explicit) { is_explicit_ = is_explicit; }
 	bool is_explicit() const { return is_explicit_; }
 
- // constexpr specifier support (for future use)
+	// constexpr specifier support (for future use)
 	void set_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
 	bool is_constexpr() const { return is_constexpr_; }
 
- // requires clause support (C++20)
+	// requires clause support (C++20)
 	void set_requires_clause(ASTNode requires_clause) { requires_clause_ = requires_clause; }
 	const std::optional<ASTNode>& requires_clause() const { return requires_clause_; }
 	bool has_requires_clause() const { return requires_clause_.has_value(); }
 
- // Template body position: for member function template constructors whose bodies
- // are deferred to instantiation time (two-phase lookup, C++ §13.9.2).
+	// Template body position: for member function template constructors whose bodies
+	// are deferred to instantiation time (two-phase lookup, C++ §13.9.2).
 	void set_template_body_position(SaveHandle handle) {
 		has_template_body_ = true;
 		template_body_position_handle_ = handle;
@@ -522,21 +522,21 @@ public:
 		return true;
 	}
 
- // Pre-computed mangled name for consistent access across all compiler stages
+	// Pre-computed mangled name for consistent access across all compiler stages
 	void set_mangled_name(StringHandle name) { mangled_name_ = name; }
 	StringHandle mangled_name() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
 
- // noexcept specifier support
- // C++11 [class.dtor]/3: A destructor that is defaulted and not defined as
- // deleted is implicitly noexcept(true) unless a base or member destructor
- // is noexcept(false).  We default to true and clear only on explicit
- // noexcept(false).
- // has_noexcept_specifier_ distinguishes "bare noexcept / noexcept(expr)"
- // (written explicitly) from "no specifier at all".  Without an explicit
- // specifier the effective noexcept status must be inferred from base/member
- // destructors (C++20 [except.spec]/7), so callers should use
- // isStructNothrowDestructible() instead of reading is_noexcept() directly.
+	// noexcept specifier support
+	// C++11 [class.dtor]/3: A destructor that is defaulted and not defined as
+	// deleted is implicitly noexcept(true) unless a base or member destructor
+	// is noexcept(false).  We default to true and clear only on explicit
+	// noexcept(false).
+	// has_noexcept_specifier_ distinguishes "bare noexcept / noexcept(expr)"
+	// (written explicitly) from "no specifier at all".  Without an explicit
+	// specifier the effective noexcept status must be inferred from base/member
+	// destructors (C++20 [except.spec]/7), so callers should use
+	// isStructNothrowDestructible() instead of reading is_noexcept() directly.
 	void set_noexcept(bool is_noexcept) { is_noexcept_ = is_noexcept; }
 	bool is_noexcept() const { return is_noexcept_; }
 	void set_noexcept_expression(ASTNode expr) { noexcept_expression_ = expr; }
@@ -602,7 +602,7 @@ struct AnonymousUnionMemberInfo {
 	std::vector<size_t> array_dimensions; // Dimension sizes for multidimensional arrays (e.g., {3, 3} for int[3][3])
 	int pointer_depth;				   // Pointer indirection level
 
- // Convenience helpers
+	// Convenience helpers
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 
@@ -649,29 +649,29 @@ struct StructMemberFunctionDecl {
 	bool is_destructor;
 	OverloadableOperator operator_kind;	// None for non-operators; non-None implies operator overload
 
- // Virtual function support (Phase 2)
+	// Virtual function support (Phase 2)
 	bool is_virtual = false;		 // True if declared with 'virtual' keyword
 	bool is_pure_virtual = false;	  // True if pure virtual (= 0)
 	bool is_override = false;		  // True if declared with 'override' keyword
 	bool is_final = false;		   // True if declared with 'final' keyword
 
- // CV qualifiers for member functions (Phase 4)
+	// CV qualifiers for member functions (Phase 4)
 	CVQualifier cv_qualifier = CVQualifier::None;
 
- // noexcept tracking for type traits
+	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)
 
- // Convenience accessors
+	// Convenience accessors
 	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
- // Convenience accessor for operator symbol string (for logging/mangling)
+	// Convenience accessor for operator symbol string (for logging/mangling)
 	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
 
- // Return the identifier name from the underlying function declaration AST node.
- // For regular functions this is the lexical name; for conversion-operator stubs
- // created during template instantiation this is the original template name.
+	// Return the identifier name from the underlying function declaration AST node.
+	// For regular functions this is the lexical name; for conversion-operator stubs
+	// created during template instantiation this is the original template name.
 	StringHandle getName() const {
 		if (const FunctionDeclarationNode* fn = get_function_decl_node(function_declaration))
 			return fn->decl_node().identifier_token().handle();
@@ -691,11 +691,11 @@ struct StructMemberFunctionDecl {
 // Friend declaration node
 class FriendDeclarationNode {
 public:
- // Friend class declaration: friend class ClassName;
+	// Friend class declaration: friend class ClassName;
 	explicit FriendDeclarationNode(FriendKind kind, StringHandle name)
 		: kind_(kind), name_(name) {}
 
- // Friend member function declaration: friend void ClassName::functionName();
+	// Friend member function declaration: friend void ClassName::functionName();
 	FriendDeclarationNode(FriendKind kind, StringHandle name, StringHandle class_name)
 		: kind_(kind), name_(name), class_name_(class_name) {}
 
@@ -703,7 +703,7 @@ public:
 	StringHandle name() const { return name_; }
 	StringHandle class_name() const { return class_name_; }
 
- // For friend functions, store the function declaration
+	// For friend functions, store the function declaration
 	void set_function_declaration(ASTNode decl) { function_decl_ = decl; }
 	std::optional<ASTNode> function_declaration() const { return function_decl_; }
 
@@ -736,7 +736,7 @@ struct StaticMemberDecl {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	int pointer_depth = 0;		   // Pointer indirection level (e.g., int* = 1, int** = 2)
 
- // Returns the legacy Type enum derived from the embedded TypeCategory.
+	// Returns the legacy Type enum derived from the embedded TypeCategory.
 	TypeCategory memberType() const { return type_index.category(); }
 
 	StaticMemberDecl(StringHandle name_, TypeIndex type_index_, size_t size_, size_t alignment_,
@@ -804,21 +804,21 @@ public:
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
-	// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
+		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
 		if (const auto* fn = get_function_decl_node(function_decl))
 			func_decl.is_noexcept = fn->is_noexcept();
 	}
 
 	void add_constructor(ASTNode constructor_decl, AccessSpecifier access) {
 		auto& ctor = member_functions_.emplace_back(constructor_decl, access, true, false);
-	// Extract noexcept from the constructor declaration node
+		// Extract noexcept from the constructor declaration node
 		ctor.is_noexcept = constructor_decl.as<ConstructorDeclarationNode>().is_noexcept();
 	}
 
 	void add_destructor(ASTNode destructor_decl, AccessSpecifier access, bool is_virtual = false) {
 		auto& dtor_decl = member_functions_.emplace_back(destructor_decl, access, false, true);
 		dtor_decl.is_virtual = is_virtual;
-	// Extract noexcept from the destructor declaration node
+		// Extract noexcept from the destructor declaration node
 		dtor_decl.is_noexcept = destructor_decl.as<DestructorDeclarationNode>().is_noexcept();
 	}
 
@@ -832,12 +832,12 @@ public:
 		func_decl.is_override = is_override;
 		func_decl.is_final = is_final;
 		func_decl.cv_qualifier = cv_qualifier;
-	// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
+		// Extract noexcept from the underlying function declaration node (may be wrapped in TemplateFunctionDeclarationNode)
 		if (const auto* fn = get_function_decl_node(function_decl))
 			func_decl.is_noexcept = fn->is_noexcept();
 	}
 
- // Friend declaration support
+	// Friend declaration support
 	void add_friend(ASTNode friend_decl) {
 		friend_declarations_.push_back(friend_decl);
 	}
@@ -846,7 +846,7 @@ public:
 		return friend_declarations_;
 	}
 
- // Nested class support
+	// Nested class support
 	void add_nested_class(ASTNode nested_class) {
 		nested_classes_.push_back(nested_class);
 	}
@@ -855,7 +855,7 @@ public:
 		return nested_classes_;
 	}
 
- // Type alias support
+	// Type alias support
 	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {
 		type_aliases_.emplace_back(alias_name, type_node, access);
 	}
@@ -864,7 +864,7 @@ public:
 		return type_aliases_;
 	}
 
- // Static member support (for template/partial specialization AST storage)
+	// Static member support (for template/partial specialization AST storage)
 	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth) {
@@ -875,20 +875,20 @@ public:
 		return static_members_;
 	}
 
- // Anonymous union support
+	// Anonymous union support
 	void add_anonymous_union_marker(size_t member_index, bool is_union) {
 		anonymous_unions_.emplace_back(member_index, is_union);
 	}
 
- // Add a member to the most recently created anonymous union
- // Must be called after add_anonymous_union_marker()
+	// Add a member to the most recently created anonymous union
+	// Must be called after add_anonymous_union_marker()
 	void add_anonymous_union_member(StringHandle member_name, TypeIndex type_index,
 									size_t member_size, size_t member_alignment, std::optional<size_t> bitfield_width,
 									size_t referenced_size_bits, ReferenceQualifier reference_qualifier,
 									bool is_array,
 									int pointer_depth,
 									std::vector<size_t> array_dimensions) {
-	// Add to the last anonymous union that was created
+		// Add to the last anonymous union that was created
 		if (!anonymous_unions_.empty()) {
 			anonymous_unions_.back().union_members.emplace_back(
 				member_name, type_index, member_size, member_alignment,
@@ -896,8 +896,8 @@ public:
 				pointer_depth,
 				std::move(array_dimensions));
 		}
-	// Note: If anonymous_unions_ is empty, this is a programming error in the parser
-	// The parser should always call add_anonymous_union_marker() before adding members
+		// Note: If anonymous_unions_ is empty, this is a programming error in the parser
+		// The parser should always call add_anonymous_union_marker() before adding members
 	}
 
 	const std::vector<AnonymousUnionInfo>& anonymous_unions() const {
@@ -912,7 +912,7 @@ public:
 		return enclosing_class_;
 	}
 
- // Deleted special member function tracking
+	// Deleted special member function tracking
 	void mark_deleted_default_constructor() { has_deleted_default_constructor_ = true; }
 	void mark_deleted_copy_constructor() { has_deleted_copy_constructor_ = true; }
 	void mark_deleted_move_constructor() { has_deleted_move_constructor_ = true; }
@@ -925,7 +925,7 @@ public:
 		return enclosing_class_ != nullptr;
 	}
 
- // Get fully qualified name (e.g., "Outer::Inner")
+	// Get fully qualified name (e.g., "Outer::Inner")
 	StringHandle qualified_name() const {
 		if (enclosing_class_) {
 			return StringTable::getOrInternStringHandle(StringBuilder().append(enclosing_class_->qualified_name()).append("::"sv).append(name_).commit());
@@ -933,7 +933,7 @@ public:
 		return name_;
 	}
 
- // Deferred static_assert support (for templates)
+	// Deferred static_assert support (for templates)
 	void add_deferred_static_assert(ASTNode condition_expr, StringHandle message) {
 		deferred_static_asserts_.emplace_back(condition_expr, message);
 	}
@@ -1013,7 +1013,7 @@ public:
 	const InlineVector<std::string_view, 4>& template_param_names() const { return template_param_names_; }
 	ASTNode class_declaration() const { return class_declaration_; }
 
- // Get the underlying StructDeclarationNode
+	// Get the underlying StructDeclarationNode
 	StructDeclarationNode& class_decl_node() {
 		return class_declaration_.as<StructDeclarationNode>();
 	}
@@ -1021,7 +1021,7 @@ public:
 		return class_declaration_.as<StructDeclarationNode>();
 	}
 
- // Deferred template body parsing support
+	// Deferred template body parsing support
 	void set_deferred_bodies(std::vector<DeferredTemplateMemberBody> bodies) {
 		deferred_bodies_ = std::move(bodies);
 	}

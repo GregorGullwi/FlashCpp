@@ -8,7 +8,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 	static thread_local int recursion_depth = 0;
 	constexpr int MAX_RECURSION_DEPTH = 50;
 
- // RAII guard to ensure recursion_depth is decremented on all exit paths
+	// RAII guard to ensure recursion_depth is decremented on all exit paths
 	struct RecursionGuard {
 		int& depth;
 		RecursionGuard(int& d) : depth(d) { ++depth; }
@@ -38,12 +38,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			return ParseResult::error("Parser error: too many binary operator iterations", current_token_);
 		}
 
-	// Safety check: ensure we have a token to examine
+		// Safety check: ensure we have a token to examine
 		if (peek().is_eof()) {
 			break;
 		}
 
-	// Check if the current token is a binary operator or comma (which can be an operator)
+		// Check if the current token is a binary operator or comma (which can be an operator)
 		bool is_operator = peek().is_operator();
 		bool is_comma = peek().is_punctuator() && peek() == ","_tok;
 
@@ -51,19 +51,19 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			break;
 		}
 
-	// Skip pack expansion operator '...' - it should be handled by the caller (e.g., function call argument parsing)
+		// Skip pack expansion operator '...' - it should be handled by the caller (e.g., function call argument parsing)
 		if (peek() == "..."_tok) {
 			break;
 		}
 
-	// Skip ternary operator '?' - it's handled separately below
+		// Skip ternary operator '?' - it's handled separately below
 		if (is_operator && peek() == "?"_tok) {
 			break;
 		}
 
-	// In TemplateTypeArg context, stop at '>' and ',' as they delimit template arguments
-	// This allows parsing expressions like "T::value || X::value" while stopping at the
-	// template argument delimiter
+		// In TemplateTypeArg context, stop at '>' and ',' as they delimit template arguments
+		// This allows parsing expressions like "T::value || X::value" while stopping at the
+		// template argument delimiter
 		if (context == ExpressionContext::TemplateTypeArg) {
 			if (peek() == ">"_tok || peek() == ">>"_tok) {
 				break;  // Stop at template closing bracket
@@ -73,76 +73,76 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			}
 		}
 
-	// Phase 1: C++20 Template Argument Disambiguation
-	// Phase 3: Enhanced with context-aware disambiguation
-	// Before treating '<' as a comparison operator, check if it could be template arguments
-	// This handles cases like: decltype(ns::func<Args...>(0)) where '<' after qualified-id
-	// should be parsed as template arguments, not as less-than operator
-	//
-	// Context-aware rules:
-	// - Decltype context: strongly prefer template arguments (strictest)
-	// - TemplateTypeArg context: prefer template arguments
-	// - RequiresClause context: prefer template arguments
-	// - Normal context: use regular disambiguation
+		// Phase 1: C++20 Template Argument Disambiguation
+		// Phase 3: Enhanced with context-aware disambiguation
+		// Before treating '<' as a comparison operator, check if it could be template arguments
+		// This handles cases like: decltype(ns::func<Args...>(0)) where '<' after qualified-id
+		// should be parsed as template arguments, not as less-than operator
+		//
+		// Context-aware rules:
+		// - Decltype context: strongly prefer template arguments (strictest)
+		// - TemplateTypeArg context: prefer template arguments
+		// - RequiresClause context: prefer template arguments
+		// - Normal context: use regular disambiguation
 		if (is_operator && peek() == "<"_tok && result.node().has_value()) {
 			FLASH_LOG(Parser, Debug, "Binary operator loop: checking if '<' is template arguments, context=", static_cast<int>(context));
 
-	// Check if the left side could be a template name
-	// Don't attempt template argument parsing if it's clearly a simple variable
+			// Check if the left side could be a template name
+			// Don't attempt template argument parsing if it's clearly a simple variable
 			bool could_be_template_name = false;
 
 			if (result.node()->is<ExpressionNode>()) {
 				const auto& expr = result.node()->as<ExpressionNode>();
 
-	// Check if it's an identifier that could be a template
+				// Check if it's an identifier that could be a template
 				if (std::holds_alternative<IdentifierNode>(expr)) {
 					const auto& ident = std::get<IdentifierNode>(expr);
 					std::string_view ident_name = ident.name();
 
-		// Check if this identifier is in the symbol table as a regular variable
+					// Check if this identifier is in the symbol table as a regular variable
 					auto symbol_type = gSymbolTable.lookup(StringTable::getOrInternStringHandle(ident_name),
 														   gSymbolTable.get_current_scope_handle());
 
-		// If it's a variable, don't try template argument parsing
+					// If it's a variable, don't try template argument parsing
 					if (symbol_type && (symbol_type->is<VariableDeclarationNode>() ||
 										symbol_type->is<DeclarationNode>())) {
-		// This is a regular variable, treat < as comparison
+						// This is a regular variable, treat < as comparison
 						could_be_template_name = false;
 					} else {
-		// Not a known variable, could be a template
+						// Not a known variable, could be a template
 						could_be_template_name = true;
 					}
 				} else if (std::holds_alternative<FunctionCallNode>(expr) ||
 						   std::holds_alternative<ConstructorCallNode>(expr)) {
-		// Function calls and constructor calls cannot have template arguments after them.
-		// This handles cases like:
-		// - T(-1) < T(0) where T is a template parameter used in functional-style cast
-		// - func() < value where func is a function call
-		// In both cases, '<' after the call expression is a comparison operator, not
-		// the start of template arguments. This is because:
-		// 1. The result of a function/constructor call is a value, not a template name
-		// 2. C++ doesn't allow template arguments to follow call expressions
-		// Note: This is safe because if a function returns a template type, the template
-		// instantiation happens at the function definition, not at the call site.
+					// Function calls and constructor calls cannot have template arguments after them.
+					// This handles cases like:
+					// - T(-1) < T(0) where T is a template parameter used in functional-style cast
+					// - func() < value where func is a function call
+					// In both cases, '<' after the call expression is a comparison operator, not
+					// the start of template arguments. This is because:
+					// 1. The result of a function/constructor call is a value, not a template name
+					// 2. C++ doesn't allow template arguments to follow call expressions
+					// Note: This is safe because if a function returns a template type, the template
+					// instantiation happens at the function definition, not at the call site.
 					could_be_template_name = false;
 				} else if (std::holds_alternative<QualifiedIdentifierNode>(expr) ||
 						   std::holds_alternative<MemberAccessNode>(expr)) {
-		// For qualified identifiers like R1<T>::num or member access expressions,
-		// we need to check if the final member could be a template.
-		// In TemplateTypeArg context, patterns like _R1::num < _R2::num> should be
-		// parsed as comparisons, not as _R1::num<_R2::num> (template instantiation).
-		//
-		// The key insight is: for dependent member access (where the base is a template
-		// parameter), the member is likely a static data member, not a member template.
-		// Even if could_be_template_arguments() succeeds (because _R2::num> looks like
-		// valid template arguments), we should prefer treating < as comparison in
-		// TemplateTypeArg context.
-		//
-		// Strategy:
-		// 1. Extract the final member name from the qualified identifier
-		// 2. Check if it's a known template (class or variable template)
-		// 3. If not a known template AND we're in TemplateTypeArg context,
-		//    treat < as comparison operator
+					// For qualified identifiers like R1<T>::num or member access expressions,
+					// we need to check if the final member could be a template.
+					// In TemplateTypeArg context, patterns like _R1::num < _R2::num> should be
+					// parsed as comparisons, not as _R1::num<_R2::num> (template instantiation).
+					//
+					// The key insight is: for dependent member access (where the base is a template
+					// parameter), the member is likely a static data member, not a member template.
+					// Even if could_be_template_arguments() succeeds (because _R2::num> looks like
+					// valid template arguments), we should prefer treating < as comparison in
+					// TemplateTypeArg context.
+					//
+					// Strategy:
+					// 1. Extract the final member name from the qualified identifier
+					// 2. Check if it's a known template (class or variable template)
+					// 3. If not a known template AND we're in TemplateTypeArg context,
+					//    treat < as comparison operator
 
 					std::string_view member_name;
 					if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
@@ -152,56 +152,56 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						member_name = member_access.member_name();
 					}
 
-		// Check if the member is a known template
+					// Check if the member is a known template
 					auto template_opt = gTemplateRegistry.lookupTemplate(member_name);
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(member_name);
 					auto alias_template_opt = gTemplateRegistry.lookup_alias_template(member_name);
 
 					if (template_opt.has_value() || var_template_opt.has_value() || alias_template_opt.has_value()) {
-		// Member is a known template, allow template argument parsing
+						// Member is a known template, allow template argument parsing
 						could_be_template_name = true;
 					} else if (context == ExpressionContext::TemplateTypeArg) {
-		// Member is NOT a known template and we're parsing template arguments
-		// This is likely a pattern like: integral_constant<bool, _R1::num < _R2::num>
-		// where < is a comparison operator, not template arguments
+						// Member is NOT a known template and we're parsing template arguments
+						// This is likely a pattern like: integral_constant<bool, _R1::num < _R2::num>
+						// where < is a comparison operator, not template arguments
 						FLASH_LOG(Parser, Debug, "In TemplateTypeArg context, member '", member_name,
 								  "' is not a known template - treating '<' as comparison operator");
 						could_be_template_name = false;
 					} else {
-		// Not in TemplateTypeArg context, be conservative and allow template parsing
+						// Not in TemplateTypeArg context, be conservative and allow template parsing
 						could_be_template_name = true;
 					}
 				} else {
-		// Not a simple identifier, could be a complex expression that needs template args
+					// Not a simple identifier, could be a complex expression that needs template args
 					could_be_template_name = true;
 				}
 			} else {
-	// Not an expression node, be conservative and allow template parsing
+				// Not an expression node, be conservative and allow template parsing
 				could_be_template_name = true;
 			}
 
-	// Use lookahead to check if this could be template arguments
-	// In Decltype context, be more aggressive about treating < as template arguments
+			// Use lookahead to check if this could be template arguments
+			// In Decltype context, be more aggressive about treating < as template arguments
 			if (could_be_template_name && could_be_template_arguments()) {
 				FLASH_LOG(Parser, Debug, "Confirmed: '<' starts template arguments, not comparison operator");
-	// Template arguments were successfully parsed by could_be_template_arguments()
-	// The parse_explicit_template_arguments() call inside it already consumed the tokens
-	// We need to re-parse to get the actual template arguments
+				// Template arguments were successfully parsed by could_be_template_arguments()
+				// The parse_explicit_template_arguments() call inside it already consumed the tokens
+				// We need to re-parse to get the actual template arguments
 				auto template_args = parse_explicit_template_arguments();
 
-	// Check if followed by '::' for qualified member access
-	// This handles patterns like: Base<T>::member(args)
+				// Check if followed by '::' for qualified member access
+				// This handles patterns like: Base<T>::member(args)
 				if (peek() == "::"_tok) {
 					advance(); // consume '::'
 
-		// Expect member name
+					// Expect member name
 					if (!peek().is_identifier()) {
 						return ParseResult::error("Expected identifier after '::'", current_token_);
 					}
 					Token member_token = peek_info();
 					advance(); // consume member name
 
-		// Build the qualified name for lookup
+					// Build the qualified name for lookup
 					std::string_view base_name;
 					if (result.node()->is<ExpressionNode>()) {
 						const auto& expr = result.node()->as<ExpressionNode>();
@@ -210,7 +210,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						}
 					}
 
-		// Check if followed by '(' for function call
+					// Check if followed by '(' for function call
 					if (peek() == "("_tok) {
 						advance(); // consume '('
 
@@ -226,7 +226,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							return ParseResult::error("Expected ')' after function call arguments", current_token_);
 						}
 
-		// Try to resolve Template<Args>::member to a real member function declaration
+						// Try to resolve Template<Args>::member to a real member function declaration
 						const DeclarationNode* decl_ptr = nullptr;
 						const FunctionDeclarationNode* func_decl_ptr = nullptr;
 
@@ -267,7 +267,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							}
 						}
 
-		// Fall back to forward declaration if lookup failed
+						// Fall back to forward declaration if lookup failed
 						if (!decl_ptr) {
 							auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 							auto forward_decl = emplace_node<DeclarationNode>(type_node, member_token);
@@ -283,36 +283,36 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						continue;
 					}
 
-		// Not a function call - just a qualified identifier access
+					// Not a function call - just a qualified identifier access
 					auto ident_node = emplace_node<ExpressionNode>(IdentifierNode(member_token));
 					result = ParseResult::success(ident_node);
 					continue;
 				}
 
-	// Note: We don't directly use template_args here because the postfix operator loop
-	// will handle function calls with template arguments. We just needed to prevent
-	// the binary operator loop from consuming '<' as a comparison operator.
-	// Continue to the next iteration to let postfix operators handle this.
+				// Note: We don't directly use template_args here because the postfix operator loop
+				// will handle function calls with template arguments. We just needed to prevent
+				// the binary operator loop from consuming '<' as a comparison operator.
+				// Continue to the next iteration to let postfix operators handle this.
 				continue;
 			}
-	// If could_be_template_arguments() returned false, fall through to treat '<' as operator
+			// If could_be_template_arguments() returned false, fall through to treat '<' as operator
 		}
 
-	// Get the precedence of the current operator
+		// Get the precedence of the current operator
 		int current_operator_precedence =
 			get_operator_precedence(peek_info().value());
 
-	// If the current operator has lower precedence than the provided
-	// precedence, stop parsing the expression
+		// If the current operator has lower precedence than the provided
+		// precedence, stop parsing the expression
 		if (current_operator_precedence < precedence) {
 			break;
 		}
 
-	// Consume the operator token
+		// Consume the operator token
 		Token operator_token = current_token_;
 		advance();
 
-	// Parse the right-hand side expression
+		// Parse the right-hand side expression
 		ParseResult rhs_result = parse_expression(current_operator_precedence + 1, context);
 		if (rhs_result.is_error()) {
 			return rhs_result;
@@ -320,10 +320,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 		if (auto leftNode = result.node()) {
 			if (auto rightNode = rhs_result.node()) {
-	// SFINAE: validate binary operator for struct types
-	// When in SFINAE context (e.g., decltype(a + b)), check that the
-	// operator is actually defined for the operand types. For struct types,
-	// this means checking member operator overloads and free operator functions.
+				// SFINAE: validate binary operator for struct types
+				// When in SFINAE context (e.g., decltype(a + b)), check that the
+				// operator is actually defined for the operand types. For struct types,
+				// this means checking member operator overloads and free operator functions.
 				if (in_sfinae_context_ && !sfinae_type_map_.empty()) {
 					auto resolve_operand_type_index = [&](const ASTNode& operand) -> TypeIndex {
 						if (!operand.is<ExpressionNode>())
@@ -344,14 +344,14 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						if (!is_struct_type(type_spec.category()))
 							return TypeIndex{};
 						TypeIndex type_idx = type_spec.type_index();
-		// Resolve template parameter types via sfinae_type_map_
+						// Resolve template parameter types via sfinae_type_map_
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
 							StringHandle type_name_handle = type_info->name();
 							auto subst_it = sfinae_type_map_.find(type_name_handle);
 							if (subst_it != sfinae_type_map_.end()) {
 								type_idx = subst_it->second;
 							} else {
-		// Unresolved template parameter — skip validation
+								// Unresolved template parameter — skip validation
 								return TypeIndex{};
 							}
 						}
@@ -401,7 +401,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						left_type_spec.has_value() && right_type_spec.has_value() &&
 						(isUserDefinedBinaryOperatorOperandType(*left_type_spec) || isUserDefinedBinaryOperatorOperandType(*right_type_spec));
 
-		// If at least one operand has a concrete user-defined type, validate the operator exists
+					// If at least one operand has a concrete user-defined type, validate the operator exists
 					if (should_validate_operator) {
 						bool operator_found = false;
 						std::string_view op_symbol = operator_token.value();
@@ -471,37 +471,37 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					}
 				}
 
-	// Create the binary operation and update the result
+				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);
 				result = ParseResult::success(binary_op);
 			}
 		}
 	}
 
- // Check for ternary operator (condition ? true_expr : false_expr)
- // Ternary has precedence 5 (between assignment=3 and logical-or=7)
- // Only parse ternary if we're at a precedence level that allows it
+	// Check for ternary operator (condition ? true_expr : false_expr)
+	// Ternary has precedence 5 (between assignment=3 and logical-or=7)
+	// Only parse ternary if we're at a precedence level that allows it
 	if (precedence <= 5 && peek() == "?"_tok) {
 		advance();  // Consume '?'
 		Token question_token = current_token_;  // Save the '?' token
 
-	// Parse the true expression (allow lower precedence on the right)
-	// IMPORTANT: Pass the context to preserve template argument parsing mode
-	// This ensures that '<' and '>' inside ternary branches are handled correctly
-	// when the ternary is itself inside template arguments (e.g., integral_constant<int, (x < 0) ? -1 : 1>)
+		// Parse the true expression (allow lower precedence on the right)
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
+		// This ensures that '<' and '>' inside ternary branches are handled correctly
+		// when the ternary is itself inside template arguments (e.g., integral_constant<int, (x < 0) ? -1 : 1>)
 		ParseResult true_result = parse_expression(0, context);
 		if (true_result.is_error()) {
 			return true_result;
 		}
 
-	// Expect ':'
+		// Expect ':'
 		if (peek() != ":"_tok) {
 			return ParseResult::error("Expected ':' in ternary operator", current_token_);
 		}
 		advance();  // Consume ':'
 
-	// Parse the false expression (use precedence 5 for right-associativity)
-	// IMPORTANT: Pass the context to preserve template argument parsing mode
+		// Parse the false expression (use precedence 5 for right-associativity)
+		// IMPORTANT: Pass the context to preserve template argument parsing mode
 		ParseResult false_result = parse_expression(5, context);
 		if (false_result.is_error()) {
 			return false_result;
@@ -510,7 +510,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		if (auto condition_node = result.node()) {
 			if (auto true_node = true_result.node()) {
 				if (auto false_node = false_result.node()) {
-		// Create the ternary operator node
+					// Create the ternary operator node
 					auto ternary_op = emplace_node<ExpressionNode>(
 						TernaryOperatorNode(*condition_node, *true_node, *false_node, question_token));
 					result = ParseResult::success(ternary_op);
@@ -523,8 +523,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 }
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
- // Convert the text to lowercase for case-insensitive parsing
- // and strip digit separators (') which are valid C++14+ syntax
+	// Convert the text to lowercase for case-insensitive parsing
+	// and strip digit separators (') which are valid C++14+ syntax
 	std::string lowerText;
 	lowerText.reserve(text.size());
 	for (char c : text) {
@@ -535,30 +535,30 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 	TypedNumeric typeInfo;
 	char* end_ptr = nullptr;
 
- // Check if this is a hex or binary literal FIRST, before checking for exponent
- // This is important because 'e' and 'f' are valid hex digits (a-f)
+	// Check if this is a hex or binary literal FIRST, before checking for exponent
+	// This is important because 'e' and 'f' are valid hex digits (a-f)
 	bool is_hex_literal = lowerText.find("0x") == 0;
 	bool is_binary_literal = lowerText.find("0b") == 0;
 
- // Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
- // BUT only check for 'e' (exponent) and 'f' (float suffix) if NOT a hex literal
+	// Check if this is a floating-point literal (contains '.', 'e', or 'E', or has 'f'/'l' suffix)
+	// BUT only check for 'e' (exponent) and 'f' (float suffix) if NOT a hex literal
 	bool has_decimal_point = lowerText.find('.') != std::string::npos;
 	bool has_exponent = !is_hex_literal && lowerText.find('e') != std::string::npos;
 	bool has_float_suffix = !is_hex_literal && lowerText.find('f') != std::string::npos;
 	bool is_floating_point = has_decimal_point || has_exponent || has_float_suffix;
 
 	if (is_floating_point) {
-	// Parse as floating-point literal
+		// Parse as floating-point literal
 		double float_value = std::strtod(lowerText.c_str(), &end_ptr);
 		typeInfo.value = float_value;
 
-	// Check suffix to determine float vs double
+		// Check suffix to determine float vs double
 		std::string_view suffix = end_ptr;
 
-	// Branchless suffix detection using bit manipulation
-	// Check for 'f' or 'F' suffix
+		// Branchless suffix detection using bit manipulation
+		// Check for 'f' or 'F' suffix
 		bool is_float = (suffix.find('f') != std::string_view::npos);
-	// Check for 'l' or 'L' suffix (long double)
+		// Check for 'l' or 'L' suffix (long double)
 		bool is_long_double = (suffix.find('l') != std::string_view::npos) && !is_float;
 
 		if (is_float) {
@@ -576,24 +576,24 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 		return typeInfo;
 	}
 
- // Integer literal parsing — extract numeric value and set end_ptr for suffix detection.
- // sizeInBits is derived from the resolved Type at the end of this function, not from digit count.
+	// Integer literal parsing — extract numeric value and set end_ptr for suffix detection.
+	// sizeInBits is derived from the resolved Type at the end of this function, not from digit count.
 	if (is_hex_literal) {
 		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 16);
 	} else if (is_binary_literal) {
 		typeInfo.value = std::strtoull(lowerText.c_str() + 2, &end_ptr, 2);
 	} else if (lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.') {
-	// Octal literal (but not "0." which is a float)
+		// Octal literal (but not "0." which is a float)
 		typeInfo.value = std::strtoull(lowerText.c_str() + 1, &end_ptr, 8);
 	} else {
-	// Decimal integer literal
+		// Decimal integer literal
 		typeInfo.value = std::strtoull(lowerText.c_str(), &end_ptr, 10);
 	}
 
- // Check for integer suffixes
- // Valid C++20 integer suffixes per [lex.icon]: u, l, ul, lu, ll, ull, llu
- // (case-insensitive; already lowercased above)
- // Constexpr lookup table stores the resolved type directly to avoid redundant counting.
+	// Check for integer suffixes
+	// Valid C++20 integer suffixes per [lex.icon]: u, l, ul, lu, ll, ull, llu
+	// (case-insensitive; already lowercased above)
+	// Constexpr lookup table stores the resolved type directly to avoid redundant counting.
 	struct IntSuffixInfo {
 		std::string_view text;
 		TypeCategory signed_type;
@@ -618,30 +618,30 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 		typeInfo.type = hasUnsigned ? suffix_it->unsigned_type : suffix_it->signed_type;
 	} else if (!suffix.empty() &&
 			   suffix.find_first_not_of(suffixCharacters) == std::string_view::npos) {
-	// All chars are u/l but not a valid combination (e.g., "lul", "lll", "uu")
+		// All chars are u/l but not a valid combination (e.g., "lul", "lll", "uu")
 		return std::nullopt;
 	} else {
-	// No suffix: determine type from the value per C++20 [lex.icon] Table 8.
-	// Decimal: int → long → long long (first signed type that can represent the value).
-	// Hex/octal/binary: int → unsigned int → long → unsigned long → long long → unsigned long long.
+		// No suffix: determine type from the value per C++20 [lex.icon] Table 8.
+		// Decimal: int → long → long long (first signed type that can represent the value).
+		// Hex/octal/binary: int → unsigned int → long → unsigned long → long long → unsigned long long.
 		auto val = std::get<unsigned long long>(typeInfo.value);
 		bool is_decimal = !is_hex_literal && !is_binary_literal &&
 						  !(lowerText.find("0") == 0 && lowerText.length() > 1 && lowerText[1] != '.');
 
-	// The lexer may produce a negative literal token (e.g., "-1") when a minus sign
-	// is immediately followed by digits.  strtoull("-1") wraps around to ULLONG_MAX,
-	// which would incorrectly promote the type to LongLong.  For type-selection
-	// purposes we use the magnitude of the value so that "-1" → Type::Int (same as "1").
+		// The lexer may produce a negative literal token (e.g., "-1") when a minus sign
+		// is immediately followed by digits.  strtoull("-1") wraps around to ULLONG_MAX,
+		// which would incorrectly promote the type to LongLong.  For type-selection
+		// purposes we use the magnitude of the value so that "-1" → Type::Int (same as "1").
 		bool is_negative = !lowerText.empty() && lowerText[0] == '-';
 		unsigned long long abs_val = is_negative ? (0ULL - val) : val;
 
 		int int_bits = get_type_size_bits(TypeCategory::Int);
 		int long_bits = get_type_size_bits(TypeCategory::Long);
-	// long long is always 64 bits per C++ standard.
+		// long long is always 64 bits per C++ standard.
 
 		if (is_decimal) {
-	// Decimal unsuffixed: int → long → long long (signed only).
-	// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
+			// Decimal unsuffixed: int → long → long long (signed only).
+			// Use the magnitude for range checks so that e.g. "-1" is Type::Int.
 			if (int_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
 				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
@@ -649,7 +649,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 				typeInfo.type = TypeCategory::Long;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else if (long_bits == 32 && abs_val <= 0x7FFFFFFFULL) {
-	// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
+				// LLP64 (Windows): long is 32-bit, same range as int → skip to long long.
 				typeInfo.type = TypeCategory::Int;
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			} else {
@@ -657,7 +657,7 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 				typeInfo.typeQualifier = TypeQualifier::Signed;
 			}
 		} else {
-	// Hex/octal/binary unsuffixed: int → unsigned int → long → unsigned long → long long → unsigned long long.
+			// Hex/octal/binary unsuffixed: int → unsigned int → long → unsigned long → long long → unsigned long long.
 			unsigned long long int_max_signed = (1ULL << (int_bits - 1)) - 1;
 			unsigned long long int_max_unsigned = (1ULL << int_bits) - 1;
 			unsigned long long long_max_signed = (long_bits == 64) ? 0x7FFFFFFFFFFFFFFFULL : (1ULL << (long_bits - 1)) - 1;
@@ -685,51 +685,51 @@ std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {
 		}
 	}
 
- // Always set sizeInBits from the resolved type so it matches the C++ standard,
- // rather than relying on the digit-based estimate which can be wrong
- // (e.g. suffix chars counted as digits for hex/binary/octal literals).
+	// Always set sizeInBits from the resolved type so it matches the C++ standard,
+	// rather than relying on the digit-based estimate which can be wrong
+	// (e.g. suffix chars counted as digits for hex/binary/octal literals).
 	typeInfo.sizeInBits = static_cast<unsigned char>(get_type_size_bits(typeInfo.type));
 
 	return typeInfo;
 }
 
 int Parser::get_operator_precedence(const std::string_view& op) {
- // C++ operator precedence (higher number = higher precedence)
- // Standard precedence order: Shift > Three-Way (<=>)  > Relational
+	// C++ operator precedence (higher number = higher precedence)
+	// Standard precedence order: Shift > Three-Way (<=>)  > Relational
 	static const std::unordered_map<std::string_view, int> precedence_map = {
-	// Multiplicative (precedence 17)
+			// Multiplicative (precedence 17)
 		{"*", 17},
 		{"/", 17},
 		{"%", 17},
-	// Additive (precedence 16)
+			// Additive (precedence 16)
 		{"+", 16},
 		{"-", 16},
-	// Shift (precedence 15)
+			// Shift (precedence 15)
 		{"<<", 15},
 		{">>", 15},
-	// Spaceship/Three-way comparison (precedence 14) - C++20 standard compliant
+			// Spaceship/Three-way comparison (precedence 14) - C++20 standard compliant
 		{"<=>", 14},
-	// Relational (precedence 13)
+			// Relational (precedence 13)
 		{"<", 13},
 		{"<=", 13},
 		{">", 13},
 		{">=", 13},
-	// Equality (precedence 12)
+			// Equality (precedence 12)
 		{"==", 12},
 		{"!=", 12},
-	// Bitwise AND (precedence 11)
+			// Bitwise AND (precedence 11)
 		{"&", 11},
-	// Bitwise XOR (precedence 10)
+			// Bitwise XOR (precedence 10)
 		{"^", 10},
-	// Bitwise OR (precedence 9)
+			// Bitwise OR (precedence 9)
 		{"|", 9},
-	// Logical AND (precedence 8)
+			// Logical AND (precedence 8)
 		{"&&", 8},
-	// Logical OR (precedence 7)
+			// Logical OR (precedence 7)
 		{"||", 7},
-	// Ternary conditional (precedence 5, handled specially in parse_expression)
+			// Ternary conditional (precedence 5, handled specially in parse_expression)
 		{"?", 5},
-	// Assignment operators (precedence 3, right-associative, lowest precedence)
+			// Assignment operators (precedence 3, right-associative, lowest precedence)
 		{"=", 3},
 		{"+=", 3},
 		{"-=", 3},
@@ -741,7 +741,7 @@ int Parser::get_operator_precedence(const std::string_view& op) {
 		{"^=", 3},
 		{"<<=", 3},
 		{">>=", 3},
-	// Comma operator (precedence 1, lowest precedence)
+			// Comma operator (precedence 1, lowest precedence)
 		{",", 1},
 	};
 
@@ -749,7 +749,7 @@ int Parser::get_operator_precedence(const std::string_view& op) {
 	if (it != precedence_map.end()) {
 		return it->second;
 	} else {
-	// Log warning for unknown operators to help debugging
+		// Log warning for unknown operators to help debugging
 		FLASH_LOG(Parser, Warning, "Unknown operator '", op, "' in get_operator_precedence, returning 0");
 		return 0;
 	}
@@ -778,11 +778,11 @@ void Parser::skip_cpp_attributes() {
 	while (peek() == "["_tok) {
 		auto next = peek_info(1);
 		if (next.value() == "[") {
-	// Found [[
+			// Found [[
 			advance(); // consume first [
 			advance(); // consume second [
 
-	// Skip everything until ]]
+			// Skip everything until ]]
 			int bracket_depth = 2;
 			while (!peek().is_eof() && bracket_depth > 0) {
 				if (peek() == "["_tok) {
@@ -797,7 +797,7 @@ void Parser::skip_cpp_attributes() {
 		}
 	}
 
- // Also skip GCC-style attributes - they often appear together
+	// Also skip GCC-style attributes - they often appear together
 	skip_gcc_attributes();
 }
 
@@ -806,7 +806,7 @@ void Parser::skip_gcc_attributes() {
 	while (!peek().is_eof() && (peek_info().value() == "__attribute__" || peek_info().value() == "__attribute")) {
 		advance(); // consume "__attribute__" or "__attribute"
 
-	// Expect ((
+		// Expect ((
 		if (peek() != "("_tok) {
 			return; // Invalid __attribute__, return
 		}
@@ -817,7 +817,7 @@ void Parser::skip_gcc_attributes() {
 		}
 		advance(); // consume second (
 
-	// Skip everything until ))
+		// Skip everything until ))
 		int paren_depth = 2;
 		while (!peek().is_eof() && paren_depth > 0) {
 			if (peek() == "("_tok) {
@@ -879,15 +879,15 @@ void Parser::skip_noexcept_specifier() {
 	if (peek().is_eof())
 		return;
 
- // Check for noexcept keyword
+	// Check for noexcept keyword
 	if (peek().is_keyword() && peek() == "noexcept"_tok) {
 		advance(); // consume 'noexcept'
 
-	// Check for optional noexcept(expression)
+		// Check for optional noexcept(expression)
 		if (peek() == "("_tok) {
 			advance(); // consume '('
 
-	// Skip everything until matching ')'
+			// Skip everything until matching ')'
 			int paren_depth = 1;
 			while (!peek().is_eof() && paren_depth > 0) {
 				if (peek() == "("_tok) {
@@ -907,19 +907,19 @@ void Parser::skip_noexcept_specifier() {
 bool Parser::parse_constructor_exception_specifier() {
 	bool is_noexcept = false;
 
- // Parse noexcept specifier
+	// Parse noexcept specifier
 	if (peek() == "noexcept"_tok) {
 		advance(); // consume 'noexcept'
 		is_noexcept = true;
 
-	// Check for noexcept(expr) form
+		// Check for noexcept(expr) form
 		if (peek() == "("_tok) {
 			skip_balanced_parens(); // skip the noexcept expression
 		}
 	}
 
- // Parse throw() (old-style exception specification)
- // throw() is equivalent to noexcept(true) in C++
+	// Parse throw() (old-style exception specification)
+	// throw() is equivalent to noexcept(true) in C++
 	if (peek() == "throw"_tok) {
 		advance(); // consume 'throw'
 		if (peek() == "("_tok) {
@@ -936,16 +936,16 @@ bool Parser::parse_constructor_exception_specifier() {
 // Stops before: override, final, = default, = delete (callers handle those with semantic info),
 //               requires (callers handle with proper parameter scope)
 void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals) {
- // Clear any previously parsed requires clause
+	// Clear any previously parsed requires clause
 	last_parsed_requires_clause_.reset();
 
- // Reset output qualifiers
+	// Reset output qualifiers
 	out_quals = FlashCpp::MemberQualifiers{};
 
 	while (!peek().is_eof()) {
 		auto token = peek_info();
 
-	// Handle cv-qualifiers
+		// Handle cv-qualifiers
 		if (token.type() == Token::Type::Keyword &&
 			(token.value() == "const" || token.value() == "volatile")) {
 			if (token.value() == "const")
@@ -956,7 +956,7 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 			continue;
 		}
 
-	// Handle ref-qualifiers (& and &&)
+		// Handle ref-qualifiers (& and &&)
 		if (peek() == "&"_tok) {
 			out_quals.ref_qualifier = ReferenceQualifier::LValueReference;
 			advance();
@@ -968,13 +968,13 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 			continue;
 		}
 
-	// Handle noexcept
+		// Handle noexcept
 		if (token.type() == Token::Type::Keyword && token.value() == "noexcept") {
 			skip_noexcept_specifier();
 			continue;
 		}
 
-	// Handle throw() (old-style exception specification)
+		// Handle throw() (old-style exception specification)
 		if (token.type() == Token::Type::Keyword && token.value() == "throw") {
 			advance(); // consume 'throw'
 			if (peek() == "("_tok) {
@@ -991,34 +991,34 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 			continue;
 		}
 
-	// NOTE: Do NOT skip 'override' and 'final' here!
-	// These keywords have semantic meaning for member functions and need to be
-	// parsed and recorded by the calling code (struct parsing handles these).
-	// Skipping them here would cause the member function parsing to miss
-	// these important virtual function specifiers.
+		// NOTE: Do NOT skip 'override' and 'final' here!
+		// These keywords have semantic meaning for member functions and need to be
+		// parsed and recorded by the calling code (struct parsing handles these).
+		// Skipping them here would cause the member function parsing to miss
+		// these important virtual function specifiers.
 
-	// Handle __attribute__((...))
+		// Handle __attribute__((...))
 		if (token.value() == "__attribute__") {
 			skip_gcc_attributes();
 			continue;
 		}
 
-	// Handle GNU declaration suffix symbol renaming: __asm("symbol")
+		// Handle GNU declaration suffix symbol renaming: __asm("symbol")
 		if (skip_asm_suffix()) {
 			continue;
 		}
 
-	// Stop before trailing requires clause - don't consume it here.
-	// Callers like parse_static_member_function need to handle requires clauses
-	// themselves so they can set up proper function parameter scope first.
-	// This allows requires clauses referencing function parameters to work correctly.
+		// Stop before trailing requires clause - don't consume it here.
+		// Callers like parse_static_member_function need to handle requires clauses
+		// themselves so they can set up proper function parameter scope first.
+		// This allows requires clauses referencing function parameters to work correctly.
 		if (token.type() == Token::Type::Keyword && token.value() == "requires") {
 			break;
 		}
 
-	// Handle pure virtual (= 0) — note: = default and = delete are NOT consumed here;
-	// callers (struct body parsing, friend declarations, parse_static_member_function)
-	// handle those explicitly so they can record the semantic information.
+		// Handle pure virtual (= 0) — note: = default and = delete are NOT consumed here;
+		// callers (struct body parsing, friend declarations, parse_static_member_function)
+		// handle those explicitly so they can record the semantic information.
 		if (token.type() == Token::Type::Punctuator && token.value() == "=") {
 			auto next = peek_info(1);
 			if (next.value() == "0") {
@@ -1028,7 +1028,7 @@ void Parser::skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_q
 			}
 		}
 
-	// Not a trailing specifier, stop
+		// Not a trailing specifier, stop
 		break;
 	}
 }
@@ -1071,7 +1071,7 @@ void Parser::skip_trailing_requires_clause() {
 // Also consumes and ignores MSVC-specific pointer modifiers (__ptr32, __ptr64, __w64,
 // __unaligned, __uptr, __sptr) that may appear after cv-qualifiers on pointer declarators.
 void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
- // Microsoft-specific pointer modifier check — same list used in parse_type_specifier()
+	// Microsoft-specific pointer modifier check — same list used in parse_type_specifier()
 	auto is_msvc_pointer_modifier = [](std::string_view kw) {
 		return kw == "__ptr32" || kw == "__ptr64" || kw == "__w64" ||
 			   kw == "__unaligned" || kw == "__uptr" || kw == "__sptr";
@@ -1081,15 +1081,15 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 		CVQualifier ptr_cv = parse_cv_qualifiers(); // Parse CV-qualifiers after the * (const, volatile)
 		skip_noop_gnu_qualifiers(); // Skip __restrict / __restrict__ after pointer CV-qualifiers
 		ptr_cv |= parse_cv_qualifiers(); // Re-parse CV-qualifiers that may follow __restrict
-	// Consume and ignore Microsoft-specific pointer modifiers
+		// Consume and ignore Microsoft-specific pointer modifiers
 		while (peek().is_keyword() && is_msvc_pointer_modifier(peek_info().value())) {
 			advance();
 		}
 		type_spec.add_pointer_level(ptr_cv);
 	}
- // Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
- // Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)
- // This avoids consuming const/volatile in non-reference contexts like member function qualifiers
+	// Handle trailing CV-qualifiers before reference (e.g., Type volatile&, Type const&)
+	// Only consume const/volatile when followed by & or && (possibly with more cv-qualifiers)
+	// This avoids consuming const/volatile in non-reference contexts like member function qualifiers
 	{
 		SaveHandle cv_check = save_token_position();
 		bool found_ref = false;
@@ -1102,7 +1102,7 @@ void Parser::consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec) {
 			}
 			advance();
 		}
-	// Skip __restrict / __restrict__ that may appear between CV-qualifiers and & / &&
+		// Skip __restrict / __restrict__ that may appear between CV-qualifiers and & / &&
 		while (!peek().is_eof() && peek().is_identifier()) {
 			std::string_view tok = peek_info().value();
 			if (tok == "__restrict" || tok == "__restrict__") {
@@ -1144,7 +1144,7 @@ void Parser::consume_conversion_operator_target_modifiers(TypeSpecifierNode& tar
 // Returns true if at least one type was parsed or the list is empty (valid).
 bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types) {
 	while (peek() != ")"_tok && !peek().is_eof()) {
-	// Handle C-style varargs: just '...' (without type before it)
+		// Handle C-style varargs: just '...' (without type before it)
 		if (peek() == "..."_tok) {
 			advance(); // consume '...'
 			break;
@@ -1154,12 +1154,12 @@ bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_para
 		if (!param_type_result.is_error() && param_type_result.node().has_value()) {
 			TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
 
-	// Handle pack expansion (...) after a parameter type
+			// Handle pack expansion (...) after a parameter type
 			if (peek() == "..."_tok) {
 				advance(); // consume '...'
 			}
 
-	// Apply pointer/reference modifiers to the parameter type
+			// Apply pointer/reference modifiers to the parameter type
 			consume_pointer_ref_modifiers(param_type);
 			out_param_types.push_back(param_type.type_index());
 		} else {
@@ -1173,8 +1173,8 @@ bool Parser::parse_function_type_parameter_list(std::vector<TypeIndex>& out_para
 		}
 	}
 
- // Handle trailing C-style varargs: _ArgTypes... ...
- // After breaking out of the loop, we might have '...' before ')'
+	// Handle trailing C-style varargs: _ArgTypes... ...
+	// After breaking out of the loop, we might have '...' before ')'
 	if (peek() == "..."_tok) {
 		advance(); // consume C-style varargs '...'
 	}
@@ -1193,21 +1193,21 @@ bool Parser::parse_static_member_function(
 	const InlineVector<StringHandle, 4>& current_template_param_names,
 	bool add_to_struct_info,
 	bool add_to_ast_nodes) {
- // Check if this is a function (has '(')
+	// Check if this is a function (has '(')
 	if (peek() != "("_tok) {
 		return false;  // Not a function, caller should handle as static data member
 	}
 
- // This is a static member function
+	// This is a static member function
 	if (!type_and_name_result.node().has_value() || !type_and_name_result.node()->is<DeclarationNode>()) {
-	// Set error in result
+		// Set error in result
 		type_and_name_result = ParseResult::error("Expected declaration node for static member function", peek_info());
 		return true;	 // We handled it (even though it's an error)
 	}
 
 	DeclarationNode& decl_node = type_and_name_result.node()->as<DeclarationNode>();
 
- // Parse function declaration with parameters
+	// Parse function declaration with parameters
 	auto func_result = parse_function_declaration(decl_node);
 	if (func_result.is_error()) {
 		type_and_name_result = func_result;
@@ -1221,33 +1221,33 @@ bool Parser::parse_static_member_function(
 
 	FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
 
- // Create a new FunctionDeclarationNode with member function info
+	// Create a new FunctionDeclarationNode with member function info
 	auto [member_func_node, member_func_ref] =
 		emplace_node_ref<FunctionDeclarationNode>(decl_node, struct_name_handle);
 
- // Copy parameters from the parsed function
+	// Copy parameters from the parsed function
 	for (const auto& param : func_decl.parameter_nodes()) {
 		member_func_ref.add_parameter_node(param);
 	}
 
- // Mark as constexpr
+	// Mark as constexpr
 	member_func_ref.set_is_constexpr(is_static_constexpr);
 
- // Mark as static member function (no implicit 'this' parameter)
+	// Mark as static member function (no implicit 'this' parameter)
 	member_func_ref.set_is_static(true);
 
- // Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
+	// Skip any trailing specifiers (const, volatile, noexcept, etc.) after parameter list
 	FlashCpp::MemberQualifiers member_quals;
 	skip_function_trailing_specifiers(member_quals);
 
- // Check for trailing requires clause: static int func(int x) requires constraint { ... }
- // This is common in C++20 code, e.g., requires requires { expr; }
+	// Check for trailing requires clause: static int func(int x) requires constraint { ... }
+	// This is common in C++20 code, e.g., requires requires { expr; }
 	if (peek() == "requires"_tok) {
 		Token requires_token = peek_info(); // Preserve source location
 		advance(); // consume 'requires'
 
-	// Enter a temporary scope and add function parameters so they're visible in the requires clause
-	// Example: static pointer pointer_to(element_type& __r) requires requires { __r; }
+		// Enter a temporary scope and add function parameters so they're visible in the requires clause
+		// Example: static pointer pointer_to(element_type& __r) requires requires { __r; }
 		gSymbolTable.enter_scope(ScopeType::Function);
 		for (const auto& param : member_func_ref.parameter_nodes()) {
 			if (param.is<DeclarationNode>()) {
@@ -1256,10 +1256,10 @@ bool Parser::parse_static_member_function(
 			}
 		}
 
-	// Parse the constraint expression (can be a requires expression: requires { ... })
+		// Parse the constraint expression (can be a requires expression: requires { ... })
 		auto constraint_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 
-	// Exit the temporary scope
+		// Exit the temporary scope
 		gSymbolTable.exit_scope();
 
 		if (constraint_result.is_error()) {
@@ -1267,30 +1267,30 @@ bool Parser::parse_static_member_function(
 			return true;
 		}
 
-	// Store the parsed requires clause - it will be evaluated at compile time
-	// during template instantiation via the evaluateConstraint() infrastructure.
+		// Store the parsed requires clause - it will be evaluated at compile time
+		// during template instantiation via the evaluateConstraint() infrastructure.
 		last_parsed_requires_clause_ = emplace_node<RequiresClauseNode>(
 			*constraint_result.node(),
 			requires_token);
 		FLASH_LOG(Parser, Debug, "Parsed trailing requires clause for static member function (compile-time evaluation)");
 	}
 
- // Parse function body if present
+	// Parse function body if present
 	if (peek() == "{"_tok) {
-	// DELAYED PARSING: Save the current position (start of '{')
+		// DELAYED PARSING: Save the current position (start of '{')
 		SaveHandle body_start = save_token_position();
 
-	// Look up the struct type
+		// Look up the struct type
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
 		TypeIndex struct_type_idx{};
 		if (type_it != getTypesByNameMap().end()) {
 			struct_type_idx = type_it->second->type_index_;
 		}
 
-	// Skip over the function body by counting braces
+		// Skip over the function body by counting braces
 		skip_balanced_braces();
 
-	// Record this for delayed parsing
+		// Record this for delayed parsing
 		delayed_function_bodies_.push_back({&member_func_ref,
 											body_start,
 											{},		// initializer_list_start (not used)
@@ -1304,7 +1304,7 @@ bool Parser::parse_static_member_function(
 											nullptr,	 // dtor_node
 											current_template_param_names});
 	} else if (peek() == "="_tok) {
-	// Handle = delete or = default
+		// Handle = delete or = default
 		advance(); // consume '='
 		if (peek() == "delete"_tok) {
 			advance(); // consume 'delete'
@@ -1312,7 +1312,7 @@ bool Parser::parse_static_member_function(
 				type_and_name_result = ParseResult::error("Expected ';' after '= delete'", peek_info());
 				return true;
 			}
-	// Deleted static member functions are not callable - skip registration
+			// Deleted static member functions are not callable - skip registration
 			return true;
 		} else if (peek() == "default"_tok) {
 			advance(); // consume 'default'
@@ -1330,14 +1330,14 @@ bool Parser::parse_static_member_function(
 		return true;
 	}
 
- // Add static member function to struct
+	// Add static member function to struct
 	FLASH_LOG(Templates, Debug, "Adding static member function '", decl_node.identifier_token().value(), "' to struct '", StringTable::getStringView(struct_name_handle), "'");
 	struct_ref.add_member_function(member_func_node, current_access,
 								   false, false, false, false,
 								   member_quals.cv_qualifier);
 	FLASH_LOG(Templates, Debug, "Struct '", StringTable::getStringView(struct_name_handle), "' now has ", struct_ref.member_functions().size(), " member functions after adding static member");
 
- // Also register in StructTypeInfo (unless deferred to the struct finalization loop)
+	// Also register in StructTypeInfo (unless deferred to the struct finalization loop)
 	if (add_to_struct_info) {
 		auto& registered = struct_info->member_functions.emplace_back(
 			decl_node.identifier_token().handle(),
@@ -1347,7 +1347,7 @@ bool Parser::parse_static_member_function(
 			false	  // is_destructor
 		);
 		registered.cv_qualifier = member_quals.cv_qualifier;
-	// Extract noexcept from the underlying function declaration node
+		// Extract noexcept from the underlying function declaration node
 		registered.is_noexcept = member_func_node.as<FunctionDeclarationNode>().is_noexcept();
 	}
 
@@ -1367,9 +1367,9 @@ ParseResult Parser::parse_static_member_block(
 	const InlineVector<StringHandle, 4>& current_template_param_names,
 	bool use_struct_type_info,
 	bool add_functions_to_ast_nodes) {
- // consume "static" already done by caller
+	// consume "static" already done by caller
 
- // Handle optional const and constexpr
+	// Handle optional const and constexpr
 	CVQualifier cv_qual = CVQualifier::None;
 	bool is_static_constexpr = false;
 	while (peek().is_keyword()) {
@@ -1388,13 +1388,13 @@ ParseResult Parser::parse_static_member_block(
 		}
 	}
 
- // Parse type and name
+	// Parse type and name
 	auto type_and_name = parse_type_and_name();
 	if (type_and_name.is_error()) {
 		return type_and_name;
 	}
 
- // Check if this is a static member function (has '(')
+	// Check if this is a static member function (has '(')
 	if (parse_static_member_function(
 			type_and_name,
 			is_static_constexpr,
@@ -1405,39 +1405,39 @@ ParseResult Parser::parse_static_member_block(
 			current_template_param_names,
 			/*add_to_struct_info=*/true,
 			/*add_to_ast_nodes=*/add_functions_to_ast_nodes)) {
-	// Function was handled (or error occurred)
+		// Function was handled (or error occurred)
 		if (type_and_name.is_error()) {
 			return type_and_name;
 		}
 		return ParseResult::success();  // Signal caller to continue
 	}
 
- // If not a function, handle as static data member
+	// If not a function, handle as static data member
 	if (!type_and_name.node().has_value()) {
 		return ParseResult::error("Expected static member declaration", peek_info());
 	}
 	DeclarationNode& decl = type_and_name.node()->as<DeclarationNode>();
 	TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
- // Optional initializer
+	// Optional initializer
 	std::optional<ASTNode> init_expr_opt;
 	if (peek() == "="_tok) {
-	// Push struct context so static member references can be resolved
-	// This enables expressions like `!is_signed` to find `is_signed` as a static member
+		// Push struct context so static member references can be resolved
+		// This enables expressions like `!is_signed` to find `is_signed` as a static member
 		TypeIndex struct_type_index{};
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
 		if (type_it != getTypesByNameMap().end()) {
 			struct_type_index = type_it->second->type_index_;
 		}
 
-	// Push context (reusing MemberFunctionContext for static member lookup)
-	// Pass struct_info directly since TypeInfo::struct_info_ hasn't been populated yet
+		// Push context (reusing MemberFunctionContext for static member lookup)
+		// Pass struct_info directly since TypeInfo::struct_info_ hasn't been populated yet
 		member_function_context_stack_.push_back({struct_name_handle, struct_type_index, &struct_ref, struct_info});
 
-	// Parse initializer while preserving brace-init lists for aggregate/static object members.
+		// Parse initializer while preserving brace-init lists for aggregate/static object members.
 		auto init_result = parse_copy_initialization(decl, type_spec);
 
-	// Pop context after parsing
+		// Pop context after parsing
 		member_function_context_stack_.pop_back();
 
 		if (!init_result.has_value()) {
@@ -1445,7 +1445,7 @@ ParseResult Parser::parse_static_member_block(
 		}
 		init_expr_opt = *init_result;
 	} else if (peek() == "{"_tok) {
-	// Brace initialization: static constexpr int x{42};
+		// Brace initialization: static constexpr int x{42};
 
 		TypeIndex struct_type_index{};
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
@@ -1461,25 +1461,25 @@ ParseResult Parser::parse_static_member_block(
 		init_expr_opt = init_result.node();
 	}
 
- // Consume semicolon
+	// Consume semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after static member declaration", peek_info());
 	}
 
- // Register static member in struct info
- // Calculate size and alignment for the static member (handles pointers/references correctly)
+	// Register static member in struct info
+	// Calculate size and alignment for the static member (handles pointers/references correctly)
 	auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 	ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 	int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
- // Register the static member
+	// Register the static member
 	StringHandle static_member_name_handle = decl.identifier_token().handle();
 
- // Determine the access specifier to use
+	// Determine the access specifier to use
 	AccessSpecifier access = current_access;
 	if (use_struct_type_info) {
-	// For template specializations that use struct_type_info.getStructInfo()
-	// We need to get it from the global map
+		// For template specializations that use struct_type_info.getStructInfo()
+		// We need to get it from the global map
 		auto type_it = getTypesByNameMap().find(struct_name_handle);
 		if (type_it != getTypesByNameMap().end() && type_it->second->getStructInfo()) {
 			type_it->second->getStructInfo()->addStaticMember(
@@ -1494,7 +1494,7 @@ ParseResult Parser::parse_static_member_block(
 				ptr_depth);
 		}
 	} else {
-	// Normal case - use provided struct_info directly
+		// Normal case - use provided struct_info directly
 		struct_info->addStaticMember(
 			static_member_name_handle,
 			type_spec.type_index(),
@@ -1514,7 +1514,7 @@ ParseResult Parser::parse_static_member_block(
 Linkage Parser::parse_declspec_attributes() {
 	Linkage linkage = Linkage::None;
 
- // Parse all __declspec attributes
+	// Parse all __declspec attributes
 	while (peek() == "__declspec"_tok) {
 		advance(); // consume "__declspec"
 
@@ -1522,7 +1522,7 @@ Linkage Parser::parse_declspec_attributes() {
 			return linkage; // Invalid __declspec, return what we have
 		}
 
-	// Parse the declspec specifier(s)
+		// Parse the declspec specifier(s)
 		while (!peek().is_eof() && peek() != ")"_tok) {
 			if (peek().is_identifier() || peek().is_keyword()) {
 				std::string_view spec = peek_info().value();
@@ -1531,10 +1531,10 @@ Linkage Parser::parse_declspec_attributes() {
 				} else if (spec == "dllexport") {
 					linkage = Linkage::DllExport;
 				}
-	// else: ignore other declspec attributes like align, deprecated, allocator, restrict, etc.
+				// else: ignore other declspec attributes like align, deprecated, allocator, restrict, etc.
 				advance();
 			} else if (peek() == "("_tok) {
-	// Skip nested parens like __declspec(align(16)) or __declspec(deprecated("..."))
+				// Skip nested parens like __declspec(align(16)) or __declspec(deprecated("..."))
 				int paren_depth = 1;
 				advance();
 				while (!peek().is_eof() && paren_depth > 0) {
@@ -1566,7 +1566,7 @@ CallingConvention Parser::parse_calling_convention() {
 		   (peek().is_keyword() || peek().is_identifier())) {
 		std::string_view token_val = peek_info().value();
 
-	// Look up calling convention in the mapping table using ranges
+		// Look up calling convention in the mapping table using ranges
 		auto it = std::ranges::find(calling_convention_map, token_val, &CallingConventionMapping::keyword);
 		if (it != std::end(calling_convention_map)) {
 			calling_conv = it->convention;
@@ -1587,9 +1587,9 @@ Parser::AttributeInfo Parser::parse_attributes() {
 	info.linkage = parse_declspec_attributes();
 	info.calling_convention = parse_calling_convention();
 
- // Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
+	// Handle potential interleaved attributes (e.g., __declspec(...) [[nodiscard]] __declspec(...))
 	if (!peek().is_eof() && (peek() == "["_tok || peek_info().value() == "__attribute__")) {
-	// Recurse to handle more attributes (prefer more specific linkage)
+		// Recurse to handle more attributes (prefer more specific linkage)
 		AttributeInfo more_info = parse_attributes();
 		if (more_info.linkage != Linkage::None) {
 			info.linkage = more_info.linkage;
@@ -1603,18 +1603,18 @@ Parser::AttributeInfo Parser::parse_attributes() {
 }
 
 std::optional<size_t> Parser::parse_alignas_specifier() {
- // Parse: alignas(constant-expression) or alignas(type-id)
- // C++11 standard allows both forms:
- // 1. alignas(16) - constant expression
- // 2. alignas(double) - type-id
- // 3. alignas(Point) - user-defined type
+	// Parse: alignas(constant-expression) or alignas(type-id)
+	// C++11 standard allows both forms:
+	// 1. alignas(16) - constant expression
+	// 2. alignas(double) - type-id
+	// 3. alignas(Point) - user-defined type
 
- // Check if next token is alignas keyword
+	// Check if next token is alignas keyword
 	if (peek() != "alignas"_tok) {
 		return std::nullopt;
 	}
 
- // Save position in case parsing fails
+	// Save position in case parsing fails
 	SaveHandle saved_pos = save_token_position();
 
 	advance(); // consume "alignas"
@@ -1627,12 +1627,12 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 	size_t alignment = 0;
 	auto token = peek_info();
 
- // Try to parse as integer literal first (most common case)
+	// Try to parse as integer literal first (most common case)
 	if (token.type() == Token::Type::Literal) {
-	// Parse the numeric literal
+		// Parse the numeric literal
 		std::string_view value_str = token.value();
 
-	// Try to parse as integer
+		// Try to parse as integer
 		auto result = std::from_chars(value_str.data(), value_str.data() + value_str.size(), alignment);
 		if (result.ec == std::errc()) {
 			advance(); // consume the literal
@@ -1642,36 +1642,36 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 				return std::nullopt;
 			}
 
-	// Validate alignment (must be power of 2)
+			// Validate alignment (must be power of 2)
 			if (alignment == 0 || (alignment & (alignment - 1)) != 0) {
 				restore_token_position(saved_pos);
 				return std::nullopt;
 			}
 
-	// Success - discard saved position
+			// Success - discard saved position
 			discard_saved_token(saved_pos);
 			return alignment;
 		}
 	}
 
- // Try to parse as type-id (e.g., alignas(Point) or alignas(double))
+	// Try to parse as type-id (e.g., alignas(Point) or alignas(double))
 	if ((token.type() == Token::Type::Keyword || token.type() == Token::Type::Identifier)) {
-	// Save position before type specifier attempt to allow fallback to expression
+		// Save position before type specifier attempt to allow fallback to expression
 		SaveHandle pre_type_pos = save_token_position();
-	// Try to parse a full type specifier to handle all type variations
+		// Try to parse a full type specifier to handle all type variations
 		ParseResult type_result = parse_type_specifier();
 
 		if (!type_result.is_error() && type_result.node().has_value()) {
-	// Successfully parsed a type specifier - check if followed by ')'
+			// Successfully parsed a type specifier - check if followed by ')'
 			if (consume(")"_tok)) {
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				TypeCategory parsed_type = type_spec.category();
 
-	// Use existing get_type_alignment function for consistency
+				// Use existing get_type_alignment function for consistency
 				int type_size_bits = get_type_size_bits(parsed_type);
 				size_t type_size_bytes = type_size_bits / 8;
 
-	// For struct types, look up alignment from struct info
+				// For struct types, look up alignment from struct info
 				if (is_struct_type(parsed_type)) {
 					TypeIndex type_index = type_spec.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
@@ -1687,22 +1687,22 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 					}
 				}
 
-	// For other types, use the standard alignment function
+				// For other types, use the standard alignment function
 				alignment = get_type_alignment(parsed_type, type_size_bytes);
 				discard_saved_token(pre_type_pos);
 				discard_saved_token(saved_pos);
 				return alignment;
 			}
-	// Type parsed but ')' not found - fall through to expression parsing
+			// Type parsed but ')' not found - fall through to expression parsing
 		}
-	// Type parsing failed or ')' not found - restore and try expression
+		// Type parsing failed or ')' not found - restore and try expression
 		restore_token_position(pre_type_pos);
 	}
 
- // Try to parse as a constant expression (e.g., alignas(__alignof__(_Tp2::_M_t)))
- // This handles cases where the argument is a complex expression like alignof, sizeof, etc.
+	// Try to parse as a constant expression (e.g., alignas(__alignof__(_Tp2::_M_t)))
+	// This handles cases where the argument is a complex expression like alignof, sizeof, etc.
 	{
-	// Restore to just after the '(' for a fresh parse attempt
+		// Restore to just after the '(' for a fresh parse attempt
 		restore_token_position(saved_pos);
 		saved_pos = save_token_position();
 		advance(); // consume "alignas"
@@ -1711,7 +1711,7 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (!expr_result.is_error() && expr_result.node().has_value()) {
 			if (consume(")"_tok)) {
-	// Try to evaluate the expression as a constant
+				// Try to evaluate the expression as a constant
 				auto eval_result = try_evaluate_constant_expression(*expr_result.node());
 				if (eval_result.has_value()) {
 					alignment = static_cast<size_t>(eval_result->value);
@@ -1720,15 +1720,15 @@ std::optional<size_t> Parser::parse_alignas_specifier() {
 						return alignment;
 					}
 				}
-	// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
-	// In template contexts, actual alignment will be resolved at instantiation time
+				// Expression parsed but couldn't evaluate (template-dependent) - use default alignment
+				// In template contexts, actual alignment will be resolved at instantiation time
 				discard_saved_token(saved_pos);
 				return 8; // Default to 8-byte alignment
 			}
 		}
 	}
 
- // Failed to parse - restore position
+	// Failed to parse - restore position
 	restore_token_position(saved_pos);
 	return std::nullopt;
 }

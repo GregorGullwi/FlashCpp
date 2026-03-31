@@ -32,8 +32,8 @@ public:
 		return instance;
 	}
 
- // Register a member function for lazy instantiation
- // Key format: "instantiated_class_name::member_function_name[$const]"
+	// Register a member function for lazy instantiation
+	// Key format: "instantiated_class_name::member_function_name[$const]"
 	void registerLazyMember(LazyMemberFunctionInfo info) {
 		StringHandle normalized_class = normalizeClassName(info.identity.instantiated_owner_name);
 		StringHandle lookup_name = effectiveLookupName(info.identity);
@@ -45,7 +45,7 @@ public:
 		lazy_members_[StringTable::getOrInternStringHandle(key)] = std::move(info);
 	}
 
- // Check if a member function needs lazy instantiation
+	// Check if a member function needs lazy instantiation
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) const {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
@@ -57,12 +57,12 @@ public:
 		return lazy_members_.find(handle) != lazy_members_.end();
 	}
 
- // Check either the non-const or const variant — for call sites that don't yet know is_const.
+	// Check either the non-const or const variant — for call sites that don't yet know is_const.
 	bool needsInstantiationAny(StringHandle instantiated_class_name, StringHandle member_function_name) const {
 		return needsInstantiation(instantiated_class_name, member_function_name, false) || needsInstantiation(instantiated_class_name, member_function_name, true);
 	}
 
- // Get lazy member info for instantiation
+	// Get lazy member info for instantiation
 	std::optional<LazyMemberFunctionInfo> getLazyMemberInfo(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
@@ -78,8 +78,8 @@ public:
 		return std::nullopt;
 	}
 
- // Get lazy member info without knowing is_const — tries non-const first, then const.
- // For call sites that haven't yet determined which overload they need.
+	// Get lazy member info without knowing is_const — tries non-const first, then const.
+	// For call sites that haven't yet determined which overload they need.
 	std::optional<LazyMemberFunctionInfo> getLazyMemberInfoAny(StringHandle instantiated_class_name, StringHandle member_function_name) {
 		auto info = getLazyMemberInfo(instantiated_class_name, member_function_name, false);
 		if (!info)
@@ -87,7 +87,7 @@ public:
 		return info;
 	}
 
- // Mark a member function as instantiated (remove from lazy registry)
+	// Mark a member function as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_function_name, bool is_const) {
 		instantiated_class_name = normalizeClassName(instantiated_class_name);
 		StringBuilder key_builder;
@@ -99,12 +99,12 @@ public:
 		lazy_members_.erase(handle);
 	}
 
- // Clear all lazy members (for testing)
+	// Clear all lazy members (for testing)
 	void clear() {
 		lazy_members_.clear();
 	}
 
- // Get count of uninstantiated members (for diagnostics)
+	// Get count of uninstantiated members (for diagnostics)
 	size_t getUninstantiatedCount() const {
 		return lazy_members_.size();
 	}
@@ -112,7 +112,7 @@ public:
 private:
 	LazyMemberInstantiationRegistry() = default;
 
- // Map from "instantiated_class::member_function" to lazy instantiation info
+	// Map from "instantiated_class::member_function" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyMemberFunctionInfo, TransparentStringHash, std::equal_to<>> lazy_members_;
 };
 
@@ -154,22 +154,22 @@ public:
 		return instance;
 	}
 
- // Register a static member for lazy instantiation
- // Key format: "instantiated_class_name::member_name"
+	// Register a static member for lazy instantiation
+	// Key format: "instantiated_class_name::member_name"
 	void registerLazyStaticMember(const LazyStaticMemberInfo& info) {
 		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
 		FLASH_LOG(Templates, Debug, "Registering lazy static member: ", key);
 		lazy_static_members_[key] = info;
 	}
 
- // Check if a static member needs lazy instantiation
+	// Check if a static member needs lazy instantiation
 	bool needsInstantiation(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		return lazy_static_members_.find(key) != lazy_static_members_.end();
 	}
 
- // Get lazy static member info for instantiation
- // Returns a pointer to avoid copying; nullptr if not found
+	// Get lazy static member info for instantiation
+	// Returns a pointer to avoid copying; nullptr if not found
 	const LazyStaticMemberInfo* getLazyStaticMemberInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_static_members_.find(key);
@@ -179,19 +179,19 @@ public:
 		return nullptr;
 	}
 
- // Mark a static member as instantiated (remove from lazy registry)
+	// Mark a static member as instantiated (remove from lazy registry)
 	void markInstantiated(StringHandle instantiated_class_name, StringHandle member_name) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		lazy_static_members_.erase(key);
 		FLASH_LOG(Templates, Debug, "Marked lazy static member as instantiated: ", key);
 	}
 
- // Clear all lazy static members (for testing)
+	// Clear all lazy static members (for testing)
 	void clear() {
 		lazy_static_members_.clear();
 	}
 
- // Get count of uninstantiated static members (for diagnostics)
+	// Get count of uninstantiated static members (for diagnostics)
 	size_t getUninstantiatedCount() const {
 		return lazy_static_members_.size();
 	}
@@ -199,8 +199,8 @@ public:
 private:
 	LazyStaticMemberRegistry() = default;
 
- // Helper to generate registry key from class name and member name
- // Key format: "instantiated_class_name::member_name"
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
 	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
 		class_name = normalizeClassName(class_name);
 		StringBuilder key_builder;
@@ -212,7 +212,7 @@ private:
 		return StringTable::getOrInternStringHandle(key);
 	}
 
- // Map from "instantiated_class::static_member" to lazy instantiation info
+	// Map from "instantiated_class::static_member" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyStaticMemberInfo, TransparentStringHash, std::equal_to<>> lazy_static_members_;
 };
 
@@ -238,8 +238,8 @@ struct LazyClassInstantiationInfo {
 	std::vector<ASTNode> template_params;		  // Template parameters from class template
 	ASTNode template_declaration;				  // Reference to primary template declaration
 	ClassInstantiationPhase current_phase = ClassInstantiationPhase::None;
- // Flags for tracking what needs to be instantiated in Full phase
- // These are set during Minimal phase to avoid re-parsing template declaration
+	// Flags for tracking what needs to be instantiated in Full phase
+	// These are set during Minimal phase to avoid re-parsing template declaration
 	bool has_base_classes = false;				   // Does the template have base classes?
 	bool has_static_members = false;				 // Does the template have static members?
 	bool has_member_functions = false;			   // Does the template have member functions?
@@ -258,19 +258,19 @@ public:
 		return instance;
 	}
 
- // Register a class for lazy instantiation
+	// Register a class for lazy instantiation
 	void registerLazyClass(const LazyClassInstantiationInfo& info) {
 		FLASH_LOG(Templates, Debug, "Registering lazy class: ", info.instantiated_name,
 				  " (template: ", info.template_name, ")");
 		lazy_classes_[info.instantiated_name] = info;
 	}
 
- // Check if a class is registered for lazy instantiation
+	// Check if a class is registered for lazy instantiation
 	bool isRegistered(StringHandle instantiated_name) const {
 		return lazy_classes_.find(instantiated_name) != lazy_classes_.end();
 	}
 
- // Get the current instantiation phase of a class
+	// Get the current instantiation phase of a class
 	ClassInstantiationPhase getCurrentPhase(StringHandle instantiated_name) const {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it != lazy_classes_.end()) {
@@ -279,8 +279,8 @@ public:
 		return ClassInstantiationPhase::None;
 	}
 
- // Check if a class needs instantiation to the specified phase
- // Uses enum underlying values for comparison (None=0 < Minimal=1 < Layout=2 < Full=3)
+	// Check if a class needs instantiation to the specified phase
+	// Uses enum underlying values for comparison (None=0 < Minimal=1 < Layout=2 < Full=3)
 	bool needsInstantiationTo(StringHandle instantiated_name, ClassInstantiationPhase target_phase) const {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it == lazy_classes_.end()) {
@@ -289,8 +289,8 @@ public:
 		return static_cast<uint8_t>(it->second.current_phase) < static_cast<uint8_t>(target_phase);
 	}
 
- // Get lazy class info for instantiation
- // Returns a pointer to avoid copying; nullptr if not found
+	// Get lazy class info for instantiation
+	// Returns a pointer to avoid copying; nullptr if not found
 	const LazyClassInstantiationInfo* getLazyClassInfo(StringHandle instantiated_name) const {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it != lazy_classes_.end()) {
@@ -299,7 +299,7 @@ public:
 		return nullptr;
 	}
 
- // Get mutable lazy class info for updating phase
+	// Get mutable lazy class info for updating phase
 	LazyClassInstantiationInfo* getLazyClassInfoMutable(StringHandle instantiated_name) {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it != lazy_classes_.end()) {
@@ -308,7 +308,7 @@ public:
 		return nullptr;
 	}
 
- // Update the instantiation phase of a class
+	// Update the instantiation phase of a class
 	void updatePhase(StringHandle instantiated_name, ClassInstantiationPhase new_phase) {
 		auto it = lazy_classes_.find(instantiated_name);
 		if (it != lazy_classes_.end()) {
@@ -319,18 +319,18 @@ public:
 		}
 	}
 
- // Mark a class as fully instantiated (remove from lazy registry)
+	// Mark a class as fully instantiated (remove from lazy registry)
 	void markFullyInstantiated(StringHandle instantiated_name) {
 		lazy_classes_.erase(instantiated_name);
 		FLASH_LOG(Templates, Debug, "Marked lazy class as fully instantiated: ", instantiated_name);
 	}
 
- // Clear all lazy classes (for testing)
+	// Clear all lazy classes (for testing)
 	void clear() {
 		lazy_classes_.clear();
 	}
 
- // Get count of partially instantiated classes (for diagnostics)
+	// Get count of partially instantiated classes (for diagnostics)
 	size_t getPartiallyInstantiatedCount() const {
 		return lazy_classes_.size();
 	}
@@ -338,7 +338,7 @@ public:
 private:
 	LazyClassInstantiationRegistry() = default;
 
- // Map from instantiated class name to lazy instantiation info
+	// Map from instantiated class name to lazy instantiation info
 	std::unordered_map<StringHandle, LazyClassInstantiationInfo, TransparentStringHash, std::equal_to<>> lazy_classes_;
 };
 
@@ -358,7 +358,7 @@ struct LazyTypeAliasInfo {
 	std::vector<TemplateTypeArg> template_args;	// Concrete template arguments
 	bool needs_substitution = true;				// True if target contains template parameters
 	bool is_evaluated = false;					   // True once evaluation has been performed
- // Cached evaluation result (category embedded in evaluated_type_index)
+	// Cached evaluation result (category embedded in evaluated_type_index)
 	TypeIndex evaluated_type_index{};
 };
 
@@ -372,24 +372,24 @@ public:
 		return instance;
 	}
 
- // Register a type alias for lazy evaluation
- // Key format: "instantiated_class_name::member_name"
+	// Register a type alias for lazy evaluation
+	// Key format: "instantiated_class_name::member_name"
 	void registerLazyTypeAlias(const LazyTypeAliasInfo& info) {
 		StringHandle key = makeKey(info.instantiated_class_name, info.member_name);
 		FLASH_LOG(Templates, Debug, "Registering lazy type alias: ", key);
 		lazy_aliases_[key] = info;
 	}
 
- // Check if a type alias needs lazy evaluation (registered and not yet evaluated)
+	// Check if a type alias needs lazy evaluation (registered and not yet evaluated)
 	bool needsEvaluation(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
 		return it != lazy_aliases_.end() && !it->second.is_evaluated;
 	}
 
- // Get lazy type alias info
- // Returns a pointer to avoid copying; nullptr if not found
- // Use this instead of isRegistered() when you need the actual data
+	// Get lazy type alias info
+	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of isRegistered() when you need the actual data
 	const LazyTypeAliasInfo* getLazyTypeAliasInfo(StringHandle instantiated_class_name, StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
@@ -399,7 +399,7 @@ public:
 		return nullptr;
 	}
 
- // Get mutable lazy type alias info for updating evaluation result
+	// Get mutable lazy type alias info for updating evaluation result
 	LazyTypeAliasInfo* getLazyTypeAliasInfoMutable(StringHandle instantiated_class_name, StringHandle member_name) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
 		auto it = lazy_aliases_.find(key);
@@ -409,8 +409,8 @@ public:
 		return nullptr;
 	}
 
- // Mark a type alias as evaluated and cache the result
- // Returns true if the alias was found and marked, false if not registered
+	// Mark a type alias as evaluated and cache the result
+	// Returns true if the alias was found and marked, false if not registered
 	bool markEvaluated(StringHandle instantiated_class_name, StringHandle member_name,
 					   TypeIndex result_type_index) {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
@@ -425,7 +425,7 @@ public:
 		return false;
 	}
 
- // Get cached evaluation result (only valid if is_evaluated is true)
+	// Get cached evaluation result (only valid if is_evaluated is true)
 	std::optional<TypeIndex> getCachedResult(StringHandle instantiated_class_name,
 											 StringHandle member_name) const {
 		StringHandle key = makeKey(instantiated_class_name, member_name);
@@ -436,12 +436,12 @@ public:
 		return std::nullopt;
 	}
 
- // Clear all lazy type aliases (for testing)
+	// Clear all lazy type aliases (for testing)
 	void clear() {
 		lazy_aliases_.clear();
 	}
 
- // Get count of unevaluated type aliases (for diagnostics)
+	// Get count of unevaluated type aliases (for diagnostics)
 	size_t getUnevaluatedCount() const {
 		size_t count = 0;
 		for (const auto& [key, info] : lazy_aliases_) {
@@ -452,7 +452,7 @@ public:
 		return count;
 	}
 
- // Get total count of registered type aliases (for diagnostics)
+	// Get total count of registered type aliases (for diagnostics)
 	size_t getTotalCount() const {
 		return lazy_aliases_.size();
 	}
@@ -460,8 +460,8 @@ public:
 private:
 	LazyTypeAliasRegistry() = default;
 
- // Helper to generate registry key from class name and member name
- // Key format: "instantiated_class_name::member_name"
+	// Helper to generate registry key from class name and member name
+	// Key format: "instantiated_class_name::member_name"
 	static StringHandle makeKey(StringHandle class_name, StringHandle member_name) {
 		StringBuilder key_builder;
 		std::string_view key = key_builder
@@ -472,7 +472,7 @@ private:
 		return StringTable::getOrInternStringHandle(key);
 	}
 
- // Map from "instantiated_class::type_alias" to lazy evaluation info
+	// Map from "instantiated_class::type_alias" to lazy evaluation info
 	std::unordered_map<StringHandle, LazyTypeAliasInfo, TransparentStringHash, std::equal_to<>> lazy_aliases_;
 };
 
@@ -505,24 +505,24 @@ public:
 		return instance;
 	}
 
- // Register a nested type for lazy instantiation
- // Key format: "parent_class_name::nested_type_name"
+	// Register a nested type for lazy instantiation
+	// Key format: "parent_class_name::nested_type_name"
 	void registerLazyNestedType(const LazyNestedTypeInfo& info) {
 		StringHandle key = makeKey(info.parent_class_name, info.nested_type_name);
 		FLASH_LOG(Templates, Debug, "Registering lazy nested type: ", key);
 		lazy_nested_types_[key] = info;
 	}
 
- // Check if a nested type needs lazy instantiation (entry exists in registry)
- // Note: Once instantiated, the entry is removed from the registry
+	// Check if a nested type needs lazy instantiation (entry exists in registry)
+	// Note: Once instantiated, the entry is removed from the registry
 	bool needsInstantiation(StringHandle parent_class_name, StringHandle nested_type_name) const {
 		StringHandle key = makeKey(parent_class_name, nested_type_name);
 		return lazy_nested_types_.find(key) != lazy_nested_types_.end();
 	}
 
- // Get lazy nested type info
- // Returns a pointer to avoid copying; nullptr if not found
- // Use this instead of a separate isRegistered() method
+	// Get lazy nested type info
+	// Returns a pointer to avoid copying; nullptr if not found
+	// Use this instead of a separate isRegistered() method
 	const LazyNestedTypeInfo* getLazyNestedTypeInfo(StringHandle parent_class_name, StringHandle nested_type_name) const {
 		StringHandle key = makeKey(parent_class_name, nested_type_name);
 		auto it = lazy_nested_types_.find(key);
@@ -532,15 +532,15 @@ public:
 		return nullptr;
 	}
 
- // Mark a nested type as instantiated (remove from lazy registry)
- // Consistent with other lazy registries - entries are removed after instantiation
+	// Mark a nested type as instantiated (remove from lazy registry)
+	// Consistent with other lazy registries - entries are removed after instantiation
 	void markInstantiated(StringHandle parent_class_name, StringHandle nested_type_name) {
 		StringHandle key = makeKey(parent_class_name, nested_type_name);
 		lazy_nested_types_.erase(key);
 		FLASH_LOG(Templates, Debug, "Marked lazy nested type as instantiated: ", key);
 	}
 
- // Get all nested types for a parent class that need instantiation
+	// Get all nested types for a parent class that need instantiation
 	std::vector<const LazyNestedTypeInfo*> getNestedTypesForParent(StringHandle parent_class_name) const {
 		std::vector<const LazyNestedTypeInfo*> result;
 		for (const auto& [key, info] : lazy_nested_types_) {
@@ -551,13 +551,13 @@ public:
 		return result;
 	}
 
- // Clear all lazy nested types (for testing)
+	// Clear all lazy nested types (for testing)
 	void clear() {
 		lazy_nested_types_.clear();
 	}
 
- // Get count of pending (uninstantiated) nested types (for diagnostics)
- // Note: Since entries are removed after instantiation, this is the same as total count
+	// Get count of pending (uninstantiated) nested types (for diagnostics)
+	// Note: Since entries are removed after instantiation, this is the same as total count
 	size_t getPendingCount() const {
 		return lazy_nested_types_.size();
 	}
@@ -565,8 +565,8 @@ public:
 private:
 	LazyNestedTypeRegistry() = default;
 
- // Helper to generate registry key from parent class name and nested type name
- // Key format: "parent_class_name::nested_type_name"
+	// Helper to generate registry key from parent class name and nested type name
+	// Key format: "parent_class_name::nested_type_name"
 	static StringHandle makeKey(StringHandle parent_name, StringHandle nested_name) {
 		StringBuilder key_builder;
 		std::string_view key = key_builder
@@ -577,7 +577,7 @@ private:
 		return StringTable::getOrInternStringHandle(key);
 	}
 
- // Map from "parent_class::nested_type" to lazy instantiation info
+	// Map from "parent_class::nested_type" to lazy instantiation info
 	std::unordered_map<StringHandle, LazyNestedTypeInfo, TransparentStringHash, std::equal_to<>> lazy_nested_types_;
 };
 
@@ -591,16 +591,16 @@ class ConceptRegistry {
 public:
 	ConceptRegistry() = default;
 
- // Register a concept declaration
- // concept_name: The name of the concept (e.g., "Integral", "Addable")
- // concept_node: The ConceptDeclarationNode AST node
+	// Register a concept declaration
+	// concept_name: The name of the concept (e.g., "Integral", "Addable")
+	// concept_node: The ConceptDeclarationNode AST node
 	void registerConcept(std::string_view concept_name, ASTNode concept_node) {
 		std::string key(concept_name);
 		concepts_[key] = concept_node;
 	}
 
- // Look up a concept by name
- // Returns the ConceptDeclarationNode if found, std::nullopt otherwise
+	// Look up a concept by name
+	// Returns the ConceptDeclarationNode if found, std::nullopt otherwise
 	std::optional<ASTNode> lookupConcept(std::string_view concept_name) const {
 		auto it = concepts_.find(concept_name);
 		if (it != concepts_.end()) {
@@ -609,17 +609,17 @@ public:
 		return std::nullopt;
 	}
 
- // Check if a concept exists
+	// Check if a concept exists
 	bool hasConcept(std::string_view concept_name) const {
 		return concepts_.find(concept_name) != concepts_.end();
 	}
 
- // Clear all concepts (for testing)
+	// Clear all concepts (for testing)
 	void clear() {
 		concepts_.clear();
 	}
 
- // Get all concept names (for debugging)
+	// Get all concept names (for debugging)
 	std::vector<std::string> getAllConceptNames() const {
 		std::vector<std::string> names;
 		names.reserve(concepts_.size());
@@ -630,8 +630,8 @@ public:
 	}
 
 private:
- // Map from concept name to ConceptDeclarationNode
- // Using TransparentStringHash for heterogeneous lookup with string_view
+	// Map from concept name to ConceptDeclarationNode
+	// Using TransparentStringHash for heterogeneous lookup with string_view
 	std::unordered_map<std::string, ASTNode, TransparentStringHash, std::equal_to<>> concepts_;
 };
 
@@ -646,28 +646,28 @@ extern ConceptRegistry gConceptRegistry;
 // A subsumes B if whenever A is satisfied, B is also satisfied
 // In practice: A subsumes B if A's requirements are a superset of B's
 inline bool constraintSubsumes(const ASTNode& constraintA, const ASTNode& constraintB) {
- // Advanced subsumption rules:
- // 1. Identical constraints subsume each other
- // 2. A && B subsumes A (conjunction implies the parts)
- // 3. A && B subsumes B (conjunction implies the parts)
- // 4. A subsumes A || B (A is stronger than disjunction with A)
- // 5. A && !B does not subsume A (negation creates incompatibility)
- // 6. Transitivity: if A subsumes B and B subsumes C, then A subsumes C
- // 7. A && B && C subsumes A && B (more constraints = more specific)
+	// Advanced subsumption rules:
+	// 1. Identical constraints subsume each other
+	// 2. A && B subsumes A (conjunction implies the parts)
+	// 3. A && B subsumes B (conjunction implies the parts)
+	// 4. A subsumes A || B (A is stronger than disjunction with A)
+	// 5. A && !B does not subsume A (negation creates incompatibility)
+	// 6. Transitivity: if A subsumes B and B subsumes C, then A subsumes C
+	// 7. A && B && C subsumes A && B (more constraints = more specific)
 
- // If constraints are identical, they subsume each other
- // This is a simplified check - full implementation would need deep comparison
+	// If constraints are identical, they subsume each other
+	// This is a simplified check - full implementation would need deep comparison
 	if (constraintA.type_name() == constraintB.type_name()) {
-	// Same type - might be the same constraint
-	// For full correctness, we'd need to compare the actual expressions
+		// Same type - might be the same constraint
+		// For full correctness, we'd need to compare the actual expressions
 		return true;
 	}
 
- // Check if A is a conjunction that includes B
+	// Check if A is a conjunction that includes B
 	if (constraintA.is<BinaryOperatorNode>()) {
 		const auto& binop = constraintA.as<BinaryOperatorNode>();
 		if (binop.op() == "&&") {
-	// A = X && Y, check if X or Y subsumes B
+			// A = X && Y, check if X or Y subsumes B
 			if (constraintSubsumes(binop.get_lhs(), constraintB)) {
 				return true;
 			}
@@ -675,46 +675,46 @@ inline bool constraintSubsumes(const ASTNode& constraintA, const ASTNode& constr
 				return true;
 			}
 
-	// Check transitive subsumption: (A && B) subsumes C if A subsumes C or B subsumes C
-	// Already handled above
+			// Check transitive subsumption: (A && B) subsumes C if A subsumes C or B subsumes C
+			// Already handled above
 		}
 
-	// Handle negation: !A does not subsume A
+		// Handle negation: !A does not subsume A
 		if (binop.op() == "||") {
-	// A = X || Y does not generally subsume anything
-	// (disjunction is weaker than either branch)
+			// A = X || Y does not generally subsume anything
+			// (disjunction is weaker than either branch)
 			return false;
 		}
 	}
 
- // Check if A is a unary negation operator
+	// Check if A is a unary negation operator
 	if (constraintA.is<UnaryOperatorNode>()) {
 		const auto& unop = constraintA.as<UnaryOperatorNode>();
 		if (unop.op() == "!") {
-	// !A does not subsume A (they're contradictory)
-	// !A subsumes !(A && B) is complex, skip for now
+			// !A does not subsume A (they're contradictory)
+			// !A subsumes !(A && B) is complex, skip for now
 			return false;
 		}
 	}
 
- // Check if B is a disjunction where A subsumes one branch
+	// Check if B is a disjunction where A subsumes one branch
 	if (constraintB.is<BinaryOperatorNode>()) {
 		const auto& binop = constraintB.as<BinaryOperatorNode>();
 		if (binop.op() == "||") {
-	// B = X || Y, A subsumes B if A subsumes both X and Y
+			// B = X || Y, A subsumes B if A subsumes both X and Y
 			if (constraintSubsumes(constraintA, binop.get_lhs()) &&
 				constraintSubsumes(constraintA, binop.get_rhs())) {
 				return true;
 			}
 		}
 
-	// Check if B is a conjunction where A subsumes the whole conjunction
+		// Check if B is a conjunction where A subsumes the whole conjunction
 		if (binop.op() == "&&") {
-	// B = X && Y, A subsumes B if A subsumes (X && Y) as a whole
-	// This is tricky: A subsumes (X && Y) if A subsumes at least one of them
-	// Example: A subsumes (A && B) because A is less restrictive
-	// But we already check if constraintA matches constraintB above
-	// So skip detailed analysis here
+			// B = X && Y, A subsumes B if A subsumes (X && Y) as a whole
+			// This is tricky: A subsumes (X && Y) if A subsumes at least one of them
+			// Example: A subsumes (A && B) because A is less restrictive
+			// But we already check if constraintA matches constraintB above
+			// So skip detailed analysis here
 		}
 	}
 
@@ -724,7 +724,7 @@ inline bool constraintSubsumes(const ASTNode& constraintA, const ASTNode& constr
 // Compare two concepts for subsumption ordering
 // Returns: -1 if A subsumes B, 1 if B subsumes A, 0 if neither
 inline int compareConceptSubsumption(const ASTNode& conceptA, const ASTNode& conceptB) {
- // Get constraint expressions from concepts
+	// Get constraint expressions from concepts
 	const ASTNode* exprA = nullptr;
 	const ASTNode* exprB = nullptr;
 
@@ -788,7 +788,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 
 	TypeCategory arg_type = type_args[0].category();
 
- // Handle common type traits
+	// Handle common type traits
 	if (trait_name == "is_integral_v" || trait_name == "is_integral") {
 		return isIntegralType(arg_type);
 	} else if (trait_name == "is_floating_point_v" || trait_name == "is_floating_point") {
@@ -796,7 +796,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 	} else if (trait_name == "is_arithmetic_v" || trait_name == "is_arithmetic") {
 		return isIntegralType(arg_type) || isFloatingPointType(arg_type);
 	} else if (trait_name == "is_signed_v" || trait_name == "is_signed") {
-	// Check if type is signed
+		// Check if type is signed
 		switch (arg_type) {
 		case TypeCategory::Char:	 // char signedness is implementation-defined, but typically signed
 		case TypeCategory::Short:
@@ -824,7 +824,7 @@ inline bool evaluateTypeTrait(std::string_view trait_name, const std::vector<Tem
 		}
 	}
 
- // Unknown type trait - assume satisfied (conservative approach)
+	// Unknown type trait - assume satisfied (conservative approach)
 	return true;
 }
 
@@ -835,7 +835,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 	const std::vector<TemplateTypeArg>& template_args,
 	const std::vector<std::string_view>& template_param_names) {
 
- // Handle ExpressionNode wrapper
+	// Handle ExpressionNode wrapper
 	if (expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
 		return std::visit([&](const auto& inner) -> std::optional<long long> {
@@ -845,7 +845,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 						  expr_variant);
 	}
 
- // Handle numeric literals
+	// Handle numeric literals
 	if (expr.is<NumericLiteralNode>()) {
 		const auto& literal = expr.as<NumericLiteralNode>();
 		if (std::holds_alternative<unsigned long long>(literal.value())) {
@@ -855,21 +855,21 @@ inline std::optional<long long> evaluateConstraintExpression(
 		}
 	}
 
- // Handle sizeof expression
+	// Handle sizeof expression
 	if (expr.is<SizeofExprNode>()) {
 		const auto& sizeof_expr = expr.as<SizeofExprNode>();
 		const ASTNode& type_or_expr = sizeof_expr.type_or_expr();
 
-	// If it's a type specifier, get the size
+		// If it's a type specifier, get the size
 		if (type_or_expr.is<TypeSpecifierNode>()) {
 			const auto& type_spec = type_or_expr.as<TypeSpecifierNode>();
 
-	// Check if it's a template parameter that needs substitution
+			// Check if it's a template parameter that needs substitution
 			if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
 				std::string_view type_name = type_spec.token().value();
 
-	// Also check the actual type name from gTypeInfo using the type_index
-	// This is important for placeholder types like "Op<...>::type"
+				// Also check the actual type name from gTypeInfo using the type_index
+				// This is important for placeholder types like "Op<...>::type"
 				std::string_view full_type_name = type_name;
 				TypeIndex type_idx = type_spec.type_index();
 				if (const TypeInfo* type_idx_ti = tryGetTypeInfo(type_idx)) {
@@ -878,7 +878,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 
 				FLASH_LOG(Templates, Debug, "evaluateConstraintExpression: sizeof(", type_name, "), full_type_name='", full_type_name, "', type_index=", type_idx);
 
-	// Check if the type name is a simple template parameter (e.g., sizeof(T))
+				// Check if the type name is a simple template parameter (e.g., sizeof(T))
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
 						const auto& arg = template_args[i];
@@ -892,21 +892,21 @@ inline std::optional<long long> evaluateConstraintExpression(
 					}
 				}
 
-	// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
-	// These are created during parsing as placeholders for template-dependent types
+				// Check if this is a placeholder for a dependent nested type like "Op<...>::type"
+				// These are created during parsing as placeholders for template-dependent types
 				if (full_type_name.find("::") != std::string_view::npos) {
-		// This looks like a nested type access - try to resolve it
-		// Format: "Op<...>::type" or similar
+					// This looks like a nested type access - try to resolve it
+					// Format: "Op<...>::type" or similar
 					size_t scope_pos = full_type_name.find("::");
 					std::string_view base_part = full_type_name.substr(0, scope_pos);
 					std::string_view member_part = full_type_name.substr(scope_pos + 2);
 
 					FLASH_LOG(Templates, Debug, "  Nested type access: base='", base_part, "', member='", member_part, "'");
 
-		// Check if base_part references a template template parameter like "Op<...>"
+					// Check if base_part references a template template parameter like "Op<...>"
 					std::string_view template_param_name;
 					if (base_part.find("<") != std::string_view::npos) {
-		// Extract the template parameter name (e.g., "Op" from "Op<...>")
+						// Extract the template parameter name (e.g., "Op" from "Op<...>")
 						template_param_name = base_part.substr(0, base_part.find("<"));
 					} else {
 						template_param_name = base_part;
@@ -917,40 +917,40 @@ inline std::optional<long long> evaluateConstraintExpression(
 						FLASH_LOG(Templates, Debug, "    template_param_names[", dbg_i, "] = '", template_param_names[dbg_i], "'");
 					}
 
-		// Look for the template template parameter in our substitutions
+					// Look for the template template parameter in our substitutions
 					for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 						if (template_param_names[i] == template_param_name) {
 							const auto& arg = template_args[i];
 
 							FLASH_LOG(Templates, Debug, "  Found template param at index ", i, ", is_template_template_arg=", arg.is_template_template_arg);
 
-		// Check if this is a template template argument
+							// Check if this is a template template argument
 							if (arg.is_template_template_arg && arg.template_name_handle.isValid()) {
-		// We have a template template argument like HasType
+								// We have a template template argument like HasType
 								std::string_view template_name = arg.template_name_handle.view();
 								FLASH_LOG(Templates, Debug, "  Found template template arg: '", template_name, "'");
 
-		// Now we need to get the instantiated type's member
-		// For HasType<int>::type, we need to get the type alias from HasType<int>
+								// Now we need to get the instantiated type's member
+								// For HasType<int>::type, we need to get the type alias from HasType<int>
 
-		// Look for the pack argument to get the template argument
+								// Look for the pack argument to get the template argument
 								for (size_t j = i + 1; j < template_args.size(); ++j) {
 									const auto& pack_arg = template_args[j];
 									if (!pack_arg.is_template_template_arg && !pack_arg.is_value) {
-			// Found a type argument - this is what we instantiate the template with
+										// Found a type argument - this is what we instantiate the template with
 										FLASH_LOG(Templates, Debug, "  Pack arg type_index=", pack_arg.type_index, ", base_type=", static_cast<int>(pack_arg.typeEnum()));
 
-			// For member "type", we need to look up HasType<T>::type which equals T
-			// For HasType, the using type = T; means ::type is the template argument
+										// For member "type", we need to look up HasType<T>::type which equals T
+										// For HasType, the using type = T; means ::type is the template argument
 										if (member_part == "type") {
-			// For a simple type alias like HasType<T>::type = T,
-			// return the size of the template argument
+											// For a simple type alias like HasType<T>::type = T,
+											// return the size of the template argument
 											if (const TypeInfo* pack_arg_ti = tryGetTypeInfo(pack_arg.type_index)) {
 												long long size = static_cast<long long>((pack_arg_ti->type_size_ + 7) / 8);
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
 												return size;
 											}
-			// For built-in types without type_index
+											// For built-in types without type_index
 											long long size = static_cast<long long>(get_type_size_bits(pack_arg.category()) / 8);
 											if (size > 0) {
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size, " (from base_type)");
@@ -966,17 +966,17 @@ inline std::optional<long long> evaluateConstraintExpression(
 					}
 				}
 
-	// Look for matching template parameter
+				// Look for matching template parameter
 				for (size_t i = 0; i < template_param_names.size() && i < template_args.size(); ++i) {
 					if (template_param_names[i] == type_name) {
-		// Found the template parameter - use the substituted type's size
+						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
 						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
-		// type_size_ is in bits, convert to bytes
+							// type_size_ is in bits, convert to bytes
 							return static_cast<long long>((arg_ti->type_size_ + 7) / 8);
 						}
-		// Fallback for primitive types without type_index (e.g., int, char, etc.)
-		// This handles cases where type_index is 0 but base_type is valid
+						// Fallback for primitive types without type_index (e.g., int, char, etc.)
+						// This handles cases where type_index is 0 but base_type is valid
 						long long size = static_cast<long long>(get_type_size_bits(arg.category()) / 8);
 						if (size > 0) {
 							return size;
@@ -984,15 +984,15 @@ inline std::optional<long long> evaluateConstraintExpression(
 					}
 				}
 
-	// Try to look up the type directly
+				// Try to look up the type directly
 				auto type_handle = StringTable::getOrInternStringHandle(type_name);
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
-		// type_size_ is in bits, convert to bytes
+					// type_size_ is in bits, convert to bytes
 					return static_cast<long long>((type_it->second->type_size_ + 7) / 8);
 				}
 			} else {
-	// Built-in type - get size from type info
+				// Built-in type - get size from type info
 				size_t size_bits = type_spec.size_in_bits();
 				if (size_bits > 0) {
 					return static_cast<long long>((size_bits + 7) / 8);
@@ -1000,22 +1000,22 @@ inline std::optional<long long> evaluateConstraintExpression(
 			}
 		}
 
-	// Handle nested type access like typename Op<Args...>::type
+		// Handle nested type access like typename Op<Args...>::type
 		if (tryGetQualifiedIdentifier(type_or_expr)) {
-	// This is a dependent type - try to resolve it
-	// For now, if we can't resolve, return nullopt
+			// This is a dependent type - try to resolve it
+			// For now, if we can't resolve, return nullopt
 			return std::nullopt;
 		}
 	}
 
- // Handle qualified identifier (nested type access)
+	// Handle qualified identifier (nested type access)
 	if (tryGetQualifiedIdentifier(expr)) {
-	// This is a dependent type - try to resolve the qualified name
-	// For now, can't evaluate complex qualified identifiers
+		// This is a dependent type - try to resolve the qualified name
+		// For now, can't evaluate complex qualified identifiers
 		return std::nullopt;
 	}
 
- // Can't evaluate this expression
+	// Can't evaluate this expression
 	return std::nullopt;
 }
 
@@ -1035,19 +1035,19 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		}
 	}
 
- // Handle ExpressionNode wrapper - unwrap it and evaluate the inner node
+	// Handle ExpressionNode wrapper - unwrap it and evaluate the inner node
 	if (constraint_expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = constraint_expr.as<ExpressionNode>();
-	// ExpressionNode is a variant, visit it to get the actual inner node
+		// ExpressionNode is a variant, visit it to get the actual inner node
 		return std::visit([&](const auto& inner) -> ConstraintEvaluationResult {
-	// Create an ASTNode wrapper around the inner node
+			// Create an ASTNode wrapper around the inner node
 			ASTNode inner_ast_node(&inner);
 			return evaluateConstraint(inner_ast_node, template_args, template_param_names);
 		},
 						  expr_variant);
 	}
 
- // For BoolLiteralNode (true/false keywords parsed as boolean literals)
+	// For BoolLiteralNode (true/false keywords parsed as boolean literals)
 	if (constraint_expr.is<BoolLiteralNode>()) {
 		const auto& literal = constraint_expr.as<BoolLiteralNode>();
 		bool value = literal.value();
@@ -1061,10 +1061,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return ConstraintEvaluationResult::success();
 	}
 
- // For boolean literals (true/false), evaluate directly
+	// For boolean literals (true/false), evaluate directly
 	if (constraint_expr.is<NumericLiteralNode>()) {
 		const auto& literal = constraint_expr.as<NumericLiteralNode>();
-	// Check if the value is 0 (false) or non-zero (true)
+		// Check if the value is 0 (false) or non-zero (true)
 		bool value = true;  // default to true
 		if (std::holds_alternative<unsigned long long>(literal.value())) {
 			value = std::get<unsigned long long>(literal.value()) != 0;
@@ -1081,12 +1081,12 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return ConstraintEvaluationResult::success();
 	}
 
- // For identifier nodes (concept names or type trait variables)
+	// For identifier nodes (concept names or type trait variables)
 	if (constraint_expr.is<IdentifierNode>()) {
 		const auto& ident = constraint_expr.as<IdentifierNode>();
 		std::string_view name = ident.name();
 
-	// Check for boolean literals written as identifiers (true/false)
+		// Check for boolean literals written as identifiers (true/false)
 		if (name == "false") {
 			return ConstraintEvaluationResult::failure(
 				"constraint not satisfied: literal constraint is false",
@@ -1097,10 +1097,10 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			return ConstraintEvaluationResult::success();
 		}
 
-	// Check if it's a type trait variable (e.g., is_integral_v)
+		// Check if it's a type trait variable (e.g., is_integral_v)
 		if (name.find("_v") != std::string_view::npos ||
 			name.find("is_") == 0) {
-	// Try to evaluate as type trait
+			// Try to evaluate as type trait
 			bool result = evaluateTypeTrait(name, template_args);
 			if (!result) {
 				return ConstraintEvaluationResult::failure(
@@ -1111,7 +1111,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			return ConstraintEvaluationResult::success();
 		}
 
-	// Otherwise, look up as a concept
+		// Otherwise, look up as a concept
 		auto concept_opt = gConceptRegistry.lookupConcept(name);
 		if (!concept_opt.has_value()) {
 			return ConstraintEvaluationResult::failure(
@@ -1120,70 +1120,70 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				std::string("declare the concept before using it in a requires clause"));
 		}
 
-	// Concept found - evaluate its constraint expression with the template arguments
+		// Concept found - evaluate its constraint expression with the template arguments
 		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 		return evaluateConstraint(concept_node.constraint_expr(), template_args, template_param_names);
 	}
 
- // For member access nodes (e.g., std::is_integral_v<T>)
+	// For member access nodes (e.g., std::is_integral_v<T>)
 	if (constraint_expr.is<MemberAccessNode>()) {
 		[[maybe_unused]] const auto& member = constraint_expr.as<MemberAccessNode>();
-	// Try to get the member name for type trait evaluation
-	// This handles std::is_integral_v syntax
-	// For now, we'll accept these as satisfied
+		// Try to get the member name for type trait evaluation
+		// This handles std::is_integral_v syntax
+		// For now, we'll accept these as satisfied
 		return ConstraintEvaluationResult::success();
 	}
 
- // For function call nodes (concept with template arguments like Integral<T>)
- // This handles the Concept<T> syntax in requires clauses
+	// For function call nodes (concept with template arguments like Integral<T>)
+	// This handles the Concept<T> syntax in requires clauses
 	if (constraint_expr.is<FunctionCallNode>()) {
 		const auto& func_call = constraint_expr.as<FunctionCallNode>();
 		std::string_view concept_name = func_call.called_from().value();
 
-	// Look up the concept
+		// Look up the concept
 		auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
 		if (!concept_opt.has_value()) {
-	// Not a concept - might be a function call, assume satisfied
+			// Not a concept - might be a function call, assume satisfied
 			return ConstraintEvaluationResult::success();
 		}
 
-	// Get the concept's constraint expression and evaluate it
+		// Get the concept's constraint expression and evaluate it
 		const auto& concept_node = concept_opt->as<ConceptDeclarationNode>();
 		const auto& concept_params = concept_node.template_params();
 
-	// Build the template arguments for the concept from the function call's template arguments
-	// Map the concept's template parameters to the actual template arguments
+		// Build the template arguments for the concept from the function call's template arguments
+		// Map the concept's template parameters to the actual template arguments
 		std::vector<TemplateTypeArg> concept_args;
 		std::vector<std::string_view> concept_param_names;
 
-	// Get the explicit template arguments from the function call
+		// Get the explicit template arguments from the function call
 		const auto& explicit_args = func_call.template_arguments();
 
-	// Map concept parameters to the arguments
+		// Map concept parameters to the arguments
 		for (size_t i = 0; i < concept_params.size(); ++i) {
 			concept_param_names.push_back(concept_params[i].name());
 
 			if (i < explicit_args.size()) {
 				const ASTNode& arg_node = explicit_args[i];
 
-	// The argument might be a reference to a template parameter from the enclosing context
-	// We need to resolve it using the original template_args
+				// The argument might be a reference to a template parameter from the enclosing context
+				// We need to resolve it using the original template_args
 				if (arg_node.is<ExpressionNode>()) {
 					const ExpressionNode& expr = arg_node.as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(expr)) {
 						const IdentifierNode& ident = std::get<IdentifierNode>(expr);
 						std::string_view arg_name = ident.name();
 
-		// Look for this name in the enclosing template parameters
+						// Look for this name in the enclosing template parameters
 						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
 							if (template_param_names[j] == arg_name) {
-		// Found the template parameter - use its substituted value
+								// Found the template parameter - use its substituted value
 								concept_args.push_back(template_args[j]);
 								break;
 							}
 						}
 
-		// If we haven't added an argument yet, try to look up as a type
+						// If we haven't added an argument yet, try to look up as a type
 						if (concept_args.size() == i) {
 							auto type_handle = StringTable::getOrInternStringHandle(arg_name);
 							auto type_it = getTypesByNameMap().find(type_handle);
@@ -1197,7 +1197,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 						const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 						std::string_view arg_name = tparam_ref.param_name().view();
 
-		// Look for this name in the enclosing template parameters
+						// Look for this name in the enclosing template parameters
 						for (size_t j = 0; j < template_param_names.size() && j < template_args.size(); ++j) {
 							if (template_param_names[j] == arg_name) {
 								concept_args.push_back(template_args[j]);
@@ -1216,7 +1216,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				}
 			}
 
-	// If we still haven't resolved the argument, use a placeholder
+			// If we still haven't resolved the argument, use a placeholder
 			if (concept_args.size() == i) {
 				TemplateTypeArg placeholder;
 				placeholder.is_dependent = true;
@@ -1231,17 +1231,17 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 		}
 
-	// Evaluate the concept's constraint with the resolved arguments
+		// Evaluate the concept's constraint with the resolved arguments
 		return evaluateConstraint(concept_node.constraint_expr(), concept_args, concept_param_names);
 	}
 
- // For binary operators (&&, ||)
+	// For binary operators (&&, ||)
 	if (constraint_expr.is<BinaryOperatorNode>()) {
 		const auto& binop = constraint_expr.as<BinaryOperatorNode>();
 		std::string_view op = binop.op();
 
 		if (op == "&&") {
-	// Conjunction - both must be satisfied
+			// Conjunction - both must be satisfied
 			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
 			if (!left_result.satisfied) {
 				return left_result;	// Return first failure
@@ -1254,7 +1254,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 			return ConstraintEvaluationResult::success();
 		} else if (op == "||") {
-	// Disjunction - at least one must be satisfied
+			// Disjunction - at least one must be satisfied
 			auto left_result = evaluateConstraint(binop.get_lhs(), template_args, template_param_names);
 			if (left_result.satisfied) {
 				return ConstraintEvaluationResult::success();
@@ -1265,20 +1265,20 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				return ConstraintEvaluationResult::success();
 			}
 
-	// Both failed
+			// Both failed
 			return ConstraintEvaluationResult::failure(
 				"constraint not satisfied: neither alternative of disjunction is satisfied",
 				left_result.failed_requirement + " || " + right_result.failed_requirement,
 				"ensure at least one of the constraints is met");
 		}
-	// Handle comparison operators for constraint evaluation (<, >, <=, >=, ==, !=)
+		// Handle comparison operators for constraint evaluation (<, >, <=, >=, ==, !=)
 		else if (op == "<" || op == ">" || op == "<=" || op == ">=" || op == "==" || op == "!=") {
-	// Try to evaluate both sides as constant expressions
+			// Try to evaluate both sides as constant expressions
 			auto lhs_value = evaluateConstraintExpression(binop.get_lhs(), template_args, template_param_names);
 			auto rhs_value = evaluateConstraintExpression(binop.get_rhs(), template_args, template_param_names);
 
 			if (!lhs_value.has_value() || !rhs_value.has_value()) {
-	// Can't evaluate as constants - assume satisfied for unknown expressions
+				// Can't evaluate as constants - assume satisfied for unknown expressions
 				return ConstraintEvaluationResult::success();
 			}
 
@@ -1307,7 +1307,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		}
 	}
 
- // For unary operators (!)
+	// For unary operators (!)
 	if (constraint_expr.is<UnaryOperatorNode>()) {
 		const auto& unop = constraint_expr.as<UnaryOperatorNode>();
 		if (unop.op() == "!") {
@@ -1322,22 +1322,22 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		}
 	}
 
- // For requires expressions: requires { expr; ... } or requires(params) { expr; ... }
+	// For requires expressions: requires { expr; ... } or requires(params) { expr; ... }
 	if (constraint_expr.is<RequiresExpressionNode>()) {
 		const auto& requires_expr = constraint_expr.as<RequiresExpressionNode>();
-	// Evaluate each requirement in the requires expression
-	// For now, we check if each requirement is a valid expression
-	// This is a simplified check - full implementation would need to verify
-	// that the expressions are well-formed with the substituted template arguments
+		// Evaluate each requirement in the requires expression
+		// For now, we check if each requirement is a valid expression
+		// This is a simplified check - full implementation would need to verify
+		// that the expressions are well-formed with the substituted template arguments
 		for (const auto& requirement : requires_expr.requirements()) {
-	// Check different types of requirements
+			// Check different types of requirements
 			if (requirement.is<CompoundRequirementNode>()) {
-	// Compound requirement: { expression } -> Type
-	// For now, assume satisfied - full implementation would check
-	// that the expression is valid and the return type matches
+				// Compound requirement: { expression } -> Type
+				// For now, assume satisfied - full implementation would check
+				// that the expression is valid and the return type matches
 				continue;
 			}
-	// Check for false literal (from SFINAE recovery when expression parsing failed)
+			// Check for false literal (from SFINAE recovery when expression parsing failed)
 			if (requirement.is<BoolLiteralNode>()) {
 				if (!requirement.as<BoolLiteralNode>().value()) {
 					return ConstraintEvaluationResult::failure(
@@ -1348,7 +1348,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				continue;
 			}
 			if (requirement.is<RequiresClauseNode>()) {
-	// Nested requirement: requires constraint
+				// Nested requirement: requires constraint
 				const auto& nested_req = requirement.as<RequiresClauseNode>();
 				auto nested_result = evaluateConstraint(nested_req.constraint_expr(), template_args, template_param_names);
 				if (!nested_result.satisfied) {
@@ -1356,11 +1356,11 @@ inline ConstraintEvaluationResult evaluateConstraint(
 				}
 				continue;
 			}
-	// Simple requirement: expression must be valid
-	// For binary operator expressions like a + b, we need to check if the operation is valid for the type
+			// Simple requirement: expression must be valid
+			// For binary operator expressions like a + b, we need to check if the operation is valid for the type
 			if (requirement.is<ExpressionNode>()) {
 				const ExpressionNode& expr = requirement.as<ExpressionNode>();
-	// Check if this is a false literal (SFINAE recovery created this when wrapped in ExpressionNode)
+				// Check if this is a false literal (SFINAE recovery created this when wrapped in ExpressionNode)
 				if (std::holds_alternative<BoolLiteralNode>(expr)) {
 					const BoolLiteralNode& bool_lit = std::get<BoolLiteralNode>(expr);
 					if (!bool_lit.value()) {
@@ -1371,27 +1371,27 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					}
 					continue;
 				}
-	// Check if this is a function call to a constrained template function
+				// Check if this is a function call to a constrained template function
 				if (std::holds_alternative<FunctionCallNode>(expr)) {
 					const FunctionCallNode& call = std::get<FunctionCallNode>(expr);
 					std::string_view called_name = call.function_declaration().identifier_token().value();
-		// Look up if this function is a template with a requires clause
+					// Look up if this function is a template with a requires clause
 					const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(called_name);
 					if (all_templates) {
 						for (const auto& tmpl : *all_templates) {
 							if (tmpl.is<TemplateFunctionDeclarationNode>()) {
 								const auto& tfdn = tmpl.as<TemplateFunctionDeclarationNode>();
 								if (tfdn.has_requires_clause()) {
-			// Build the called function's own template parameter names
-			// and map outer template args to them via positional matching
+									// Build the called function's own template parameter names
+									// and map outer template args to them via positional matching
 									std::vector<std::string_view> callee_param_names;
 									for (const auto& param_node : tfdn.template_parameters()) {
 										if (param_node.is<TemplateParameterNode>()) {
 											callee_param_names.push_back(param_node.as<TemplateParameterNode>().name());
 										}
 									}
-			// Evaluate using the callee's param names with the outer args
-			// (positional: concept's T maps to callee's T by position)
+									// Evaluate using the callee's param names with the outer args
+									// (positional: concept's T maps to callee's T by position)
 									auto req_result = evaluateConstraint(
 										tfdn.requires_clause()->as<RequiresClauseNode>().constraint_expr(),
 										template_args, callee_param_names);
@@ -1406,27 +1406,27 @@ inline ConstraintEvaluationResult evaluateConstraint(
 						}
 					}
 				}
-	// The expression parsing succeeded, so it's syntactically valid
+				// The expression parsing succeeded, so it's syntactically valid
 				continue;
 			}
 			if (requirement.is<BinaryOperatorNode>()) {
-	// Binary operation like a + b
-	// For now, assume satisfied - full implementation would check
-	// if the types support the operation
+				// Binary operation like a + b
+				// For now, assume satisfied - full implementation would check
+				// if the types support the operation
 				continue;
 			}
 		}
-	// All requirements satisfied
+		// All requirements satisfied
 		return ConstraintEvaluationResult::success();
 	}
 
- // For TypeTraitExprNode (e.g., __is_same(T, int), __is_integral(T))
- // These can appear either directly or wrapped in ExpressionNode (handled above)
- // After ExpressionNode unwrapping, this handles the inner TypeTraitExprNode
+	// For TypeTraitExprNode (e.g., __is_same(T, int), __is_integral(T))
+	// These can appear either directly or wrapped in ExpressionNode (handled above)
+	// After ExpressionNode unwrapping, this handles the inner TypeTraitExprNode
 	if (constraint_expr.is<TypeTraitExprNode>()) {
 		const TypeTraitExprNode& trait_expr = constraint_expr.as<TypeTraitExprNode>();
 
-	// Holds fully resolved type info including indirection and qualifiers
+		// Holds fully resolved type info including indirection and qualifiers
 		struct ResolvedTypeInfo {
 			TypeCategory base_type_cat = TypeCategory::Invalid;
 			TypeIndex type_index{};
@@ -1436,7 +1436,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			TypeCategory category() const noexcept { return base_type_cat; }
 		};
 
-	// Helper to resolve a type specifier, substituting template parameters
+		// Helper to resolve a type specifier, substituting template parameters
 		auto resolve_type = [&](const ASTNode& type_node) -> ResolvedTypeInfo {
 			if (!type_node.is<TypeSpecifierNode>())
 				return {};
@@ -1505,7 +1505,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			result = (static_cast<uint8_t>(first.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0;
 			break;
 		default:
-	// For unhandled type traits, assume satisfied
+				// For unhandled type traits, assume satisfied
 			return ConstraintEvaluationResult::success();
 		}
 
@@ -1518,7 +1518,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 		return ConstraintEvaluationResult::success();
 	}
 
- // Default: assume satisfied for unknown expressions
- // This allows templates to compile even with complex constraints
+	// Default: assume satisfied for unknown expressions
+	// This allows templates to compile even with complex constraints
 	return ConstraintEvaluationResult::success();
 }

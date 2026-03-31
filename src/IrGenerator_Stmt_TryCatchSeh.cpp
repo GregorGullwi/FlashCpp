@@ -7,15 +7,15 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		active_try_statement_depth_ -= 1;
 	};
 
-	// Generate try-catch-finally structure
-	// For now, we'll generate a simplified version that doesn't actually implement exception handling
-	// but allows the code to compile and run
+		// Generate try-catch-finally structure
+		// For now, we'll generate a simplified version that doesn't actually implement exception handling
+		// but allows the code to compile and run
 
-	// Generate unique labels for exception handling using StringBuilder
+		// Generate unique labels for exception handling using StringBuilder
 	static size_t try_counter = 0;
 	size_t current_try_id = try_counter++;
 
-	// Create and commit each label separately to avoid StringBuilder overlap
+		// Create and commit each label separately to avoid StringBuilder overlap
 	StringBuilder handlers_sb;
 	handlers_sb.append("__try_handlers_").append(current_try_id);
 	std::string_view handlers_label = handlers_sb.commit();
@@ -28,12 +28,12 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 	handlers_end_sb.append("__try_handlers_end_").append(current_try_id);
 	std::string_view handlers_end_label = handlers_end_sb.commit();
 
-	// Emit TryBegin marker
+		// Emit TryBegin marker
 	ir_.addInstruction(IrInstruction(IrOpcode::TryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
-	// Enable capture of try-block-scope vars for Phase 1 cleanup.
-	// Nested try blocks must preserve the outer capture state so outer-scope
-	// destructible locals remain available to the outer landing pad.
+		// Enable capture of try-block-scope vars for Phase 1 cleanup.
+		// Nested try blocks must preserve the outer capture state so outer-scope
+		// destructible locals remain available to the outer landing pad.
 	bool saved_capture_try_cleanup = capture_try_cleanup_;
 	size_t saved_capture_try_cleanup_depth = capture_try_cleanup_depth_;
 	std::vector<ScopeVariableInfo> saved_captured_try_cleanup_vars = std::move(captured_try_cleanup_vars_);
@@ -41,11 +41,11 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 	capture_try_cleanup_ = true;
 	capture_try_cleanup_depth_ = scope_stack_.size() + 1;
 
-	// Visit try block
+		// Visit try block
 	visit(node.try_block());
 
-	// Disable capture and collect the vars — only converted to StringHandle pairs
-	// when there is actually a first catch handler that needs them.
+		// Disable capture and collect the vars — only converted to StringHandle pairs
+		// when there is actually a first catch handler that needs them.
 	capture_try_cleanup_ = false;
 	std::vector<ScopeVariableInfo> try_scope_cleanup_vars = std::move(captured_try_cleanup_vars_);
 	capture_try_cleanup_ = saved_capture_try_cleanup;
@@ -59,44 +59,44 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 		}
 	}
 
-	// Emit TryEnd marker
+		// Emit TryEnd marker
 	ir_.addInstruction(IrOpcode::TryEnd, {}, node.try_token());
 
-	// Jump to parent continuation on successful try block execution
+		// Jump to parent continuation on successful try block execution
 	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
-	// Parent continuation label must remain in the parent runtime range.
+		// Parent continuation label must remain in the parent runtime range.
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
-	// Skip over out-of-line catch handlers during normal execution.
+		// Skip over out-of-line catch handlers during normal execution.
 	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(handlers_end_label)}, node.try_token()));
 
-	// Emit label for exception handlers
+		// Emit label for exception handlers
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(handlers_label)}, node.try_token()));
 
-	// Visit catch clauses
+		// Visit catch clauses
 	for (size_t catch_index = 0; catch_index < node.catch_clauses().size(); ++catch_index) {
 		const auto& catch_clause_node = node.catch_clauses()[catch_index];
 		const auto& catch_clause = catch_clause_node.as<CatchClauseNode>();
 
-	// Generate unique label for this catch handler end using StringBuilder
+			// Generate unique label for this catch handler end using StringBuilder
 		StringBuilder catch_end_sb;
 		catch_end_sb.append("__catch_end_").append(current_try_id).append("_").append(catch_index);
 		std::string_view catch_end_label = catch_end_sb.commit();
 
-	// If this is a typed catch (not catch(...))
+			// If this is a typed catch (not catch(...))
 		if (!catch_clause.is_catch_all()) {
 			const auto& exception_decl = *catch_clause.exception_declaration();
 			const auto& decl = exception_decl.as<DeclarationNode>();
 			const auto& type_node = decl.type_node().as<TypeSpecifierNode>();
 
-	// Get type information
+				// Get type information
 			TypeIndex type_index = type_node.type_index();
 
-	// Allocate a temporary for the caught exception
+				// Allocate a temporary for the caught exception
 			TempVar exception_temp = var_counter.next();
 
-	// Emit CatchBegin marker with exception type and qualifiers
+				// Emit CatchBegin marker with exception type and qualifiers
 			CatchBeginOp catch_op;
 			catch_op.exception_temp = exception_temp;
 			catch_op.type_index = type_index.withCategory(type_node.type());
@@ -105,25 +105,25 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			catch_op.is_const = type_node.is_const();
 			catch_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_lvalue_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 			catch_op.is_catch_all = false;  // This is a typed catch, not catch(...)
-	// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
 			if (catch_index == 0) {
 				catch_op.cleanup_vars = try_cleanup_vars;
 			}
 			ir_.addInstruction(IrInstruction(IrOpcode::CatchBegin, std::move(catch_op), catch_clause.catch_token()));
 
-	// Add the exception variable to the symbol table for the catch block scope
+				// Add the exception variable to the symbol table for the catch block scope
 			symbol_table.enter_scope(ScopeType::Block);
 
-	// Register the exception parameter in the symbol table
+				// Register the exception parameter in the symbol table
 			std::string_view exception_var_name = decl.identifier_token().value();
 			if (!exception_var_name.empty()) {
-		// Create a variable declaration for the exception parameter
+					// Create a variable declaration for the exception parameter
 				VariableDeclOp decl_op;
 				decl_op.type_index = type_node.type_index();
 				decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 				decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
 
-		// Create a TypedValue for the initializer
+					// Create a TypedValue for the initializer
 				TypedValue init_value;
 				init_value.setType(type_node.type());
 				init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
@@ -145,11 +145,11 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), decl.identifier_token()));
 
-		// Add to symbol table
+					// Add to symbol table
 				symbol_table.insert(exception_var_name, exception_decl);
 			}
 		} else {
-	// catch(...) - catches all exceptions
+				// catch(...) - catches all exceptions
 			CatchBeginOp catch_op;
 			catch_op.exception_temp = TempVar(0);
 			catch_op.type_index = TypeIndex(0);
@@ -158,7 +158,7 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			catch_op.is_const = false;
 			catch_op.ref_qualifier = CVReferenceQualifier::None;
 			catch_op.is_catch_all = true;  // This IS catch(...)
-	// Phase 1: first handler gets the cleanup vars for try-block-local destructors
+				// Phase 1: first handler gets the cleanup vars for try-block-local destructors
 			if (catch_index == 0) {
 				catch_op.cleanup_vars = try_cleanup_vars;
 			}
@@ -166,15 +166,15 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 			symbol_table.enter_scope(ScopeType::Block);
 		}
 
-	// Visit catch block body
+			// Visit catch block body
 		catch_scope_stack_.push_back({scope_stack_.size(), active_try_statement_depth_});
 		visit(catch_clause.body());
 
-	// C++20 [except.handle]/15: in a constructor or destructor function-try-block,
-	// if control reaches the end of a catch handler without an explicit throw or
-	// return, the current exception is implicitly rethrown.  Emit Rethrow here while
-	// the catch scope is still on the stack so emitActiveCatchScopeDestructors works.
-	// When the body already ends with throw/return the Rethrow is dead code but harmless.
+			// C++20 [except.handle]/15: in a constructor or destructor function-try-block,
+			// if control reaches the end of a catch handler without an explicit throw or
+			// return, the current exception is implicitly rethrown.  Emit Rethrow here while
+			// the catch scope is still on the stack so emitActiveCatchScopeDestructors works.
+			// When the body already ends with throw/return the Rethrow is dead code but harmless.
 		if (node.is_ctor_dtor_function_try()) {
 			emitActiveCatchScopeDestructors();
 			ir_.addInstruction(IrOpcode::Rethrow, {}, catch_clause.catch_token());
@@ -182,24 +182,24 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 
 		catch_scope_stack_.pop_back();
 
-	// Emit CatchEnd marker
+			// Emit CatchEnd marker
 		ir_.addInstruction(IrOpcode::CatchEnd, CatchEndOp{.continuation_label = end_label}, catch_clause.catch_token());
 
-	// Exit catch block scope
+			// Exit catch block scope
 		symbol_table.exit_scope();
 
-	// Jump to end after catch block
+			// Jump to end after catch block
 		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, catch_clause.catch_token()));
 
-	// Emit catch end label
+			// Emit catch end label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(catch_end_label)}, catch_clause.catch_token()));
 	}
 
-	// End of out-of-line catch handlers; resume normal flow after try/catch.
-	// Before the handlers_end_label, emit an ElfCatchNoMatch marker if any typed
-	// (non-catch-all) handlers were present.  In the ELF code generator this
-	// inserts "load exc_ptr; JMP cleanup_lp" so the exception propagates correctly
-	// when no handler matched.  On Windows this is a no-op.
+		// End of out-of-line catch handlers; resume normal flow after try/catch.
+		// Before the handlers_end_label, emit an ElfCatchNoMatch marker if any typed
+		// (non-catch-all) handlers were present.  In the ELF code generator this
+		// inserts "load exc_ptr; JMP cleanup_lp" so the exception propagates correctly
+		// when no handler matched.  On Windows this is a no-op.
 	bool has_typed_handlers = false;
 	for (size_t i = 0; i < node.catch_clauses().size(); ++i) {
 		if (!node.catch_clauses()[i].as<CatchClauseNode>().is_catch_all()) {
@@ -218,19 +218,19 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 	if (node.is_rethrow()) {
 		emitActiveCatchScopeDestructors();
-	// throw; (rethrow current exception)
+			// throw; (rethrow current exception)
 		ir_.addInstruction(IrOpcode::Rethrow, {}, node.throw_token());
 	} else {
-	// throw expression;
+			// throw expression;
 		const auto& expr = *node.expression();
 
-	// Generate code for the expression to throw
+			// Generate code for the expression to throw
 		ExprResult expr_result = visitExpressionNode(expr.as<ExpressionNode>());
 
 		TypeCategory expr_type = expr_result.typeEnum();
 		size_t type_size = static_cast<size_t>(expr_result.size_in_bits.value);
 
-	// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
+			// Extract TypeIndex from ExprResult (.type_index carries legacy slot-4 metadata)
 		TypeIndex exception_type_index = expr_result.type_index;
 
 		IrValue exception_value;
@@ -249,7 +249,7 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 		} else if (const auto* d_val = std::get_if<double>(&expr_result.value)) {
 			exception_value = *d_val;
 		} else {
-	// Unknown operand type - log warning and default to zero value
+				// Unknown operand type - log warning and default to zero value
 			FLASH_LOG(Codegen, Warning, "Unknown operand type in throw expression, defaulting to zero");
 			exception_value = static_cast<unsigned long long>(0);
 		}
@@ -290,7 +290,7 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 			emitActiveCatchScopeDestructors();
 		}
 
-	// Create ThrowOp with typed data
+			// Create ThrowOp with typed data
 		ThrowOp throw_op;
 		throw_op.type_index = exception_type_index.withCategory(expr_type);
 		throw_op.size_in_bytes = type_size / 8;	// Convert bits to bytes
@@ -303,14 +303,14 @@ void AstToIr::visitThrowStatementNode(const ThrowStatementNode& node) {
 }
 
 void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& node) {
-	// Generate __try/__except structure
-	// __try { try_block } __except(filter) { except_block }
+		// Generate __try/__except structure
+		// __try { try_block } __except(filter) { except_block }
 
-	// Generate unique labels using StringBuilder
+		// Generate unique labels using StringBuilder
 	static size_t seh_try_counter = 0;
 	size_t current_seh_id = seh_try_counter++;
 
-	// Create labels
+		// Create labels
 	StringBuilder except_sb;
 	except_sb.append("__seh_except_").append(current_seh_id);
 	std::string_view except_label = except_sb.commit();
@@ -323,12 +323,12 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 	except_end_sb.append("__seh_except_end_").append(current_seh_id);
 	std::string_view except_end_label = except_end_sb.commit();
 
-	// Get the __except clause and check if filter is constant
+		// Get the __except clause and check if filter is constant
 	const auto& except_clause = node.except_clause().as<SehExceptClauseNode>();
 	const auto& filter_expr = except_clause.filter_expression().as<SehFilterExpressionNode>();
 	const auto& filter_inner_expr = filter_expr.expression().as<ExpressionNode>();
 
-	// Detect constant filter: numeric literal or unary-minus on numeric literal
+		// Detect constant filter: numeric literal or unary-minus on numeric literal
 	bool is_constant_filter = false;
 	int32_t constant_filter_value = 0;
 	TempVar filter_result = var_counter.next();
@@ -352,63 +352,63 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 	}
 
 	if (is_constant_filter) {
-	// For constant filters, evaluate the expression to emit any necessary IR
-	// (this is just a constant load, harmless)
+			// For constant filters, evaluate the expression to emit any necessary IR
+			// (this is just a constant load, harmless)
 		visitExpressionNode(filter_inner_expr);
 	}
 
-	// Push SEH context for __leave statement resolution
+		// Push SEH context for __leave statement resolution
 	pushSehContext(end_label, std::string_view(), false);
 
-	// Emit SehTryBegin marker
+		// Emit SehTryBegin marker
 	ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
 
-	// Visit __try block
+		// Visit __try block
 	visit(node.try_block());
 
-	// Emit SehTryEnd marker
+		// Emit SehTryEnd marker
 	ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
 
-	// Pop SEH context after __try block
+		// Pop SEH context after __try block
 	popSehContext();
 
-	// Jump to end after successful __try block execution
+		// Jump to end after successful __try block execution
 	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 
-	// Saved exception code var for GetExceptionCode() in __except body
+		// Saved exception code var for GetExceptionCode() in __except body
 	TempVar saved_exception_code_var;
 	bool has_saved_exception_code_for_body = false;
 
-	// For non-constant filters, emit a filter funclet between the try block and except handler
+		// For non-constant filters, emit a filter funclet between the try block and except handler
 	if (!is_constant_filter) {
 		StringBuilder filter_sb;
 		filter_sb.append("__seh_filter_").append(current_seh_id);
 		std::string_view filter_label = filter_sb.commit();
 
-	// Emit filter funclet label
+			// Emit filter funclet label
 		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(filter_label)}, except_clause.except_token()));
 
-	// Emit SehFilterBegin marker (funclet prologue: saves RCX to [rsp+8], sets RBP from RDX)
+			// Emit SehFilterBegin marker (funclet prologue: saves RCX to [rsp+8], sets RBP from RDX)
 		ir_.addInstruction(IrOpcode::SehFilterBegin, {}, except_clause.except_token());
 
-	// Allocate a parent-frame slot to save ExceptionCode for use in __except body
+			// Allocate a parent-frame slot to save ExceptionCode for use in __except body
 		saved_exception_code_var = var_counter.next();
 		has_saved_exception_code_for_body = true;
 		SehSaveExceptionCodeOp save_op;
 		save_op.saved_var = saved_exception_code_var;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehSaveExceptionCode, std::move(save_op), except_clause.except_token()));
 
-	// Set filter funclet context so GetExceptionCode() uses the filter path (reads RCX)
+			// Set filter funclet context so GetExceptionCode() uses the filter path (reads RCX)
 		seh_in_filter_funclet_ = true;
 
-	// Evaluate the filter expression inside the funclet
-	// RBP points to parent frame, so local variable access works correctly
+			// Evaluate the filter expression inside the funclet
+			// RBP points to parent frame, so local variable access works correctly
 		ExprResult filter_result_expr = visitExpressionNode(filter_inner_expr);
 
-	// Restore filter funclet context
+			// Restore filter funclet context
 		seh_in_filter_funclet_ = false;
 
-	// Determine filter result - TempVar or constant
+			// Determine filter result - TempVar or constant
 		SehFilterEndOp filter_end_op;
 		if (const auto* temp_var = std::get_if<TempVar>(&filter_result_expr.value)) {
 			filter_result = *temp_var;
@@ -417,7 +417,7 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 			filter_end_op.constant_result = 0;
 			FLASH_LOG(Codegen, Debug, "SEH filter is runtime expression, funclet filter_result=", filter_result.var_number);
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&filter_result_expr.value)) {
-	// Filter expression returned a constant (e.g. comma expr ending in literal 1)
+				// Filter expression returned a constant (e.g. comma expr ending in literal 1)
 			filter_end_op.filter_result = filter_result;
 			filter_end_op.is_constant_result = true;
 			filter_end_op.constant_result = static_cast<int32_t>(*ull_val);
@@ -431,10 +431,10 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 		ir_.addInstruction(IrInstruction(IrOpcode::SehFilterEnd, std::move(filter_end_op), except_clause.except_token()));
 	}
 
-	// Emit label for __except handler entry
+		// Emit label for __except handler entry
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_label)}, node.try_token()));
 
-	// Emit SehExceptBegin marker with filter result
+		// Emit SehExceptBegin marker with filter result
 	SehExceptBeginOp except_op;
 	except_op.filter_result = filter_result;
 	except_op.is_constant_filter = is_constant_filter;
@@ -442,10 +442,10 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 	except_op.except_end_label = except_end_label;
 	ir_.addInstruction(IrInstruction(IrOpcode::SehExceptBegin, std::move(except_op), except_clause.except_token()));
 
-	// Enter scope for __except block
+		// Enter scope for __except block
 	symbol_table.enter_scope(ScopeType::Block);
 
-	// Set up GetExceptionCode() context for __except body, saving outer context for nesting
+		// Set up GetExceptionCode() context for __except body, saving outer context for nesting
 	bool outer_has_saved = seh_has_saved_exception_code_;
 	TempVar outer_saved_var = seh_saved_exception_code_var_;
 	if (has_saved_exception_code_for_body) {
@@ -453,44 +453,44 @@ void AstToIr::visitSehTryExceptStatementNode(const SehTryExceptStatementNode& no
 		seh_saved_exception_code_var_ = saved_exception_code_var;
 	}
 
-	// Visit __except block body
+		// Visit __except block body
 	visit(except_clause.body());
 
-	// Restore outer GetExceptionCode() context
+		// Restore outer GetExceptionCode() context
 	seh_has_saved_exception_code_ = outer_has_saved;
 	seh_saved_exception_code_var_ = outer_saved_var;
 
-	// Emit SehExceptEnd marker
+		// Emit SehExceptEnd marker
 	ir_.addInstruction(IrOpcode::SehExceptEnd, {}, except_clause.except_token());
 
-	// Exit __except block scope
+		// Exit __except block scope
 	symbol_table.exit_scope();
 
-	// Jump to end after __except block
+		// Jump to end after __except block
 	ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = StringTable::getOrInternStringHandle(end_label)}, except_clause.except_token()));
 
-	// Emit except end label
+		// Emit except end label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(except_end_label)}, except_clause.except_token()));
 
-	// Emit end label
+		// Emit end label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 }
 
 void AstToIr::visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& node) {
-	// Generate __try/__finally structure
-	// __try { try_block } __finally { finally_block }
-	//
-	// Control flow:
-	// 1. Execute __try block
-	// 2. On normal exit: jump to __finally handler
-	// 3. Execute __finally handler
-	// 4. Continue after SEH block
+		// Generate __try/__finally structure
+		// __try { try_block } __finally { finally_block }
+		//
+		// Control flow:
+		// 1. Execute __try block
+		// 2. On normal exit: jump to __finally handler
+		// 3. Execute __finally handler
+		// 4. Continue after SEH block
 
-	// Generate unique labels using StringBuilder
+		// Generate unique labels using StringBuilder
 	static size_t seh_finally_counter = 0;
 	size_t current_seh_id = seh_finally_counter++;
 
-	// Create labels
+		// Create labels
 	StringBuilder finally_sb;
 	finally_sb.append("__seh_finally_").append(current_seh_id);
 	std::string_view finally_label = finally_sb.commit();
@@ -499,56 +499,56 @@ void AstToIr::visitSehTryFinallyStatementNode(const SehTryFinallyStatementNode& 
 	end_sb.append("__seh_finally_end_").append(current_seh_id);
 	std::string_view end_label = end_sb.commit();
 
-	// Push SEH context for __leave statement resolution
+		// Push SEH context for __leave statement resolution
 	pushSehContext(end_label, finally_label, true);
 
-	// Emit SehTryBegin marker
+		// Emit SehTryBegin marker
 	ir_.addInstruction(IrInstruction(IrOpcode::SehTryBegin, BranchOp{.target_label = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
-	// Visit __try block
+		// Visit __try block
 	visit(node.try_block());
 
-	// Emit SehTryEnd marker
+		// Emit SehTryEnd marker
 	ir_.addInstruction(IrOpcode::SehTryEnd, {}, node.try_token());
 
-	// Pop SEH context after __try block
+		// Pop SEH context after __try block
 	popSehContext();
 
-	// Normal flow: call the __finally funclet then jump to end
+		// Normal flow: call the __finally funclet then jump to end
 	SehFinallyCallOp call_op;
 	call_op.funclet_label = finally_label;
 	call_op.end_label = end_label;
 	ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), node.try_token()));
 
-	// Emit label for __finally funclet entry point
+		// Emit label for __finally funclet entry point
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(finally_label)}, node.try_token()));
 
-	// Get the __finally clause
+		// Get the __finally clause
 	const auto& finally_clause = node.finally_clause().as<SehFinallyClauseNode>();
 
-	// Emit SehFinallyBegin marker (sets up funclet prologue)
+		// Emit SehFinallyBegin marker (sets up funclet prologue)
 	ir_.addInstruction(IrOpcode::SehFinallyBegin, {}, finally_clause.finally_token());
 
-	// Enter scope for __finally block
+		// Enter scope for __finally block
 	symbol_table.enter_scope(ScopeType::Block);
 
-	// Visit __finally block body
+		// Visit __finally block body
 	visit(finally_clause.body());
 
-	// Emit SehFinallyEnd marker (funclet epilogue + ret)
+		// Emit SehFinallyEnd marker (funclet epilogue + ret)
 	ir_.addInstruction(IrOpcode::SehFinallyEnd, {}, finally_clause.finally_token());
 
-	// Exit __finally block scope
+		// Exit __finally block scope
 	symbol_table.exit_scope();
 
-	// Emit end label (execution continues here after SehFinallyCall)
+		// Emit end label (execution continues here after SehFinallyCall)
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(end_label)}, node.try_token()));
 }
 
 void AstToIr::visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
-	// Generate __leave statement
-	// __leave jumps to the end of the current __try block
-	// If the __try has a __finally, it calls the __finally funclet first
+		// Generate __leave statement
+		// __leave jumps to the end of the current __try block
+		// If the __try has a __finally, it calls the __finally funclet first
 
 	const SehContext* seh_ctx = getCurrentSehContext();
 	if (!seh_ctx) {
@@ -558,13 +558,13 @@ void AstToIr::visitSehLeaveStatementNode(const SehLeaveStatementNode& node) {
 	}
 
 	if (seh_ctx->has_finally) {
-	// __leave inside __try/__finally: call the funclet then jump to end
+			// __leave inside __try/__finally: call the funclet then jump to end
 		SehFinallyCallOp call_op;
 		call_op.funclet_label = seh_ctx->finally_label;
 		call_op.end_label = seh_ctx->try_end_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), node.leave_token()));
 	} else {
-	// __leave inside __try/__except: just jump to end of __try block
+			// __leave inside __try/__except: just jump to end of __try block
 		SehLeaveOp leave_op;
 		leave_op.target_label = seh_ctx->try_end_label;
 		ir_.addInstruction(IrInstruction(IrOpcode::SehLeave, std::move(leave_op), node.leave_token()));
@@ -598,11 +598,11 @@ const AstToIr::SehContext* AstToIr::getCurrentSehContext() const {
 // Returns true if any finally calls were emitted.
 bool AstToIr::emitSehFinallyCallsBeforeReturn(const Token& token) {
 	bool emitted = false;
- // Walk from innermost (back) to outermost (front)
+	// Walk from innermost (back) to outermost (front)
 	for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= 0; --i) {
 		const SehContext& ctx = seh_context_stack_[i];
 		if (ctx.has_finally) {
-	// Generate a unique post-finally label for this return point
+			// Generate a unique post-finally label for this return point
 			static size_t seh_return_finally_counter = 0;
 			size_t id = seh_return_finally_counter++;
 
@@ -615,7 +615,7 @@ bool AstToIr::emitSehFinallyCallsBeforeReturn(const Token& token) {
 			call_op.end_label = post_label;
 			ir_.addInstruction(IrInstruction(IrOpcode::SehFinallyCall, std::move(call_op), token));
 
-	// Emit the post-finally label so execution continues here after the funclet returns
+			// Emit the post-finally label so execution continues here after the funclet returns
 			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = StringTable::getOrInternStringHandle(post_label)}, token));
 
 			emitted = true;
@@ -638,7 +638,7 @@ bool AstToIr::emitSehFinallyCallsBeforeBreakContinue(const Token& token) {
 
 	size_t loop_seh_depth = loop_depth_stack_.back().seh_depth;
 	bool emitted = false;
- // Walk from innermost SEH context down to (but not including) the loop's entry depth
+	// Walk from innermost SEH context down to (but not including) the loop's entry depth
 	for (int i = static_cast<int>(seh_context_stack_.size()) - 1; i >= static_cast<int>(loop_seh_depth); --i) {
 		const SehContext& ctx = seh_context_stack_[i];
 		if (ctx.has_finally) {

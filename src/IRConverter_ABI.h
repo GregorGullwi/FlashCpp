@@ -65,10 +65,10 @@ static constexpr std::array<X64Register, 8> SYSV_FLOAT_PARAM_REGS = {
 template <typename TWriterClass>
 constexpr X64Register getIntParamReg(size_t index) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Linux: System V AMD64 ABI (6 integer parameter registers)
+		// Linux: System V AMD64 ABI (6 integer parameter registers)
 		return (index < SYSV_INT_PARAM_REGS.size()) ? SYSV_INT_PARAM_REGS[index] : X64Register::Count;
 	} else {
-	// Windows: Win64 ABI (4 integer parameter registers)
+		// Windows: Win64 ABI (4 integer parameter registers)
 		return (index < WIN64_INT_PARAM_REGS.size()) ? WIN64_INT_PARAM_REGS[index] : X64Register::Count;
 	}
 }
@@ -77,10 +77,10 @@ constexpr X64Register getIntParamReg(size_t index) {
 template <typename TWriterClass>
 constexpr X64Register getFloatParamReg(size_t index) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Linux: System V AMD64 ABI (8 float parameter registers)
+		// Linux: System V AMD64 ABI (8 float parameter registers)
 		return (index < SYSV_FLOAT_PARAM_REGS.size()) ? SYSV_FLOAT_PARAM_REGS[index] : X64Register::Count;
 	} else {
-	// Windows: Win64 ABI (4 float parameter registers)
+		// Windows: Win64 ABI (4 float parameter registers)
 		return (index < WIN64_FLOAT_PARAM_REGS.size()) ? WIN64_FLOAT_PARAM_REGS[index] : X64Register::Count;
 	}
 }
@@ -156,9 +156,9 @@ inline uint16_t getX64RegisterCodeViewCode(X64Register reg) {
 }
 
 inline std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
- // For RBP-relative addressing, temporary variables have negative offsets
- // TempVar with var_number N is at offset -(N * 8)
- // For example: var_number=1 → offset=-8, var_number=2 → offset=-16, var_number=3 → offset=-24, etc.
+	// For RBP-relative addressing, temporary variables have negative offsets
+	// TempVar with var_number N is at offset -(N * 8)
+	// For example: var_number=1 → offset=-8, var_number=2 → offset=-16, var_number=3 → offset=-24, etc.
 	if (stackVariableOffset < 0 && (stackVariableOffset % 8) == 0) {
 		size_t var_number = static_cast<size_t>(-stackVariableOffset / 8);
 		return TempVar(var_number);
@@ -200,9 +200,9 @@ struct RegisterAllocator {
 			if (reg.isDirty) {
 				func(reg.reg, reg.stackVariableOffset, reg.size_in_bits.value);
 				reg.isDirty = false;
-	// Clear the stack variable mapping after flushing to prevent stale register lookups.
-	// This ensures that subsequent code will reload from memory rather than using
-	// a potentially stale register value. INT_MIN is the sentinel value (see AllocatedRegister init).
+				// Clear the stack variable mapping after flushing to prevent stale register lookups.
+				// This ensures that subsequent code will reload from memory rather than using
+				// a potentially stale register value. INT_MIN is the sentinel value (see AllocatedRegister init).
 				reg.stackVariableOffset = INT_MIN;
 			}
 		}
@@ -224,7 +224,7 @@ struct RegisterAllocator {
 		reg_info.size_in_bits = SizeInBits{0};
 	}
 
- // Find which register (if any) currently holds a value for the given stack offset
+	// Find which register (if any) currently holds a value for the given stack offset
 	std::optional<X64Register> findRegisterForStackOffset(int32_t stackOffset) const {
 		for (const auto& reg : registers) {
 			if (reg.isAllocated && reg.stackVariableOffset == stackOffset) {
@@ -241,23 +241,23 @@ struct RegisterAllocator {
 				return reg;
 			}
 		}
-	// No free registers - need to spill one
-	// Return a sentinel value to indicate spilling is needed
+		// No free registers - need to spill one
+		// Return a sentinel value to indicate spilling is needed
 		throw InternalError("No registers available");
 	}
 
- // Find a register to spill (prefer non-dirty registers, avoid RSP/RBP)
+	// Find a register to spill (prefer non-dirty registers, avoid RSP/RBP)
 	std::optional<X64Register> findRegisterToSpill() {
 		return findRegisterToSpill(X64Register::Count);
 	}
 
- // Find a register to spill, excluding a specific register
+	// Find a register to spill, excluding a specific register
 	std::optional<X64Register> findRegisterToSpill(X64Register exclude) {
-	// Single pass: prefer non-dirty registers, but accept dirty ones if needed
+		// Single pass: prefer non-dirty registers, but accept dirty ones if needed
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
 
-	// Iterate only over general-purpose registers (RAX to R15)
+		// Iterate only over general-purpose registers (RAX to R15)
 		for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
 			if (registers[i].isAllocated &&
 				registers[i].reg != X64Register::RSP &&
@@ -265,45 +265,45 @@ struct RegisterAllocator {
 				registers[i].reg != exclude) {
 
 				if (!registers[i].isDirty) {
-		// Found a clean register - best case, return immediately
+					// Found a clean register - best case, return immediately
 					return registers[i].reg;
 				} else if (best_candidate == X64Register::Count) {
-		// Found a dirty register - keep it as fallback
+					// Found a dirty register - keep it as fallback
 					best_candidate = registers[i].reg;
 					found_dirty = true;
 				}
 			}
 		}
 
-	// Return the dirty register if we found one, otherwise nullopt
+		// Return the dirty register if we found one, otherwise nullopt
 		return (found_dirty) ? std::optional<X64Register>(best_candidate) : std::nullopt;
 	}
 
- // Find an XMM register to spill (prefer non-dirty registers)
+	// Find an XMM register to spill (prefer non-dirty registers)
 	std::optional<X64Register> findXMMRegisterToSpill() {
-	// Single pass: prefer non-dirty registers, but accept dirty ones if needed
+		// Single pass: prefer non-dirty registers, but accept dirty ones if needed
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
 
-	// Iterate only over XMM registers (XMM0 to XMM15)
+		// Iterate only over XMM registers (XMM0 to XMM15)
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (registers[i].isAllocated) {
 				if (!registers[i].isDirty) {
-		// Found a clean register - best case, return immediately
+					// Found a clean register - best case, return immediately
 					return registers[i].reg;
 				} else if (best_candidate == X64Register::Count) {
-		// Found a dirty register - keep it as fallback
+					// Found a dirty register - keep it as fallback
 					best_candidate = registers[i].reg;
 					found_dirty = true;
 				}
 			}
 		}
 
-	// Return the dirty register if we found one, otherwise nullopt
+		// Return the dirty register if we found one, otherwise nullopt
 		return (found_dirty) ? std::optional<X64Register>(best_candidate) : std::nullopt;
 	}
 
- // Allocate an XMM register specifically for floating-point operations
+	// Allocate an XMM register specifically for floating-point operations
 	AllocatedRegister& allocateXMM() {
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (!registers[i].isAllocated) {
@@ -341,7 +341,7 @@ struct RegisterAllocator {
 
 	std::optional<X64Register> tryGetStackVariableRegister(int32_t stackVariableOffset) const {
 		for (auto& reg : registers) {
-	// Skip RSP and RBP - they should never be used as general-purpose registers
+			// Skip RSP and RBP - they should never be used as general-purpose registers
 			if (reg.reg == X64Register::RSP || reg.reg == X64Register::RBP) {
 				continue;
 			}
@@ -356,7 +356,7 @@ struct RegisterAllocator {
 		if (reg == X64Register::Count || !registers[static_cast<int>(reg)].isAllocated) {
 			throw InternalError("set_stack_variable_offset: register not allocated");
 		}
-	// Clear any other registers that think they hold this stack variable
+		// Clear any other registers that think they hold this stack variable
 		for (auto& r : registers) {
 			if (r.stackVariableOffset == stackVariableOffset && r.reg != reg) {
 				r.stackVariableOffset = INT_MIN; // Clear the mapping
@@ -368,8 +368,8 @@ struct RegisterAllocator {
 		registers[static_cast<int>(reg)].isDirty = true;
 	}
 
- // Clear all register associations for a specific stack offset
- // Use this when storing to a stack slot to invalidate any cached register values
+	// Clear all register associations for a specific stack offset
+	// Use this when storing to a stack slot to invalidate any cached register values
 	void clearStackVariableAssociations(int32_t stackVariableOffset) {
 		for (auto& r : registers) {
 			if (r.stackVariableOffset == stackVariableOffset) {
@@ -381,20 +381,20 @@ struct RegisterAllocator {
 
 	OpCodeWithSize get_reg_reg_move_op_code(X64Register dst_reg, X64Register src_reg, size_t size_in_bytes) {
 		OpCodeWithSize result;
-	/*if (dst_reg == src_reg) {	// removed for now, since this is an optimization
+		/*if (dst_reg == src_reg) {	// removed for now, since this is an optimization
 			return result;
 		}*/
 
-	// Handle invalid size or cross-type register moves (e.g., XMM to GP with size 0)
+		// Handle invalid size or cross-type register moves (e.g., XMM to GP with size 0)
 		if (size_in_bytes < 1 || size_in_bytes > 8) {
-	// Return empty opcode for invalid moves
+			// Return empty opcode for invalid moves
 			return result;
 		}
 
-	// For 64-bit moves, we need the REX prefix (0x48)
+		// For 64-bit moves, we need the REX prefix (0x48)
 		if (size_in_bytes == 8) {
-	// Build REX prefix: 0100WRXB
-	// W=1 for 64-bit, R=1 if src_reg is R8-R15, B=1 if dst_reg is R8-R15
+			// Build REX prefix: 0100WRXB
+			// W=1 for 64-bit, R=1 if src_reg is R8-R15, B=1 if dst_reg is R8-R15
 			uint8_t rex = 0x48;	// REX.W = 1
 			if (static_cast<uint8_t>(src_reg) >= 8) {
 				rex |= 0x04;	 // REX.R = 1
@@ -404,13 +404,13 @@ struct RegisterAllocator {
 			}
 			result.op_codes[0] = rex;
 			result.op_codes[1] = 0x89;  // MOV r64, r64
-	// ModR/M: Mod=11 (register-to-register), Reg=src_reg (lower 3 bits), R/M=dst_reg (lower 3 bits)
+			// ModR/M: Mod=11 (register-to-register), Reg=src_reg (lower 3 bits), R/M=dst_reg (lower 3 bits)
 			result.op_codes[2] = 0xC0 + ((static_cast<uint8_t>(src_reg) & 0x07) << 3) + (static_cast<uint8_t>(dst_reg) & 0x07);
 			result.size_in_bytes = 3;
 		}
-	// For 32-bit moves, we may need REX prefix for R8-R15
+		// For 32-bit moves, we may need REX prefix for R8-R15
 		else if (size_in_bytes == 4) {
-	// Check if we need REX prefix for extended registers
+			// Check if we need REX prefix for extended registers
 			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
 				uint8_t rex = 0x40;	// Base REX prefix
 				if (static_cast<uint8_t>(src_reg) >= 8) {
@@ -429,10 +429,10 @@ struct RegisterAllocator {
 				result.size_in_bytes = 2;
 			}
 		}
-	// For 16-bit moves, we need the 66 prefix
+		// For 16-bit moves, we need the 66 prefix
 		else if (size_in_bytes == 2) {
 			result.op_codes[0] = 0x66;
-	// Check if we need REX prefix for extended registers
+			// Check if we need REX prefix for extended registers
 			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
 				uint8_t rex = 0x40;	// Base REX prefix
 				if (static_cast<uint8_t>(src_reg) >= 8) {
@@ -451,11 +451,11 @@ struct RegisterAllocator {
 				result.size_in_bytes = 3;
 			}
 		}
-	// For 8-bit moves, we need special handling for high registers
+		// For 8-bit moves, we need special handling for high registers
 		else if (size_in_bytes == 1) {
-	// Check if we need REX prefix:
-	// 1. Extended registers (R8-R15)
-	// 2. To access SIL, DIL, BPL, SPL instead of AH, CH, DH, BH (RSI=6, RDI=7, RBP=5, RSP=4)
+			// Check if we need REX prefix:
+			// 1. Extended registers (R8-R15)
+			// 2. To access SIL, DIL, BPL, SPL instead of AH, CH, DH, BH (RSI=6, RDI=7, RBP=5, RSP=4)
 			bool needs_rex = (static_cast<uint8_t>(src_reg) >= 4 && static_cast<uint8_t>(src_reg) <= 7) ||
 							 (static_cast<uint8_t>(dst_reg) >= 4 && static_cast<uint8_t>(dst_reg) <= 7) ||
 							 static_cast<uint8_t>(src_reg) >= 8 ||
@@ -483,22 +483,22 @@ struct RegisterAllocator {
 		return result;
 	}
 
- // Invalidate all caller-saved registers after a function call
- // According to x64 calling convention, RAX, RCX, RDX, R8, R9, R10, R11 and XMM0-XMM15 are volatile
+	// Invalidate all caller-saved registers after a function call
+	// According to x64 calling convention, RAX, RCX, RDX, R8, R9, R10, R11 and XMM0-XMM15 are volatile
 	void invalidateCallerSavedRegisters() {
-	// Clear general-purpose caller-saved registers
+		// Clear general-purpose caller-saved registers
 		const X64Register caller_saved_gpr[] = {
 			X64Register::RAX, X64Register::RCX, X64Register::RDX,
 			X64Register::R8, X64Register::R9, X64Register::R10, X64Register::R11};
 		for (auto reg : caller_saved_gpr) {
 			int idx = static_cast<int>(reg);
-	// Don't release if not allocated, but clear the stack variable mapping
+			// Don't release if not allocated, but clear the stack variable mapping
 			if (registers[idx].isAllocated) {
 				invalidateRegister(reg);
 			}
 		}
 
-	// Clear all XMM registers (all are caller-saved)
+		// Clear all XMM registers (all are caller-saved)
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (registers[i].isAllocated) {
 				invalidateRegister(static_cast<X64Register>(i));

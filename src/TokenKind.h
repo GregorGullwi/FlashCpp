@@ -108,7 +108,7 @@ enum class KeywordId : uint16_t {
 	DynamicCast,
 	ConstCast,
 	ReinterpretCast,
- // Additional C++ keywords
+	// Additional C++ keywords
 	Alignas,
 	Alignof,
 	Asm,
@@ -144,7 +144,7 @@ enum class KeywordId : uint16_t {
 	Unsigned,
 	Volatile,
 	Wchar_t,
- // Microsoft-specific keywords
+	// Microsoft-specific keywords
 	MSVC_Int8,
 	MSVC_Int16,
 	MSVC_Int32,
@@ -166,7 +166,7 @@ enum class KeywordId : uint16_t {
 
 class TokenKind {
 public:
- // Categories (upper 8 bits)
+	// Categories (upper 8 bits)
 	enum class Category : uint8_t {
 		None = 0,		  // EOF / uninitialized
 		Identifier,		// user identifiers
@@ -191,7 +191,7 @@ public:
 	}
 	constexpr bool operator!=(TokenKind o) const { return !(*this == o); }
 
- // Special sentinels
+	// Special sentinels
 	static constexpr TokenKind eof() { return {}; }
 	static constexpr TokenKind ident() {
 		return {Category::Identifier, 0};
@@ -215,7 +215,7 @@ public:
 	constexpr bool is_operator() const { return category_ == Category::Operator; }
 	constexpr bool is_punctuator() const { return category_ == Category::Punctuator; }
 
- // Typed factories — category is implicit from the enum type
+	// Typed factories — category is implicit from the enum type
 	static constexpr TokenKind punct(PunctId id) {
 		return {Category::Punctuator, static_cast<uint16_t>(id)};
 	}
@@ -229,11 +229,11 @@ public:
 private:
 	Category category_ = Category::None;
 	uint16_t id_ = 0;		  // unique within category
- // Total: 4 bytes — fits in a single register
+	// Total: 4 bytes — fits in a single register
 };
 
 namespace tok {
- // Punctuators
+	// Punctuators
 inline constexpr auto LBrace = TokenKind::punct(PunctId::LBrace);
 inline constexpr auto RBrace = TokenKind::punct(PunctId::RBrace);
 inline constexpr auto LParen = TokenKind::punct(PunctId::LParen);
@@ -249,7 +249,7 @@ inline constexpr auto Dot = TokenKind::punct(PunctId::Dot);
 inline constexpr auto Arrow = TokenKind::punct(PunctId::Arrow);
 inline constexpr auto Hash = TokenKind::punct(PunctId::Hash);
 
- // Operators
+	// Operators
 inline constexpr auto Plus = TokenKind::op(OpId::Plus);
 inline constexpr auto Minus = TokenKind::op(OpId::Minus);
 inline constexpr auto Star = TokenKind::op(OpId::Star);
@@ -288,7 +288,7 @@ inline constexpr auto Question = TokenKind::op(OpId::Question);
 inline constexpr auto MemberPointer = TokenKind::op(OpId::MemberPointer);
 inline constexpr auto ArrowMemberPointer = TokenKind::op(OpId::ArrowMemberPointer);
 
- // Keywords
+	// Keywords
 inline constexpr auto KW_if = TokenKind::kw(KeywordId::If);
 inline constexpr auto KW_else = TokenKind::kw(KeywordId::Else);
 inline constexpr auto KW_while = TokenKind::kw(KeywordId::While);
@@ -334,7 +334,7 @@ inline constexpr auto KW_static_cast = TokenKind::kw(KeywordId::StaticCast);
 inline constexpr auto KW_dynamic_cast = TokenKind::kw(KeywordId::DynamicCast);
 inline constexpr auto KW_const_cast = TokenKind::kw(KeywordId::ConstCast);
 inline constexpr auto KW_reinterpret_cast = TokenKind::kw(KeywordId::ReinterpretCast);
- // Additional C++ keywords
+	// Additional C++ keywords
 inline constexpr auto KW_alignas = TokenKind::kw(KeywordId::Alignas);
 inline constexpr auto KW_alignof = TokenKind::kw(KeywordId::Alignof);
 inline constexpr auto KW_asm = TokenKind::kw(KeywordId::Asm);
@@ -370,7 +370,7 @@ inline constexpr auto KW_typeid = TokenKind::kw(KeywordId::Typeid);
 inline constexpr auto KW_unsigned = TokenKind::kw(KeywordId::Unsigned);
 inline constexpr auto KW_volatile = TokenKind::kw(KeywordId::Volatile);
 inline constexpr auto KW_wchar_t = TokenKind::kw(KeywordId::Wchar_t);
- // Microsoft-specific keywords
+	// Microsoft-specific keywords
 inline constexpr auto KW___int8 = TokenKind::kw(KeywordId::MSVC_Int8);
 inline constexpr auto KW___int16 = TokenKind::kw(KeywordId::MSVC_Int16);
 inline constexpr auto KW___int32 = TokenKind::kw(KeywordId::MSVC_Int32);

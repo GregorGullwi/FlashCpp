@@ -35,12 +35,12 @@ struct OutOfLineMemberFunction {
 	ASTNode function_node; // FunctionDeclarationNode
 	SaveHandle body_start; // Handle to saved position of function body for re-parsing
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
- // For nested templates (member function templates of class templates):
- // template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
- // inner_template_params stores the inner template params (U), while template_params stores the outer (T)
+	// For nested templates (member function templates of class templates):
+	// template<typename T> template<typename U> T Container<T>::convert(U u) { ... }
+	// inner_template_params stores the inner template params (U), while template_params stores the outer (T)
 	InlineVector<ASTNode, 4> inner_template_params;
 	InlineVector<StringHandle, 4> inner_template_param_names;
- // Function specifiers from out-of-line definition (= default, = delete)
+	// Function specifiers from out-of-line definition (= default, = delete)
 	bool is_defaulted = false;
 	bool is_deleted = false;
 };
@@ -92,15 +92,15 @@ struct TemplatePattern {
 	ASTNode specialized_node; // The AST node for the specialized template
 	std::optional<SfinaeCondition> sfinae_condition; // Optional SFINAE check for void_t patterns
 
- // Constructor to avoid aggregate initialization issues with mutable cache fields
+	// Constructor to avoid aggregate initialization issues with mutable cache fields
 	TemplatePattern() = default;
 	TemplatePattern(InlineVector<ASTNode, 4> tp, InlineVector<TemplateTypeArg, 4> pa,
 					ASTNode sn, std::optional<SfinaeCondition> sc)
 		: template_params(std::move(tp)), pattern_args(std::move(pa)),
 		  specialized_node(std::move(sn)), sfinae_condition(std::move(sc)) {}
 
- // Cached set of template parameter names for O(1) lookup in matches()/specificity().
- // Built lazily on first access. Assumes template_params is not modified after construction.
+	// Cached set of template parameter names for O(1) lookup in matches()/specificity().
+	// Built lazily on first access. Assumes template_params is not modified after construction.
 	mutable std::unordered_set<StringHandle, StringHandleHash> cached_template_param_names_;
 	mutable bool template_param_names_valid_ = false;
 
@@ -118,12 +118,12 @@ struct TemplatePattern {
 		return cached_template_param_names_;
 	}
 
- // Builds a TemplateTypeArg from a concrete TypeInfo::TemplateArgInfo for use in deduction.
- // Unlike toTemplateTypeArg() (which is a general-purpose 1:1 conversion that copies all
- // fields including dependent_name), this helper is specifically for building *resolved*
- // parameter bindings (e.g., T=int). It intentionally omits dependent_name because the
- // result represents a concrete type, not a dependent placeholder. It also defaults
- // base_type to TypeCategory::Int for value args with TypeCategory::Invalid, which toTemplateTypeArg does not.
+	// Builds a TemplateTypeArg from a concrete TypeInfo::TemplateArgInfo for use in deduction.
+	// Unlike toTemplateTypeArg() (which is a general-purpose 1:1 conversion that copies all
+	// fields including dependent_name), this helper is specifically for building *resolved*
+	// parameter bindings (e.g., T=int). It intentionally omits dependent_name because the
+	// result represents a concrete type, not a dependent placeholder. It also defaults
+	// base_type to TypeCategory::Int for value args with TypeCategory::Invalid, which toTemplateTypeArg does not.
 	static TemplateTypeArg createDeducedArgFromConcrete(const TypeInfo::TemplateArgInfo& c) {
 		TemplateTypeArg deduced;
 		if (c.is_value) {
@@ -143,8 +143,8 @@ struct TemplatePattern {
 		return deduced;
 	}
 
- // Records a deduction for a single template parameter name, checking consistency
- // if the parameter was already deduced. Returns false on inconsistency.
+	// Records a deduction for a single template parameter name, checking consistency
+	// if the parameter was already deduced. Returns false on inconsistency.
 	static bool recordDeduction(
 		StringHandle param_name,
 		const TemplateTypeArg& deduced,
@@ -164,14 +164,14 @@ struct TemplatePattern {
 		return true;
 	}
 
- // Maximum nesting depth for recursive template argument matching/scoring.
- // Prevents stack overflow on pathological or circular TypeInfo chains.
- // Real-world C++ template nesting is shallow; 64 is generous.
+	// Maximum nesting depth for recursive template argument matching/scoring.
+	// Prevents stack overflow on pathological or circular TypeInfo chains.
+	// Real-world C++ template nesting is shallow; 64 is generous.
 	static constexpr int MAX_NESTED_ARG_DEPTH = 64;
 
- // Recursive helper: matches a single inner template argument (possibly itself a nested
- // template instantiation) against a concrete inner argument, deducing template parameter
- // substitutions. Handles arbitrarily deep nesting such as Pair<Pair<A,B>, Pair<C,D>>.
+	// Recursive helper: matches a single inner template argument (possibly itself a nested
+	// template instantiation) against a concrete inner argument, deducing template parameter
+	// substitutions. Handles arbitrarily deep nesting such as Pair<Pair<A,B>, Pair<C,D>>.
 	static bool matchNestedArg(
 		const TypeInfo::TemplateArgInfo& p,
 		const TypeInfo::TemplateArgInfo& c,
@@ -182,11 +182,11 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: matchNestedArg recursion depth limit exceeded (", depth, ")");
 			return false;
 		}
-	// Check if p is a UserDefined/Struct type (or legacy Invalid category) — could be a param name or a nested template instantiation
+		// Check if p is a UserDefined/Struct type (or legacy Invalid category) — could be a param name or a nested template instantiation
 		if (!p.is_value && (is_struct_type(p.category()) || p.category() == TypeCategory::Invalid)) {
 			if (const TypeInfo* p_ti = tryGetTypeInfo(p.type_index)) {
 				if (p_ti->isTemplateInstantiation()) {
-		// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
+					// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
 					if (!is_struct_type(c.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested pattern is template instantiation but concrete is not UserDefined/Struct");
 						return false;
@@ -213,7 +213,7 @@ struct TemplatePattern {
 					}
 					return true;
 				}
-	// Simple template parameter name (e.g., T, U)
+				// Simple template parameter name (e.g., T, U)
 				StringHandle inner_name = p_ti->name();
 				if (inner_name.isValid() && template_param_names.count(inner_name)) {
 					return recordDeduction(inner_name, createDeducedArgFromConcrete(c), param_substitutions);
@@ -222,7 +222,7 @@ struct TemplatePattern {
 				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
 			}
 		}
-	// Value parameter deduction
+		// Value parameter deduction
 		if (p.is_value && c.is_value) {
 			if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
 				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
@@ -233,9 +233,9 @@ struct TemplatePattern {
 			}
 			return true;
 		}
-	// Handle non-type template parameter placeholder stored without is_value=true:
-	// When p is a dependent name placeholder (category=Invalid or no valid type_index)
-	// and the concrete arg is a value, treat p as a non-type param and deduce.
+		// Handle non-type template parameter placeholder stored without is_value=true:
+		// When p is a dependent name placeholder (category=Invalid or no valid type_index)
+		// and the concrete arg is a value, treat p as a non-type param and deduce.
 		if (!p.is_value && c.is_value) {
 			if (p.dependent_name.isValid() && template_param_names.count(p.dependent_name)) {
 				return recordDeduction(p.dependent_name, createDeducedArgFromConcrete(c), param_substitutions);
@@ -245,7 +245,7 @@ struct TemplatePattern {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner arg value/type mismatch");
 			return false;
 		}
-	// Concrete type must match exactly
+		// Concrete type must match exactly
 		if (p.category() != c.category()) {
 			FLASH_LOG(Templates, Trace, "  FAILED: inner concrete type mismatch");
 			return false;
@@ -320,15 +320,15 @@ struct TemplatePattern {
 		return true;
 	}
 
- // Check if this pattern matches the given concrete arguments
- // For example, pattern T& matches int&, float&, etc.
- // Returns true if match succeeds, and fills param_substitutions with T->int mapping
+	// Check if this pattern matches the given concrete arguments
+	// For example, pattern T& matches int&, float&, etc.
+	// Returns true if match succeeds, and fills param_substitutions with T->int mapping
 	bool matches(const std::vector<TemplateTypeArg>& concrete_args,
 				 std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>>& param_substitutions) const {
 		FLASH_LOG(Templates, Trace, "      matches(): pattern has ", pattern_args.size(), " args, concrete has ", concrete_args.size(), " args");
 
-	// Handle variadic templates: pattern may have fewer args if last template param is a pack
-	// Check if the last template parameter is variadic (a pack)
+		// Handle variadic templates: pattern may have fewer args if last template param is a pack
+		// Check if the last template parameter is variadic (a pack)
 		bool has_variadic_pack = false;
 		[[maybe_unused]] size_t pack_param_index = 0;
 		for (size_t i = 0; i < template_params.size(); ++i) {
@@ -342,9 +342,9 @@ struct TemplatePattern {
 			}
 		}
 
-	// For non-variadic patterns, sizes must match exactly
-	// For variadic patterns, concrete_args.size() >= pattern_args.size() - 1
-	// (pack can be empty, matching 0 or more args)
+		// For non-variadic patterns, sizes must match exactly
+		// For variadic patterns, concrete_args.size() >= pattern_args.size() - 1
+		// (pack can be empty, matching 0 or more args)
 		if (!has_variadic_pack) {
 			if (pattern_args.size() != concrete_args.size()) {
 				FLASH_LOG(Templates, Trace, "      Size mismatch: pattern_args.size()=", pattern_args.size(),
@@ -352,9 +352,9 @@ struct TemplatePattern {
 				return false;
 			}
 		} else {
-	// With variadic pack: need at least (pattern_args.size() - 1) concrete args
-	// Pattern <First, Rest...> has 2 pattern_args, but can match 1+ concrete args
-	// (Rest can be empty matching 0 args, or Rest can match 1+ args)
+			// With variadic pack: need at least (pattern_args.size() - 1) concrete args
+			// Pattern <First, Rest...> has 2 pattern_args, but can match 1+ concrete args
+			// (Rest can be empty matching 0 args, or Rest can match 1+ args)
 			if (concrete_args.size() < pattern_args.size() - 1) {
 				return false; // Not enough args for non-pack parameters
 			}
@@ -362,28 +362,28 @@ struct TemplatePattern {
 
 		param_substitutions.clear();
 
-	// Use cached hash set of template parameter names for O(1) lookup
+		// Use cached hash set of template parameter names for O(1) lookup
 		const auto& template_param_names = getTemplateParamNames();
 
-	// Check each pattern argument against the corresponding concrete argument
-	// Track template parameter index separately from pattern argument index
+		// Check each pattern argument against the corresponding concrete argument
+		// Track template parameter index separately from pattern argument index
 		size_t param_index = 0; // Tracks which template parameter we're binding
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const TemplateTypeArg& pattern_arg = pattern_args[i];
 
-	// Handle variadic pack case: if i >= concrete_args.size(),
-	// this pattern arg corresponds to a pack that matches 0 args (empty pack)
+			// Handle variadic pack case: if i >= concrete_args.size(),
+			// this pattern arg corresponds to a pack that matches 0 args (empty pack)
 			if (i >= concrete_args.size()) {
-	// This should only happen for the variadic pack parameter
-	// Check if this pattern position corresponds to a variadic pack
+				// This should only happen for the variadic pack parameter
+				// Check if this pattern position corresponds to a variadic pack
 				if (param_index < template_params.size() && template_params[param_index].is<TemplateParameterNode>()) {
 					const TemplateParameterNode& param = template_params[param_index].as<TemplateParameterNode>();
 					if (param.is_variadic()) {
-		// Empty pack is valid - continue without error
+						// Empty pack is valid - continue without error
 						continue;
 					}
 				}
-	// Not a variadic pack but no concrete arg - pattern doesn't match
+				// Not a variadic pack but no concrete arg - pattern doesn't match
 				return false;
 			}
 
@@ -391,20 +391,20 @@ struct TemplatePattern {
 
 			FLASH_LOG(Templates, Trace, "Matching pattern arg[", i, "] against concrete arg[", i, "]");
 
-	// Find the template parameter name for this pattern position
-	// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
-	// We need to check if the base types match and the modifiers match
+			// Find the template parameter name for this pattern position
+			// The pattern_arg contains the type from the pattern (e.g., T for pattern T&)
+			// We need to check if the base types match and the modifiers match
 
-	// Pattern matching rules:
-	// 1. If pattern is "T&" and concrete is "int&", then T=int (reference match)
-	// 2. If pattern is "T&&" and concrete is "int&&", then T=int (rvalue reference match)
-	// 3. If pattern is "T*" and concrete is "int*", then T=int (pointer match)
-	// 4. If pattern is "T**" and concrete is "int**", then T=int (double pointer match)
-	// 5. If pattern is "const T" and concrete is "const int", then T=int (const match)
-	// 6. If pattern is "T" and concrete is "int", then T=int (exact match)
-	// 7. Reference/pointer/const modifiers must match
+			// Pattern matching rules:
+			// 1. If pattern is "T&" and concrete is "int&", then T=int (reference match)
+			// 2. If pattern is "T&&" and concrete is "int&&", then T=int (rvalue reference match)
+			// 3. If pattern is "T*" and concrete is "int*", then T=int (pointer match)
+			// 4. If pattern is "T**" and concrete is "int**", then T=int (double pointer match)
+			// 5. If pattern is "const T" and concrete is "const int", then T=int (const match)
+			// 6. If pattern is "T" and concrete is "int", then T=int (exact match)
+			// 7. Reference/pointer/const modifiers must match
 
-	// Check if modifiers match
+			// Check if modifiers match
 			if (pattern_arg.ref_qualifier != concrete_arg.ref_qualifier) {
 				FLASH_LOG(Templates, Trace, "  FAILED: ref_qualifier mismatch");
 				return false;
@@ -421,20 +421,20 @@ struct TemplatePattern {
 				FLASH_LOG(Templates, Trace, "  FAILED: array-ness mismatch");
 				return false;
 			}
-	// Check array size matching
-	// - If pattern has no size (T[]), it matches any array
-	// - If pattern has SIZE_MAX (T[N] where N is template param), it matches any sized array but not unsized arrays
-	// - If pattern has a specific size (T[3]), it must match exactly
+			// Check array size matching
+			// - If pattern has no size (T[]), it matches any array
+			// - If pattern has SIZE_MAX (T[N] where N is template param), it matches any sized array but not unsized arrays
+			// - If pattern has a specific size (T[3]), it must match exactly
 			if (pattern_arg.is_array && pattern_arg.array_size.has_value() && concrete_arg.array_size.has_value()) {
-	// Both have sizes - check if they match
-	// SIZE_MAX in pattern means "any size" (template parameter like N)
+				// Both have sizes - check if they match
+				// SIZE_MAX in pattern means "any size" (template parameter like N)
 				if (*pattern_arg.array_size != SIZE_MAX && *pattern_arg.array_size != *concrete_arg.array_size) {
 					FLASH_LOG(Templates, Trace, "  FAILED: array size mismatch");
 					return false;
 				}
 			} else if (pattern_arg.is_array && pattern_arg.array_size.has_value() && *pattern_arg.array_size == SIZE_MAX) {
-	// Pattern has SIZE_MAX (like T[N]) but concrete has no size (like int[])
-	// This should not match - T[N] requires a sized array
+				// Pattern has SIZE_MAX (like T[N]) but concrete has no size (like int[])
+				// This should not match - T[N] requires a sized array
 				if (!concrete_arg.array_size.has_value()) {
 					FLASH_LOG(Templates, Trace, "  FAILED: pattern requires sized array but concrete is unsized");
 					return false;
@@ -452,36 +452,36 @@ struct TemplatePattern {
 				return false;
 			}
 
-	// For pattern matching, we need to extract the template parameter name
-	// The pattern_arg.base_type is UserDefined and represents the template parameter
-	// We need to get the parameter name from template_params
+			// For pattern matching, we need to extract the template parameter name
+			// The pattern_arg.base_type is UserDefined and represents the template parameter
+			// We need to get the parameter name from template_params
 
-	// The pattern_arg.base_type tells us which template parameter this is
-	// For partial specialization Derived<T*, T>, both pattern args refer to the SAME
-	// template parameter T, so we can't use position i
+			// The pattern_arg.base_type tells us which template parameter this is
+			// For partial specialization Derived<T*, T>, both pattern args refer to the SAME
+			// template parameter T, so we can't use position i
 
-	// Find which template parameter this pattern arg refers to
-	// base_type == TypeCategory::UserDefined means it's a template parameter reference
-	// BUT it could also be a dependent template instantiation placeholder
-	// (e.g., ratio<_Num, _Den> stored as UserDefined with isTemplateInstantiation())
-	// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct
-	// template) must reach the template instantiation handler below, not the concrete
-	// type check. Detect that case up front.
+			// Find which template parameter this pattern arg refers to
+			// base_type == TypeCategory::UserDefined means it's a template parameter reference
+			// BUT it could also be a dependent template instantiation placeholder
+			// (e.g., ratio<_Num, _Den> stored as UserDefined with isTemplateInstantiation())
+			// Struct-type template instantiation patterns (e.g., Pair<A,B> where Pair is a struct
+			// template) must reach the template instantiation handler below, not the concrete
+			// type check. Detect that case up front.
 			const TypeInfo* p_arg_ti = tryGetTypeInfo(pattern_arg.type_index);
 			bool is_struct_template_inst = (is_struct_type(pattern_arg.category()) || pattern_arg.category() == TypeCategory::Invalid) &&
 										   p_arg_ti &&
 										   p_arg_ti->isTemplateInstantiation();
 
-	// pattern_arg is a template parameter placeholder if it is UserDefined, or if category is
-	// Invalid (legacy TypeIndex) and the type_index points to a non-instantiation struct entry.
+			// pattern_arg is a template parameter placeholder if it is UserDefined, or if category is
+			// Invalid (legacy TypeIndex) and the type_index points to a non-instantiation struct entry.
 			bool is_userdefined_param = (pattern_arg.category() == TypeCategory::UserDefined) ||
 										(pattern_arg.category() == TypeCategory::Invalid && p_arg_ti &&
 										 !p_arg_ti->isTemplateInstantiation());
 
 			if (!is_userdefined_param && !is_struct_template_inst) {
-	// This is a concrete type or value in the pattern
-	// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
-	// The concrete type/value must match exactly
+				// This is a concrete type or value in the pattern
+				// (e.g., partial specialization Container<int, T> or enable_if<true, T>)
+				// The concrete type/value must match exactly
 				FLASH_LOG(Templates, Trace, "  Pattern arg[", i, "]: concrete type/value check");
 				FLASH_LOG(Templates, Trace, "    pattern_arg.category=", static_cast<int>(pattern_arg.category()),
 						  " concrete_arg.category=", static_cast<int>(concrete_arg.category()));
@@ -492,8 +492,8 @@ struct TemplatePattern {
 							  " concrete_arg.value=", concrete_arg.value);
 				}
 				if (pattern_arg.category() != concrete_arg.category()) {
-		// For non-type value parameters, Bool and Int are interchangeable
-		// (e.g., template<bool B> with default false stored as Bool vs Int)
+					// For non-type value parameters, Bool and Int are interchangeable
+					// (e.g., template<bool B> with default false stored as Bool vs Int)
 					bool compatible_value_types = pattern_arg.is_value && concrete_arg.is_value &&
 												  ((pattern_arg.category() == TypeCategory::Bool && concrete_arg.category() == TypeCategory::Int) ||
 												   (pattern_arg.category() == TypeCategory::Int && concrete_arg.category() == TypeCategory::Bool));
@@ -502,7 +502,7 @@ struct TemplatePattern {
 						return false;
 					}
 				}
-	// For non-type template parameters, also check the value matches
+				// For non-type template parameters, also check the value matches
 				if (pattern_arg.is_value && concrete_arg.is_value) {
 					if (pattern_arg.value != concrete_arg.value) {
 						FLASH_LOG(Templates, Trace, "    FAILED: values don't match");
@@ -516,12 +516,12 @@ struct TemplatePattern {
 				continue; // No substitution needed for concrete types/values - don't increment param_index
 			}
 
-	// Check if this UserDefined/Struct pattern arg is a dependent template instantiation
-	// (e.g., ratio<_Num, _Den> stored as UserDefined, or Pair<A,B> stored as Struct)
-	// If so, the concrete arg must be a template instantiation of the same base template
+			// Check if this UserDefined/Struct pattern arg is a dependent template instantiation
+			// (e.g., ratio<_Num, _Den> stored as UserDefined, or Pair<A,B> stored as Struct)
+			// If so, the concrete arg must be a template instantiation of the same base template
 			if (const TypeInfo* pattern_type_info = tryGetTypeInfo(pattern_arg.type_index)) {
 				if (pattern_type_info->isTemplateInstantiation()) {
-		// Pattern is a template instantiation — concrete must match base template
+					// Pattern is a template instantiation — concrete must match base template
 					StringHandle pattern_base = pattern_type_info->baseTemplateName();
 					if (!is_struct_type(concrete_arg.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: pattern is template instantiation '",
@@ -544,9 +544,9 @@ struct TemplatePattern {
 					}
 					FLASH_LOG(Templates, Trace, "  SUCCESS: template instantiation base matches '",
 							  StringTable::getStringView(pattern_base), "'");
-		// Recursively match inner template args to deduce parameters.
-		// Uses matchNestedArg which handles arbitrary nesting depth,
-		// e.g., Pair<Pair<A,B>, Pair<C,D>> against pair<pair<int,float>, pair<double,bool>>.
+					// Recursively match inner template args to deduce parameters.
+					// Uses matchNestedArg which handles arbitrary nesting depth,
+					// e.g., Pair<Pair<A,B>, Pair<C,D>> against pair<pair<int,float>, pair<double,bool>>.
 					const size_t subs_before_inner = param_substitutions.size();
 					{
 						const auto& pattern_inner_args = pattern_type_info->templateArgs();
@@ -572,16 +572,16 @@ struct TemplatePattern {
 								return false;
 						}
 					}
-		// Advance param_index past inner-deduced parameters so that
-		// subsequent pattern args use the correct fallback index.
+					// Advance param_index past inner-deduced parameters so that
+					// subsequent pattern args use the correct fallback index.
 					param_index += param_substitutions.size() - subs_before_inner;
 					continue;
 				}
 			}
 
-	// Find the template parameter name for this pattern arg
-	// First, try to get the name from the pattern arg's type_index (for reused parameters)
-	// For is_same<T, T>, both pattern args point to the same TypeInfo for T
+			// Find the template parameter name for this pattern arg
+			// First, try to get the name from the pattern arg's type_index (for reused parameters)
+			// For is_same<T, T>, both pattern args point to the same TypeInfo for T
 			StringHandle param_name;
 			bool found_param = false;
 
@@ -592,8 +592,8 @@ struct TemplatePattern {
 			}
 
 			if (!found_param) {
-	// Fallback: use param_index to get the template parameter
-	// This is needed when type_index isn't set properly
+				// Fallback: use param_index to get the template parameter
+				// This is needed when type_index isn't set properly
 				if (param_index >= template_params.size()) {
 					FLASH_LOG(Templates, Trace, "  FAILED: param_index ", param_index, " >= template_params.size() ", template_params.size());
 					return false; // More template params needed than available - invalid pattern
@@ -611,49 +611,49 @@ struct TemplatePattern {
 				}
 			}
 
-	// Check if we've already seen this parameter
-	// For consistency checking, we need to compare the BASE TYPE only,
-	// because Derived<T*, T> means both args bind to the same T, but with different modifiers
+			// Check if we've already seen this parameter
+			// For consistency checking, we need to compare the BASE TYPE only,
+			// because Derived<T*, T> means both args bind to the same T, but with different modifiers
 			auto it = param_substitutions.find(param_name);
 			if (it != param_substitutions.end()) {
-	// Parameter already bound - check consistency of BASE TYPE only
+				// Parameter already bound - check consistency of BASE TYPE only
 				if (it->second.category() != concrete_arg.category()) {
 					FLASH_LOG(Templates, Trace, "  FAILED: Inconsistent substitution for parameter ", StringTable::getStringView(param_name));
 					return false; // Inconsistent substitution (different base types)
 				}
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Reused parameter ", StringTable::getStringView(param_name), " - consistency check passed");
-	// Don't increment param_index - we reused an existing parameter binding
+				// Don't increment param_index - we reused an existing parameter binding
 			} else {
-	// Bind this parameter to the concrete type, stripping pattern qualifiers.
+				// Bind this parameter to the concrete type, stripping pattern qualifiers.
 				TemplateTypeArg deduced_arg = deduceArgFromPattern(concrete_arg, pattern_arg);
 				param_substitutions[param_name] = deduced_arg;
 				FLASH_LOG(Templates, Trace, "  SUCCESS: Bound parameter ", StringTable::getStringView(param_name), " to concrete type (qualifiers stripped)");
-	// Increment param_index since we bound a new template parameter
+				// Increment param_index since we bound a new template parameter
 				++param_index;
 			}
 		}
 
-	// SFINAE check: If this pattern has a SFINAE condition (e.g., void_t<typename T::type>),
-	// verify that the condition is satisfied with the substituted types.
-	// This enables proper void_t detection behavior.
+		// SFINAE check: If this pattern has a SFINAE condition (e.g., void_t<typename T::type>),
+		// verify that the condition is satisfied with the substituted types.
+		// This enables proper void_t detection behavior.
 		if (sfinae_condition.has_value()) {
 			const SfinaeCondition& cond = *sfinae_condition;
 
-	// Get the concrete type for the template parameter
+			// Get the concrete type for the template parameter
 			if (cond.template_param_index < concrete_args.size()) {
 				const TemplateTypeArg& concrete_arg = concrete_args[cond.template_param_index];
 
-	// Check if the concrete type has the required member type
+				// Check if the concrete type has the required member type
 				if (const TypeInfo* type_info = tryGetTypeInfo(concrete_arg.type_index)) {
 
-		// Build the qualified member name (e.g., "WithType::type")
+					// Build the qualified member name (e.g., "WithType::type")
 					StringBuilder qualified_name;
 					qualified_name.append(type_info->name());
 					qualified_name.append("::");
 					qualified_name.append(cond.member_name);
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name.commit());
 
-		// Check if this member type exists
+					// Check if this member type exists
 					auto type_it = getTypesByNameMap().find(qualified_handle);
 					if (type_it == getTypesByNameMap().end()) {
 						FLASH_LOG(Templates, Debug, "SFINAE condition failed: ",
@@ -669,18 +669,18 @@ struct TemplatePattern {
 		return true; // All patterns matched
 	}
 
- // Calculate specificity score (higher = more specialized)
- // T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, T[N] = 2, T[] = 1, etc.
+	// Calculate specificity score (higher = more specialized)
+	// T = 0, T& = 1, T* = 1, const T = 1, const T& = 2, T[N] = 2, T[] = 1, etc.
 	int specificity() const {
 		int score = 0;
 
-	// Use cached hash set of template parameter names for O(1) lookup
+		// Use cached hash set of template parameter names for O(1) lookup
 		const auto& template_param_names = getTemplateParamNames();
 
-	// Helper: recursively compute the specificity contribution of a single inner template arg.
-	// A dependent type param (like T) contributes 0; a concrete type (like int) contributes 1;
-	// a nested template instantiation (like Pair<A,B>) contributes 2 + args + recursion,
-	// reflecting the structural constraint it imposes.
+		// Helper: recursively compute the specificity contribution of a single inner template arg.
+		// A dependent type param (like T) contributes 0; a concrete type (like int) contributes 1;
+		// a nested template instantiation (like Pair<A,B>) contributes 2 + args + recursion,
+		// reflecting the structural constraint it imposes.
 		auto innerArgScore = [&](const TypeInfo::TemplateArgInfo& inner_arg, auto& self, int depth = 0) -> int {
 			if (depth >= MAX_NESTED_ARG_DEPTH) {
 				return 0; // Depth limit reached; stop adding specificity
@@ -689,15 +689,15 @@ struct TemplatePattern {
 				(is_struct_type(inner_arg.category()))) {
 				if (const TypeInfo* inner_ti = tryGetTypeInfo(inner_arg.type_index)) {
 					if (inner_ti->isTemplateInstantiation()) {
-		// Nested template instantiation: structural constraint adds specificity.
-		// e.g., Pair<A,B> is more specific than a bare T.
+						// Nested template instantiation: structural constraint adds specificity.
+						// e.g., Pair<A,B> is more specific than a bare T.
 						int nested = 2 + static_cast<int>(inner_ti->templateArgs().size());
 						for (const auto& nested_arg : inner_ti->templateArgs()) {
 							nested += self(nested_arg, self, depth + 1);
 						}
 						return nested;
 					}
-		// Simple template parameter name → dependent, no extra specificity
+					// Simple template parameter name → dependent, no extra specificity
 					StringHandle iname = inner_ti->name();
 					if (iname.isValid() && template_param_names.count(iname)) {
 						return 0;
@@ -715,19 +715,19 @@ struct TemplatePattern {
 			if (inner_arg.is_value) {
 				return 1; // concrete non-type value
 			}
-	// Fundamental (non-UserDefined, non-value) concrete type
+			// Fundamental (non-UserDefined, non-value) concrete type
 			return 1;
 		};
 
 		for (const auto& arg : pattern_args) {
-	// Base score: any pattern parameter = 0
+			// Base score: any pattern parameter = 0
 
-	// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
+			// Template instantiation pattern (e.g., pair<T,U> or Pair<Pair<A,B>,Pair<C,D>>) is more specific than bare T
 			if (is_struct_type(arg.category())) {
 				if (const TypeInfo* ti = tryGetTypeInfo(arg.type_index)) {
 					if (ti->isTemplateInstantiation()) {
 						score += 2 + static_cast<int>(ti->templateArgs().size());
-		// Each inner arg contributes to specificity, including nested instantiations
+						// Each inner arg contributes to specificity, including nested instantiations
 						for (const auto& inner_arg : ti->templateArgs()) {
 							score += innerArgScore(inner_arg, innerArgScore);
 						}
@@ -735,7 +735,7 @@ struct TemplatePattern {
 				}
 			}
 
-	// Pointer modifier adds specificity (T* is more specific than T)
+			// Pointer modifier adds specificity (T* is more specific than T)
 			score += arg.pointer_depth; // T* = +1, T** = +2, etc.
 
 			if (arg.is_lvalue_reference()) {
@@ -745,18 +745,18 @@ struct TemplatePattern {
 				score += 1; // T&& is more specific than T
 			}
 
-	// Array modifiers add specificity
+			// Array modifiers add specificity
 			if (arg.is_array) {
 				if (arg.array_size.has_value()) {
-		// SIZE_MAX indicates "array with size expression but value unknown" (like T[N])
-		// Concrete sizes (like T[3]) and template parameter sizes (like T[N]) both get score of 2
+					// SIZE_MAX indicates "array with size expression but value unknown" (like T[N])
+					// Concrete sizes (like T[3]) and template parameter sizes (like T[N]) both get score of 2
 					score += 2; // T[N] or T[3] is more specific than T[]
 				} else {
 					score += 1; // T[] is more specific than T
 				}
 			}
 
-	// CV-qualifiers add specificity
+			// CV-qualifiers add specificity
 			if ((static_cast<uint8_t>(arg.cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0) {
 				score += 1; // const T is more specific than T
 			}

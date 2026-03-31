@@ -8,7 +8,7 @@ ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
- // Helper function to get type name as string
+	// Helper function to get type name as string
 	auto get_type_name = [](TypeCategory type) -> std::string_view {
 		switch (type) {
 		case TypeCategory::Void:
@@ -48,37 +48,37 @@ ASTNode Parser::substituteTemplateParameters(
 		}
 	};
 
- // Handle different node types
+	// Handle different node types
 	if (node.is<ExpressionNode>()) {
 		const ExpressionNode& expr_node = node.as<ExpressionNode>();
 		const auto& expr = expr_node;
 
-	// Check if this is a TemplateParameterReferenceNode
+		// Check if this is a TemplateParameterReferenceNode
 		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 			std::string_view param_name = tparam_ref.param_name().view();
 
-	// Find which template parameter this is
+			// Find which template parameter this is
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == param_name) {
 					const TemplateTypeArg& arg = template_args[i];
 
-		// When a non-type param (e.g., _Size) receives a Type argument due to
-		// dependent expressions like sizeof(_Tp), skip the substitution to avoid
-		// creating broken identifiers like "user_defined".
+					// When a non-type param (e.g., _Size) receives a Type argument due to
+					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
+					// creating broken identifiers like "user_defined".
 					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
 						break;  // Leave unsubstituted
 					}
 
 					if (arg.isTypeArgument()) {
-		// Create an identifier node for the concrete type
+						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()),
 										 tparam_ref.token().line(), tparam_ref.token().column(),
 										 tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
-		// Create a numeric literal node for the value with the correct type
+						// Create a numeric literal node for the value with the correct type
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
@@ -86,38 +86,38 @@ ASTNode Parser::substituteTemplateParameters(
 										  tparam_ref.token().file_index());
 						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
 					}
-		// For template template parameters, not yet supported
+					// For template template parameters, not yet supported
 					break;
 				}
 			}
 
-	// If we couldn't substitute, return the original node
+			// If we couldn't substitute, return the original node
 			return node;
 		}
 
-	// Check if this is an IdentifierNode that matches a template parameter name
-	// (This handles the case where template parameters are stored as IdentifierNode in the AST)
+		// Check if this is an IdentifierNode that matches a template parameter name
+		// (This handles the case where template parameters are stored as IdentifierNode in the AST)
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			std::string_view id_name = id_node.name();
 
-	// Check if this identifier matches a template parameter name
+			// Check if this identifier matches a template parameter name
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 				if (tparam.name() == id_name) {
 					const TemplateTypeArg& arg = template_args[i];
 
-		// Skip substitution when non-type param gets a dependent Type argument
+					// Skip substitution when non-type param gets a dependent Type argument
 					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
 						break;  // Leave unsubstituted
 					}
 
 					if (arg.isTypeArgument()) {
-		// Create an identifier node for the concrete type
+						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()), 0, 0, 0);
 						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
 					} else if (arg.is_value) {
-		// Create a numeric literal node for the value with the correct type
+						// Create a numeric literal node for the value with the correct type
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
@@ -128,26 +128,26 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
-	// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
-	// These are created during template body parsing for variable template references like __cmp_cat_id<_Ts>
-	// We need to re-instantiate the variable template with the substituted type args
+		// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
+		// These are created during template body parsing for variable template references like __cmp_cat_id<_Ts>
+		// We need to re-instantiate the variable template with the substituted type args
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			std::string_view id_name = id_node.name();
 
-	// Only check for dependent placeholders if the name contains '$' (the hash separator)
+			// Only check for dependent placeholders if the name contains '$' (the hash separator)
 			if (id_name.find('$') != std::string_view::npos) {
-	// Look up the type info for this identifier
+			// Look up the type info for this identifier
 				StringHandle id_handle = StringTable::getOrInternStringHandle(id_name);
 				auto type_it = getTypesByNameMap().find(id_handle);
 				if (type_it != getTypesByNameMap().end() && type_it->second->isTemplateInstantiation()) {
 					const TypeInfo* placeholder_type = type_it->second;
 					std::string_view base_template = StringTable::getStringView(placeholder_type->baseTemplateName());
 
-	// Check if this is a variable template
+				// Check if this is a variable template
 					auto var_template_opt = gTemplateRegistry.lookupVariableTemplate(base_template);
 					if (var_template_opt.has_value()) {
-		// Get the template args from the placeholder and substitute them
+					// Get the template args from the placeholder and substitute them
 						const auto& placeholder_args = placeholder_type->templateArgs();
 						std::vector<TemplateTypeArg> new_args;
 						bool any_substituted = false;
@@ -160,7 +160,7 @@ ASTNode Parser::substituteTemplateParameters(
 							arg.pointer_depth = parg.pointer_depth;
 							arg.cv_qualifier = parg.cv_qualifier;
 
-		// Check if this arg is a template parameter that should be substituted
+						// Check if this arg is a template parameter that should be substituted
 							if (const TypeInfo* parg_type_info = tryGetTypeInfo(parg.type_index)) {
 								std::string_view arg_type_name = StringTable::getStringView(parg_type_info->name());
 								for (size_t p = 0; p < template_params.size() && p < template_args.size(); ++p) {
@@ -168,7 +168,7 @@ ASTNode Parser::substituteTemplateParameters(
 										continue;
 									const TemplateParameterNode& tparam = template_params[p].as<TemplateParameterNode>();
 									if (tparam.name() == arg_type_name) {
-			// Substitute with the concrete type
+									// Substitute with the concrete type
 										const TemplateTypeArg& concrete_arg = template_args[p];
 										if (concrete_arg.isTypeArgument()) {
 											arg.setCategory(concrete_arg.category());
@@ -186,8 +186,8 @@ ASTNode Parser::substituteTemplateParameters(
 						if (any_substituted) {
 							auto result = try_instantiate_variable_template(base_template, new_args);
 							if (result.has_value()) {
-		// The variable template was instantiated. Return an IdentifierNode
-		// that references the instantiated variable (not the VariableDeclarationNode itself)
+							// The variable template was instantiated. Return an IdentifierNode
+							// that references the instantiated variable (not the VariableDeclarationNode itself)
 								if (result->is<VariableDeclarationNode>()) {
 									const auto& var_decl = result->as<VariableDeclarationNode>();
 									Token ref_token = var_decl.declaration().identifier_token();
@@ -200,9 +200,9 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			} // end of '$' check
 		}
-	// Promote Unresolved identifiers to concrete bindings when possible.
-	// Phase 1 violations ([temp.res]/9) are checked earlier in
-	// reparse_template_function_body via createBoundIdentifier / checkPhase1.
+		// Promote Unresolved identifiers to concrete bindings when possible.
+		// Phase 1 violations ([temp.res]/9) are checked earlier in
+		// reparse_template_function_body via createBoundIdentifier / checkPhase1.
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			if (id_node.binding() == IdentifierBinding::Unresolved) {
@@ -230,8 +230,8 @@ ASTNode Parser::substituteTemplateParameters(
 				substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
 			}
 
-	// Check if function name contains a dependent template hash (Base$hash::member)
-	// that needs to be resolved with concrete template arguments
+			// Check if function name contains a dependent template hash (Base$hash::member)
+			// that needs to be resolved with concrete template arguments
 			std::string_view func_name = func_call.called_from().value();
 			if (func_name.empty())
 				func_name = func_call.function_declaration().identifier_token().value();
@@ -243,7 +243,7 @@ ASTNode Parser::substituteTemplateParameters(
 			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
 				std::string_view member_name = func_name.substr(scope_pos + 2);
 
-	// Build concrete template arguments from the substitution context
+				// Build concrete template arguments from the substitution context
 				std::vector<TemplateTypeArg> inst_args;
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 					const TemplateTypeArg& arg = template_args[i];
@@ -267,14 +267,14 @@ ASTNode Parser::substituteTemplateParameters(
 					std::string_view correct_inst_name = get_instantiated_class_name(base_template_name, inst_args);
 
 					if (correct_inst_name != func_name.substr(0, scope_pos)) {
-		// Build corrected function name
+						// Build corrected function name
 						StringBuilder new_name_builder;
 						new_name_builder.append(correct_inst_name).append("::").append(member_name);
 						std::string_view new_func_name = new_name_builder.commit();
 
 						FLASH_LOG(Templates, Debug, "Resolved dependent qualified call: ", func_name, " -> ", new_func_name);
 
-		// Trigger lazy member function instantiation
+						// Trigger lazy member function instantiation
 						StringHandle inst_handle = StringTable::getOrInternStringHandle(correct_inst_name);
 						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(inst_handle, member_handle)) {
@@ -285,10 +285,10 @@ ASTNode Parser::substituteTemplateParameters(
 							}
 						}
 
-		// Create new forward declaration with corrected name.
-		// The placeholder return type (Int/32) is safe because the codegen
-		// resolves the actual return type from the matched FunctionDeclarationNode,
-		// not from this forward declaration's type node.
+						// Create new forward declaration with corrected name.
+						// The placeholder return type (Int/32) is safe because the codegen
+						// resolves the actual return type from the matched FunctionDeclarationNode,
+						// not from this forward declaration's type node.
 						Token new_token(Token::Type::Identifier, new_func_name,
 										func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
 						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
@@ -323,15 +323,15 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_index = substituteTemplateParameters(array_sub.index_expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ArraySubscriptNode(substituted_array, substituted_index, array_sub.bracket_token()));
 		} else if (std::holds_alternative<FoldExpressionNode>(expr)) {
-	// C++17 Fold expressions - expand into nested binary operations
+			// C++17 Fold expressions - expand into nested binary operations
 			const FoldExpressionNode& fold = std::get<FoldExpressionNode>(expr);
 
 			std::vector<ASTNode> pack_values;
 
-	// Handle complex pack expressions like (__cmp_cat_id<_Ts> | ...)
-	// where the pack is inside a variable template invocation, not a simple identifier
+			// Handle complex pack expressions like (__cmp_cat_id<_Ts> | ...)
+			// where the pack is inside a variable template invocation, not a simple identifier
 			if (fold.has_complex_pack_expr()) {
-	// Find the variadic template parameter
+				// Find the variadic template parameter
 				size_t variadic_param_idx = SIZE_MAX;
 				size_t non_variadic_count = 0;
 				for (size_t p = 0; p < template_params.size(); ++p) {
@@ -363,8 +363,8 @@ ASTNode Parser::substituteTemplateParameters(
 					if (fold.type() == FoldExpressionNode::Type::Binary && fold.init_expr().has_value()) {
 						return substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
 					}
-		// C++17: empty unary fold is allowed only for &&, || and comma
-		// For other operators, return identity values
+					// C++17: empty unary fold is allowed only for &&, || and comma
+					// For other operators, return identity values
 					std::string_view op = fold.op();
 					if (op == "&&") {
 						Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
@@ -381,9 +381,9 @@ ASTNode Parser::substituteTemplateParameters(
 					return node;
 				}
 
-	// For each pack element, substitute the variadic parameter in the complex expression
+				// For each pack element, substitute the variadic parameter in the complex expression
 				for (size_t i = 0; i < num_pack_elements; ++i) {
-		// Also include the non-variadic parameters so they get substituted too
+					// Also include the non-variadic parameters so they get substituted too
 					std::vector<ASTNode> subst_params;
 					std::vector<TemplateTypeArg> subst_args;
 					for (size_t p = 0; p < template_params.size(); ++p) {
@@ -393,9 +393,9 @@ ASTNode Parser::substituteTemplateParameters(
 								if (variadic_param_idx == SIZE_MAX || (non_variadic_count + i) >= template_args.size()) {
 									continue;
 								}
-		// Create a non-variadic version of this parameter for single substitution
+								// Create a non-variadic version of this parameter for single substitution
 								TemplateParameterNode single_tparam(tparam.nameHandle(), tparam.token());
-		// Don't set variadic - we're substituting one element at a time
+								// Don't set variadic - we're substituting one element at a time
 								subst_params.push_back(emplace_node<TemplateParameterNode>(single_tparam));
 								subst_args.push_back(template_args[non_variadic_count + i]);
 							} else if (p < template_args.size()) {
@@ -413,15 +413,15 @@ ASTNode Parser::substituteTemplateParameters(
 					pack_values.push_back(substituted);
 				}
 			} else {
-	// Simple pack name case: pack_name refers to a function parameter pack (like "args")
-	// or a non-type template parameter pack (like "Bs" in (Bs && ...))
+				// Simple pack name case: pack_name refers to a function parameter pack (like "args")
+				// or a non-type template parameter pack (like "Bs" in (Bs && ...))
 				size_t num_pack_elements = count_pack_elements(fold.pack_name());
 
 				FLASH_LOG(Templates, Debug, "Fold expansion: pack_name='", fold.pack_name(), "' num_pack_elements=", num_pack_elements);
 
 				if (num_pack_elements == 0) {
-		// Fallback: check template_params/template_args for non-type parameter packs
-		// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
+					// Fallback: check template_params/template_args for non-type parameter packs
+					// This handles patterns like template<unsigned... args> constexpr unsigned f() { return (args | ...); }
 					std::optional<size_t> pack_param_idx;
 					size_t non_variadic_count = 0;
 					for (size_t p = 0; p < template_params.size(); ++p) {
@@ -438,7 +438,7 @@ ASTNode Parser::substituteTemplateParameters(
 					if (pack_param_idx.has_value() && template_args.size() >= non_variadic_count) {
 						size_t pack_size = template_args.size() - non_variadic_count;
 
-		// Check if all pack elements are values (non-type parameters)
+						// Check if all pack elements are values (non-type parameters)
 						bool all_values = true;
 						std::vector<int64_t> pack_int_values;
 						for (size_t i = non_variadic_count; i < template_args.size(); ++i) {
@@ -451,7 +451,7 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 
 						if (all_values && !pack_int_values.empty()) {
-		// Direct evaluation for non-type parameter pack folds
+							// Direct evaluation for non-type parameter pack folds
 							auto fold_result = ConstExpr::evaluate_fold_expression(fold.op(), pack_int_values);
 							if (fold_result.has_value()) {
 								std::string_view op = fold.op();
@@ -459,8 +459,8 @@ ASTNode Parser::substituteTemplateParameters(
 									Token bool_token(Token::Type::Keyword, *fold_result ? "true"sv : "false"sv, 0, 0, 0);
 									return emplace_node<ExpressionNode>(BoolLiteralNode(bool_token, *fold_result != 0));
 								} else {
-			// Determine the result type from the variadic parameter's declared type
-			// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
+									// Determine the result type from the variadic parameter's declared type
+									// e.g., template<unsigned... args> -> TypeCategory::UnsignedInt, 32 bits
 									TypeCategory result_type = TypeCategory::Int;
 									int result_size_bits = 32;
 									if (pack_param_idx.has_value()) {
@@ -478,7 +478,7 @@ ASTNode Parser::substituteTemplateParameters(
 								}
 							}
 						} else if (pack_size == 0) {
-		// Empty pack - return identity value per C++17
+							// Empty pack - return identity value per C++17
 							std::string_view op = fold.op();
 							if (op == "&&") {
 								Token bool_token(Token::Type::Keyword, "true"sv, fold.get_token().line(), fold.get_token().column(), fold.get_token().file_index());
@@ -490,7 +490,7 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 					}
 
-		// Also check pack_param_info_ as another fallback
+					// Also check pack_param_info_ as another fallback
 					if (num_pack_elements == 0) {
 						auto pack_size = get_pack_size(fold.pack_name());
 						if (pack_size.has_value()) {
@@ -504,7 +504,7 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 
-	// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
+				// Create identifier nodes for each pack element: pack_name_0, pack_name_1, etc.
 				for (size_t i = 0; i < num_pack_elements; ++i) {
 					StringBuilder param_name_builder;
 					param_name_builder.append(fold.pack_name());
@@ -524,21 +524,21 @@ ASTNode Parser::substituteTemplateParameters(
 				return node;
 			}
 
-	// Expand the fold expression based on type and direction
+			// Expand the fold expression based on type and direction
 			ASTNode result_expr;
 			Token op_token = fold.get_token();
 
 			if (fold.type() == FoldExpressionNode::Type::Unary) {
-	// Unary fold: (... op pack) or (pack op ...)
+				// Unary fold: (... op pack) or (pack op ...)
 				if (fold.direction() == FoldExpressionNode::Direction::Left) {
-		// Left fold: (... op pack) = ((pack[0] op pack[1]) op pack[2]) ...
+					// Left fold: (... op pack) = ((pack[0] op pack[1]) op pack[2]) ...
 					result_expr = pack_values[0];
 					for (size_t i = 1; i < pack_values.size(); ++i) {
 						result_expr = emplace_node<ExpressionNode>(
 							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
 					}
 				} else {
-		// Right fold: (pack op ...) = pack[0] op (pack[1] op (pack[2] op ...))
+					// Right fold: (pack op ...) = pack[0] op (pack[1] op (pack[2] op ...))
 					result_expr = pack_values[pack_values.size() - 1];
 					for (int i = static_cast<int>(pack_values.size()) - 2; i >= 0; --i) {
 						result_expr = emplace_node<ExpressionNode>(
@@ -546,18 +546,18 @@ ASTNode Parser::substituteTemplateParameters(
 					}
 				}
 			} else {
-	// Binary fold with init expression
+				// Binary fold with init expression
 				ASTNode init = substituteTemplateParameters(*fold.init_expr(), template_params, template_args);
 
 				if (fold.direction() == FoldExpressionNode::Direction::Left) {
-		// Left binary fold: (init op ... op pack) = (((init op pack[0]) op pack[1]) op ...)
+					// Left binary fold: (init op ... op pack) = (((init op pack[0]) op pack[1]) op ...)
 					result_expr = init;
 					for (size_t i = 0; i < pack_values.size(); ++i) {
 						result_expr = emplace_node<ExpressionNode>(
 							BinaryOperatorNode(op_token, result_expr, pack_values[i]));
 					}
 				} else {
-		// Right binary fold: (pack op ... op init) = pack[0] op (pack[1] op (... op init))
+					// Right binary fold: (pack op ... op init) = pack[0] op (pack[1] op (... op init))
 					result_expr = init;
 					for (int i = static_cast<int>(pack_values.size()) - 1; i >= 0; --i) {
 						result_expr = emplace_node<ExpressionNode>(
@@ -568,25 +568,25 @@ ASTNode Parser::substituteTemplateParameters(
 
 			return result_expr;
 		} else if (std::holds_alternative<SizeofPackNode>(expr)) {
-	// sizeof... operator - replace with the pack size as a constant
+			// sizeof... operator - replace with the pack size as a constant
 			const SizeofPackNode& sizeof_pack = std::get<SizeofPackNode>(expr);
 			std::string_view pack_name = sizeof_pack.pack_name();
 			FLASH_LOG(Templates, Debug, "*** SizeofPackNode handler entered for pack: '", pack_name, "'");
 
-	// Count pack elements using the helper function (works when symbol table scope is active)
+			// Count pack elements using the helper function (works when symbol table scope is active)
 			size_t num_pack_elements = count_pack_elements(pack_name);
 
-	// Fallback: if count_pack_elements returns 0 (scope may have been exited),
-	// try to calculate from template_params/template_args by finding the variadic parameter
+			// Fallback: if count_pack_elements returns 0 (scope may have been exited),
+			// try to calculate from template_params/template_args by finding the variadic parameter
 			bool found_variadic = false;
 			if (num_pack_elements == 0 && !template_args.empty()) {
-	// The pack_name is the function parameter name (e.g., "rest")
-	// We need to find the corresponding variadic template parameter (e.g., "Rest")
-	// The mapping: function param type uses the template param name
-	// IMPORTANT: Only match the variadic parameter whose name matches pack_name.
-	// Without this check, a member function template with its own variadic params
-	// (e.g., Args...) would incorrectly match when sizeof... asks about the class
-	// template's pack (e.g., Elements...).
+				// The pack_name is the function parameter name (e.g., "rest")
+				// We need to find the corresponding variadic template parameter (e.g., "Rest")
+				// The mapping: function param type uses the template param name
+				// IMPORTANT: Only match the variadic parameter whose name matches pack_name.
+				// Without this check, a member function template with its own variadic params
+				// (e.g., Args...) would incorrectly match when sizeof... asks about the class
+				// template's pack (e.g., Elements...).
 				size_t non_variadic_count = 0;
 				for (size_t i = 0; i < template_params.size(); ++i) {
 					if (template_params[i].is<TemplateParameterNode>()) {
@@ -605,7 +605,7 @@ ASTNode Parser::substituteTemplateParameters(
 				found_variadic = true; // count_pack_elements found it
 			}
 
-	// If no variadic parameter was found, check pack_param_info_ as well
+			// If no variadic parameter was found, check pack_param_info_ as well
 			if (!found_variadic) {
 				auto pack_size = get_pack_size(pack_name);
 				if (pack_size.has_value()) {
@@ -614,9 +614,9 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 
-	// If still not found, check class template pack context
-	// This handles sizeof...(_Elements) in member function templates of class templates
-	// where _Elements is the class template's parameter pack
+			// If still not found, check class template pack context
+			// This handles sizeof...(_Elements) in member function templates of class templates
+			// where _Elements is the class template's parameter pack
 			if (!found_variadic) {
 				FLASH_LOG(Templates, Debug, "Trying to find pack '", pack_name, "' in class template pack context");
 				auto class_pack_size = get_class_template_pack_size(pack_name);
@@ -629,12 +629,12 @@ ASTNode Parser::substituteTemplateParameters(
 				}
 			}
 
-	// If pack name not found, check if it's a known template parameter from an enclosing
-	// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).
-	// If so, treat as template-dependent and return unchanged.
-	// If truly unknown, throw an error.
+			// If pack name not found, check if it's a known template parameter from an enclosing
+			// class template context (e.g., sizeof...(_Elements) in a member function of tuple<_Elements...>).
+			// If so, treat as template-dependent and return unchanged.
+			// If truly unknown, throw an error.
 			if (!found_variadic) {
-	// Check if we're inside a template body and the pack name is a known template parameter
+				// Check if we're inside a template body and the pack name is a known template parameter
 				bool is_known_template_param = false;
 				if ((parsing_template_depth_ > 0)) {
 					for (const auto& param_name : current_template_param_names_) {
@@ -644,7 +644,7 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 					}
 				}
-	// Also check if any class template in the registry has this pack name
+				// Also check if any class template in the registry has this pack name
 				if (!is_known_template_param) {
 					for (const auto& [key, infos] : class_template_pack_registry_) {
 						for (const auto& info : infos) {
@@ -657,13 +657,13 @@ ASTNode Parser::substituteTemplateParameters(
 							break;
 					}
 				}
-	// Also check if the pack name is a template parameter of an enclosing class template
-	// (e.g., sizeof...(_Elements) inside a member function template of tuple<_Elements...>)
+				// Also check if the pack name is a template parameter of an enclosing class template
+				// (e.g., sizeof...(_Elements) inside a member function template of tuple<_Elements...>)
 				if (!is_known_template_param && !struct_parsing_context_stack_.empty()) {
 					for (auto sit = struct_parsing_context_stack_.rbegin(); sit != struct_parsing_context_stack_.rend() && !is_known_template_param; ++sit) {
 						std::string_view struct_name = sit->struct_name;
-		// Try multiple lookup candidates following unqualified lookup rules:
-		// direct name, template base name for instantiated classes, and each enclosing namespace.
+						// Try multiple lookup candidates following unqualified lookup rules:
+						// direct name, template base name for instantiated classes, and each enclosing namespace.
 						std::vector<std::string_view> base_names_to_try;
 						base_names_to_try.reserve(2);
 						std::vector<std::string_view> names_to_try;
@@ -712,7 +712,7 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 
 						for (size_t ni = 0; ni < names_to_try.size() && !is_known_template_param; ++ni) {
-		// Check ALL overloads, not just the first one
+							// Check ALL overloads, not just the first one
 							const auto* all_tmpls = gTemplateRegistry.lookupAllTemplates(names_to_try[ni]);
 							if (all_tmpls) {
 								for (const auto& tmpl_node : *all_tmpls) {
@@ -724,8 +724,8 @@ ASTNode Parser::substituteTemplateParameters(
 											if (param.is<TemplateParameterNode>()) {
 												const auto& tparam = param.as<TemplateParameterNode>();
 												if (tparam.is_variadic()) {
-				// Match by name, or match if the stored name is anonymous
-				// (from forward declarations like `template<typename...> class tuple;`)
+													// Match by name, or match if the stored name is anonymous
+													// (from forward declarations like `template<typename...> class tuple;`)
 													if (tparam.name() == pack_name || tparam.name().starts_with("__anon_type_")) {
 														is_known_template_param = true;
 														break;
@@ -743,12 +743,12 @@ ASTNode Parser::substituteTemplateParameters(
 					FLASH_LOG(Templates, Debug, "sizeof...(", pack_name, ") is from enclosing class template - treating as template-dependent");
 					return node;
 				}
-	// Pack name is genuinely unknown — this is a C++ constraint violation.
+				// Pack name is genuinely unknown — this is a C++ constraint violation.
 				FLASH_LOG(Parser, Error, "'", pack_name, "' does not refer to the name of a parameter pack");
 				throw CompileError("'" + std::string(pack_name) + "' does not refer to the name of a parameter pack");
 			}
 
-	// Create an integer literal with the pack size
+			// Create an integer literal with the pack size
 			FLASH_LOG(Templates, Debug, "*** Replacing sizeof...(", pack_name, ") with literal: ", num_pack_elements);
 			StringBuilder pack_size_builder;
 			std::string_view pack_size_str = pack_size_builder.append(num_pack_elements).commit();
@@ -761,7 +761,7 @@ ASTNode Parser::substituteTemplateParameters(
 			FLASH_LOG(Templates, Debug, "*** Created NumericLiteralNode, returning");
 			return result;
 		} else if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
-	// static_cast<Type>(expr) - recursively substitute in both target type and expression
+			// static_cast<Type>(expr) - recursively substitute in both target type and expression
 			const StaticCastNode& cast_node = *static_cast_node;
 			ASTNode substituted_type = substituteTemplateParameters(cast_node.target_type(), template_params, template_args);
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
@@ -782,33 +782,33 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_expr = substituteTemplateParameters(cast_node.expr(), template_params, template_args);
 			return emplace_node<ExpressionNode>(ReinterpretCastNode(substituted_type, substituted_expr, cast_node.cast_token()));
 		} else if (std::holds_alternative<SizeofExprNode>(expr)) {
-	// sizeof operator - substitute template parameters in the operand and try to evaluate
+			// sizeof operator - substitute template parameters in the operand and try to evaluate
 			const SizeofExprNode& sizeof_expr = std::get<SizeofExprNode>(expr);
 
 			if (sizeof_expr.is_type()) {
-	// sizeof(type) - substitute the type
+				// sizeof(type) - substitute the type
 				ASTNode type_or_expr = sizeof_expr.type_or_expr();
 
-	// Check if the type is a TypeSpecifierNode
+				// Check if the type is a TypeSpecifierNode
 				if (type_or_expr.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& type_spec = type_or_expr.as<TypeSpecifierNode>();
 
-		// Check if this is a user-defined or struct type that matches a template parameter
+					// Check if this is a user-defined or struct type that matches a template parameter
 					if ((is_struct_type(type_spec.category()))) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 							std::string_view type_name = StringTable::getStringView(type_info->name());
 
-		// Check if this type name matches a template parameter
+							// Check if this type name matches a template parameter
 							for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
 								if (tparam.name() == type_name) {
 									const TemplateTypeArg& arg = template_args[i];
 
 									if (arg.isTypeArgument()) {
-			// Get the size of the concrete type in bytes
+										// Get the size of the concrete type in bytes
 										size_t type_size = get_type_size_bits(arg.category()) / 8;
 
-			// Create an integer literal with the type size
+										// Create an integer literal with the type size
 										StringBuilder size_builder;
 										std::string_view size_str = size_builder.append(type_size).commit();
 										Token literal_token(Token::Type::Literal, size_str,
@@ -824,17 +824,17 @@ ASTNode Parser::substituteTemplateParameters(
 						}
 					}
 
-		// Otherwise, recursively substitute the type node
+					// Otherwise, recursively substitute the type node
 					ASTNode substituted_type = substituteTemplateParameters(type_or_expr, template_params, template_args);
 					return emplace_node<ExpressionNode>(SizeofExprNode(substituted_type, sizeof_expr.sizeof_token()));
 				}
 			} else {
-	// sizeof(expression) - substitute the expression
+				// sizeof(expression) - substitute the expression
 				ASTNode substituted_expr = substituteTemplateParameters(sizeof_expr.type_or_expr(), template_params, template_args);
 				return emplace_node<ExpressionNode>(SizeofExprNode::from_expression(substituted_expr, sizeof_expr.sizeof_token()));
 			}
 
-	// Return the original node if no substitution was possible
+			// Return the original node if no substitution was possible
 			return node;
 		}
 
@@ -851,21 +851,21 @@ ASTNode Parser::substituteTemplateParameters(
 									   std::move(substituted_args), member_call.called_from()));
 		}
 
-	// For other expression types that don't contain subexpressions, return as-is
+		// For other expression types that don't contain subexpressions, return as-is
 		return node;
 
 	} else if (node.is<FunctionCallNode>()) {
-	// Handle function calls that might contain template parameter references
+		// Handle function calls that might contain template parameter references
 		const FunctionCallNode& func_call = node.as<FunctionCallNode>();
 
-	// Substitute arguments (with PackExpansionExprNode handling)
+		// Substitute arguments (with PackExpansionExprNode handling)
 		ChunkedVector<ASTNode> substituted_args;
 		for (size_t i = 0; i < func_call.arguments().size(); ++i) {
 			substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
 		}
 
-	// For now, don't substitute the function declaration itself
-	// Create new function call with substituted arguments
+		// For now, don't substitute the function declaration itself
+		// Create new function call with substituted arguments
 		ASTNode new_func_call = emplace_node<FunctionCallNode>(func_call.function_declaration(), std::move(substituted_args), func_call.called_from());
 		substituteFunctionCallExtras(
 			new_func_call.as<FunctionCallNode>(),
@@ -873,7 +873,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return new_func_call;
 
 	} else if (node.is<BinaryOperatorNode>()) {
-	// Handle binary operators
+		// Handle binary operators
 		const BinaryOperatorNode& bin_op = node.as<BinaryOperatorNode>();
 
 		ASTNode substituted_left = substituteTemplateParameters(bin_op.get_lhs(), template_params, template_args);
@@ -882,13 +882,13 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<BinaryOperatorNode>(bin_op.get_token(), substituted_left, substituted_right);
 
 	} else if (node.is<DeclarationNode>()) {
-	// Handle declarations that might have template parameter types
+		// Handle declarations that might have template parameter types
 		const DeclarationNode& decl = node.as<DeclarationNode>();
 
-	// Substitute the type specifier
+		// Substitute the type specifier
 		ASTNode substituted_type = substituteTemplateParameters(decl.type_node(), template_params, template_args);
 
-	// Create new declaration with substituted type while preserving declaration metadata
+		// Create new declaration with substituted type while preserving declaration metadata
 		ASTNode new_decl_node = emplace_node<DeclarationNode>(substituted_type, decl.identifier_token());
 		DeclarationNode& new_decl = new_decl_node.as<DeclarationNode>();
 		new_decl.set_custom_alignment(decl.custom_alignment());
@@ -910,7 +910,7 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
 
-	// Check if this is a user-defined type that matches a template parameter
+		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
 			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
@@ -975,7 +975,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return new_init_list;
 
 	} else if (node.is<BlockNode>()) {
-	// Handle block nodes by substituting in all statements
+		// Handle block nodes by substituting in all statements
 		const BlockNode& block = node.as<BlockNode>();
 
 		auto new_block = emplace_node<BlockNode>();
@@ -988,7 +988,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return new_block;
 
 	} else if (node.is<ForStatementNode>()) {
-	// Handle for statements
+		// Handle for statements
 		const ForStatementNode& for_stmt = node.as<ForStatementNode>();
 
 		auto init_stmt = for_stmt.get_init_statement().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*for_stmt.get_init_statement(), template_params, template_args)) : std::nullopt;
@@ -999,7 +999,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<ForStatementNode>(init_stmt, condition, update_expr, body_stmt);
 
 	} else if (node.is<UnaryOperatorNode>()) {
-	// Handle unary operators
+		// Handle unary operators
 		const UnaryOperatorNode& unary_op = node.as<UnaryOperatorNode>();
 
 		ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
@@ -1007,7 +1007,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<UnaryOperatorNode>(unary_op.get_token(), substituted_operand, unary_op.is_prefix());
 
 	} else if (node.is<VariableDeclarationNode>()) {
-	// Handle variable declarations
+		// Handle variable declarations
 		const VariableDeclarationNode& var_decl = node.as<VariableDeclarationNode>();
 		ASTNode substituted_decl = substituteTemplateParameters(var_decl.declaration_node(), template_params, template_args);
 
@@ -1017,14 +1017,14 @@ ASTNode Parser::substituteTemplateParameters(
 		VariableDeclarationNode& new_var = new_var_node.as<VariableDeclarationNode>();
 		setOuterTemplateBindingsFromParams(new_var, template_params, template_args);
 
-	// Preserve constexpr/constinit flags
+		// Preserve constexpr/constinit flags
 		if (var_decl.is_constexpr())
 			new_var.set_is_constexpr(true);
 		if (var_decl.is_constinit())
 			new_var.set_is_constinit(true);
 
-	// For constexpr variables with substituted initializers, update the symbol table
-	// so that subsequent if constexpr conditions can look up the concrete value
+		// For constexpr variables with substituted initializers, update the symbol table
+		// so that subsequent if constexpr conditions can look up the concrete value
 		if (var_decl.is_constexpr() && initializer.has_value()) {
 			std::string_view var_name = var_decl.declaration().identifier_token().value();
 			gSymbolTable.insert(var_name, new_var_node);
@@ -1033,7 +1033,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return new_var_node;
 
 	} else if (node.is<ReturnStatementNode>()) {
-	// Handle return statements
+		// Handle return statements
 		const ReturnStatementNode& ret_stmt = node.as<ReturnStatementNode>();
 
 		auto expr = ret_stmt.expression().has_value() ? std::optional<ASTNode>(substituteTemplateParameters(*ret_stmt.expression(), template_params, template_args)) : std::nullopt;
@@ -1041,12 +1041,12 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<ReturnStatementNode>(expr, ret_stmt.return_token());
 
 	} else if (node.is<IfStatementNode>()) {
-	// Handle if statements
+		// Handle if statements
 		const IfStatementNode& if_stmt = node.as<IfStatementNode>();
 
 		ASTNode substituted_condition = substituteTemplateParameters(if_stmt.get_condition(), template_params, template_args);
 
-	// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
+		// For if constexpr, evaluate the condition at compile time and eliminate the dead branch
 		if (if_stmt.is_constexpr()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 			eval_ctx.parser = this;
@@ -1059,7 +1059,7 @@ ASTNode Parser::substituteTemplateParameters(
 				} else if (if_stmt.has_else()) {
 					return substituteTemplateParameters(*if_stmt.get_else_statement(), template_params, template_args);
 				} else {
-		// No else branch and condition is false - return empty block
+					// No else branch and condition is false - return empty block
 					return emplace_node<BlockNode>();
 				}
 			}
@@ -1072,7 +1072,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<IfStatementNode>(substituted_condition, substituted_then, substituted_else, substituted_init, if_stmt.is_constexpr());
 
 	} else if (node.is<WhileStatementNode>()) {
-	// Handle while statements
+		// Handle while statements
 		const WhileStatementNode& while_stmt = node.as<WhileStatementNode>();
 
 		ASTNode substituted_condition = substituteTemplateParameters(while_stmt.get_condition(), template_params, template_args);
@@ -1081,7 +1081,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return emplace_node<WhileStatementNode>(substituted_condition, substituted_body);
 	}
 
- // For other node types, return as-is (simplified implementation)
+	// For other node types, return as-is (simplified implementation)
 	return node;
 }
 
@@ -1094,13 +1094,13 @@ ASTNode Parser::substituteTemplateParameters(
 //
 // Returns: base template name if found, empty string_view otherwise
 std::string_view Parser::extract_base_template_name(std::string_view mangled_name) {
- // Try progressively longer prefixes until we find a registered template
+	// Try progressively longer prefixes until we find a registered template
 	size_t underscore_pos = 0;
 
 	while ((underscore_pos = mangled_name.find('_', underscore_pos)) != std::string_view::npos) {
 		std::string_view candidate = mangled_name.substr(0, underscore_pos);
 
-	// Check if this is a registered class template
+		// Check if this is a registered class template
 		auto candidate_opt = gTemplateRegistry.lookupTemplate(candidate);
 		if (candidate_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "extract_base_template_name: found template '",
@@ -1108,7 +1108,7 @@ std::string_view Parser::extract_base_template_name(std::string_view mangled_nam
 			return candidate;
 		}
 
-	// Also check alias templates
+		// Also check alias templates
 		auto alias_candidate = gTemplateRegistry.lookup_alias_template(candidate);
 		if (alias_candidate.has_value()) {
 			FLASH_LOG(Templates, Debug, "extract_base_template_name: found alias template '",
@@ -1130,9 +1130,9 @@ std::string_view Parser::extract_base_template_name(std::string_view mangled_nam
 std::string_view Parser::extract_base_template_name_by_stripping(std::string_view instantiated_name) {
 	std::string_view base_template_name = instantiated_name;
 
- // Try progressively stripping '_suffix' patterns until we find a registered template
+	// Try progressively stripping '_suffix' patterns until we find a registered template
 	while (!base_template_name.empty()) {
-	// Check if current name is a registered template
+		// Check if current name is a registered template
 		auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 		if (template_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "extract_base_template_name_by_stripping: found template '",
@@ -1140,7 +1140,7 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 			return base_template_name;
 		}
 
-	// Also check alias templates
+		// Also check alias templates
 		auto alias_opt = gTemplateRegistry.lookup_alias_template(base_template_name);
 		if (alias_opt.has_value()) {
 			FLASH_LOG(Templates, Debug, "extract_base_template_name_by_stripping: found alias template '",
@@ -1148,7 +1148,7 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 			return base_template_name;
 		}
 
-	// Strip last suffix
+		// Strip last suffix
 		size_t underscore_pos = base_template_name.find_last_of('_');
 		if (underscore_pos == std::string_view::npos) {
 			break;  // No more underscores to strip
@@ -1161,9 +1161,9 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 }
 // Helper: resolve a type name within the current namespace context (including using directives)
 const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
- // Walk current namespace chain outward first (e.g., physics::Vector, ::Vector)
- // This must come before the unqualified lookup so that namespace-local types
- // are preferred over short aliases registered by other namespaces.
+	// Walk current namespace chain outward first (e.g., physics::Vector, ::Vector)
+	// This must come before the unqualified lookup so that namespace-local types
+	// are preferred over short aliases registered by other namespaces.
 	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
 	while (ns_handle.isValid()) {
 		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
@@ -1177,13 +1177,13 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		ns_handle = gNamespaceRegistry.getParent(ns_handle);
 	}
 
- // Fallback: direct unqualified lookup
+	// Fallback: direct unqualified lookup
 	auto it = getTypesByNameMap().find(type_handle);
 	if (it != getTypesByNameMap().end()) {
 		return it->second;
 	}
 
- // using directives
+	// using directives
 	for (NamespaceHandle using_ns : gSymbolTable.get_current_using_directive_handles()) {
 		if (!using_ns.isValid())
 			continue;
@@ -1194,7 +1194,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		}
 	}
 
- // Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
+	// Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
 	std::string_view type_name_sv = StringTable::getStringView(type_handle);
 	const TypeInfo* suffix_match = nullptr;
 	for (const auto& [handle, info] : getTypesByNameMap()) {
@@ -1207,7 +1207,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		if (prefix_pos < 2 || full_name[prefix_pos - 2] != ':' || full_name[prefix_pos - 1] != ':')
 			continue;
 		if (suffix_match && suffix_match != info) {
-	// Ambiguous - multiple matches
+			// Ambiguous - multiple matches
 			suffix_match = nullptr;
 			break;
 		}
@@ -1231,7 +1231,7 @@ bool Parser::expandPackExpansionArgs(
 
 	const ASTNode& pattern = pack_expansion.pattern();
 
- // Find the variadic template parameter and count non-variadic params
+	// Find the variadic template parameter and count non-variadic params
 	size_t variadic_param_idx = SIZE_MAX;
 	size_t non_variadic_count = 0;
 	for (size_t p = 0; p < template_params.size(); ++p) {
@@ -1251,9 +1251,9 @@ bool Parser::expandPackExpansionArgs(
 		num_pack_elements = template_args.size() - non_variadic_count;
 	}
 
- // Also check pack_param_info_ for function parameter packs. Match the pack
- // name against the pattern so empty packs are still recognized and consumed
- // instead of leaking a PackExpansionExprNode across the parser/sema boundary.
+	// Also check pack_param_info_ for function parameter packs. Match the pack
+	// name against the pattern so empty packs are still recognized and consumed
+	// instead of leaking a PackExpansionExprNode across the parser/sema boundary.
 	std::string_view func_pack_name;
 	for (const auto& pack_info : pack_param_info_) {
 		if (exprContainsIdentifier(pattern, pack_info.original_name)) {
@@ -1273,7 +1273,7 @@ bool Parser::expandPackExpansionArgs(
 
 	FLASH_LOG(Templates, Debug, "Expanding PackExpansionExprNode in function call args: ", num_pack_elements, " elements");
 	for (size_t pi = 0; pi < num_pack_elements; ++pi) {
-	// Build substitution params for this single pack element
+		// Build substitution params for this single pack element
 		std::vector<ASTNode> subst_params;
 		std::vector<TemplateTypeArg> subst_args;
 		for (size_t p = 0; p < template_params.size(); ++p) {
@@ -1290,8 +1290,8 @@ bool Parser::expandPackExpansionArgs(
 			}
 		}
 
-	// Replace the function parameter pack identifier (e.g., "args") with
-	// the expanded element name (e.g., "args_0") in the pattern before substitution
+		// Replace the function parameter pack identifier (e.g., "args") with
+		// the expanded element name (e.g., "args_0") in the pattern before substitution
 		ASTNode expanded_pattern = replacePackIdentifierInExpr(pattern, func_pack_name, pi);
 		ASTNode substituted = substituteTemplateParameters(expanded_pattern, subst_params, subst_args);
 		out_args.push_back(substituted);
@@ -1326,7 +1326,7 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 	if (!expr.has_value() || pack_name.empty())
 		return expr;
 
- // Handle ExpressionNode variant
+	// Handle ExpressionNode variant
 	if (expr.is<ExpressionNode>()) {
 		const ExpressionNode& expr_variant = expr.as<ExpressionNode>();
 
@@ -1433,11 +1433,11 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(ArraySubscriptNode(new_array, new_index, sub.bracket_token()));
 		}
 
-	// For other variant types, return as-is
+		// For other variant types, return as-is
 		return expr;
 	}
 
- // Handle direct FunctionCallNode
+	// Handle direct FunctionCallNode
 	if (expr.is<FunctionCallNode>()) {
 		const FunctionCallNode& call = expr.as<FunctionCallNode>();
 		ChunkedVector<ASTNode> new_args;
@@ -1478,7 +1478,7 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 	if (!expr.has_value() || pack_name.empty())
 		return false;
 
- // Search a list of argument nodes.
+	// Search a list of argument nodes.
 	auto argsContain = [&](const auto& args) -> bool {
 		for (const auto& arg : args)
 			if (exprContainsIdentifier(arg, pack_name))

@@ -1282,8 +1282,8 @@ ParseResult Parser::parse_lambda_expression() {
 			TypeIndex type_index{};
 
 			if (capture.kind() == LambdaCaptureNode::CaptureKind::ByReference) {
-	// By-reference capture: store a pointer (8 bytes on x64)
-	// We store the base type (e.g., Int) but the member will be accessed as a pointer
+				// By-reference capture: store a pointer (8 bytes on x64)
+				// We store the base type (e.g., Int) but the member will be accessed as a pointer
 				member_size = 8;
 				member_alignment = 8;
 			} else {

@@ -13,7 +13,7 @@ struct TokenSpelling {
 };
 
 inline constexpr TokenSpelling all_fixed_tokens[] = {
- // ---- Punctuators ----
+	// ---- Punctuators ----
 	{"{", tok::LBrace},
 	{"}", tok::RBrace},
 	{"(", tok::LParen},
@@ -29,7 +29,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{"->", tok::Arrow},
 	{"#", tok::Hash},
 
- // ---- Operators ----
+	// ---- Operators ----
 	{"+", tok::Plus},
 	{"-", tok::Minus},
 	{"*", tok::Star},
@@ -68,7 +68,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{".*", tok::MemberPointer},
 	{"->*", tok::ArrowMemberPointer},
 
- // ---- Alternative operator spellings (same TokenKind) ----
+	// ---- Alternative operator spellings (same TokenKind) ----
 	{"and", tok::LogicalAnd},
 	{"or", tok::LogicalOr},
 	{"not", tok::LogicalNot},
@@ -81,7 +81,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{"or_eq", tok::BitwiseOrAssign},
 	{"xor_eq", tok::BitwiseXorAssign},
 
- // ---- Keywords ----
+	// ---- Keywords ----
 	{"if", tok::KW_if},
 	{"else", tok::KW_else},
 	{"while", tok::KW_while},
@@ -162,7 +162,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{"unsigned", tok::KW_unsigned},
 	{"volatile", tok::KW_volatile},
 	{"wchar_t", tok::KW_wchar_t},
- // Microsoft-specific keywords
+	// Microsoft-specific keywords
 	{"__int8", tok::KW___int8},
 	{"__int16", tok::KW___int16},
 	{"__int32", tok::KW___int32},
@@ -176,7 +176,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{"__inline", tok::KW___inline},
 	{"__forceinline", tok::KW___forceinline},
 	{"__declspec", tok::KW___declspec},
- // SEH keywords
+	// SEH keywords
 	{"__try", tok::KW___try},
 	{"__except", tok::KW___except},
 	{"__finally", tok::KW___finally},
@@ -198,7 +198,7 @@ consteval TokenKind operator""_tok(const char* s, size_t len) {
 // Uses a static hash map built once on first call for O(1) average lookup.
 // Returns TokenKind::eof() if the spelling is not a fixed token.
 inline TokenKind spell_to_kind(std::string_view spelling) {
- // Build hash map on first call (guaranteed thread-safe in C++11+)
+	// Build hash map on first call (guaranteed thread-safe in C++11+)
 	struct SpellMap {
 		std::unordered_map<std::string_view, TokenKind> map;
 		SpellMap() {

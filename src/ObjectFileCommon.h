@@ -12,14 +12,14 @@
 
 namespace ObjectFileCommon {
 
- // Transparent hash for std::string-keyed maps enabling string_view lookups without allocation
+	// Transparent hash for std::string-keyed maps enabling string_view lookups without allocation
 struct StringViewHash {
 	using is_transparent = void;
 	size_t operator()(std::string_view sv) const { return std::hash<std::string_view>{}(sv); }
 	size_t operator()(const std::string& s) const { return std::hash<std::string_view>{}(s); }
 };
 
- // Function signature information for mangling
+	// Function signature information for mangling
 struct FunctionSignature {
 	TypeSpecifierNode return_type;
 	std::vector<TypeSpecifierNode> parameter_types;
@@ -37,7 +37,7 @@ struct FunctionSignature {
 		: return_type(ret_type), parameter_types(std::move(params)) {}
 };
 
- // Exception handling information for a catch handler
+	// Exception handling information for a catch handler
 struct CatchHandlerInfo {
 	uint32_t type_index;		 // Type to catch (0 for catch-all)
 	uint32_t handler_offset;	 // Code offset of catch handler relative to function start
@@ -52,22 +52,22 @@ struct CatchHandlerInfo {
 	int32_t catch_obj_offset; // Frame offset where caught exception object is stored (negative RBP offset)
 };
 
- // Unwind map entry for destructor calls during exception unwinding
+	// Unwind map entry for destructor calls during exception unwinding
 struct UnwindMapEntryInfo {
 	int to_state;			  // State to transition to after unwinding (-1 = no more unwinding)
 	std::string action;		// Name of destructor/cleanup function to call (empty = no action)
 };
 
- // Exception handling information for a try block
+	// Exception handling information for a try block
 struct TryBlockInfo {
 	uint32_t try_start_offset;  // Code offset where try block starts
 	uint32_t try_end_offset;	 // Code offset where try block ends
 	std::vector<CatchHandlerInfo> catch_handlers;
 };
 
- // Windows SEH (Structured Exception Handling) information
+	// Windows SEH (Structured Exception Handling) information
 
- // SEH __except handler information
+	// SEH __except handler information
 struct SehExceptHandlerInfo {
 	uint32_t handler_offset;	 // Code offset of __except handler
 	uint32_t filter_result;	// Filter expression evaluation result (temp var number)
@@ -76,12 +76,12 @@ struct SehExceptHandlerInfo {
 	uint32_t filter_funclet_offset = 0; // Code offset of filter funclet (for non-constant filters)
 };
 
- // SEH __finally handler information
+	// SEH __finally handler information
 struct SehFinallyHandlerInfo {
 	uint32_t handler_offset;	 // Code offset of __finally handler
 };
 
- // SEH try block information
+	// SEH try block information
 struct SehTryBlockInfo {
 	uint32_t try_start_offset;  // Code offset where __try block starts
 	uint32_t try_end_offset;	 // Code offset where __try block ends
@@ -91,7 +91,7 @@ struct SehTryBlockInfo {
 	SehFinallyHandlerInfo finally_handler; // __finally handler (if has_finally_handler is true)
 };
 
- // Base class descriptor info for RTTI emission
+	// Base class descriptor info for RTTI emission
 struct BaseClassDescriptorInfo {
 	std::string name;			  // Base class name
 	uint32_t num_contained_bases; // Number of bases this base has
@@ -99,10 +99,10 @@ struct BaseClassDescriptorInfo {
 	bool is_virtual;			 // Whether this is a virtual base
 };
 
- // Byte-packing helpers for RTTI/vtable data construction
- // Replaces 30+ inline for-loops with clean one-liners
+	// Byte-packing helpers for RTTI/vtable data construction
+	// Replaces 30+ inline for-loops with clean one-liners
 
- /// Append a value in little-endian byte order to a char vector
+	/// Append a value in little-endian byte order to a char vector
 template <typename T>
 inline void appendLE(std::vector<char>& buf, T value) {
 	for (size_t i = 0; i < sizeof(T); ++i) {
@@ -110,13 +110,13 @@ inline void appendLE(std::vector<char>& buf, T value) {
 	}
 }
 
- /// Append N zero bytes to a char vector
+	/// Append N zero bytes to a char vector
 inline void appendZeros(std::vector<char>& buf, size_t count) {
 	buf.insert(buf.end(), count, 0);
 }
 
- /// C++20 concept documenting the duck-type interface shared by ObjectFileWriter and ElfFileWriter.
- /// Both file writers are used as template parameters to IrToObjConverter<TWriterClass>.
+	/// C++20 concept documenting the duck-type interface shared by ObjectFileWriter and ElfFileWriter.
+	/// Both file writers are used as template parameters to IrToObjConverter<TWriterClass>.
 template <typename T>
 concept FileWriter = requires(T writer,
 							  std::string_view name,
@@ -128,19 +128,19 @@ concept FileWriter = requires(T writer,
 							  const std::vector<TryBlockInfo>& try_blocks,
 							  const std::vector<UnwindMapEntryInfo>& unwind_map,
 							  const std::vector<SehTryBlockInfo>& seh_try_blocks) {
-	// Core function management
+		// Core function management
 	writer.add_function_symbol(name, offset, size, linkage);
 	writer.finalize_current_function();
 	writer.finalize_debug_info();
 
-	// Relocation support
+		// Relocation support
 	writer.add_relocation(reloc_offset, name);
 	writer.add_relocation(reloc_offset, name, reloc_type);
 
-	// Exception handling
+		// Exception handling
 	writer.add_function_exception_info(name, offset, size, try_blocks, unwind_map, seh_try_blocks, size);
 
-	// Global data
+		// Global data
 	writer.add_global_variable_data(name, size_t{0}, size_t{0}, std::span<const uint8_t>{}, false, false);
 };
 

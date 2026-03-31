@@ -57,23 +57,23 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 	if (!struct_info)
 		return true;
 
- // If there is an explicit user-defined destructor AND it carries an explicit
- // noexcept specifier (bare noexcept or noexcept(expr)), the is_noexcept()
- // flag was eagerly evaluated at parse time — trust it directly.
- // If the destructor has NO explicit noexcept specifier (or is = default),
- // its effective noexcept status is determined by bases/members, just as for
- // an implicit destructor (C++20 [except.spec]/7, [class.dtor]/3).
+	// If there is an explicit user-defined destructor AND it carries an explicit
+	// noexcept specifier (bare noexcept or noexcept(expr)), the is_noexcept()
+	// flag was eagerly evaluated at parse time — trust it directly.
+	// If the destructor has NO explicit noexcept specifier (or is = default),
+	// its effective noexcept status is determined by bases/members, just as for
+	// an implicit destructor (C++20 [except.spec]/7, [class.dtor]/3).
 	const auto* dtor = struct_info->findDestructor();
 	if (dtor && dtor->function_decl.is<DestructorDeclarationNode>()) {
 		const auto& dtor_node = dtor->function_decl.as<DestructorDeclarationNode>();
 		if (dtor_node.has_noexcept_specifier()) {
 			return dtor_node.is_noexcept();
 		}
-	// Fall through to base/member check below
+		// Fall through to base/member check below
 	}
 
- // No explicit destructor, or destructor without a noexcept specifier:
- // the effective noexcept status depends on base classes and members.
+	// No explicit destructor, or destructor without a noexcept specifier:
+	// the effective noexcept status depends on base classes and members.
 	for (const auto& base : struct_info->base_classes) {
 		if (base.is_deferred)
 			continue;
@@ -83,7 +83,7 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 			return false;
 	}
 	for (const auto& member : struct_info->members) {
-	// Only struct/class-typed members (not pointers or references) have destructors
+		// Only struct/class-typed members (not pointers or references) have destructors
 		if ((!is_struct_type(member.type_index.category())) ||
 			member.pointer_depth > 0 || member.is_reference())
 			continue;
@@ -96,9 +96,9 @@ bool isStructNothrowDestructible(const StructTypeInfo* struct_info) {
 }
 
 bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor, const SymbolTable& symbols) {
- // Try to resolve the actual type from the object expression's declaration
- // (not the type_name() token) so that template specializations like
- // Wrapper<int> resolve to the correct instantiated type.
+	// Try to resolve the actual type from the object expression's declaration
+	// (not the type_name() token) so that template specializations like
+	// Wrapper<int> resolve to the correct instantiated type.
 	if (pseudo_dtor.object().is<ExpressionNode>()) {
 		const ExpressionNode& obj_expr = pseudo_dtor.object().as<ExpressionNode>();
 		if (const auto* obj_id = std::get_if<IdentifierNode>(&obj_expr)) {
@@ -117,7 +117,7 @@ bool isPseudoDestructorCallNoexcept(const PseudoDestructorCallNode& pseudo_dtor,
 			}
 		}
 	}
- // Fallback: look up by type name token (works for non-template types)
+	// Fallback: look up by type name token (works for non-template types)
 	std::string_view type_name = pseudo_dtor.type_name();
 	auto it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
 	if (it != getTypesByNameMap().end()) {
@@ -146,36 +146,36 @@ TypeTraitResult evaluateTypeTrait(
 
 	switch (kind) {
 	case TypeTraitKind::IsConstantEvaluated:
-	// In compile-time context, return true; in runtime context, return false
-	// This is context-dependent, so caller should handle this case specially
+			// In compile-time context, return true; in runtime context, return false
+			// This is context-dependent, so caller should handle this case specially
 		return TypeTraitResult::failure();
 
 	case TypeTraitKind::IsCompleteOrUnbounded:
-	// __is_complete_or_unbounded evaluates to true if either:
-	// 1. T is a complete type, or
-	// 2. T is an unbounded array type (e.g. int[])
-	// It evaluates to false for:
-	// - Incomplete class types
-	// - void
-	// - Bounded array types with incomplete element types
+			// __is_complete_or_unbounded evaluates to true if either:
+			// 1. T is a complete type, or
+			// 2. T is an unbounded array type (e.g. int[])
+			// It evaluates to false for:
+			// - Incomplete class types
+			// - void
+			// - Bounded array types with incomplete element types
 
-	// Check for void - always incomplete
+			// Check for void - always incomplete
 		if (cat == TypeCategory::Void && pointer_depth == 0 && !is_reference) {
 			return TypeTraitResult::success_false();
 		}
 
-	// Check for unbounded array - always returns true
+			// Check for unbounded array - always returns true
 		if (is_array && (!array_size.has_value() || *array_size == 0)) {
 			return TypeTraitResult::success_true();
 		}
 
-	// Check for incomplete class/struct types (struct_info is null for incomplete types)
+			// Check for incomplete class/struct types (struct_info is null for incomplete types)
 		if (is_struct_type(cat) &&
 			!struct_info && pointer_depth == 0 && !is_reference) {
 			return TypeTraitResult::success_false();
 		}
 
-	// All other types are considered complete
+			// All other types are considered complete
 		return TypeTraitResult::success_true();
 
 	case TypeTraitKind::IsVoid:
@@ -303,7 +303,7 @@ TypeTraitResult evaluateTypeTrait(
 
 	case TypeTraitKind::IsAggregate:
 		if (struct_info && !is_reference && pointer_depth == 0) {
-	// Check aggregate conditions
+				// Check aggregate conditions
 			bool has_user_constructors = false;
 			for (const auto& func : struct_info->member_functions) {
 				if (func.is_constructor && func.function_decl.is<ConstructorDeclarationNode>()) {
@@ -426,7 +426,7 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::HasVirtualDestructor:
 		if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
 			result = struct_info->has_vtable && struct_info->hasUserDefinedDestructor();
-	// If no explicit destructor but has vtable, check base classes
+				// If no explicit destructor but has vtable, check base classes
 			if (!result && struct_info->has_vtable && !struct_info->base_classes.empty()) {
 				for (const auto& base : struct_info->base_classes) {
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
@@ -444,7 +444,7 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsConstructible:
 	case TypeTraitKind::IsTriviallyConstructible:
 	case TypeTraitKind::IsNothrowConstructible:
-	// These need variadic type arguments, return failure for simple evaluation
+			// These need variadic type arguments, return failure for simple evaluation
 		if (isScalarType(cat, is_reference, pointer_depth)) {
 			result = true;  // Scalars are always default constructible
 		} else if (struct_info && !struct_info->is_union && !is_reference && pointer_depth == 0) {
@@ -456,7 +456,7 @@ TypeTraitResult evaluateTypeTrait(
 		}
 		break;
 
-	// Binary traits and variadic traits need special handling with second type
+		// Binary traits and variadic traits need special handling with second type
 	case TypeTraitKind::IsBaseOf:
 	case TypeTraitKind::IsSame:
 	case TypeTraitKind::IsConvertible:
@@ -466,11 +466,11 @@ TypeTraitResult evaluateTypeTrait(
 	case TypeTraitKind::IsNothrowAssignable:
 	case TypeTraitKind::IsLayoutCompatible:
 	case TypeTraitKind::IsPointerInterconvertibleBaseOf:
-	// These need the second type argument, return failure
+			// These need the second type argument, return failure
 		return TypeTraitResult::failure();
 
 	case TypeTraitKind::UnderlyingType:
-	// This returns a type, not a bool, so handle specially
+			// This returns a type, not a bool, so handle specially
 		return TypeTraitResult::failure();
 
 	default:

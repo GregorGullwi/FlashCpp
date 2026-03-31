@@ -54,21 +54,21 @@ class Parser;
 /// which this class handles.
 class ExpressionSubstitutor {
 public:
- /// Construct a substitutor with a parameter-to-argument mapping
- /// @param param_map Maps template parameter names to concrete template arguments
- /// @param parser Reference to the parser for triggering template instantiations
- /// @param template_param_order Optional vector preserving the original template parameter declaration order
+	/// Construct a substitutor with a parameter-to-argument mapping
+	/// @param param_map Maps template parameter names to concrete template arguments
+	/// @param parser Reference to the parser for triggering template instantiations
+	/// @param template_param_order Optional vector preserving the original template parameter declaration order
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		Parser& parser,
 		const std::vector<std::string_view>& template_param_order = {})
 		: param_map_(param_map), parser_(parser), template_param_order_(template_param_order) {}
 
- /// Construct a substitutor with both scalar and pack parameter mappings
- /// @param param_map Maps scalar template parameter names to concrete template arguments
- /// @param pack_map Maps pack parameter names to vectors of template arguments
- /// @param parser Reference to the parser for triggering template instantiations
- /// @param template_param_order Optional vector preserving the original template parameter declaration order
+	/// Construct a substitutor with both scalar and pack parameter mappings
+	/// @param param_map Maps scalar template parameter names to concrete template arguments
+	/// @param pack_map Maps pack parameter names to vectors of template arguments
+	/// @param parser Reference to the parser for triggering template instantiations
+	/// @param template_param_order Optional vector preserving the original template parameter declaration order
 	ExpressionSubstitutor(
 		const std::unordered_map<std::string_view, TemplateTypeArg>& param_map,
 		const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>>& pack_map,
@@ -76,13 +76,13 @@ public:
 		const std::vector<std::string_view>& template_param_order = {})
 		: param_map_(param_map), pack_map_(pack_map), parser_(parser), template_param_order_(template_param_order) {}
 
- /// Main entry point: Substitute template parameters in an expression
- /// @param expr The expression AST node to process
- /// @return A new expression with template parameters substituted
+	/// Main entry point: Substitute template parameters in an expression
+	/// @param expr The expression AST node to process
+	/// @return A new expression with template parameters substituted
 	ASTNode substitute(const ASTNode& expr);
 
 private:
- // Handlers for different expression types
+	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
 	ASTNode substituteFunctionCall(const FunctionCallNode& call);
 	ASTNode substituteBinaryOp(const BinaryOperatorNode& binop);
@@ -95,18 +95,18 @@ private:
 	ASTNode substituteStaticCast(const StaticCastNode& cast_node);
 	ASTNode substituteLiteral(const ASTNode& literal);
 
- // Helper: substitute in a type specifier with template args
+	// Helper: substitute in a type specifier with template args
 	TypeSpecifierNode substituteInType(const TypeSpecifierNode& type);
 
- // Helper: trigger template instantiation for a type
+	// Helper: trigger template instantiation for a type
 	void ensureTemplateInstantiated(
 		std::string_view template_name,
 		const std::vector<TemplateTypeArg>& args);
 
- // Helper: check if a template argument node is a pack expansion
+	// Helper: check if a template argument node is a pack expansion
 	bool isPackExpansion(const ASTNode& arg_node, std::string_view& pack_name);
 
- // Helper: expand pack parameters in template arguments
+	// Helper: expand pack parameters in template arguments
 	std::vector<TemplateTypeArg> expandPacksInArguments(
 		const std::vector<ASTNode>& template_arg_nodes);
 

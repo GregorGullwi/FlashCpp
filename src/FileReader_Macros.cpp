@@ -11,7 +11,7 @@
 // 4. Token pasting (##) is performed after argument substitution
 // 5. Stringification (#) uses unexpanded argument text
 std::string FileReader::expandMacros(const std::string& input, std::unordered_set<std::string> expanding_macros) {
- // Check if we're inside a multiline raw string from a previous line
+	// Check if we're inside a multiline raw string from a previous line
 	if (inside_multiline_raw_string_) {
 		std::string closing = ")" + multiline_raw_delimiter_ + "\"";
 		size_t close_pos = input.find(closing);
@@ -22,7 +22,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		return input;
 	}
 
- // Check for multiline raw string start
+	// Check for multiline raw string start
 	size_t raw_start = 0;
 	while ((raw_start = input.find("R\"", raw_start)) != std::string::npos) {
 		size_t delim_start = raw_start + 2;
@@ -39,7 +39,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		raw_start++;
 	}
 
- // Use a working copy to avoid const_cast issues
+	// Use a working copy to avoid const_cast issues
 	std::string current = input;
 	std::string output;
 	output.reserve(current.size() * 2);	// Reserve space to avoid reallocations
@@ -47,8 +47,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 	size_t loop_guard = 1000;  // Safety limit for expansion iterations
 	bool needs_another_pass = true;	// Controls iteration - start with true to do at least one pass
 
- // We need to iterate because expansions can introduce new macros
- // Each pass scans the entire string for macros to expand
+	// We need to iterate because expansions can introduce new macros
+	// Each pass scans the entire string for macros to expand
 	while (needs_another_pass && loop_guard-- > 0) {
 		needs_another_pass = false;	// Will be set true if we expand any macros
 		output.clear();
@@ -63,7 +63,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		while (pos < input_size) {
 			char c = current[pos];
 
-	// Handle escape sequences in strings
+			// Handle escape sequences in strings
 			if ((in_string || in_char) && c == '\\' && pos + 1 < input_size) {
 				output += c;
 				output += current[++pos];
@@ -71,15 +71,15 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				continue;
 			}
 
-	// Handle raw string literals
+			// Handle raw string literals
 			if (!in_string && !in_char && !in_raw_string && c == 'R' && pos + 1 < input_size && current[pos + 1] == '"') {
-	// Start of raw string - find delimiter
+				// Start of raw string - find delimiter
 				size_t delim_start = pos + 2;
 				size_t paren = current.find('(', delim_start);
 				if (paren != std::string::npos && paren <= delim_start + 16) {
 					raw_delimiter = current.substr(delim_start, paren - delim_start);
 					in_raw_string = true;
-		// Copy up to and including the opening paren
+					// Copy up to and including the opening paren
 					while (pos <= paren) {
 						output += current[pos++];
 					}
@@ -88,11 +88,11 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 			}
 
 			if (in_raw_string) {
-	// Look for closing delimiter
+				// Look for closing delimiter
 				std::string closing = ")" + raw_delimiter + "\"";
 				if (pos + closing.size() <= input_size &&
 					current.compare(pos, closing.size(), closing) == 0) {
-		// Found closing, copy it and exit raw string mode
+					// Found closing, copy it and exit raw string mode
 					output += current.substr(pos, closing.size());
 					pos += closing.size();
 					in_raw_string = false;
@@ -104,7 +104,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				continue;
 			}
 
-	// Handle regular string literals
+			// Handle regular string literals
 			if (!in_char && c == '"') {
 				in_string = !in_string;
 				output += c;
@@ -112,7 +112,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				continue;
 			}
 
-	// Handle character literals
+			// Handle character literals
 			if (!in_string && c == '\'') {
 				in_char = !in_char;
 				output += c;
@@ -120,18 +120,18 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				continue;
 			}
 
-	// Inside string/char literal, just copy
+			// Inside string/char literal, just copy
 			if (in_string || in_char) {
 				output += c;
 				++pos;
 				continue;
 			}
 
-	// Check for identifier start (letter or underscore)
+			// Check for identifier start (letter or underscore)
 			if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
 				size_t ident_start = pos;
 				++pos;
-	// Consume the rest of the identifier
+				// Consume the rest of the identifier
 				while (pos < input_size && (std::isalnum(static_cast<unsigned char>(current[pos])) || current[pos] == '_')) {
 					++pos;
 				}
@@ -139,10 +139,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				std::string_view ident(current.data() + ident_start, pos - ident_start);
 				std::string ident_str(ident);
 
-	// Handle _Pragma() operator (C++20 §15.9 [cpp.pragma.op])
-	// _Pragma("string") is destringized and processed as #pragma string
+				// Handle _Pragma() operator (C++20 §15.9 [cpp.pragma.op])
+				// _Pragma("string") is destringized and processed as #pragma string
 				if (ident == "_Pragma") {
-		// Skip whitespace before '('
+					// Skip whitespace before '('
 					size_t paren_pos = pos;
 					while (paren_pos < input_size && std::isspace(static_cast<unsigned char>(current[paren_pos]))) {
 						++paren_pos;
@@ -150,17 +150,17 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					if (paren_pos < input_size && current[paren_pos] == '(') {
 						size_t close_paren = findMatchingClosingParen(current, paren_pos);
 						if (close_paren != std::string::npos) {
-		// Extract string literal content between parens
+							// Extract string literal content between parens
 							std::string_view inner(current.data() + paren_pos + 1, close_paren - paren_pos - 1);
-		// Trim whitespace
+							// Trim whitespace
 							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.front())))
 								inner.remove_prefix(1);
 							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.back())))
 								inner.remove_suffix(1);
-		// Destringize: remove surrounding quotes, unescape backslash sequences
+							// Destringize: remove surrounding quotes, unescape backslash sequences
 							if (inner.size() >= 2 && inner.front() == '"' && inner.back() == '"') {
 								std::string pragma_content(inner.substr(1, inner.size() - 2));
-		// Destringize per standard: delete \ before " or \ characters
+								// Destringize per standard: delete \ before " or \ characters
 								std::string destringized;
 								destringized.reserve(pragma_content.size());
 								for (size_t i = 0; i < pragma_content.size(); ++i) {
@@ -170,7 +170,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									}
 									destringized += pragma_content[i];
 								}
-		// Process as #pragma: handle once/pack, skip others
+								// Process as #pragma: handle once/pack, skip others
 								if (destringized == "once") {
 									if (!filestack_.empty()) {
 										processedHeaders_.insert(std::string(filestack_.top().file_name));
@@ -179,25 +179,25 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									std::string pragma_line = "#pragma " + destringized;
 									processPragmaPack(pragma_line);
 								}
-		// else: skip (warning, GCC visibility, etc.)
+								// else: skip (warning, GCC visibility, etc.)
 							}
 							pos = close_paren + 1;
 							needs_another_pass = true;
 							continue;
 						}
 					}
-		// Not a valid _Pragma invocation, emit as-is
+					// Not a valid _Pragma invocation, emit as-is
 					output += ident;
 					continue;
 				}
 
-	// Skip if this macro is being expanded (prevent recursion per C++ standard)
+				// Skip if this macro is being expanded (prevent recursion per C++ standard)
 				if (expanding_macros.count(ident_str) > 0) {
 					output += ident;
 					continue;
 				}
 
-	// Look up identifier in defines
+				// Look up identifier in defines
 				auto it = defines_.find(ident_str);
 				if (it != defines_.end()) {
 					const Directive& directive = it->second;
@@ -206,17 +206,17 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					if (auto* defineDirective = directive.get_if<DefineDirective>()) {
 						replace_str = defineDirective->body;
 
-		// Use the is_function_like flag to properly detect function-like macros
-		// This handles variadic macros like #define FOO(...) which have empty args but are function-like
+						// Use the is_function_like flag to properly detect function-like macros
+						// This handles variadic macros like #define FOO(...) which have empty args but are function-like
 						if (defineDirective->is_function_like) {
-		// Look for opening parenthesis (skip whitespace)
+							// Look for opening parenthesis (skip whitespace)
 							size_t paren_pos = pos;
 							while (paren_pos < input_size && std::isspace(static_cast<unsigned char>(current[paren_pos]))) {
 								++paren_pos;
 							}
 
 							if (paren_pos >= input_size || current[paren_pos] != '(') {
-		// No '(' found - this is not a macro invocation, just copy the identifier
+								// No '(' found - this is not a macro invocation, just copy the identifier
 								output += ident;
 								continue;
 							}
@@ -224,7 +224,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							size_t args_start = paren_pos;
 							size_t args_end = findMatchingClosingParen(current, args_start);
 							if (args_end == std::string::npos) {
-		// Malformed - no closing paren
+								// Malformed - no closing paren
 								output += ident;
 								continue;
 							}
@@ -232,7 +232,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							std::vector<std::string_view> args = splitArgs(
 								std::string_view(current).substr(args_start + 1, args_end - args_start - 1));
 
-		// Handle variadic arguments (__VA_ARGS__)
+							// Handle variadic arguments (__VA_ARGS__)
 							std::string va_args_str;
 							bool has_variadic_args = false;
 							if (args.size() > defineDirective->args.size()) {
@@ -245,8 +245,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								}
 							}
 
-		// Handle __VA_OPT__ (C++20 feature)
-		// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
+							// Handle __VA_OPT__ (C++20 feature)
+							// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
 							size_t va_opt_pos = 0;
 							while ((va_opt_pos = replace_str.find("__VA_OPT__", va_opt_pos)) != std::string::npos) {
 								size_t opt_paren_start = replace_str.find('(', va_opt_pos + 10);
@@ -263,21 +263,21 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									break;
 							}
 
-		// Handle __VA_ARGS__
+							// Handle __VA_ARGS__
 							size_t va_args_pos = replace_str.find("__VA_ARGS__");
 							if (va_args_pos != std::string::npos) {
 								replace_str.replace(va_args_pos, 11, va_args_str);
 							}
 
-		// Substitute macro arguments
+							// Substitute macro arguments
 							if (args.size() < defineDirective->args.size()) {
-		// Not enough arguments per C++ standard - skip expansion
+								// Not enough arguments per C++ standard - skip expansion
 								output += ident;
 								continue;
 							}
 
-		// Per C++ standard 6.10.3.1: Determine which parameters are operands of # or ##
-		// Arguments for such parameters must NOT be pre-expanded
+							// Per C++ standard 6.10.3.1: Determine which parameters are operands of # or ##
+							// Arguments for such parameters must NOT be pre-expanded
 							auto is_separator = [](char c) {
 								return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
 							};
@@ -287,17 +287,17 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									size_t found = body.find(param_name, search_pos);
 									if (found == std::string::npos)
 										break;
-			// Check if this is a whole-word match
+									// Check if this is a whole-word match
 									bool start_ok = (found == 0) || is_separator(body[found - 1]);
 									bool end_ok = (found + param_name.size() >= body.size()) || is_separator(body[found + param_name.size()]);
 									if (start_ok && end_ok) {
-			// Check if preceded by ## (skip whitespace)
+										// Check if preceded by ## (skip whitespace)
 										size_t before = found;
 										while (before > 0 && std::isspace(static_cast<unsigned char>(body[before - 1])))
 											--before;
 										if (before >= 2 && body[before - 2] == '#' && body[before - 1] == '#')
 											return true;
-			// Check if followed by ## (skip whitespace)
+										// Check if followed by ## (skip whitespace)
 										size_t after = found + param_name.size();
 										while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after])))
 											++after;
@@ -310,11 +310,11 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							};
 
 							for (size_t i = 0; i < defineDirective->args.size(); ++i) {
-		// Handle stringification (#) - uses UNEXPANDED argument per C++ standard
+								// Handle stringification (#) - uses UNEXPANDED argument per C++ standard
 								size_t stringify_pos = 0;
 								std::string search_str = "#" + defineDirective->args[i];
 								while ((stringify_pos = replace_str.find(search_str, stringify_pos)) != std::string::npos) {
-			// Skip if part of ## (token pasting)
+									// Skip if part of ## (token pasting)
 									if (stringify_pos > 0 && replace_str[stringify_pos - 1] == '#') {
 										stringify_pos++;
 										continue;
@@ -324,13 +324,13 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 										stringify_pos++;
 										continue;
 									}
-			// Stringification uses unexpanded argument
+									// Stringification uses unexpanded argument
 									replace_str.replace(stringify_pos, search_str.length(),
 														std::format("\"{0}\"", args[i]));
 									stringify_pos += args[i].length() + 2;
 								}
-		// Per C++ standard: arguments NOT adjacent to # or ## are expanded before substitution
-		// Arguments adjacent to ## are substituted unexpanded (token pasting operates on raw tokens)
+								// Per C++ standard: arguments NOT adjacent to # or ## are expanded before substitution
+								// Arguments adjacent to ## are substituted unexpanded (token pasting operates on raw tokens)
 								std::string_view arg_value = args[i];
 								std::string expanded_arg;
 								if (!paramAdjacentToHashHash(defineDirective->args[i], defineDirective->body)) {
@@ -346,8 +346,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 						replace_str = function_directive->getBody();
 					}
 
-		// Per C standard 6.10.3.3: Process ## token-pasting BEFORE rescanning
-		// This must happen after argument substitution but before macro expansion
+					// Per C standard 6.10.3.3: Process ## token-pasting BEFORE rescanning
+					// This must happen after argument substitution but before macro expansion
 					{
 						size_t pp = 0;
 						while ((pp = replace_str.find("##", pp)) != std::string::npos) {
@@ -358,10 +358,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							while (wa < replace_str.size() && std::isspace(static_cast<unsigned char>(replace_str[wa])))
 								++wa;
 
-		// Before concatenating, expand predefined macros (FunctionDirectives like
-		// __COUNTER__, __LINE__, etc.) on either side of ##. These are not macro
-		// arguments, so the "don't expand adjacent to ##" rule doesn't apply to them.
-		// Extract the right-side token (identifier) and expand if it's a FunctionDirective
+							// Before concatenating, expand predefined macros (FunctionDirectives like
+							// __COUNTER__, __LINE__, etc.) on either side of ##. These are not macro
+							// arguments, so the "don't expand adjacent to ##" rule doesn't apply to them.
+							// Extract the right-side token (identifier) and expand if it's a FunctionDirective
 							if (wa < replace_str.size() && (std::isalpha(static_cast<unsigned char>(replace_str[wa])) || replace_str[wa] == '_')) {
 								size_t token_end = wa;
 								while (token_end < replace_str.size() && (std::isalnum(static_cast<unsigned char>(replace_str[token_end])) || replace_str[token_end] == '_'))
@@ -372,11 +372,11 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									if (auto* func_dir = it_r->second.get_if<FunctionDirective>()) {
 										std::string expanded = func_dir->getBody();
 										replace_str = replace_str.substr(0, wa) + expanded + replace_str.substr(token_end);
-			// wa stays the same, but the token is now the expanded value
+										// wa stays the same, but the token is now the expanded value
 									}
 								}
 							}
-		// Extract the left-side token (identifier) and expand if it's a FunctionDirective
+							// Extract the left-side token (identifier) and expand if it's a FunctionDirective
 							if (wb > 0) {
 								size_t token_start = wb;
 								while (token_start > 0 && (std::isalnum(static_cast<unsigned char>(replace_str[token_start - 1])) || replace_str[token_start - 1] == '_'))
@@ -387,10 +387,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									if (it_l != defines_.end()) {
 										if (auto* func_dir = it_l->second.get_if<FunctionDirective>()) {
 											std::string expanded = func_dir->getBody();
-			// Replace the left token with its expansion, adjusting positions
+											// Replace the left token with its expansion, adjusting positions
 											size_t old_len = wb - token_start;
 											replace_str = replace_str.substr(0, token_start) + expanded + replace_str.substr(wb);
-			// Adjust pp and wa for the length change
+											// Adjust pp and wa for the length change
 											int delta = static_cast<int>(expanded.size()) - static_cast<int>(old_len);
 											pp += delta;
 											wb = token_start + expanded.size();
@@ -405,7 +405,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 						}
 					}
 
-		// Recursively expand the replacement (with this macro marked as expanding)
+					// Recursively expand the replacement (with this macro marked as expanding)
 					auto new_expanding = expanding_macros;
 					new_expanding.insert(ident_str);
 					replace_str = expandMacros(replace_str, new_expanding);
@@ -413,17 +413,17 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					output += replace_str;
 					needs_another_pass = true;  // We expanded something, may need another pass
 				} else {
-		// Not a macro, copy the identifier as-is
+					// Not a macro, copy the identifier as-is
 					output += ident;
 				}
 			} else {
-	// Not an identifier, just copy
+				// Not an identifier, just copy
 				output += c;
 				++pos;
 			}
 		}
 
-	// Prepare for next iteration if we had expansions
+		// Prepare for next iteration if we had expansions
 		if (needs_another_pass) {
 			current = std::move(output);
 			output.clear();
@@ -435,11 +435,11 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 		FLASH_LOG(Lexer, Warning, "Macro expansion limit reached for line (possible infinite recursion): ", input.substr(0, 100));
 	}
 
- // The final result is in 'output' if we completed a full pass without expansions,
- // or in 'current' if we hit the loop guard during a pass with expansions
+	// The final result is in 'output' if we completed a full pass without expansions,
+	// or in 'current' if we hit the loop guard during a pass with expansions
 	std::string& result = needs_another_pass ? current : output;
 
- // Handle token-pasting operator (##) - done after all substitutions per C++ standard
+	// Handle token-pasting operator (##) - done after all substitutions per C++ standard
 	size_t paste_pos;
 	while ((paste_pos = result.find("##")) != std::string::npos) {
 		size_t ws_before = paste_pos;
@@ -476,7 +476,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 		return;
 	}
 
- // Unary operators
+	// Unary operators
 	if (op == Operator::Not) {
 		auto value = values.top();
 		values.pop();
@@ -516,7 +516,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 		case Operator::GreaterEquals:
 			values.push(left >= right);
 			break;
-	// Arithmetic operators
+		// Arithmetic operators
 		case Operator::Add:
 			values.push(left + right);
 			break;
@@ -552,7 +552,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 				values.push(0);
 			}
 			break;
-	// Bitwise operators
+		// Bitwise operators
 		case Operator::LeftShift:
 			values.push(left << right);
 			break;
@@ -641,7 +641,7 @@ bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::
 
 long FileReader::evaluate_expression(std::istringstream& iss) {
 	if (settings_.isVerboseMode()) {
-	// Save position and read entire expression for debug
+		// Save position and read entire expression for debug
 		auto pos = iss.tellg();
 		std::string debug_expr;
 		std::getline(iss, debug_expr);
@@ -650,7 +650,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 		FLASH_LOG(Lexer, Trace, "Evaluating expression: '", debug_expr, "'");
 	}
 
- // Check if expression is empty (all whitespace) - treat as 0
+	// Check if expression is empty (all whitespace) - treat as 0
 	auto start_pos = iss.tellg();
 	iss >> std::ws;	// Skip whitespace
 	if (iss.eof() || iss.peek() == EOF) {
@@ -685,7 +685,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 			CharInfo info = it->second;
 			op_str = iss.get(); // Consume the operator
 
-	// Handle multi-character operators
+			// Handle multi-character operators
 			if (info.is_multi_char && (iss.peek() == '=' || (c != '!' && iss.peek() == c))) {
 				op_str += iss.get();
 			}
@@ -712,7 +712,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				ops.push(op);
 			}
 		} else if (isalpha(c) || c == '_') {
-	// Manually consume only identifier characters to avoid consuming operators
+			// Manually consume only identifier characters to avoid consuming operators
 			std::string keyword;
 			while (iss) {
 				char next = iss.peek();
@@ -729,8 +729,8 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				}
 				iss >> symbol;
 				if (has_parenthesis) {
-		// The symbol may have ')' at the end if it was read by >> operator
-		// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
+					// The symbol may have ')' at the end if it was read by >> operator
+					// Remove ')' from the symbol, but don't call ignore() because >> already consumed it
 					symbol.erase(std::remove(symbol.begin(), symbol.end(), ')'), symbol.end());
 				}
 
@@ -738,52 +738,52 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				values.push(value);
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "  Pushed defined() result: ", value, " (symbol='", symbol, "', values.size=", values.size(), ")");
-		// Don't print stream state here anymore since it was misleading
+					// Don't print stream state here anymore since it was misleading
 				}
 			} else if (keyword == "__has_include") {
-	// __has_include(<header>) or __has_include("header") - check if header exists
-	// Read the argument from the input stream
+				// __has_include(<header>) or __has_include("header") - check if header exists
+				// Read the argument from the input stream
 				long exists = 0;
 				char include_name_buf[256] = {};
 
-	// Skip whitespace and expect '('
+				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
 
-		// Skip whitespace after '('
+					// Skip whitespace after '('
 					iss >> std::ws;
 
-		// Check for < or "
+					// Check for < or "
 					char quote_char = iss.peek();
 					char end_char = (quote_char == '<') ? '>' : '"';
 
 					if (quote_char == '<' || quote_char == '"') {
 						iss.ignore(); // Consume opening < or "
 
-		// Read the include name into buffer
+						// Read the include name into buffer
 						size_t i = 0;
 						while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
 							include_name_buf[i++] = iss.get();
 						}
 						include_name_buf[i] = '\0';
 
-		// Consume closing > or "
+						// Consume closing > or "
 						if (iss.peek() == end_char) {
 							iss.ignore();
 						}
 
-		// Skip whitespace before ')'
+						// Skip whitespace before ')'
 						iss >> std::ws;
 
-		// Consume closing ')' if present
+						// Consume closing ')' if present
 						if (iss.peek() == ')') {
 							iss.ignore();
 						}
 
 						std::string_view include_name(include_name_buf);
 
-		// Check if the file exists in any include directory
+						// Check if the file exists in any include directory
 						for (const auto& include_dir : settings_.getIncludeDirs()) {
 							std::string include_file(include_dir);
 							include_file.append("/");
@@ -801,78 +801,78 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				}
 				values.push(exists);
 			} else if (keyword == "__has_builtin") {
-	// __has_builtin(__builtin_name) - check if a compiler builtin is supported
-	// Read the argument from the input stream
+				// __has_builtin(__builtin_name) - check if a compiler builtin is supported
+				// Read the argument from the input stream
 				long exists = 0;
 				char builtin_name_buf[128] = {};
 
-	// Skip whitespace and expect '('
+				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
 
-		// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
+					// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
 					iss >> std::ws;
 
-		// Read the builtin name into buffer
+					// Read the builtin name into buffer
 					size_t i = 0;
 					while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
 						builtin_name_buf[i++] = iss.get();
 					}
 					builtin_name_buf[i] = '\0';
 
-		// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
+					// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
 					iss >> std::ws;
 
-		// Consume closing ')' if present
+					// Consume closing ')' if present
 					if (iss.peek() == ')') {
 						iss.ignore();
 					}
 
 					std::string_view builtin_name(builtin_name_buf);
 
-		// Set of all supported type trait and other compiler builtins
-		// This must match the builtins supported in Parser.cpp
+					// Set of all supported type trait and other compiler builtins
+					// This must match the builtins supported in Parser.cpp
 					static const std::unordered_set<std::string_view> supported_builtins = {
-		// Type category traits
+						// Type category traits
 						"__is_void", "__is_nullptr", "__is_integral", "__is_floating_point",
 						"__is_array", "__is_pointer", "__is_lvalue_reference", "__is_rvalue_reference",
 						"__is_member_object_pointer", "__is_member_function_pointer",
 						"__is_enum", "__is_union", "__is_class", "__is_function",
-		// Composite type category traits
+						// Composite type category traits
 						"__is_reference", "__is_arithmetic", "__is_fundamental",
 						"__is_object", "__is_scalar", "__is_compound",
-		// Type relationship traits
+						// Type relationship traits
 						"__is_base_of", "__is_same", "__is_convertible", "__is_nothrow_convertible",
-		// Type property traits
+						// Type property traits
 						"__is_polymorphic", "__is_final", "__is_abstract", "__is_empty",
 						"__is_aggregate", "__is_standard_layout",
 						"__has_unique_object_representations",
 						"__is_trivially_copyable", "__is_trivial", "__is_pod",
 						"__is_const", "__is_volatile", "__is_signed", "__is_unsigned",
 						"__is_bounded_array", "__is_unbounded_array",
-		// Type construction/destruction traits
+						// Type construction/destruction traits
 						"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
 						"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
 						"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
 						"__has_trivial_destructor",	// GCC/Clang intrinsic, equivalent to __is_trivially_destructible
-		// Layout traits
+						// Layout traits
 						"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
-		// Constant evaluation
+						// Constant evaluation
 						"__is_constant_evaluated",
-		// Virtual destructor check
+						// Virtual destructor check
 						"__has_virtual_destructor",
-		// Builtin functions
+						// Builtin functions
 						"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
 						"__builtin_expect", "__builtin_launder",
-		// Type modification - NOT YET IMPLEMENTED, using template fallbacks
-		// "__remove_cv", "__remove_cvref", "__remove_reference",
-		// "__add_lvalue_reference", "__add_rvalue_reference",
-		// "__add_pointer", "__decay",
-		// "__make_signed", "__make_unsigned",
-		// Type inspection
+						// Type modification - NOT YET IMPLEMENTED, using template fallbacks
+						// "__remove_cv", "__remove_cvref", "__remove_reference",
+						// "__add_lvalue_reference", "__add_rvalue_reference",
+						// "__add_pointer", "__decay",
+						// "__make_signed", "__make_unsigned",
+						// Type inspection
 						"__underlying_type",
-		// Pack and tuple support
+						// Pack and tuple support
 						"__type_pack_element"};
 
 					exists = supported_builtins.count(builtin_name) > 0 ? 1 : 0;
@@ -883,37 +883,37 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				}
 				values.push(exists);
 			} else if (keyword == "__has_cpp_attribute") {
-	// __has_cpp_attribute(attribute_name) - check C++ attribute support
-	// Read the argument from the input stream
+				// __has_cpp_attribute(attribute_name) - check C++ attribute support
+				// Read the argument from the input stream
 				long version = 0;
 				char attribute_name_buf[128] = {};
 
-	// Skip whitespace and expect '('
+				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
 
-		// Skip whitespace after '('
+					// Skip whitespace after '('
 					iss >> std::ws;
 
-		// Read the attribute name into buffer
+					// Read the attribute name into buffer
 					size_t i = 0;
 					while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
 						attribute_name_buf[i++] = iss.get();
 					}
 					attribute_name_buf[i] = '\0';
 
-		// Skip whitespace before ')'
+					// Skip whitespace before ')'
 					iss >> std::ws;
 
-		// Consume closing ')' if present
+					// Consume closing ')' if present
 					if (iss.peek() == ')') {
 						iss.ignore();
 					}
 
 					std::string_view attribute_name(attribute_name_buf);
 
-		// Check if the attribute is supported and get its version
+					// Check if the attribute is supported and get its version
 					if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
 						version = attr_it->second;
 					}
@@ -924,7 +924,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 				}
 				values.push(version);
 			} else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
-	// convert the value to an int
+				// convert the value to an int
 				const auto& body = define_it->second.getBody();
 				if (!body.empty()) {
 					long value = 0;
@@ -993,8 +993,8 @@ bool FileReader::processIncludeDirective(const std::string& line, const std::str
 	if (settings_.isVerboseMode()) {
 		FLASH_LOG(Lexer, Trace, "Looking for include file: ", filename);
 	}
- // For quoted includes (#include "file.h"), first search the directory of the current file
- // This is standard C/C++ behavior per [cpp.include]
+	// For quoted includes (#include "file.h"), first search the directory of the current file
+	// This is standard C/C++ behavior per [cpp.include]
 	if (is_quoted_include && !current_file.empty()) {
 		std::filesystem::path current_dir = std::filesystem::path(current_file).parent_path();
 		std::filesystem::path include_path = current_dir / filename;
@@ -1024,16 +1024,16 @@ bool FileReader::processIncludeDirective(const std::string& line, const std::str
 			if (settings_.isVerboseMode()) {
 				FLASH_LOG(Lexer, Trace, "  Checking path: ", include_file, " - exists: ", std::filesystem::exists(include_file));
 			}
-	// Check if the file exists before trying to read it
-	// This distinguishes between "file not found" and "file found but had preprocessing error"
+			// Check if the file exists before trying to read it
+			// This distinguishes between "file not found" and "file found but had preprocessing error"
 			if (std::filesystem::exists(include_file)) {
-	// File exists, try to read and preprocess it
+				// File exists, try to read and preprocess it
 				if (settings_.isVerboseMode()) {
 					FLASH_LOG(Lexer, Trace, "Found include file, attempting to read: ", include_file);
 				}
 				if (!readFile(include_file, include_line_number)) {
-		// Preprocessing failed (e.g., #error directive)
-		// Return false to propagate the error up
+					// Preprocessing failed (e.g., #error directive)
+					// Return false to propagate the error up
 					if (settings_.isVerboseMode()) {
 						FLASH_LOG(Lexer, Trace, "readFile returned false for: ", include_file);
 					}
@@ -1053,10 +1053,10 @@ bool FileReader::processIncludeDirective(const std::string& line, const std::str
 }
 
 bool FileReader::processIncludeNextDirective(const std::string& line, const std::string_view& current_file, long include_line_number) {
- // #include_next <header> - GCC extension
- // Searches for the header starting from the directory AFTER the one
- // where the current file was found. Used by C++ standard library headers
- // to include the underlying C headers (e.g., cmath -> math.h).
+	// #include_next <header> - GCC extension
+	// Searches for the header starting from the directory AFTER the one
+	// where the current file was found. Used by C++ standard library headers
+	// to include the underlying C headers (e.g., cmath -> math.h).
 	std::istringstream iss(line);
 	std::string token;
 	iss >> token;
@@ -1072,33 +1072,33 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 		FLASH_LOG(Lexer, Trace, "Looking for include_next file: ", filename, " (current: ", current_file, ")");
 	}
 
- // Find which include directory contains the current file
+	// Find which include directory contains the current file
 	std::filesystem::path current_dir;
 	if (!current_file.empty()) {
 		current_dir = std::filesystem::path(std::string(current_file)).parent_path();
 	}
 
- // Normalize current_dir for comparison
+	// Normalize current_dir for comparison
 	std::string current_dir_str;
 	if (!current_dir.empty()) {
 		current_dir_str = std::filesystem::weakly_canonical(current_dir).string();
 	}
 
- // Canonicalize the current file path so we can detect duplicate directory entries
+	// Canonicalize the current file path so we can detect duplicate directory entries
 	std::string canonical_current_file;
 	if (!current_file.empty()) {
 		canonical_current_file = std::filesystem::weakly_canonical(std::filesystem::path(std::string(current_file))).string();
 	}
 
- // Search include paths, skipping directories up to and including the one containing current_file
+	// Search include paths, skipping directories up to and including the one containing current_file
 	bool found_current_dir = false;
 	bool found = false;
 	for (const auto& include_dir : settings_.getIncludeDirs()) {
 		std::string canonical_include_dir = std::filesystem::weakly_canonical(std::filesystem::path(include_dir)).string();
 
-	// Check if the current file is DIRECTLY in this include directory
-	// (exact match only - not a parent directory, since #include_next
-	// should only skip the specific include dir used to find the file)
+		// Check if the current file is DIRECTLY in this include directory
+		// (exact match only - not a parent directory, since #include_next
+		// should only skip the specific include dir used to find the file)
 		if (!current_dir_str.empty() &&
 			current_dir_str == canonical_include_dir) {
 			found_current_dir = true;
@@ -1112,7 +1112,7 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 			continue;  // Haven't found the current dir yet, keep skipping
 		}
 
-	// Search in this directory
+		// Search in this directory
 		std::filesystem::path include_path(include_dir);
 		include_path /= filename;
 		std::string include_file = include_path.string();
@@ -1120,7 +1120,7 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 			FLASH_LOG(Lexer, Trace, "  include_next checking: ", include_file);
 		}
 		if (std::filesystem::exists(include_file)) {
-	// Ensure we don't find the same file we started from (prevents infinite recursion)
+			// Ensure we don't find the same file we started from (prevents infinite recursion)
 			std::string canonical_found = std::filesystem::weakly_canonical(include_path).string();
 			if (canonical_found == canonical_current_file) {
 				if (settings_.isVerboseMode()) {
@@ -1141,8 +1141,8 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 	}
 
 	if (!found && !found_current_dir) {
-	// Fallback: if we couldn't find the current dir in include paths,
-	// just do a regular include search (better than failing)
+		// Fallback: if we couldn't find the current dir in include paths,
+		// just do a regular include search (better than failing)
 		if (settings_.isVerboseMode()) {
 			FLASH_LOG(Lexer, Trace, "include_next fallback to regular include for: ", filename);
 		}
@@ -1155,31 +1155,31 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 }
 
 void FileReader::processPragmaPack(std::string_view line) {
- // Parse #pragma pack directives
- // Supported formats:
- //   #pragma pack()           - reset to default (no packing)
- //   #pragma pack(n)          - set pack alignment to n (1, 2, 4, 8, 16)
- //   #pragma pack(push)       - push current alignment onto stack
- //   #pragma pack(push, n)    - push current alignment and set to n
- //   #pragma pack(pop)        - pop alignment from stack
+	// Parse #pragma pack directives
+	// Supported formats:
+	//   #pragma pack()           - reset to default (no packing)
+	//   #pragma pack(n)          - set pack alignment to n (1, 2, 4, 8, 16)
+	//   #pragma pack(push)       - push current alignment onto stack
+	//   #pragma pack(push, n)    - push current alignment and set to n
+	//   #pragma pack(pop)        - pop alignment from stack
 
- // Find the opening parenthesis
+	// Find the opening parenthesis
 	size_t open_paren = line.find('(');
 	if (open_paren == std::string::npos) {
-	// No parenthesis - ignore (malformed pragma)
+		// No parenthesis - ignore (malformed pragma)
 		return;
 	}
 
 	size_t close_paren = line.find(')', open_paren);
 	if (close_paren == std::string::npos) {
-	// No closing parenthesis - ignore (malformed pragma)
+		// No closing parenthesis - ignore (malformed pragma)
 		return;
 	}
 
- // Extract content between parentheses
+	// Extract content between parentheses
 	std::string_view content = line.substr(open_paren + 1, close_paren - open_paren - 1);
 
- // Trim whitespace
+	// Trim whitespace
 	auto trim_start = content.find_first_not_of(" \t"sv);
 	auto trim_end = content.find_last_not_of(" \t"sv);
 	if (trim_start != std::string_view::npos && trim_end != std::string_view::npos) {
@@ -1188,13 +1188,13 @@ void FileReader::processPragmaPack(std::string_view line) {
 		content = {};
 	}
 
- // Handle empty parentheses: #pragma pack()
+	// Handle empty parentheses: #pragma pack()
 	if (content.empty()) {
 		settings_.setPackAlignment(0);  // Reset to default (no packing)
 		return;
 	}
 
- // Check for push/pop
+	// Check for push/pop
 	if (content == "push"sv) {
 		settings_.pushPackAlignment();
 		return;
@@ -1205,13 +1205,13 @@ void FileReader::processPragmaPack(std::string_view line) {
 		return;
 	}
 
- // Check for "push, n" format
+	// Check for "push, n" format
 	size_t comma_pos = content.find(',');
 	if (comma_pos != std::string_view::npos) {
 		std::string_view first_part = content.substr(0, comma_pos);
 		std::string_view second_part = content.substr(comma_pos + 1);
 
-	// Trim both parts
+		// Trim both parts
 		auto trim_first_start = first_part.find_first_not_of(" \t");
 		auto trim_first_end = first_part.find_last_not_of(" \t");
 		if (trim_first_start != std::string_view::npos && trim_first_end != std::string_view::npos) {
@@ -1225,42 +1225,42 @@ void FileReader::processPragmaPack(std::string_view line) {
 		}
 
 		if (first_part == "push") {
-	// Parse the alignment value
+			// Parse the alignment value
 			try {
 				size_t alignment = 0;
 				std::from_chars(second_part.data(), second_part.data() + second_part.size(), alignment);
-	// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
+				// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 				if (alignment == 0 || alignment == 1 || alignment == 2 ||
 					alignment == 4 || alignment == 8 || alignment == 16) {
 					settings_.pushPackAlignment(alignment);
 				}
-	// Invalid alignment values are silently ignored (matches MSVC behavior)
+				// Invalid alignment values are silently ignored (matches MSVC behavior)
 			} catch (...) {
-	// Invalid number - ignore
+				// Invalid number - ignore
 			}
 		}
 		return;
 	}
 
- // Otherwise, try to parse as a single number: #pragma pack(n)
+	// Otherwise, try to parse as a single number: #pragma pack(n)
 	try {
 		size_t alignment = 0;
 		std::from_chars(content.data(), content.data() + content.size(), alignment);
-	// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
+		// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 		if (alignment == 0 || alignment == 1 || alignment == 2 ||
 			alignment == 4 || alignment == 8 || alignment == 16) {
 			settings_.setPackAlignment(alignment);
 		}
-	// Invalid alignment values are silently ignored (matches MSVC behavior)
+		// Invalid alignment values are silently ignored (matches MSVC behavior)
 	} catch (...) {
-	// Invalid number - ignore
+		// Invalid number - ignore
 	}
 }
 
 void FileReader::processLineDirective(const std::string& line) {
- // #line directive format:
- // #line line_number
- // #line line_number "filename"
+	// #line directive format:
+	// #line line_number
+	// #line line_number "filename"
 	std::istringstream iss(line);
 	iss.seekg("#line"sv.length());
 
@@ -1272,21 +1272,21 @@ void FileReader::processLineDirective(const std::string& line) {
 		return;
 	}
 
- // Update the current line number (will be incremented on next line)
+	// Update the current line number (will be incremented on next line)
 	if (!filestack_.empty()) {
 		filestack_.top().line_number = new_line_number - 1;
 	}
 
- // Check if there's a filename
+	// Check if there's a filename
 	std::string filename;
 	iss >> std::ws;	// Skip whitespace
 	if (!iss.eof()) {
 		std::getline(iss, filename);
-	// Remove quotes if present
+		// Remove quotes if present
 		if (filename.size() >= 2 && filename.front() == '"' && filename.back() == '"') {
 			filename = filename.substr(1, filename.size() - 2);
 		}
-	// Update the filename by interning it into file_paths_ for stable lifetime
+		// Update the filename by interning it into file_paths_ for stable lifetime
 		if (!filestack_.empty() && !filename.empty()) {
 			size_t path_index = get_or_add_file_path(filename);
 			filestack_.top().file_name = file_paths_[path_index];
@@ -1297,31 +1297,31 @@ void FileReader::processLineDirective(const std::string& line) {
 void FileReader::handleDefine(std::istringstream& iss) {
 	DefineDirective define;
 
- // Parse the name
+	// Parse the name
 	std::string name;
 	iss >> name;
 
- // Check for the presence of a macro argument list
- // A function-like macro has '(' immediately after the name (no space).
- // When parsed with >>, the name will include the '(' if there's no space.
- // An object-like macro may have '(' in its body, but there's a space before it.
+	// Check for the presence of a macro argument list
+	// A function-like macro has '(' immediately after the name (no space).
+	// When parsed with >>, the name will include the '(' if there's no space.
+	// An object-like macro may have '(' in its body, but there's a space before it.
 	std::string rest_of_line;
 	std::getline(iss >> std::ws, rest_of_line);
 	size_t open_paren = name.find("(");
 	bool is_function_like = (open_paren != std::string::npos);
 
 	if (is_function_like) {
-	// Function-like macro: prepend the '(' and everything after it from name to rest_of_line
-	// E.g., name="FOO(x)" -> name="FOO", rest_of_line="(x) body"
+		// Function-like macro: prepend the '(' and everything after it from name to rest_of_line
+		// E.g., name="FOO(x)" -> name="FOO", rest_of_line="(x) body"
 		rest_of_line.insert(0, name.substr(open_paren));
 		name.erase(open_paren);
 	}
 
 	if (!rest_of_line.empty()) {
 		open_paren = rest_of_line.find("(");
-	// Only parse as function-like macro arguments if:
-	// 1. We detected this is a function-like macro (name originally had '(')
-	// 2. rest_of_line starts with '('
+		// Only parse as function-like macro arguments if:
+		// 1. We detected this is a function-like macro (name originally had '(')
+		// 2. rest_of_line starts with '('
 		if (is_function_like && open_paren != std::string::npos && rest_of_line.find_first_not_of(' ') == open_paren) {
 			size_t close_paren = rest_of_line.find(")", open_paren);
 
@@ -1332,12 +1332,12 @@ void FileReader::handleDefine(std::istringstream& iss) {
 
 			std::string arg_list = rest_of_line.substr(open_paren + 1, close_paren - open_paren - 1);
 
-	// Tokenize the argument list
+			// Tokenize the argument list
 			std::istringstream arg_stream(arg_list);
 			std::string token;
 			bool found_variadic_args = false;
 			while (std::getline(arg_stream, token, ',')) {
-	// Remove leading and trailing whitespace
+				// Remove leading and trailing whitespace
 				auto start = std::find_if_not(token.begin(), token.end(), [](unsigned char c) { return std::isspace(c); });
 				auto end = std::find_if_not(token.rbegin(), token.rend(), [](unsigned char c) { return std::isspace(c); }).base();
 				token = std::string(start, end);
@@ -1353,7 +1353,7 @@ void FileReader::handleDefine(std::istringstream& iss) {
 				}
 			}
 
-	// Save the macro body after the closing parenthesis
+			// Save the macro body after the closing parenthesis
 			rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
 			define.is_function_like = true;	// This is a function-like macro
 		} else {
@@ -1363,26 +1363,26 @@ void FileReader::handleDefine(std::istringstream& iss) {
 
 	define.body = std::move(rest_of_line);
 
- // Add the parsed define to the map
+	// Add the parsed define to the map
 	defines_[name] = std::move(define);
 }
 
 void FileReader::addBuiltinDefines() {
- // Add __cplusplus with the value corresponding to the C++ standard in use
+	// Add __cplusplus with the value corresponding to the C++ standard in use
 	defines_["__cplusplus"] = DefineDirective{"202002L", {}};  // C++20
 	defines_["__STDC_HOSTED__"] = DefineDirective{"1", {}};
 	defines_["__STDCPP_THREADS__"] = DefineDirective{"1", {}};
 	defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
 
- // GCC compatibility macros (needed for standard library headers like wchar.h)
- // These allow __GNUC_PREREQ checks to pass and expose C++ overloads
+	// GCC compatibility macros (needed for standard library headers like wchar.h)
+	// These allow __GNUC_PREREQ checks to pass and expose C++ overloads
 	defines_["__GNUC__"] = DefineDirective{"12", {}};  // GCC 12.x compatible
 	defines_["__GNUC_MINOR__"] = DefineDirective{"2", {}};
 	defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{"0", {}};
 	defines_["__GNUG__"] = DefineDirective{"12", {}};  // C++ compiler version
 	defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
 
- // GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
+	// GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
 	defines_["__ATOMIC_RELAXED"] = DefineDirective{"0", {}};
 	defines_["__ATOMIC_CONSUME"] = DefineDirective{"1", {}};
 	defines_["__ATOMIC_ACQUIRE"] = DefineDirective{"2", {}};
@@ -1390,7 +1390,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__ATOMIC_ACQ_REL"] = DefineDirective{"4", {}};
 	defines_["__ATOMIC_SEQ_CST"] = DefineDirective{"5", {}};
 
- // GCC libstdc++ macros
+	// GCC libstdc++ macros
 	defines_["_GLIBCXX_VISIBILITY"] = DefineDirective{"", {"V"}, true};
 	defines_["_GLIBCXX_BEGIN_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning
 	defines_["_GLIBCXX_END_NAMESPACE_VERSION"] = DefineDirective{};	// Inline namespace for versioning
@@ -1420,14 +1420,14 @@ void FileReader::addBuiltinDefines() {
 	defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 	defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
 	defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{"1", {}};  // Use C++11 ABI for std::string and std::list
- // C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
+	// C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
 	defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{"__cxx11::", {}};
 	defines_["_GLIBCXX_BEGIN_NAMESPACE_CXX11"] = DefineDirective{"namespace __cxx11 {", {}};
 	defines_["_GLIBCXX_END_NAMESPACE_CXX11"] = DefineDirective{"}", {}};
 	defines_["_GLIBCXX_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"__cxx11::", {}};
 	defines_["_GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"namespace __cxx11 {", {}};
 	defines_["_GLIBCXX_END_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"}", {}};
- // Container namespace macros (for std::list iterators)
+	// Container namespace macros (for std::list iterators)
 	defines_["_GLIBCXX_BEGIN_NAMESPACE_CONTAINER"] = DefineDirective{};	// Strip container namespace
 	defines_["_GLIBCXX_END_NAMESPACE_CONTAINER"] = DefineDirective{};  // Strip container namespace
 	defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{"constexpr", {}};  // Enable constexpr
@@ -1441,19 +1441,19 @@ void FileReader::addBuiltinDefines() {
 	defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};	// Strip ABI tags
 	defines_["_GLIBCXX_USE_WCHAR_T"] = DefineDirective{"1", {}};	 // Enable wchar_t support and wide char functions
 
- // MSVC C++ standard version feature flags (cumulative)
+	// MSVC C++ standard version feature flags (cumulative)
 	defines_["_HAS_CXX17"] = DefineDirective{"1", {}};  // C++17 features available
 	defines_["_HAS_CXX20"] = DefineDirective{"1", {}};  // C++20 features available
 	defines_["_MSVC_LANG"] = DefineDirective{"202002L", {}};	 // MSVC language version (C++20)
 
- // FlashCpp compiler identification
+	// FlashCpp compiler identification
 	defines_["__FLASHCPP__"] = DefineDirective{"1", {}};
 	defines_["__FLASHCPP_VERSION__"] = DefineDirective{"1", {}};
 	defines_["__FLASHCPP_VERSION_MAJOR__"] = DefineDirective{"0", {}};
 	defines_["__FLASHCPP_VERSION_MINOR__"] = DefineDirective{"1", {}};
 	defines_["__FLASHCPP_VERSION_PATCH__"] = DefineDirective{"0", {}};
 
- // Windows platform macros
+	// Windows platform macros
 	defines_["_WIN32"] = DefineDirective{"1", {}};
 	defines_["_WIN64"] = DefineDirective{"1", {}};
 	defines_["_MSC_VER"] = DefineDirective{"1944", {}};	// MSVC 2022 (match clang behavior)
@@ -1461,32 +1461,32 @@ void FileReader::addBuiltinDefines() {
 	defines_["_MSC_BUILD"] = DefineDirective{"1", {}};
 	defines_["_MSC_EXTENSIONS"] = DefineDirective{"1", {}};	// Enable MSVC extensions
 
- // MSVC STL macros
+	// MSVC STL macros
 	defines_["_HAS_EXCEPTIONS"] = DefineDirective{"1", {}};	// Exception handling enabled
 	defines_["_CPPRTTI"] = DefineDirective{"1", {}};	 // RTTI enabled
 	defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};	// wchar_t is native type
 	defines_["_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};
 
- // Additional common MSVC macros
+	// Additional common MSVC macros
 	defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{"64", {}};
 	defines_["_MT"] = DefineDirective{"1", {}};	// Multithreaded
 	defines_["_DLL"] = DefineDirective{"1", {}};	 // Using DLL runtime
 
- // Architecture macros
+	// Architecture macros
 	defines_["__x86_64__"] = DefineDirective{"1", {}};
 	defines_["__amd64__"] = DefineDirective{"1", {}};
 	defines_["__amd64"] = DefineDirective{"1", {}};
 	defines_["_M_X64"] = DefineDirective{"100", {}};	 // MSVC-style
 	defines_["_M_AMD64"] = DefineDirective{"100", {}};
 
- // Byte order macros (needed by <compare> and other headers)
+	// Byte order macros (needed by <compare> and other headers)
 	defines_["__ORDER_LITTLE_ENDIAN__"] = DefineDirective{"1234", {}};
 	defines_["__ORDER_BIG_ENDIAN__"] = DefineDirective{"4321", {}};
 	defines_["__ORDER_PDP_ENDIAN__"] = DefineDirective{"3412", {}};
 	defines_["__BYTE_ORDER__"] = DefineDirective{"__ORDER_LITTLE_ENDIAN__", {}};	 // x86_64 is little endian
 
- // C++ feature test macros (SD-6)
- // These indicate which C++ language features are supported
+	// C++ feature test macros (SD-6)
+	// These indicate which C++ language features are supported
 	defines_["__cpp_aggregate_bases"] = DefineDirective{"201603L", {}};	// C++17 aggregate base classes
 	defines_["__cpp_aggregate_nsdmi"] = DefineDirective{"201304L", {}};	// Aggregate NSDMI
 	defines_["__cpp_aggregate_paren_init"] = DefineDirective{"201902L", {}};	 // C++20 aggregate parenthesized init (P0960)
@@ -1515,8 +1515,8 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{"201606L", {}};	// Guaranteed copy elision
 	defines_["__cpp_hex_float"] = DefineDirective{"201603L", {}};  // Hexadecimal float literals
 	defines_["__cpp_if_constexpr"] = DefineDirective{"201606L", {}};	 // C++17 if constexpr
- // __cpp_impl_coroutine intentionally NOT defined - coroutines (co_await, co_yield,
- // co_return) are not implemented and not planned for FlashCpp.
+	// __cpp_impl_coroutine intentionally NOT defined - coroutines (co_await, co_yield,
+	// co_return) are not implemented and not planned for FlashCpp.
 	defines_["__cpp_impl_destroying_delete"] = DefineDirective{"201806L", {}};  // Destroying delete
 	defines_["__cpp_impl_three_way_comparison"] = DefineDirective{"201907L", {}};  // <=> support
 	defines_["__cpp_inheriting_constructors"] = DefineDirective{"200802L", {}};	// Inheriting constructors
@@ -1524,7 +1524,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_initializer_lists"] = DefineDirective{"200806L", {}};  // Initializer lists
 	defines_["__cpp_inline_variables"] = DefineDirective{"201606L", {}};	 // C++17 inline variables
 	defines_["__cpp_lambdas"] = DefineDirective{"200907L", {}};	// Lambda expressions
- //defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
+	//defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
 	defines_["__cpp_namespace_attributes"] = DefineDirective{"201411L", {}};	 // Namespace attributes
 	defines_["__cpp_noexcept_function_type"] = DefineDirective{"201510L", {}};  // C++17 noexcept in type
 	defines_["__cpp_nontype_template_args"] = DefineDirective{"201911L", {}};  // Class/float NTTP
@@ -1550,13 +1550,13 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_variadic_templates"] = DefineDirective{"200704L", {}};  // Variadic templates
 	defines_["__cpp_variadic_using"] = DefineDirective{"201611L", {}};  // Pack expansions in using
 
- // Note: __has_builtin is NOT defined as a macro here
- // It is handled specially in expandMacrosForConditional and evaluate_expression
- // to properly evaluate __has_builtin(builtin_name) at preprocessing time
+	// Note: __has_builtin is NOT defined as a macro here
+	// It is handled specially in expandMacrosForConditional and evaluate_expression
+	// to properly evaluate __has_builtin(builtin_name) at preprocessing time
 
- // C++ library feature test macros (SD-6)
- // These indicate which C++ standard library features are supported
- // Values are in format YYYYMML (year/month when feature was standardized)
+	// C++ library feature test macros (SD-6)
+	// These indicate which C++ standard library features are supported
+	// Values are in format YYYYMML (year/month when feature was standardized)
 	defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{"201510L", {}};  // C++17 (Oct 2015)
 	defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{"201603L", {}};	// C++17 (Mar 2016)
 	defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{"201304L", {}};  // C++14 (Apr 2013)
@@ -1564,11 +1564,11 @@ void FileReader::addBuiltinDefines() {
 	defines_["__cpp_lib_void_t"] = DefineDirective{"201411L", {}};  // C++17 (Nov 2014)
 	defines_["__cpp_lib_bool_constant"] = DefineDirective{"201505L", {}};  // C++17 (May 2015)
 
- // Compiler builtin type macros - values depend on compiler mode
- // MSVC (default): Windows x64 types
- // GCC/Clang: Linux x64 types
+	// Compiler builtin type macros - values depend on compiler mode
+	// MSVC (default): Windows x64 types
+	// GCC/Clang: Linux x64 types
 	if (settings_.isMsvcMode()) {
-	// MSVC x64 builtin types
+		// MSVC x64 builtin types
 		defines_["__SIZE_TYPE__"] = DefineDirective{"unsigned __int64", {}};
 		defines_["__PTRDIFF_TYPE__"] = DefineDirective{"__int64", {}};
 		defines_["__WCHAR_TYPE__"] = DefineDirective{"unsigned short", {}};
@@ -1604,7 +1604,7 @@ void FileReader::addBuiltinDefines() {
 		defines_["__CHAR16_TYPE__"] = DefineDirective{"unsigned short", {}};
 		defines_["__CHAR32_TYPE__"] = DefineDirective{"unsigned int", {}};
 	} else if (settings_.isGccMode()) {
-	// GCC/Clang x64 builtin types (Linux/macOS)
+		// GCC/Clang x64 builtin types (Linux/macOS)
 		defines_["__SIZE_TYPE__"] = DefineDirective{"long unsigned int", {}};
 		defines_["__PTRDIFF_TYPE__"] = DefineDirective{"long int", {}};
 		defines_["__WCHAR_TYPE__"] = DefineDirective{"int", {}};
@@ -1640,10 +1640,10 @@ void FileReader::addBuiltinDefines() {
 		defines_["__CHAR16_TYPE__"] = DefineDirective{"unsigned short", {}};
 		defines_["__CHAR32_TYPE__"] = DefineDirective{"unsigned int", {}};
 
-	// GCC/Clang specific predefined macros
+		// GCC/Clang specific predefined macros
 		defines_["__STRICT_ANSI__"] = DefineDirective{"1", {}};
-	// _GNU_SOURCE enables POSIX/GNU features in glibc headers (e.g., uselocale in locale.h)
-	// Both Clang and GCC define this by default on Linux, even with -std=c++20
+		// _GNU_SOURCE enables POSIX/GNU features in glibc headers (e.g., uselocale in locale.h)
+		// Both Clang and GCC define this by default on Linux, even with -std=c++20
 		defines_["_GNU_SOURCE"] = DefineDirective{"1", {}};
 		if (settings_.getDataModel() == CompileContext::DataModel::LP64) {
 			defines_["__ELF__"] = DefineDirective{"1", {}};
@@ -1662,7 +1662,7 @@ void FileReader::addBuiltinDefines() {
 		defines_["__GCC_ATOMIC_TEST_AND_SET_TRUEVAL"] = DefineDirective{"1", {}};
 
 		defines_["__BASE_FILE__"] = FunctionDirective{[this]() -> std::string {
-	// Prefer the main input file if available, otherwise fall back to the current file
+			// Prefer the main input file if available, otherwise fall back to the current file
 			if (auto input = settings_.getInputFile()) {
 				std::filesystem::path p(*input);
 				return "\"" + p.generic_string() + "\"";
@@ -1682,7 +1682,7 @@ void FileReader::addBuiltinDefines() {
 			return "\"" + file_path.filename().generic_string() + "\"";
 		}};
 
-	// Integer limit macros
+		// Integer limit macros
 		defines_["__SIG_ATOMIC_MAX__"] = DefineDirective{"2147483647", {}};
 		defines_["__SIG_ATOMIC_MIN__"] = DefineDirective{"(-2147483648)", {}};
 
@@ -1710,7 +1710,7 @@ void FileReader::addBuiltinDefines() {
 		defines_["__WCHAR_MIN__"] = DefineDirective{"(-2147483648)", {}};
 		defines_["__WINT_MIN__"] = DefineDirective{"0", {}};
 
-	// Integer constant macros
+		// Integer constant macros
 		{
 			DefineDirective macro{"c", {"c"}};
 			macro.is_function_like = true;
@@ -1763,8 +1763,8 @@ void FileReader::addBuiltinDefines() {
 		}
 	}
 
- // Compiler builtin macros for numeric limits - required by <limits> header
- // These are common to both MSVC and GCC/Clang modes on x86_64
+	// Compiler builtin macros for numeric limits - required by <limits> header
+	// These are common to both MSVC and GCC/Clang modes on x86_64
 	defines_["__CHAR_BIT__"] = DefineDirective{"8", {}};
 	defines_["__SCHAR_MAX__"] = DefineDirective{"127", {}};
 	defines_["__SHRT_MAX__"] = DefineDirective{"32767", {}};
@@ -1773,20 +1773,20 @@ void FileReader::addBuiltinDefines() {
 	defines_["__WCHAR_MAX__"] = DefineDirective{"2147483647", {}};
 	defines_["__WINT_MAX__"] = DefineDirective{"4294967295U", {}};
 
- // intmax_t and uintmax_t limits - required by <ratio> and <cstdint> headers
- // intmax_t is 64-bit on x64 platforms
+	// intmax_t and uintmax_t limits - required by <ratio> and <cstdint> headers
+	// intmax_t is 64-bit on x64 platforms
 	defines_["__INTMAX_MAX__"] = DefineDirective{"9223372036854775807LL", {}};
 	defines_["__INTMAX_MIN__"] = DefineDirective{"(-9223372036854775807LL - 1)", {}};
 	defines_["__UINTMAX_MAX__"] = DefineDirective{"18446744073709551615ULL", {}};
 
- // Platform-specific __LONG_MAX__ (differs between Windows and Linux x64)
+	// Platform-specific __LONG_MAX__ (differs between Windows and Linux x64)
 	if (settings_.isMsvcMode()) {
 		defines_["__LONG_MAX__"] = DefineDirective{"2147483647L", {}};  // 32-bit long on Windows
 	} else {
 		defines_["__LONG_MAX__"] = DefineDirective{"9223372036854775807L", {}};	// 64-bit long on Linux
 	}
 
- // Compiler builtin macros for sizeof types - required by <limits> header
+	// Compiler builtin macros for sizeof types - required by <limits> header
 	defines_["__SIZEOF_SHORT__"] = DefineDirective{"2", {}};
 	defines_["__SIZEOF_INT__"] = DefineDirective{"4", {}};
 	defines_["__SIZEOF_LONG_LONG__"] = DefineDirective{"8", {}};
@@ -1798,16 +1798,16 @@ void FileReader::addBuiltinDefines() {
 	defines_["__SIZEOF_WCHAR_T__"] = DefineDirective{"4", {}};
 	defines_["__SIZEOF_WINT_T__"] = DefineDirective{"4", {}};
 
- // Platform-specific __SIZEOF_LONG__ (differs between Windows and Linux x64)
+	// Platform-specific __SIZEOF_LONG__ (differs between Windows and Linux x64)
 	if (settings_.isMsvcMode()) {
 		defines_["__SIZEOF_LONG__"] = DefineDirective{"4", {}};	// 32-bit long on Windows
 	} else {
 		defines_["__SIZEOF_LONG__"] = DefineDirective{"8", {}};	// 64-bit long on Linux
 	}
 
- // Floating-point limit macros - required by <limits> and <cfloat> headers
- // These values are for IEEE 754 floating-point (x86_64 architecture)
- // Float (32-bit IEEE 754)
+	// Floating-point limit macros - required by <limits> and <cfloat> headers
+	// These values are for IEEE 754 floating-point (x86_64 architecture)
+	// Float (32-bit IEEE 754)
 	defines_["__FLT_RADIX__"] = DefineDirective{"2", {}};
 	defines_["__FLT_MANT_DIG__"] = DefineDirective{"24", {}};
 	defines_["__FLT_DIG__"] = DefineDirective{"6", {}};
@@ -1828,7 +1828,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__FLT_EVAL_METHOD__"] = DefineDirective{"0", {}};
 	defines_["__FLT_EVAL_METHOD_TS_18661_3__"] = DefineDirective{"0", {}};
 
- // Double (64-bit IEEE 754)
+	// Double (64-bit IEEE 754)
 	defines_["__DBL_MANT_DIG__"] = DefineDirective{"53", {}};
 	defines_["__DBL_DIG__"] = DefineDirective{"15", {}};
 	defines_["__DBL_DECIMAL_DIG__"] = DefineDirective{"17", {}};
@@ -1846,7 +1846,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__DBL_HAS_QUIET_NAN__"] = DefineDirective{"1", {}};
 	defines_["__DBL_IS_IEC_60559__"] = DefineDirective{"1", {}};
 
- // Long Double (80-bit extended precision on x86_64)
+	// Long Double (80-bit extended precision on x86_64)
 	defines_["__LDBL_MANT_DIG__"] = DefineDirective{"64", {}};
 	defines_["__LDBL_DIG__"] = DefineDirective{"18", {}};
 	defines_["__LDBL_DECIMAL_DIG__"] = DefineDirective{"21", {}};
@@ -1864,7 +1864,7 @@ void FileReader::addBuiltinDefines() {
 	defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{"1", {}};
 	defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{"1", {}};
 
- // Width / word order / deprecation markers (GCC compatibility)
+	// Width / word order / deprecation markers (GCC compatibility)
 	defines_["__SCHAR_WIDTH__"] = DefineDirective{"8", {}};
 	defines_["__SHRT_WIDTH__"] = DefineDirective{"16", {}};
 	defines_["__INT_WIDTH__"] = DefineDirective{"32", {}};
@@ -1878,15 +1878,15 @@ void FileReader::addBuiltinDefines() {
 	defines_["__INTPTR_WIDTH__"] = DefineDirective{"64", {}};
 	defines_["__INTMAX_WIDTH__"] = DefineDirective{"64", {}};
 
- // Floating-point word order
+	// Floating-point word order
 	defines_["__FLOAT_WORD_ORDER__"] = DefineDirective{"__BYTE_ORDER__", {}};
 
- // Deprecation marker
+	// Deprecation marker
 	defines_["__DEPRECATED"] = DefineDirective{"__attribute__((deprecated))", {}};
 
 	defines_["__FILE__"] = FunctionDirective{[this]() -> std::string {
-	// Use std::filesystem to normalize path separators for cross-platform compatibility
-	// This converts backslashes to forward slashes on all platforms
+		// Use std::filesystem to normalize path separators for cross-platform compatibility
+		// This converts backslashes to forward slashes on all platforms
 		std::filesystem::path file_path(filestack_.top().file_name);
 		std::string normalized_path = file_path.generic_string();
 		return "\"" + normalized_path + "\"";
@@ -1916,7 +1916,7 @@ void FileReader::addBuiltinDefines() {
 		return std::string(buffer);
 	}};
 
- // __TIMESTAMP__ - file modification time
+	// __TIMESTAMP__ - file modification time
 	defines_["__TIMESTAMP__"] = FunctionDirective{[this]() -> std::string {
 		if (!filestack_.empty()) {
 			return filestack_.top().timestamp;
@@ -1924,23 +1924,23 @@ void FileReader::addBuiltinDefines() {
 		return "\"??? ??? ?? ??:??:?? ????\"";
 	}};
 
- // __INCLUDE_LEVEL__ - nesting depth of includes (0 for main file)
+	// __INCLUDE_LEVEL__ - nesting depth of includes (0 for main file)
 	defines_["__INCLUDE_LEVEL__"] = FunctionDirective{[this]() -> std::string {
-	// Stack size - 1 because the main file is at level 0
+		// Stack size - 1 because the main file is at level 0
 		return std::to_string(filestack_.size() > 0 ? filestack_.size() - 1 : 0);
 	}};
 
- // __FUNCTION__ (MSVC extension)
+	// __FUNCTION__ (MSVC extension)
 	defines_["__FUNCTION__"] = DefineDirective("__func__", {});
 
- // __nullptr (MSVC extension) - represents nullptr type for decltype(__nullptr)
+	// __nullptr (MSVC extension) - represents nullptr type for decltype(__nullptr)
 	defines_["__nullptr"] = DefineDirective("nullptr", {});
 
- // __PRETTY_FUNCTION__ (GCC extension) and __func__ (C++11 standard)
- // These are NOT preprocessor macros - they are compiler builtins handled by the parser
- // The parser will replace them with string literals containing the current function name
- // when they appear inside a function body
- //
+	// __PRETTY_FUNCTION__ (GCC extension) and __func__ (C++11 standard)
+	// These are NOT preprocessor macros - they are compiler builtins handled by the parser
+	// The parser will replace them with string literals containing the current function name
+	// when they appear inside a function body
+	//
 
 	defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{[] {
 		constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
@@ -1951,7 +1951,7 @@ void FileReader::addBuiltinDefines() {
 }
 
 FileReader::ScopedFileStack::ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file, long included_at_line) : filestack_(filestack) {
-	// Get file modification timestamp
+		// Get file modification timestamp
 	std::string timestamp_str;
 	try {
 		auto ftime = std::filesystem::last_write_time(file);
@@ -1963,7 +1963,7 @@ FileReader::ScopedFileStack::ScopedFileStack(std::stack<CurrentFile>& filestack,
 		std::strftime(buffer, sizeof(buffer), "\"%a %b %d %H:%M:%S %Y\"", &tm_now);
 		timestamp_str = buffer;
 	} catch (...) {
-	// If we can't get the timestamp, use a default
+			// If we can't get the timestamp, use a default
 		timestamp_str = "\"??? ??? ?? ??:??:?? ????\"";
 	}
 	filestack_.push({file, 0, timestamp_str, included_at_line});

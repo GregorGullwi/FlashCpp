@@ -95,7 +95,7 @@ void registerNestedMemberFunctionsForLazy(
 
 			LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_mem_info));
 
-	// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
+			// Set is_const/volatile_member_function on the node so propagateAstProperties derives cv_qualifier.
 			{
 				ASTNode fn_node = mem_func.function_declaration;
 				if (auto* fn = get_function_decl_node_mut(fn_node)) {
@@ -111,7 +111,7 @@ void registerNestedMemberFunctionsForLazy(
 				mem_func.is_pure_virtual,
 				mem_func.is_override,
 				mem_func.is_final);
-	// cv_qualifier is now auto-derived by propagateAstProperties
+			// cv_qualifier is now auto-derived by propagateAstProperties
 
 			FLASH_LOG(Templates, Debug, "Registered lazy member function for nested type: ",
 					  qualified_name, "::", decl.identifier_token().value());

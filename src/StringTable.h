@@ -46,9 +46,9 @@
 struct StringMetadata {
 	uint64_t hash;	   // Pre-computed FNV-1a hash (8 bytes)
 	uint32_t length;	 // String length in bytes (4 bytes)
-				   // Total: 12 bytes
+					  // Total: 12 bytes
 
- // Convenience methods
+	// Convenience methods
 	const char* getContent() const {
 		return reinterpret_cast<const char*>(this + 1);
 	}
@@ -71,50 +71,50 @@ static_assert(sizeof(StringMetadata) == 12, "StringMetadata must be 12 bytes for
  * [25...0]  (26 bits) : Byte Offset within chunk (up to 64MB addressable per chunk)
  */
 struct StringHandle {
- // Bit layout constants
+	// Bit layout constants
 	static constexpr uint32_t CHUNK_INDEX_BITS = 6;
 	static constexpr uint32_t OFFSET_BITS = 26;
 	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 63
 	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;	// 67108863 bytes (64MB)
 	static constexpr uint32_t OFFSET_MASK = MAX_OFFSET;
 
- // Note: We add 1 to offset in constructor to reserve handle 0 as invalid,
- // which means the actual usable offset range is [0, MAX_OFFSET - 1]
+	// Note: We add 1 to offset in constructor to reserve handle 0 as invalid,
+	// which means the actual usable offset range is [0, MAX_OFFSET - 1]
 	static constexpr uint32_t MAX_USABLE_OFFSET = MAX_OFFSET - 1;  // 67108862 bytes
 
 	uint32_t handle = 0;	 // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
 
- // Default constructor creates invalid handle
+	// Default constructor creates invalid handle
 	StringHandle() = default;
 
- // Construct from chunk index and offset
+	// Construct from chunk index and offset
 	explicit StringHandle(uint32_t chunk_idx, uint32_t offset) {
 		assert(chunk_idx <= MAX_CHUNK_INDEX && "Chunk index must fit in 8 bits");
 		assert(offset <= MAX_USABLE_OFFSET && "Offset exceeds usable range (need to reserve 0 as invalid)");
-	// Add 1 to offset so that handle 0 is reserved as invalid
+		// Add 1 to offset so that handle 0 is reserved as invalid
 		handle = (chunk_idx << OFFSET_BITS) | (offset + 1);
 	}
 
- // Extract chunk index (high 8 bits)
+	// Extract chunk index (high 8 bits)
 	uint32_t chunkIndex() const {
 		return handle >> OFFSET_BITS;
 	}
 
- // Extract offset (low 24 bits) - subtract 1 to get actual offset
+	// Extract offset (low 24 bits) - subtract 1 to get actual offset
 	uint32_t offset() const {
 		assert(isValid());
 		return (handle & OFFSET_MASK) - 1;
 	}
 
- // Validity check - handle 0 is reserved as invalid
+	// Validity check - handle 0 is reserved as invalid
 	bool isValid() const {
 		return handle != 0;
 	}
 
- // Comparison operators (for use in maps/sets)
+	// Comparison operators (for use in maps/sets)
 	bool operator==(std::string_view other) const noexcept;
 
- // Comparison operators (for use in maps/sets)
+	// Comparison operators (for use in maps/sets)
 	bool operator==(const StringHandle& other) const noexcept {
 		return handle == other.handle;
 	}
@@ -127,9 +127,9 @@ struct StringHandle {
 		return handle < other.handle;
 	}
 
- // Hash support for unordered containers
+	// Hash support for unordered containers
 	size_t hash() const noexcept {
-	// Identity hash - handle is already unique and well-distributed
+		// Identity hash - handle is already unique and well-distributed
 		return static_cast<size_t>(handle);
 	}
 
@@ -149,11 +149,11 @@ struct StringHandle {
  */
 class StringTable {
 public:
- /**
+	/**
 	 * @brief FNV-1a hash function (fast, good distribution)
 	 */
 	static uint64_t hashString(std::string_view str) {
-	// FNV-1a constants for 64-bit hash
+		// FNV-1a constants for 64-bit hash
 		constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
 		constexpr uint64_t FNV_PRIME = 1099511628211ULL;
 
@@ -165,7 +165,7 @@ public:
 		return hash;
 	}
 
- /**
+	/**
 	 * @brief Create a new string handle (does not check for duplicates)
 	 * Use this for strings that are known to be unique.
 	 * 
@@ -180,29 +180,29 @@ public:
 	 * caching the last chunk index or using a more sophisticated data structure.
 	 */
 	static StringHandle createStringHandle(std::string_view str) {
-	// Allocate using safe placement new
+		// Allocate using safe placement new
 		StringMetadata* metadata = gChunkedStringAllocator.allocateWithMetadata<StringMetadata>(str.size() + 1);
 
-	// Find which chunk contains the allocated pointer (safe from race conditions)
+		// Find which chunk contains the allocated pointer (safe from race conditions)
 		char* ptr = reinterpret_cast<char*>(metadata);
 		assert(gChunkedStringAllocator.findChunkIndex(ptr) == gChunkedStringAllocator.getChunkIndex() && "Allocated pointer must be in a valid chunk");
 
-	// Calculate offset within that chunk
+		// Calculate offset within that chunk
 		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
 		size_t offset = ptr - chunk_start;
 
-	// Initialize metadata
+		// Initialize metadata
 		metadata->hash = hashString(str);
 		metadata->length = static_cast<uint32_t>(str.size());
 
-	// Write string content after metadata
+		// Write string content after metadata
 		char* content = metadata->getContent();
 		std::memcpy(content, str.data(), str.size());
 		content[str.size()] = '\0';	// Null terminator
 
 		StringHandle handle(static_cast<uint32_t>(chunk_idx), static_cast<uint32_t>(offset));
-	// Store in intern map (key is string_view pointing to the interned data)
+		// Store in intern map (key is string_view pointing to the interned data)
 		getInternMap()[std::string_view(content, metadata->length)] = handle;
 		return handle;
 	}
@@ -211,38 +211,38 @@ public:
 		return createStringHandle(sb.commit()); // Just do a commit() for now, optimize later
 	}
 
- /**
+	/**
 	 * @brief Get or create an interned string handle
 	 * Returns existing handle if string is already interned, creates new one otherwise.
 	 */
 	static StringHandle getOrInternStringHandle(std::string_view str) {
-	// Check if already interned
+		// Check if already interned
 		auto it = getInternMap().find(str);
 		if (it != getInternMap().end()) {
 			return it->second;
 		}
 
-	// Create new handle
+		// Create new handle
 		return createStringHandle(str);
 	}
 
 	static StringHandle getOrInternStringHandle(StringBuilder& sb) {
-	// Check if already interned
+		// Check if already interned
 		auto it = getInternMap().find(sb.preview());
 		if (it != getInternMap().end()) {
 			sb.reset();
 			return it->second;
 		}
 
-	// Create new handle
+		// Create new handle
 		return createStringHandle(sb.commit());
 	}
 
- /**
+	/**
 	 * @brief Resolve handle to string_view (O(1))
 	 */
 	static std::string_view getStringView(StringHandle handle) {
-	// Handle invalid handles gracefully by returning empty string view
+		// Handle invalid handles gracefully by returning empty string view
 		if (!handle.isValid()) {
 			return std::string_view{};
 		}
@@ -251,16 +251,16 @@ public:
 			handle.chunkIndex(),
 			handle.offset());
 
-	// Access metadata using struct
+		// Access metadata using struct
 		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
 		return std::string_view(metadata->getContent(), metadata->length);
 	}
 
- /**
+	/**
 	 * @brief Get pre-computed hash for a handle (O(1))
 	 */
 	static uint64_t getHash(StringHandle handle) {
-	// Handle invalid handles gracefully by returning 0
+		// Handle invalid handles gracefully by returning 0
 		if (!handle.isValid()) {
 			return 0;
 		}
@@ -269,19 +269,19 @@ public:
 			handle.chunkIndex(),
 			handle.offset());
 
-	// Access hash from metadata using struct
+		// Access hash from metadata using struct
 		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
 		return metadata->hash;
 	}
 
- /**
+	/**
 	 * @brief Clear the intern map (useful for testing)
 	 */
 	static void clearInternMap() {
 		getInternMap().clear();
 	}
 
- /**
+	/**
 	 * @brief Get statistics about interned strings
 	 */
 	static size_t getInternedCount() {
@@ -289,8 +289,8 @@ public:
 	}
 
 private:
- // Singleton intern map: string_view -> StringHandle
- // Keys are string_views pointing to interned data in gChunkedStringAllocator
+	// Singleton intern map: string_view -> StringHandle
+	// Keys are string_views pointing to interned data in gChunkedStringAllocator
 	static std::unordered_map<std::string_view, StringHandle>& getInternMap() {
 		static std::unordered_map<std::string_view, StringHandle> intern_map;
 		return intern_map;

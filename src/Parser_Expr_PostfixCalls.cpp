@@ -80,7 +80,7 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 	std::optional<ASTNode> result = start_result;
 
- // Handle postfix operators in a loop
+	// Handle postfix operators in a loop
 	constexpr int MAX_POSTFIX_ITERATIONS = 100;	// Safety limit to prevent infinite loops
 	int postfix_iteration = 0;
 	while (result.has_value() && !peek().is_eof() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
@@ -88,31 +88,31 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 		FLASH_LOG_FORMAT(Parser, Debug, "apply_postfix_operators iteration {}: peek token type={}, value='{}'",
 						 postfix_iteration, static_cast<int>(peek_info().type()), peek_info().value());
 
-	// Check for ++ and -- postfix operators
+		// Check for ++ and -- postfix operators
 		if (peek().is_operator()) {
 			std::string_view op = peek_info().value();
 			if (op == "++" || op == "--") {
 				Token operator_token = current_token_;
 				advance(); // consume the postfix operator
 
-	// Create a postfix unary operator node (is_prefix = false)
+				// Create a postfix unary operator node (is_prefix = false)
 				result = emplace_node<ExpressionNode>(
 					UnaryOperatorNode(operator_token, *result, false));
 				continue;  // Check for more postfix operators
 			}
 		}
 
-	// Check for member access (. or ->) - these need special handling for .operator<=>()
+		// Check for member access (. or ->) - these need special handling for .operator<=>()
 		if (peek().is_punctuator() && peek() == "."_tok) {
 			Token dot_token = peek_info();
 			advance(); // consume '.'
 
-	// Check for .operator
+			// Check for .operator
 			if (peek() == "operator"_tok) {
 				Token operator_keyword_token = peek_info();
 				advance(); // consume 'operator'
 
-	// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
+				// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
 				StringBuilder operator_name_builder;
 				operator_name_builder.append("operator");
 
@@ -120,12 +120,12 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 					return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
 				}
 
-	// Handle various operator symbols including multi-character ones
+				// Handle various operator symbols including multi-character ones
 				std::string_view op_char = peek_info().value();
 				operator_name_builder.append(op_char);
 				advance();
 
-	// Handle multi-character operators like >>=, <<=, <=>, etc.
+				// Handle multi-character operators like >>=, <<=, <=>, etc.
 				while (!peek().is_eof()) {
 					std::string_view next = peek_info().value();
 					if (next == "=" || next == ">" || next == "<") {
@@ -138,7 +138,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 							advance();
 							op_char = next;
 						} else if (op_char == "=" && next == ">") {
-		// Complete <=> operator
+							// Complete <=> operator
 							operator_name_builder.append(next);
 							advance();
 							break;
@@ -159,13 +159,13 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 										  operator_keyword_token.line(), operator_keyword_token.column(),
 										  operator_keyword_token.file_index());
 
-	// Expect '(' for the operator call
+				// Expect '(' for the operator call
 				if (peek() != "("_tok) {
 					return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
 				}
 				advance(); // consume '('
 
-	// Parse function arguments
+				// Parse function arguments
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
 					.collect_types = true,
@@ -179,7 +179,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 					return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 				}
 
-	// Create a member function call node for the operator
+				// Create a member function call node for the operator
 				auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 				auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
 				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
@@ -189,14 +189,14 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				continue;  // Continue checking for more postfix operators
 			}
 
-	// Not .operator - restore and let the normal postfix handling deal with it
-	// (this is a limitation - we'd need to refactor more to handle regular member access here)
-	// For now, just break and let the caller handle remaining tokens
-	// Actually, we consumed the '.', so we need to handle member access here or error
+			// Not .operator - restore and let the normal postfix handling deal with it
+			// (this is a limitation - we'd need to refactor more to handle regular member access here)
+			// For now, just break and let the caller handle remaining tokens
+			// Actually, we consumed the '.', so we need to handle member access here or error
 
-	// Simple member access without operator
-	// Skip 'template' keyword if present (dependent context disambiguator)
-	// e.g., obj.template emplace<T>(args)
+			// Simple member access without operator
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., obj.template emplace<T>(args)
 			if (peek() == "template"_tok)
 				advance();
 
@@ -207,14 +207,14 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			Token member_name_token = peek_info();
 			advance();
 
-	// Parse explicit template arguments: obj.template emplace<T>(args)
+			// Parse explicit template arguments: obj.template emplace<T>(args)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 			if (peek() == "<"_tok) {
 				explicit_template_args = parse_explicit_template_arguments();
-	// nullopt means disambiguation failed - '<' is a comparison operator, not template args
+				// nullopt means disambiguation failed - '<' is a comparison operator, not template args
 			}
 
-	// Check if this is a member function call (followed by '(')
+			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
 				const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
 																	   ? nullptr
@@ -236,11 +236,11 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 					return ParseResult::error("Expected ')' after member function call arguments", current_token_);
 				}
 
-	// Try to resolve object type and instantiate member function template
+				// Try to resolve object type and instantiate member function template
 				auto instantiated_func = tryResolveMemberFunctionTemplate(
 					result, member_name_token.value(), explicit_template_args, arg_types);
 
-	// Use instantiated function or create placeholder
+				// Use instantiated function or create placeholder
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
 				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
@@ -256,28 +256,28 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				result = emplace_node<ExpressionNode>(
 					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
-	// Simple member access
+				// Simple member access
 				result = emplace_node<ExpressionNode>(
 					MemberAccessNode(*result, member_name_token, false)); // false = dot access
 			}
 			continue;
 		}
 
-	// Check for -> member access (-> is a punctuator, not an operator)
+		// Check for -> member access (-> is a punctuator, not an operator)
 		if (peek() == "->"_tok) {
 			Token arrow_token = peek_info();
 			advance(); // consume '->'
 
-	// Check for ->operator
+			// Check for ->operator
 			if (peek() == "operator"_tok) {
-	// Similar handling to .operator - for brevity, just error for now
-	// A full implementation would duplicate the .operator handling
+				// Similar handling to .operator - for brevity, just error for now
+				// A full implementation would duplicate the .operator handling
 				return ParseResult::error("->operator syntax not yet implemented in apply_postfix_operators", arrow_token);
 			}
 
-	// Simple member access via arrow
-	// Skip 'template' keyword if present (dependent context disambiguator)
-	// e.g., ptr->template emplace<T>(args)
+			// Simple member access via arrow
+			// Skip 'template' keyword if present (dependent context disambiguator)
+			// e.g., ptr->template emplace<T>(args)
 			if (peek() == "template"_tok)
 				advance();
 
@@ -288,13 +288,13 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			Token member_name_token = peek_info();
 			advance();
 
-	// Parse explicit template arguments: ptr->template emplace<T>(args)
+			// Parse explicit template arguments: ptr->template emplace<T>(args)
 			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 			if (peek() == "<"_tok) {
 				explicit_template_args = parse_explicit_template_arguments();
 			}
 
-	// Check if this is a member function call (followed by '(')
+			// Check if this is a member function call (followed by '(')
 			if (peek() == "("_tok) {
 				const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
 																	   ? nullptr
@@ -316,11 +316,11 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
 				}
 
-	// Try to resolve object type and instantiate member function template
+				// Try to resolve object type and instantiate member function template
 				auto instantiated_func = tryResolveMemberFunctionTemplate(
 					result, member_name_token.value(), explicit_template_args, arg_types);
 
-	// Use instantiated function or create placeholder
+				// Use instantiated function or create placeholder
 				FunctionDeclarationNode* func_ref_ptr = nullptr;
 				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
@@ -336,19 +336,19 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				result = emplace_node<ExpressionNode>(
 					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			} else {
-	// Create arrow access node
+				// Create arrow access node
 				result = emplace_node<ExpressionNode>(
 					MemberAccessNode(*result, member_name_token, true)); // true = arrow access
 			}
 			continue;
 		}
 
-	// Check for function call operator () - e.g., static_cast<T&&>(x)(args...)
+		// Check for function call operator () - e.g., static_cast<T&&>(x)(args...)
 		if (peek().is_punctuator() && peek() == "("_tok) {
 			Token paren_token = peek_info();
 			advance(); // consume '('
 
-	// Parse function arguments
+			// Parse function arguments
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
 				.collect_types = true,
@@ -362,7 +362,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-	// Create operator() call as a member function call
+			// Create operator() call as a member function call
 			Token operator_token(Token::Type::Identifier, "operator()"sv,
 								 paren_token.line(), paren_token.column(), paren_token.file_index());
 			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
@@ -374,7 +374,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			continue;
 		}
 
-	// Check for array subscript operator [] - e.g., static_cast<T*>(p)[i]
+		// Check for array subscript operator [] - e.g., static_cast<T*>(p)[i]
 		if (peek().is_punctuator() && peek() == "["_tok) {
 			Token bracket_token = peek_info();
 			advance(); // consume '['
@@ -398,7 +398,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			}
 		}
 
-	// No more postfix operators we handle here - break
+		// No more postfix operators we handle here - break
 		break;
 	}
 
@@ -417,20 +417,20 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 // This function handles postfix operators: ++, --, [], (), ::, ., ->
 // It calls parse_primary_expression and then handles postfix operators in a loop
 ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
- // First, parse the primary expression
+	// First, parse the primary expression
 	ParseResult prim_result = parse_primary_expression(context);
 	if (prim_result.is_error()) {
 		return prim_result;
 	}
 
- // Phase 3: Postfix operator loop moved from parse_primary_expression
- // This handles postfix operators: ++, --, [], (), ::, ., ->
- // The loop continues until we run out of postfix operators
- // Note: result is now an optional<ASTNode> (extracted from ParseResult) for compatibility with the postfix loop
+	// Phase 3: Postfix operator loop moved from parse_primary_expression
+	// This handles postfix operators: ++, --, [], (), ::, ., ->
+	// The loop continues until we run out of postfix operators
+	// Note: result is now an optional<ASTNode> (extracted from ParseResult) for compatibility with the postfix loop
 
 	std::optional<ASTNode> result = prim_result.node();
 
- // Handle postfix operators in a loop
+	// Handle postfix operators in a loop
 	constexpr int MAX_POSTFIX_ITERATIONS = 100;	// Safety limit to prevent infinite loops
 	int postfix_iteration = 0;
 	while (result.has_value() && !peek().is_eof() && postfix_iteration < MAX_POSTFIX_ITERATIONS) {
@@ -443,17 +443,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				Token operator_token = current_token_;
 				advance(); // consume the postfix operator
 
-	// Create a postfix unary operator node (is_prefix = false)
+				// Create a postfix unary operator node (is_prefix = false)
 				result = emplace_node<ExpressionNode>(
 					UnaryOperatorNode(operator_token, *result, false));
 				continue;  // Check for more postfix operators
 			}
 		}
 
-	// Check for function call operator () - for operator() overload or function pointer call
+		// Check for function call operator () - for operator() overload or function pointer call
 		if (peek().is_punctuator() && peek() == "("_tok) {
-	// Check if the result is a member access to a function pointer
-	// If so, we should create a function pointer call instead of operator() call
+			// Check if the result is a member access to a function pointer
+			// If so, we should create a function pointer call instead of operator() call
 			bool is_function_pointer_call = false;
 			const MemberAccessNode* member_access = nullptr;
 
@@ -462,8 +462,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				if (std::holds_alternative<MemberAccessNode>(expr)) {
 					member_access = &std::get<MemberAccessNode>(expr);
 
-		// Check if this member is a function pointer
-		// We need to look up the struct type and find the member
+					// Check if this member is a function pointer
+					// We need to look up the struct type and find the member
 					if (!member_function_context_stack_.empty()) {
 						const auto& member_ctx = member_function_context_stack_.back();
 						if (const TypeInfo* struct_type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
@@ -487,7 +487,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			Token paren_token = peek_info();
 			advance(); // consume '('
 
-	// Parse function arguments using unified helper
+			// Parse function arguments using unified helper
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
 				.collect_types = false,
@@ -502,57 +502,57 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 
 			if (is_function_pointer_call && member_access) {
-	// This is a call through a function pointer member (e.g., this->operation(value, x))
-	// Create a FunctionPointerCallNode or use MemberFunctionCallNode with special handling
-	// For now, we use MemberFunctionCallNode which will be handled in code generation
+				// This is a call through a function pointer member (e.g., this->operation(value, x))
+				// Create a FunctionPointerCallNode or use MemberFunctionCallNode with special handling
+				// For now, we use MemberFunctionCallNode which will be handled in code generation
 
-	// Create a placeholder function declaration with the member name
+				// Create a placeholder function declaration with the member name
 				Token member_token(Token::Type::Identifier, member_access->member_name(),
 								   paren_token.line(), paren_token.column(), paren_token.file_index());
 				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
-	// Create member function call node - code generation will detect this is a function pointer
+				// Create member function call node - code generation will detect this is a function pointer
 				result = emplace_node<ExpressionNode>(
 					MemberFunctionCallNode(*result, func_ref, std::move(args), member_token));
 			} else {
-	// Create operator() call as a member function call
-	// The member function name is "operator()"
+				// Create operator() call as a member function call
+				// The member function name is "operator()"
 				Token operator_token(Token::Type::Identifier, "operator()"sv,
 									 paren_token.line(), paren_token.column(), paren_token.file_index());
 
-	// Create a temporary function declaration for operator()
-	// This will be resolved during code generation
+				// Create a temporary function declaration for operator()
+				// This will be resolved during code generation
 				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, operator_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, operator_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
-	// Create member function call node for operator()
+				// Create member function call node for operator()
 				result = emplace_node<ExpressionNode>(
 					MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
 			}
 			continue;
 		}
 
-	// Check for array subscript operator []
+		// Check for array subscript operator []
 		if (peek().is_punctuator() && peek() == "["_tok) {
 			Token bracket_token = peek_info();
 			advance(); // consume '['
 
-	// Parse the index expression
+			// Parse the index expression
 			ParseResult index_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 			if (index_result.is_error()) {
 				return index_result;
 			}
 
-	// Expect closing ']'
+			// Expect closing ']'
 			if (peek() != "]"_tok) {
 				return ParseResult::error("Expected ']' after array index", current_token_);
 			}
 			advance(); // consume ']'
 
-	// Create array subscript node
+			// Create array subscript node
 			if (auto index_node = index_result.node()) {
 				result = emplace_node<ExpressionNode>(
 					ArraySubscriptNode(*result, *index_node, bracket_token));
@@ -562,14 +562,14 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 		}
 
-	// Check for scope resolution operator :: (namespace/class member access)
+		// Check for scope resolution operator :: (namespace/class member access)
 		if (peek().is_punctuator() && peek() == "::"_tok) {
-	// Handle namespace::member or class::static_member syntax
-	// We have an identifier (in result), now parse :: and the member name
+			// Handle namespace::member or class::static_member syntax
+			// We have an identifier (in result), now parse :: and the member name
 
-	// Special case: obj.Base::member() - qualified member access through base class
-	// When result is a MemberAccessNode, the :: is qualifying the member, not
-	// the expression. Rewrite as member access with the final qualified name.
+			// Special case: obj.Base::member() - qualified member access through base class
+			// When result is a MemberAccessNode, the :: is qualifying the member, not
+			// the expression. Rewrite as member access with the final qualified name.
 			if (result->is<ExpressionNode>()) {
 				const ExpressionNode& expr = result->as<ExpressionNode>();
 				if (std::holds_alternative<MemberAccessNode>(expr)) {
@@ -577,18 +577,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					ASTNode object = member_access.object();
 					bool is_arrow = member_access.is_arrow();
 
-		// Save position before consuming any tokens so we can restore the
-		// entire chain if we hit a non-identifier after any '::' in the chain
-		// (e.g., obj.Base::~Base(), obj.Base::Inner::~Inner(), obj.Base::operator==())
+					// Save position before consuming any tokens so we can restore the
+					// entire chain if we hit a non-identifier after any '::' in the chain
+					// (e.g., obj.Base::~Base(), obj.Base::Inner::~Inner(), obj.Base::operator==())
 					auto saved_pos = save_token_position();
 					advance(); // consume '::'
 
-		// Skip 'template' keyword if present (dependent context disambiguator)
+					// Skip 'template' keyword if present (dependent context disambiguator)
 					if (peek() == "template"_tok)
 						advance();
 
-		// Consume all qualified parts: Base::Inner::member
-		// Each iteration consumes one identifier; if followed by :: we loop again
+					// Consume all qualified parts: Base::Inner::member
+					// Each iteration consumes one identifier; if followed by :: we loop again
 					bool handled = false;
 					while (peek().is_identifier()) {
 						Token qualified_member_token = peek_info();
@@ -601,8 +601,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							continue; // keep consuming qualified parts
 						}
 
-		// This is the final member name
-		// Check if it's a member function call
+						// This is the final member name
+						// Check if it's a member function call
 						if (peek() == "("_tok) {
 							advance(); // consume '('
 							auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
@@ -622,7 +622,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							result = emplace_node<ExpressionNode>(
 								MemberFunctionCallNode(object, func_decl_node, std::move(args), qualified_member_token));
 						} else {
-		// Simple qualified member access
+							// Simple qualified member access
 							result = emplace_node<ExpressionNode>(
 								MemberAccessNode(object, qualified_member_token, is_arrow));
 						}
@@ -630,7 +630,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						break;
 					}
 
-		// Handle qualified operator call on member: obj.Base::operator=()
+					// Handle qualified operator call on member: obj.Base::operator=()
 					if (!handled && peek() == "operator"_tok) {
 						advance(); // consume 'operator'
 						Token operator_keyword_token = current_token_;
@@ -669,17 +669,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						continue;
 					}
 
-		// Non-identifier after :: (e.g., ~, operator) — restore entire chain
-		// and fall through to the normal :: handler
+					// Non-identifier after :: (e.g., ~, operator) — restore entire chain
+					// and fall through to the normal :: handler
 					restore_token_position(saved_pos);
 				}
 			}
 
 			advance(); // consume '::'
 
-	// Handle qualified operator call: Type::operator=()
+			// Handle qualified operator call: Type::operator=()
 			if (peek() == "operator"_tok) {
-	// Get the namespace/class name from the current result
+				// Get the namespace/class name from the current result
 				std::string_view namespace_name;
 				if (result->is<ExpressionNode>()) {
 					const ExpressionNode& expr = result->as<ExpressionNode>();
@@ -697,12 +697,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return parse_qualified_operator_call(current_token_, namespaces);
 			}
 
-	// Expect an identifier after ::
+			// Expect an identifier after ::
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected identifier after '::'", current_token_);
 			}
 
-	// Get the namespace/class name from the current result
+			// Get the namespace/class name from the current result
 			std::string_view namespace_name;
 			if (result->is<ExpressionNode>()) {
 				const ExpressionNode& expr = result->as<ExpressionNode>();
@@ -715,19 +715,19 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return ParseResult::error("Expected identifier before '::'", current_token_);
 			}
 
-	// Now parse the rest as a qualified identifier
+			// Now parse the rest as a qualified identifier
 			std::vector<StringType<32>> namespaces;
 			namespaces.emplace_back(StringType<32>(namespace_name));
 
 			Token final_identifier = peek_info();
 			advance(); // consume the identifier after ::
 
-	// Check if there are more :: following (e.g., A::B::C)
+			// Check if there are more :: following (e.g., A::B::C)
 			while (peek() == "::"_tok) {
 				namespaces.emplace_back(StringType<32>(final_identifier.value()));
 				advance(); // consume ::
 
-	// Handle qualified operator call: A::B::operator=()
+				// Handle qualified operator call: A::B::operator=()
 				if (peek() == "operator"_tok) {
 					advance(); // consume 'operator'
 					return parse_qualified_operator_call(current_token_, namespaces);
@@ -740,28 +740,28 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				advance(); // consume identifier
 			}
 
-	// Look up the qualified identifier
+			// Look up the qualified identifier
 			auto qualified_symbol = gSymbolTable.lookup_qualified(namespaces, final_identifier.value());
 
-	// Check if this is followed by template arguments: ns::func<Args>
+			// Check if this is followed by template arguments: ns::func<Args>
 			std::optional<std::vector<TemplateTypeArg>> template_args;
 			if (peek() == "<"_tok) {
 				template_args = parse_explicit_template_arguments();
-	// If parsing failed, it might be a less-than operator, continue normally
+				// If parsing failed, it might be a less-than operator, continue normally
 			}
 
-	// Check if this is a brace initialization: ns::Class<Args>{}
+			// Check if this is a brace initialization: ns::Class<Args>{}
 			if (template_args.has_value() && peek() == "{"_tok) {
-	// Build the qualified name for lookup
+				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
-	// Try to instantiate the class template
+				// Try to instantiate the class template
 				try_instantiate_class_template(qualified_name, *template_args);
 
-	// Parse the brace initialization using the helper
+				// Parse the brace initialization using the helper
 				ParseResult brace_init_result = parse_template_brace_initialization(*template_args, qualified_name, final_identifier);
 				if (brace_init_result.is_error()) {
-		// If parsing failed, fall through to error handling
+					// If parsing failed, fall through to error handling
 					FLASH_LOG_FORMAT(Parser, Debug, "Brace initialization parsing failed: {}", brace_init_result.error_message());
 				} else if (brace_init_result.node().has_value()) {
 					result = brace_init_result.node();
@@ -769,11 +769,11 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 			}
 
-	// Check if this is a function call
+			// Check if this is a function call
 			if (peek() == "("_tok) {
 				advance(); // consume '('
 
-	// Parse function arguments using unified helper (collect types for template deduction)
+				// Parse function arguments using unified helper (collect types for template deduction)
 				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 					.handle_pack_expansion = true,
 					.collect_types = true,
@@ -787,7 +787,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
-	// Get the DeclarationNode
+				// Get the DeclarationNode
 				auto getDeclarationNode = [](const ASTNode& node) -> const DeclarationNode* {
 					if (node.is<DeclarationNode>()) {
 						return &node.as<DeclarationNode>();
@@ -796,7 +796,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					} else if (node.is<VariableDeclarationNode>()) {
 						return &node.as<VariableDeclarationNode>().declaration();
 					} else if (node.is<TemplateFunctionDeclarationNode>()) {
-		// Handle template function declarations - extract the inner function declaration
+						// Handle template function declarations - extract the inner function declaration
 						return &node.as<TemplateFunctionDeclarationNode>().function_declaration().as<FunctionDeclarationNode>().decl_node();
 					}
 					return nullptr;
@@ -833,17 +833,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					}
 				}
 
-	// If symbol not found and we're not in extern "C", try template instantiation
+				// If symbol not found and we're not in extern "C", try template instantiation
 				if (!decl_ptr && current_linkage_ != Linkage::C) {
-		// Build qualified template name (e.g., "std::move")
+					// Build qualified template name (e.g., "std::move")
 					std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 
-		// Try explicit template instantiation first if template arguments were provided
-		// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
+					// Try explicit template instantiation first if template arguments were provided
+					// (e.g., ns::func<true>(args) should use try_instantiate_template_explicit)
 					if (template_args.has_value()) {
 						std::optional<ASTNode> template_inst = try_instantiate_template_explicit(qualified_name, *template_args);
 						if (!template_inst.has_value()) {
-		// Also try without namespace prefix
+							// Also try without namespace prefix
 							template_inst = try_instantiate_template_explicit(final_identifier.value(), *template_args);
 						}
 						if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
@@ -852,12 +852,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						}
 					}
 
-		// Fall back to argument-type-based deduction
+					// Fall back to argument-type-based deduction
 					if (!decl_ptr) {
-		// Apply lvalue reference for forwarding deduction on arg_types
+						// Apply lvalue reference for forwarding deduction on arg_types
 						std::vector<TypeSpecifierNode> arg_types = apply_lvalue_reference_deduction(args, args_result.arg_types);
 
-		// Try to instantiate the qualified template function
+						// Try to instantiate the qualified template function
 						if (!arg_types.empty()) {
 							std::optional<ASTNode> template_inst = try_instantiate_template(qualified_name, arg_types);
 							if (template_inst.has_value() && template_inst->is<FunctionDeclarationNode>()) {
@@ -869,25 +869,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 
 				if (!decl_ptr) {
-		// Validate that the namespace path actually exists before creating a forward declaration.
-		// This catches errors like f2::func() when only namespace f exists.
+					// Validate that the namespace path actually exists before creating a forward declaration.
+					// This catches errors like f2::func() when only namespace f exists.
 					NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 					if (!validateQualifiedNamespace(ns_handle, final_identifier, (parsing_template_depth_ > 0))) {
 						return ParseResult::error(
 							std::string(StringBuilder().append("Use of undeclared identifier '").append(buildQualifiedNameFromStrings(namespaces, final_identifier.value())).append("'").commit()),
 							final_identifier);
 					}
-		// Namespace exists — create forward declaration for external functions (e.g., std::print)
+					// Namespace exists — create forward declaration for external functions (e.g., std::print)
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, final_identifier, CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, final_identifier);
 					decl_ptr = &forward_decl.as<DeclarationNode>();
 				}
 
-	// Create function call node
+				// Create function call node
 				auto function_call_node = emplace_node<ExpressionNode>(
 					FunctionCallNode(*decl_ptr, std::move(args), final_identifier));
 
-	// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
@@ -900,15 +900,15 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				continue; // Check for more postfix operators
 			}
 
-	// DEBUG: Log what we have at this point
+			// DEBUG: Log what we have at this point
 			if (!peek().is_eof()) {
 				FLASH_LOG(Templates, Info, "After function call check: template_args.has_value()=", template_args.has_value(),
 						  ", peek='", peek_info().value(), "', peek.empty()=", peek_info().value().empty());
 			}
 
 			if (template_args.has_value() && !peek_info().value().empty() && peek() != "("_tok) {
-	// This might be a variable template usage with qualified name: ns::var_template<Args>
-	// Build the qualified name for lookup
+				// This might be a variable template usage with qualified name: ns::var_template<Args>
+				// Build the qualified name for lookup
 				std::string_view qualified_name = buildQualifiedNameFromStrings(namespaces, final_identifier.value());
 				FLASH_LOG(Templates, Info, "Checking for qualified template: ", qualified_name, ", peek='", peek_info().value(), "'");
 
@@ -917,7 +917,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					FLASH_LOG(Templates, Info, "Found variable template: ", qualified_name);
 					auto instantiated_var = try_instantiate_variable_template(qualified_name, *template_args);
 					if (instantiated_var.has_value()) {
-		// Get the instantiated variable name
+						// Get the instantiated variable name
 						std::string_view inst_name;
 						if (instantiated_var->is<VariableDeclarationNode>()) {
 							const auto& var_decl = instantiated_var->as<VariableDeclarationNode>();
@@ -930,7 +930,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							inst_name = qualified_name;	// Fallback
 						}
 
-		// Return identifier reference to the instantiated variable
+						// Return identifier reference to the instantiated variable
 						Token inst_token(Token::Type::Identifier, inst_name,
 										 final_identifier.line(), final_identifier.column(), final_identifier.file_index());
 						result = emplace_node<ExpressionNode>(IdentifierNode(inst_token));
@@ -939,17 +939,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					}
 				}
 
-	// Not a variable template - check if it's a class template that needs instantiation
-	// If we have template args, try to instantiate the class template
-	// This handles patterns like: std::is_integral<int>::value
+				// Not a variable template - check if it's a class template that needs instantiation
+				// If we have template args, try to instantiate the class template
+				// This handles patterns like: std::is_integral<int>::value
 				if (!var_template_opt.has_value()) {
 					FLASH_LOG(Templates, Info, "Attempting class template instantiation for: ", qualified_name);
 					auto instantiation_result = try_instantiate_class_template(qualified_name, *template_args);
-		// Update the type_name to use the fully instantiated name (with defaults filled in)
+					// Update the type_name to use the fully instantiated name (with defaults filled in)
 					if (instantiation_result.has_value() && instantiation_result->is<StructDeclarationNode>()) {
 						const StructDeclarationNode& inst_struct = instantiation_result->as<StructDeclarationNode>();
 						std::string_view instantiated_name = StringTable::getStringView(inst_struct.name());
-		// Replace the base template name in namespaces with the instantiated name
+						// Replace the base template name in namespaces with the instantiated name
 						if (!namespaces.empty()) {
 							namespaces.back() = StringType<32>(instantiated_name);
 							FLASH_LOG(Templates, Debug, "Updated namespace to use instantiated name: ", instantiated_name);
@@ -957,15 +957,15 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					}
 				}
 
-	// Fall through to handle as regular qualified identifier if not a variable template
+				// Fall through to handle as regular qualified identifier if not a variable template
 			}
 
-	// Check if this might be accessing a static member (e.g., MyClass::value)
-	// Try this before checking qualified_symbol, as static member access might not be in symbol table
+			// Check if this might be accessing a static member (e.g., MyClass::value)
+			// Try this before checking qualified_symbol, as static member access might not be in symbol table
 			std::string_view type_name = namespaces.empty() ? std::string_view() : std::string_view(namespaces.back());
 			std::string_view member_name = final_identifier.value();
 
-	// Try to resolve the type and trigger lazy static member instantiation if needed
+			// Try to resolve the type and trigger lazy static member instantiation if needed
 			if (!type_name.empty()) {
 				auto type_handle = StringTable::getOrInternStringHandle(type_name);
 				auto type_it = getTypesByNameMap().find(type_handle);
@@ -974,7 +974,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					FLASH_LOG(Parser, Debug, "Found type '", type_name, "' with type=", (int)type_info->typeEnum(),
 							  " type_index=", type_info->type_index_);
 
-		// For type aliases, resolve to the actual type
+					// For type aliases, resolve to the actual type
 					if (type_info->isStruct()) {
 						const TypeInfo* actual_type = tryGetTypeInfo(type_info->type_index_);
 						const StructTypeInfo* struct_info = actual_type ? actual_type->getStructInfo() : nullptr;
@@ -982,17 +982,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 							FLASH_LOG(Parser, Debug, "Triggering lazy instantiation for ",
 									  StringTable::getStringView(struct_info->name), "::", member_name);
-		// Trigger lazy static member instantiation if needed
+							// Trigger lazy static member instantiation if needed
 							instantiateLazyStaticMember(struct_info->name, member_handle);
 						}
 					} else if (type_info->isStruct()) {
-		// Direct struct type (not an alias)
+						// Direct struct type (not an alias)
 						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {
 							StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
 							FLASH_LOG(Parser, Debug, "Triggering lazy instantiation for ",
 									  StringTable::getStringView(struct_info->name), "::", member_name);
-		// Trigger lazy static member instantiation if needed
+							// Trigger lazy static member instantiation if needed
 							instantiateLazyStaticMember(struct_info->name, member_handle);
 						}
 					}
@@ -1000,7 +1000,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 
 			if (qualified_symbol.has_value()) {
-	// Just a qualified identifier reference (e.g., Namespace::globalValue or Class::staticMember)
+				// Just a qualified identifier reference (e.g., Namespace::globalValue or Class::staticMember)
 				NamespaceHandle ns_handle = gSymbolTable.resolve_namespace_handle(namespaces);
 				QualifiedIdentifierNode qual_node(ns_handle, final_identifier);
 				result = emplace_node<ExpressionNode>(qual_node);
@@ -1010,7 +1010,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 		}
 
-	// Check for member access operator . or -> (or pointer-to-member .* or ->*)
+		// Check for member access operator . or -> (or pointer-to-member .* or ->*)
 		bool is_arrow_access = false;
 		Token operator_start_token;	// Track the operator token for error reporting
 
@@ -1019,13 +1019,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			advance(); // consume '.'
 			is_arrow_access = false;
 
-	// Check for pointer-to-member operator .*
+			// Check for pointer-to-member operator .*
 			if (peek() == "*"_tok) {
 				advance(); // consume '*'
 
-	// Parse the RHS expression (pointer to member)
-	// Pointer-to-member operators have precedence similar to multiplicative operators (17)
-	// But we need to stop at lower precedence operators, so use precedence 17
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
 				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
 
 				if (member_ptr_result.is_error()) {
@@ -1035,7 +1035,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					return ParseResult::error("Expected expression after '.*' operator", current_token_);
 				}
 
-	// Create PointerToMemberAccessNode
+				// Create PointerToMemberAccessNode
 				result = emplace_node<ExpressionNode>(
 					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, false));
 				continue;  // Check for more postfix operators
@@ -1045,13 +1045,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			advance(); // consume '->'
 			is_arrow_access = true;
 
-	// Check for pointer-to-member operator ->*
+			// Check for pointer-to-member operator ->*
 			if (peek() == "*"_tok) {
 				advance(); // consume '*'
 
-	// Parse the RHS expression (pointer to member)
-	// Pointer-to-member operators have precedence similar to multiplicative operators (17)
-	// But we need to stop at lower precedence operators, so use precedence 17
+				// Parse the RHS expression (pointer to member)
+				// Pointer-to-member operators have precedence similar to multiplicative operators (17)
+				// But we need to stop at lower precedence operators, so use precedence 17
 				ParseResult member_ptr_result = parse_expression(17, ExpressionContext::Normal);
 				if (member_ptr_result.is_error()) {
 					return member_ptr_result;
@@ -1060,16 +1060,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					return ParseResult::error("Expected expression after '->*' operator", current_token_);
 				}
 
-	// Create PointerToMemberAccessNode
+				// Create PointerToMemberAccessNode
 				result = emplace_node<ExpressionNode>(
 					PointerToMemberAccessNode(*result, *member_ptr_result.node(), operator_start_token, true));
 				continue;  // Check for more postfix operators
 			}
 
-	// Note: We don't transform ptr->member to (*ptr).member here anymore.
-	// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will
-	// handle operator-> overload resolution. For raw pointers, it will generate
-	// the equivalent of (*ptr).member; for objects with operator->, it will call that.
+			// Note: We don't transform ptr->member to (*ptr).member here anymore.
+			// Instead, we pass the is_arrow flag to MemberAccessNode, and CodeGen will
+			// handle operator-> overload resolution. For raw pointers, it will generate
+			// the equivalent of (*ptr).member; for objects with operator->, it will call that.
 		} else {
 			if (!peek().is_eof()) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Postfix loop: breaking, peek token type={}, value='{}'",
@@ -1080,13 +1080,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			break;  // No more postfix operators
 		}
 
-	// Expect an identifier (member name) OR ~ for pseudo-destructor call
-	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
+		// Expect an identifier (member name) OR ~ for pseudo-destructor call
+		// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
 		if (peek() == "~"_tok) {
 			advance(); // consume '~'
 
-	// The destructor name follows the ~
-	// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
+			// The destructor name follows the ~
+			// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", current_token_);
 			}
@@ -1094,7 +1094,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			Token destructor_type_token = peek_info();
 			advance(); // consume type name
 
-	// Build qualified type name if present (e.g., std::string -> handle ~std::string)
+			// Build qualified type name if present (e.g., std::string -> handle ~std::string)
 			std::string qualified_type_name(destructor_type_token.value());
 			while (peek() == "::"_tok) {
 				advance(); // consume '::'
@@ -1106,18 +1106,18 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				advance(); // consume identifier
 			}
 
-	// Skip template arguments if present (e.g., ~_Rb_tree_node<_Val>())
+			// Skip template arguments if present (e.g., ~_Rb_tree_node<_Val>())
 			if (peek() == "<"_tok) {
 				skip_template_arguments();
 			}
 
-	// Expect '(' for the destructor call
+			// Expect '(' for the destructor call
 			if (peek() != "("_tok) {
 				return ParseResult::error("Expected '(' after destructor name", current_token_);
 			}
 			advance(); // consume '('
 
-	// Expect ')' - destructors take no arguments
+			// Expect ')' - destructors take no arguments
 			if (peek() != ")"_tok) {
 				return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", current_token_);
 			}
@@ -1125,20 +1125,20 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
 
-	// Create a PseudoDestructorCallNode to properly represent this expression
-	// The result type is always void
+			// Create a PseudoDestructorCallNode to properly represent this expression
+			// The result type is always void
 			result = emplace_node<ExpressionNode>(
 				PseudoDestructorCallNode(*result, qualified_type_name, destructor_type_token, is_arrow_access));
 			continue;
 		}
 
-	// Handle member operator call syntax: obj.operator<=>(...) or ptr->operator++(...)
-	// This is valid C++ syntax for calling an operator as a member function by name
+		// Handle member operator call syntax: obj.operator<=>(...) or ptr->operator++(...)
+		// This is valid C++ syntax for calling an operator as a member function by name
 		if (peek() == "operator"_tok) {
 			Token operator_keyword_token = peek_info();
 			advance(); // consume 'operator'
 
-	// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
+			// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
 			StringBuilder operator_name_builder;
 			operator_name_builder.append("operator");
 
@@ -1146,16 +1146,16 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
 			}
 
-	// Handle various operator symbols including multi-character ones
+			// Handle various operator symbols including multi-character ones
 			std::string_view op = peek_info().value();
 			operator_name_builder.append(op);
 			advance();
 
-	// Handle multi-character operators like >>=, <<=, <=>, (), [], etc.
+			// Handle multi-character operators like >>=, <<=, <=>, (), [], etc.
 			while (!peek().is_eof()) {
 				std::string_view next = peek_info().value();
 				if (next == "=" || next == ">" || next == "<") {
-		// Could be part of >>=, <<=, <=>, ==, !=, etc.
+					// Could be part of >>=, <<=, <=>, ==, !=, etc.
 					if (op == ">" && (next == ">" || next == "=")) {
 						operator_name_builder.append(next);
 						advance();
@@ -1165,7 +1165,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						advance();
 						op = next;
 					} else if (op == "=" && next == ">") {
-		// Complete <=> operator (we already have operator<= from above)
+						// Complete <=> operator (we already have operator<= from above)
 						operator_name_builder.append(next);
 						advance();
 						break;
@@ -1177,12 +1177,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						break;
 					}
 				} else if (op == ")" && next == "(") {
-		// operator()
+					// operator()
 					operator_name_builder.append(next);
 					advance();
 					break;
 				} else if (op == "]" && next == "[") {
-		// operator[]
+					// operator[]
 					operator_name_builder.append(next);
 					advance();
 					break;
@@ -1196,13 +1196,13 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 											 operator_keyword_token.line(), operator_keyword_token.column(),
 											 operator_keyword_token.file_index());
 
-	// Expect '(' for the operator call
+			// Expect '(' for the operator call
 			if (peek() != "("_tok) {
 				return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
 			}
 			advance(); // consume '('
 
-	// Parse function arguments
+			// Parse function arguments
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
 				.collect_types = true,
@@ -1216,8 +1216,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
 			}
 
-	// Create a member function call node for the operator
-	// The operator is treated as a regular member function with a special name
+			// Create a member function call node for the operator
+			// The operator is treated as a regular member function with a special name
 			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
 			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
@@ -1227,7 +1227,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			continue;  // Continue checking for more postfix operators
 		}
 
-	// Skip 'template' keyword if present (dependent context disambiguator)
+		// Skip 'template' keyword if present (dependent context disambiguator)
 		if (peek() == "template"_tok)
 			advance();
 
@@ -1238,23 +1238,23 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 		Token member_name_token = peek_info();
 		advance(); // consume member name
 
-	// Check for explicit template arguments: obj.method<T>(args)
+		// Check for explicit template arguments: obj.method<T>(args)
 		std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
 		if (peek() == "<"_tok) {
 			explicit_template_args = parse_explicit_template_arguments();
-	// nullopt means disambiguation failed - '<' is a comparison operator, not template args
+			// nullopt means disambiguation failed - '<' is a comparison operator, not template args
 		}
 
-	// Check if this is a member function call (followed by '(')
+		// Check if this is a member function call (followed by '(')
 		if (peek() == "("_tok) {
-	// This is a member function call: obj.method(args)
+			// This is a member function call: obj.method(args)
 			const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
 																   ? nullptr
 																   : tryResolveConcreteMemberFunction(result, member_name_token.value());
 
 			advance(); // consume '('
 
-	// Parse function arguments using unified helper (collect types for template deduction)
+			// Parse function arguments using unified helper (collect types for template deduction)
 			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
 				.handle_pack_expansion = true,
 				.collect_types = true,
@@ -1270,10 +1270,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				return ParseResult::error("Expected ')' after function call arguments", current_token_);
 			}
 
-	// Try to get the object's type to check for member function templates
+			// Try to get the object's type to check for member function templates
 			std::optional<std::string_view> object_struct_name;
 
-	// Try to deduce the object type from the result expression
+			// Try to deduce the object type from the result expression
 			if (result->is<ExpressionNode>()) {
 				const ExpressionNode& expr = result->as<ExpressionNode>();
 				if (std::holds_alternative<IdentifierNode>(expr)) {
@@ -1287,8 +1287,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 								if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
 									object_struct_name = StringTable::getStringView(type_info->name());
 
-			// Phase 2: Ensure the struct is instantiated to Full phase for member access
-			// This ensures all members are instantiated before accessing them
+									// Phase 2: Ensure the struct is instantiated to Full phase for member access
+									// This ensures all members are instantiated before accessing them
 									StringHandle type_name = type_info->name();
 									instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
 								}
@@ -1298,10 +1298,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 			}
 
-	// SFINAE: resolve template parameter types to concrete struct names and validate member existence
+			// SFINAE: resolve template parameter types to concrete struct names and validate member existence
 			if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
-	// The object_struct_name may be a template parameter name (e.g., "U").
-	// Resolve it to the concrete struct name using sfinae_type_map_.
+				// The object_struct_name may be a template parameter name (e.g., "U").
+				// Resolve it to the concrete struct name using sfinae_type_map_.
 				StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
 				auto subst_it = sfinae_type_map_.find(obj_name_handle);
 				if (subst_it != sfinae_type_map_.end()) {
@@ -1310,7 +1310,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						object_struct_name = StringTable::getStringView(concrete_type->name());
 					}
 				}
-	// Verify the member exists on the resolved struct
+				// Verify the member exists on the resolved struct
 				bool member_found = false;
 				for (auto& node : ast_nodes_) {
 					if (node.is<StructDeclarationNode>()) {
@@ -1346,17 +1346,17 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 			}
 
-	// Try to instantiate member function template if applicable
+			// Try to instantiate member function template if applicable
 			std::optional<ASTNode> instantiated_func;
 
-	// If we have explicit template arguments, use them for instantiation
+			// If we have explicit template arguments, use them for instantiation
 			if (object_struct_name.has_value() && explicit_template_args.has_value()) {
 				instantiated_func = try_instantiate_member_function_template_explicit(
 					*object_struct_name,
 					member_name_token.value(),
 					*explicit_template_args);
 			}
-	// Otherwise, try argument type deduction
+			// Otherwise, try argument type deduction
 			else if (object_struct_name.has_value() && !arg_types.empty()) {
 				instantiated_func = try_instantiate_member_function_template(
 					*object_struct_name,
@@ -1364,8 +1364,8 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					arg_types);
 			}
 
-	// Check for lazy template instantiation
-	// If the member function is registered for lazy instantiation, instantiate it now
+			// Check for lazy template instantiation
+			// If the member function is registered for lazy instantiation, instantiate it now
 			if (object_struct_name.has_value() && !instantiating_lazy_member_) {
 				std::string_view func_name = member_name_token.value();
 
@@ -1373,25 +1373,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 					StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
 					StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 
-		// Check if this function needs lazy instantiation
+					// Check if this function needs lazy instantiation
 					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, func_name_handle)) {
 						FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
 
-		// Get the lazy member info
+						// Get the lazy member info
 						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, func_name_handle);
 						if (lazy_info_opt.has_value()) {
 							const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
 
-		// Set flag to prevent recursive instantiation
+							// Set flag to prevent recursive instantiation
 							instantiating_lazy_member_ = true;
 
-		// Instantiate the function body now
+							// Instantiate the function body now
 							instantiated_func = instantiateLazyMemberFunction(lazy_info);
 
-		// Clear flag
+							// Clear flag
 							instantiating_lazy_member_ = false;
 
-		// Mark as instantiated
+							// Mark as instantiated
 							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle, lazy_info.identity.is_const_method);
 
 							FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
@@ -1400,33 +1400,33 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 				}
 			}
 
-	// Use the instantiated function if available, otherwise create temporary placeholder
+			// Use the instantiated function if available, otherwise create temporary placeholder
 			FunctionDeclarationNode* func_ref_ptr = nullptr;
 			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 				func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
 			} else if (known_member_func) {
 				func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
 			} else {
-	// Create a temporary function declaration node for the member function
+				// Create a temporary function declaration node for the member function
 				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
 				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
 				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 				func_ref_ptr = &func_ref;
 			}
 
-	// Create member function call node
+			// Create member function call node
 			result = emplace_node<ExpressionNode>(
 				MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
 			continue;
 		}
 
-	// Regular member access (not a function call)
+		// Regular member access (not a function call)
 		result = emplace_node<ExpressionNode>(
 			MemberAccessNode(*result, member_name_token, is_arrow_access));
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
- // Check if we hit the iteration limit (indicates potential infinite loop)
+	// Check if we hit the iteration limit (indicates potential infinite loop)
 	if (postfix_iteration >= MAX_POSTFIX_ITERATIONS) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_POSTFIX_ITERATIONS limit ({}) - possible infinite loop in postfix operator parsing", MAX_POSTFIX_ITERATIONS);
 		return ParseResult::error("Parser error: too many postfix operator iterations", current_token_);
@@ -1435,6 +1435,6 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 	if (result.has_value())
 		return ParseResult::success(*result);
 
- // No result was produced - this should not happen in a well-formed expression
+	// No result was produced - this should not happen in a well-formed expression
 	return ParseResult();  // Return monostate instead of empty success
 }

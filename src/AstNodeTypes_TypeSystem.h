@@ -41,36 +41,36 @@ using CVReferenceQualifier = ReferenceQualifier;
 // Stored as an enum instead of a string for efficient comparison.
 enum class OverloadableOperator : uint8_t {
 	None = 0,		  // Not an operator overload
- // Assignment
+	// Assignment
 	Assign,			// = (generic, when copy/move not yet determined)
 	CopyAssign,		// = (copy assignment: operator=(const T&))
 	MoveAssign,		// = (move assignment: operator=(T&&))
- // Arithmetic
+	// Arithmetic
 	Plus,			  // +
 	Minus,			 // -
 	Multiply,		  // *
 	Divide,			// /
 	Modulo,			// %
- // Compound assignment
+	// Compound assignment
 	PlusAssign,		// +=
 	MinusAssign,		 // -=
 	MultiplyAssign,	// *=
 	DivideAssign,	  // /=
 	ModuloAssign,	  // %=
- // Bitwise
+	// Bitwise
 	BitwiseAnd,		// &
 	BitwiseOr,		   // |
 	BitwiseXor,		// ^
 	BitwiseNot,		// ~
 	LeftShift,		   // <<
 	RightShift,		// >>
- // Bitwise compound assignment
+	// Bitwise compound assignment
 	AndAssign,		   // &=
 	OrAssign,		  // |=
 	XorAssign,		   // ^=
 	LeftShiftAssign,	 // <<=
 	RightShiftAssign,  // >>=
- // Comparison
+	// Comparison
 	Equal,			 // ==
 	NotEqual,		  // !=
 	Less,			  // <
@@ -78,28 +78,28 @@ enum class OverloadableOperator : uint8_t {
 	LessEqual,		   // <=
 	GreaterEqual,	  // >=
 	Spaceship,		   // <=>
- // Logical
+	// Logical
 	LogicalNot,		// !
 	LogicalAnd,		// &&
 	LogicalOr,		   // ||
- // Increment/Decrement
+	// Increment/Decrement
 	Increment,		   // ++
 	Decrement,		   // --
- // Member access
+	// Member access
 	Arrow,			 // ->
 	ArrowStar,		   // ->*
- // Subscript and call
+	// Subscript and call
 	Subscript,		   // []
 	Call,			  // ()
- // Comma
+	// Comma
 	Comma,			 // ,
- // Stream (same as shift but listed for clarity in overload contexts)
- // New/Delete
+	// Stream (same as shift but listed for clarity in overload contexts)
+	// New/Delete
 	New,			   // new
 	Delete,			// delete
 	NewArray,		  // new[]
 	DeleteArray,		 // delete[]
- // Conversion operators use a type index, not this enum
+	// Conversion operators use a type index, not this enum
 };
 
 // Returns true for Assign, CopyAssign, or MoveAssign
@@ -151,7 +151,7 @@ inline bool isOverloadableBinaryOperator(OverloadableOperator op) {
 inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol) {
 	if (symbol.empty())
 		return OverloadableOperator::None;
- // Single-character operators (most common first)
+	// Single-character operators (most common first)
 	if (symbol.size() == 1) {
 		switch (symbol[0]) {
 		case '=':
@@ -186,7 +186,7 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 			return OverloadableOperator::None;
 		}
 	}
- // Two-character operators — switch on first char, then check second
+	// Two-character operators — switch on first char, then check second
 	if (symbol.size() == 2) {
 		switch (symbol[0]) {
 		case '=':
@@ -234,7 +234,7 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 			return OverloadableOperator::None;
 		}
 	}
- // Three-character operators
+	// Three-character operators
 	if (symbol == "<=>")
 		return OverloadableOperator::Spaceship;
 	if (symbol == "<<=")
@@ -243,7 +243,7 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 		return OverloadableOperator::RightShiftAssign;
 	if (symbol == "->*")
 		return OverloadableOperator::ArrowStar;
- // Keyword operators
+	// Keyword operators
 	if (symbol == "new")
 		return OverloadableOperator::New;
 	if (symbol == "delete")
@@ -474,23 +474,23 @@ struct TypeIndex {
 	uint32_t index_ = 0;
 	TypeCategory category_ = TypeCategory::Invalid;
 
- // Non-explicit default ctor: fully-null TypeIndex.
+	// Non-explicit default ctor: fully-null TypeIndex.
 	constexpr TypeIndex() noexcept = default;
- // Explicit single-arg ctor (legacy): category stays Invalid.
+	// Explicit single-arg ctor (legacy): category stays Invalid.
 	constexpr explicit TypeIndex(size_t v) noexcept
 		: index_(static_cast<uint32_t>(v)), category_(TypeCategory::Invalid) {}
- // Two-arg ctor (preferred going forward): sets both index and category.
+	// Two-arg ctor (preferred going forward): sets both index and category.
 	constexpr TypeIndex(size_t v, TypeCategory cat) noexcept
 		: index_(static_cast<uint32_t>(v)), category_(cat) {}
 
- // Public accessor (read-only raw index).
+	// Public accessor (read-only raw index).
 	constexpr uint32_t index() const noexcept { return index_; }
 
- // Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
- // a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
- // is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
+	// Factory: build a TypeIndex that carries both the gTypeInfo slot from `idx` and
+	// a resolved TypeCategory derived from `t` (or the existing category in `idx` if it
+	// is already valid).  Preferred over two-step TypeIndex{n} + setCategory() patterns.
 
- // Increment operators for loop variables (index only).
+	// Increment operators for loop variables (index only).
 	TypeIndex& operator++() noexcept {
 		++index_;
 		return *this;
@@ -501,30 +501,30 @@ struct TypeIndex {
 		return tmp;
 	}
 
- // Comparison operators use only `.index_` (the category is a cache, not an
- // identity field) so that legacy TypeIndex{n} still matches stored values.
+	// Comparison operators use only `.index_` (the category is a cache, not an
+	// identity field) so that legacy TypeIndex{n} still matches stored values.
 	constexpr bool operator==(const TypeIndex& other) const noexcept { return index_ == other.index_; }
 	constexpr bool operator!=(const TypeIndex& other) const noexcept { return index_ != other.index_; }
 	constexpr auto operator<=>(const TypeIndex& other) const noexcept { return index_ <=> other.index_; }
 
- // True when the index is non-zero (i.e., refers to a real type entry).
- // Semantics unchanged from before Milestone 7.
+	// True when the index is non-zero (i.e., refers to a real type entry).
+	// Semantics unchanged from before Milestone 7.
 	constexpr bool is_valid() const noexcept { return index_ > 0; }
 
- // True when both index and category are their zero/Invalid defaults.
+	// True when both index and category are their zero/Invalid defaults.
 	constexpr bool isNull() const noexcept {
 		return index_ == 0 && category_ == TypeCategory::Invalid;
 	}
 
- // --- Category accessors (no gTypeInfo lookup required) ---
- // These return meaningful results only when the TypeIndex was created via an
- // add*() function or initialize_native_types().  Legacy TypeIndex{n} values
- // always return TypeCategory::Invalid / false from these helpers.
+	// --- Category accessors (no gTypeInfo lookup required) ---
+	// These return meaningful results only when the TypeIndex was created via an
+	// add*() function or initialize_native_types().  Legacy TypeIndex{n} values
+	// always return TypeCategory::Invalid / false from these helpers.
 	constexpr TypeCategory category() const noexcept { return category_; }
- // Mutates only the category cache (not the index).  Use to stamp the correct
- // TypeCategory onto a TypeIndex that was built with the legacy 1-arg ctor.
+	// Mutates only the category cache (not the index).  Use to stamp the correct
+	// TypeCategory onto a TypeIndex that was built with the legacy 1-arg ctor.
 	constexpr void setCategory(TypeCategory cat) noexcept { category_ = cat; }
- // Returns a new TypeIndex with the same index but a different category.
+	// Returns a new TypeIndex with the same index but a different category.
 	constexpr TypeIndex withCategory(TypeCategory cat) const noexcept { return TypeIndex{index_, cat}; }
 
 	constexpr bool isStruct() const noexcept { return category_ == TypeCategory::Struct; }
@@ -533,19 +533,19 @@ struct TypeIndex {
 	constexpr bool isFunction() const noexcept { return category_ == TypeCategory::Function; }
 	constexpr bool isTemplatePlaceholder() const noexcept { return category_ == TypeCategory::Template; }
 
- // Delegates to is_struct_type(TypeCategory) — see its comment for semantics.
+	// Delegates to is_struct_type(TypeCategory) — see its comment for semantics.
 	constexpr bool isStructLike() const noexcept { return is_struct_type(category_); }
- // Delegates to needs_type_index(TypeCategory) — see its comment for semantics.
+	// Delegates to needs_type_index(TypeCategory) — see its comment for semantics.
 	constexpr bool needsTypeIndex() const noexcept { return ::needs_type_index(category_); }
- // Delegates to is_primitive_type(TypeCategory) — see its comment for semantics.
+	// Delegates to is_primitive_type(TypeCategory) — see its comment for semantics.
 	constexpr bool isPrimitive() const noexcept { return is_primitive_type(category_); }
 };
 
 namespace std {
 template <>
 struct hash<TypeIndex> {
- // Hash only `.index_` so that hash(a) == hash(b) whenever a == b
- // (operator== compares only `.index_`).
+	// Hash only `.index_` so that hash(a) == hash(b) whenever a == b
+	// (operator== compares only `.index_`).
 	size_t operator()(TypeIndex idx) const noexcept { return std::hash<uint32_t>{}(idx.index_); }
 };
 template <>
@@ -707,8 +707,8 @@ constexpr bool is_floating_point_type(TypeCategory cat) {
 }
 
 inline bool is_signed_integer_type(TypeCategory cat) {
- // Note: plain char is treated as signed, matching the most common implementations.
- // WChar is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64).
+	// Note: plain char is treated as signed, matching the most common implementations.
+	// WChar is target-dependent: signed on Linux (LP64), unsigned on Windows (LLP64).
 	switch (cat) {
 	case TypeCategory::Char:
 	case TypeCategory::Short:
@@ -735,11 +735,11 @@ inline bool isUnsignedIntegralType(TypeCategory cat) {
 // Helper to calculate alignment from size in bytes
 // Standard alignment rules: min(size, 8) for most platforms, with special case for long double
 inline size_t calculate_alignment_from_size(size_t size_in_bytes, TypeCategory cat) {
- // Special case for long double on x86-64: often has 16-byte alignment
+	// Special case for long double on x86-64: often has 16-byte alignment
 	if (cat == TypeCategory::LongDouble) {
 		return 16;
 	}
- // Standard alignment: same as size, up to 8 bytes
+	// Standard alignment: same as size, up to 8 bytes
 	return (size_in_bytes < 8) ? size_in_bytes : 8;
 }
 
@@ -947,7 +947,7 @@ struct FunctionSignature {
 	bool is_const = false;					   // For const member functions
 	bool is_volatile = false;				  // For volatile member functions
 
- // Accessor helpers
+	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }
 };
 
@@ -978,7 +978,7 @@ struct StructMember {
 	int pointer_depth;	   // Pointer indirection level (e.g., int* = 1, int** = 2)
 	std::optional<FunctionSignature> function_signature;	 // For FunctionPointer members: stores return type and parameter types
 
- // Convenience helpers for common checks
+	// Convenience helpers for common checks
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }
 	TypeCategory memberType() const { return type_index.category(); }
@@ -1015,25 +1015,25 @@ struct StructMemberFunction {
 	bool is_destructor;		// True if this is a destructor
 	OverloadableOperator operator_kind; // None for non-operators; non-None implies operator overload
 
- // Virtual function support (Phase 2)
+	// Virtual function support (Phase 2)
 	bool is_virtual = false;		 // True if declared with 'virtual' keyword
 	bool is_pure_virtual = false;	  // True if pure virtual (= 0)
 	bool is_override = false;		  // True if declared with 'override' keyword
 	bool is_final = false;		   // True if declared with 'final' keyword
 	int vtable_index = -1;		   // Index in vtable, -1 if not virtual
 
- // CV qualifiers for member functions (Phase 4)
+	// CV qualifiers for member functions (Phase 4)
 	CVQualifier cv_qualifier = CVQualifier::None;
 
- // noexcept tracking for type traits
+	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)
 
- // Convenience accessors
+	// Convenience accessors
 	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 
- // Convenience accessor for operator symbol string (for logging/mangling)
+	// Convenience accessor for operator symbol string (for logging/mangling)
 	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
 
 	StructMemberFunction(StringHandle n, ASTNode func_decl, AccessSpecifier acc = AccessSpecifier::Public,
@@ -1097,10 +1097,10 @@ struct ItaniumBaseClassTypeInfo {
 	const void* base_type;	   // Pointer to base class type_info (__class_type_info*)
 	int64_t offset_flags;		  // Combined offset and flags
 
- // Flags in offset_flags:
- // bit 0: __virtual_mask (0x1) - base class is virtual
- // bit 1: __public_mask (0x2) - base class is public
- // bits 8+: offset of base class in derived class (signed)
+	// Flags in offset_flags:
+	// bit 0: __virtual_mask (0x1) - base class is virtual
+	// bit 1: __public_mask (0x2) - base class is public
+	// bits 8+: offset of base class in derived class (signed)
 };
 
 // __class_type_info - Type info for classes without base classes
@@ -1124,9 +1124,9 @@ struct ItaniumVMIClassTypeInfo {
 	uint32_t base_count;		 // Number of direct base classes
 	ItaniumBaseClassTypeInfo base_info[1];  // Variable-length array of base class info
 
- // Flags:
- // __non_diamond_repeat_mask = 0x1 - has repeated bases (but not diamond)
- // __diamond_shaped_mask = 0x2     - has diamond-shaped inheritance
+	// Flags:
+	// __non_diamond_repeat_mask = 0x1 - has repeated bases (but not diamond)
+	// __diamond_shaped_mask = 0x2     - has diamond-shaped inheritance
 };
 
 // Legacy RTTITypeInfo for compatibility with existing code
@@ -1137,14 +1137,14 @@ struct RTTITypeInfo {
 	size_t num_bases;				  // Number of base classes
 	const RTTITypeInfo** base_types; // Array of pointers to base class type_info
 
- // MSVC RTTI structures
+	// MSVC RTTI structures
 	MSVCCompleteObjectLocator* col;			// ??_R4 - Complete Object Locator
 	MSVCClassHierarchyDescriptor* chd;	   // ??_R3 - Class Hierarchy Descriptor
 	MSVCBaseClassArray* bca;				 // ??_R2 - Base Class Array
 	std::vector<MSVCBaseClassDescriptor*> base_descriptors;	// ??_R1 - Base Class Descriptors
 	MSVCTypeDescriptor* type_descriptor;	 // ??_R0 - Type Descriptor
 
- // Itanium C++ ABI RTTI structures
+	// Itanium C++ ABI RTTI structures
 	void* itanium_type_info;		 // Pointer to __class_type_info, __si_class_type_info, or __vmi_class_type_info
 	enum class ItaniumTypeInfoKind {
 		None,
@@ -1158,7 +1158,7 @@ struct RTTITypeInfo {
 		  col(nullptr), chd(nullptr), bca(nullptr), type_descriptor(nullptr),
 		  itanium_type_info(nullptr), itanium_kind(ItaniumTypeInfoKind::None) {}
 
- // Check if this type is derived from another type (for dynamic_cast)
+	// Check if this type is derived from another type (for dynamic_cast)
 	bool isDerivedFrom(const RTTITypeInfo* base) const {
 		if (this == base)
 			return true;
@@ -1184,7 +1184,7 @@ struct StructStaticMember {
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
 	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
 
- // Convenience helpers for common checks
+	// Convenience helpers for common checks
 	bool is_const() const { return hasCVQualifier(cv_qualifier, CVQualifier::Const); }
 	bool is_reference() const { return reference_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return reference_qualifier == ReferenceQualifier::RValueReference; }

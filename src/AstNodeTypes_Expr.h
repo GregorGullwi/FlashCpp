@@ -109,10 +109,10 @@ public:
 	bool has_underlying_type() const { return underlying_type_.has_value(); }
 	const std::optional<ASTNode>& underlying_type() const { return underlying_type_; }
 	const std::vector<ASTNode>& enumerators() const { return enumerators_; }
- // Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
- // so codegen can look up the exact TypeInfo without any name-based search
- // (name-based lookups via getTypesByNameMap() only store the first enum with a given
- // name and collide when two functions define local enums with the same name).
+	// Direct index into gTypeInfo for this enum's TypeInfo.  Set during parsing
+	// so codegen can look up the exact TypeInfo without any name-based search
+	// (name-based lookups via getTypesByNameMap() only store the first enum with a given
+	// name and collide when two functions define local enums with the same name).
 	TypeIndex type_index() const { return type_index_; }
 
 	void set_underlying_type(ASTNode type) {
@@ -203,17 +203,17 @@ private:
 // The result type is always void
 class PseudoDestructorCallNode {
 public:
- // Constructor for simple type names: obj.~Type()
+	// Constructor for simple type names: obj.~Type()
 	explicit PseudoDestructorCallNode(ASTNode object, Token type_name_token, bool is_arrow)
 		: object_(object), qualified_type_name_(), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 
- // Constructor with qualified type: obj.~std::string()
+	// Constructor with qualified type: obj.~std::string()
 	explicit PseudoDestructorCallNode(ASTNode object, std::string_view qualified_type_name, Token type_name_token, bool is_arrow)
 		: object_(object), qualified_type_name_(StringTable::getOrInternStringHandle(qualified_type_name)), type_name_token_(type_name_token), is_arrow_access_(is_arrow) {}
 
 	ASTNode object() const { return object_; }
 	std::string_view type_name() const { return type_name_token_.value(); }
- // Returns the qualified type name handle if present (empty handle if simple name)
+	// Returns the qualified type name handle if present (empty handle if simple name)
 	StringHandle qualified_type_name() const { return qualified_type_name_; }
 	bool has_qualified_name() const { return qualified_type_name_.isValid(); }
 	const Token& type_name_token() const { return type_name_token_; }
@@ -244,11 +244,11 @@ private:
 // sizeof operator node - can take either a type or an expression
 class SizeofExprNode {
 public:
- // Constructor for sizeof(type)
+	// Constructor for sizeof(type)
 	explicit SizeofExprNode(ASTNode type_node, Token sizeof_token)
 		: type_or_expr_(type_node), sizeof_token_(sizeof_token), is_type_(true) {}
 
- // Constructor for sizeof(expression)
+	// Constructor for sizeof(expression)
 	static SizeofExprNode from_expression(ASTNode expr_node, Token sizeof_token) {
 		SizeofExprNode node(expr_node, sizeof_token);
 		node.is_type_ = false;
@@ -282,11 +282,11 @@ private:
 // alignof operator node - returns the alignment requirement of a type
 class AlignofExprNode {
 public:
- // Constructor for alignof(type)
+	// Constructor for alignof(type)
 	explicit AlignofExprNode(ASTNode type_node, Token alignof_token)
 		: type_or_expr_(type_node), alignof_token_(alignof_token), is_type_(true) {}
 
- // Constructor for alignof(expression)
+	// Constructor for alignof(expression)
 	static AlignofExprNode from_expression(ASTNode expr_node, Token alignof_token) {
 		AlignofExprNode node(expr_node, alignof_token);
 		node.is_type_ = false;
@@ -307,7 +307,7 @@ private:
 // This is the noexcept(expr) operator, not the noexcept specifier
 class NoexceptExprNode {
 public:
- // Constructor for noexcept(expression)
+	// Constructor for noexcept(expression)
 	explicit NoexceptExprNode(ASTNode expr_node, Token noexcept_token)
 		: expr_(expr_node), noexcept_token_(noexcept_token) {}
 
@@ -337,7 +337,7 @@ private:
 
 // Type trait intrinsic expression node - __is_void(T), __is_integral(T), etc.
 enum class TypeTraitKind {
- // Primary type categories
+	// Primary type categories
 	IsVoid,
 	IsNullptr,
 	IsIntegral,
@@ -352,14 +352,14 @@ enum class TypeTraitKind {
 	IsUnion,
 	IsClass,
 	IsFunction,
- // Composite type categories
+	// Composite type categories
 	IsReference,		 // __is_reference - lvalue or rvalue reference
 	IsArithmetic,		  // __is_arithmetic - integral or floating point
 	IsFundamental,	   // __is_fundamental - void, nullptr, arithmetic
 	IsObject,			  // __is_object - not function, not reference, not void
 	IsScalar,			  // __is_scalar - arithmetic, pointer, enum, member pointer, nullptr
 	IsCompound,			// __is_compound - array, function, pointer, reference, class, union, enum, member pointer
- // Type relationships (binary trait - takes 2 types)
+	// Type relationships (binary trait - takes 2 types)
 	IsBaseOf,
 	IsSame,
 	IsConvertible,	   // __is_convertible(From, To) - check if From can convert to To
@@ -369,7 +369,7 @@ enum class TypeTraitKind {
 	IsNothrowAssignable,
 	IsLayoutCompatible,
 	IsPointerInterconvertibleBaseOf,
- // Type properties
+	// Type properties
 	IsConst,			 // __is_const - has const qualifier
 	IsVolatile,			// __is_volatile - has volatile qualifier
 	IsSigned,			  // __is_signed - signed integral type
@@ -387,17 +387,17 @@ enum class TypeTraitKind {
 	IsTrivial,
 	IsPod,
 	IsLiteralType,	   // __is_literal_type - deprecated in C++17, removed in C++20
- // Constructibility traits (variadic - takes T + Args...)
+	// Constructibility traits (variadic - takes T + Args...)
 	IsConstructible,
 	IsTriviallyConstructible,
 	IsNothrowConstructible,
- // Destructibility traits (unary)
+	// Destructibility traits (unary)
 	IsDestructible,
 	IsTriviallyDestructible,
 	IsNothrowDestructible,
 	HasTrivialDestructor,	  // __has_trivial_destructor(T) - GCC/Clang intrinsic, equivalent to IsTriviallyDestructible
 	HasVirtualDestructor,	  // __has_virtual_destructor(T) - check if type has virtual destructor
- // Special traits
+	// Special traits
 	UnderlyingType,		// __underlying_type(T) - returns the underlying type of an enum
 	IsConstantEvaluated, // __is_constant_evaluated() - no arguments, returns bool
 	IsCompleteOrUnbounded // __is_complete_or_unbounded - helper for standard library, always returns true
@@ -405,19 +405,19 @@ enum class TypeTraitKind {
 
 class TypeTraitExprNode {
 public:
- // Constructor for unary type traits (single type argument)
+	// Constructor for unary type traits (single type argument)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, Token trait_token)
 		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
- // Constructor for binary type traits (two type arguments, like __is_base_of, __is_assignable)
+	// Constructor for binary type traits (two type arguments, like __is_base_of, __is_assignable)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, ASTNode second_type_node, Token trait_token)
 		: kind_(kind), type_node_(type_node), second_type_node_(second_type_node), additional_type_nodes_(), trait_token_(trait_token) {}
 
- // Constructor for variadic type traits (T + Args..., like __is_constructible)
+	// Constructor for variadic type traits (T + Args..., like __is_constructible)
 	explicit TypeTraitExprNode(TypeTraitKind kind, ASTNode type_node, std::vector<ASTNode> additional_types, Token trait_token)
 		: kind_(kind), type_node_(type_node), second_type_node_(std::nullopt), additional_type_nodes_(std::move(additional_types)), trait_token_(trait_token) {}
 
- // Constructor for no-argument traits (like __is_constant_evaluated)
+	// Constructor for no-argument traits (like __is_constant_evaluated)
 	explicit TypeTraitExprNode(TypeTraitKind kind, Token trait_token)
 		: kind_(kind), type_node_(), second_type_node_(std::nullopt), additional_type_nodes_(), trait_token_(trait_token) {}
 
@@ -429,7 +429,7 @@ public:
 	const std::vector<ASTNode>& additional_type_nodes() const { return additional_type_nodes_; }
 	const Token& trait_token() const { return trait_token_; }
 
- // Check if this is a binary trait (takes exactly 2 types)
+	// Check if this is a binary trait (takes exactly 2 types)
 	bool is_binary_trait() const {
 		return kind_ == TypeTraitKind::IsBaseOf ||
 			   kind_ == TypeTraitKind::IsSame ||
@@ -442,19 +442,19 @@ public:
 			   kind_ == TypeTraitKind::IsPointerInterconvertibleBaseOf;
 	}
 
- // Check if this is a variadic trait (takes T + Args...)
+	// Check if this is a variadic trait (takes T + Args...)
 	bool is_variadic_trait() const {
 		return kind_ == TypeTraitKind::IsConstructible ||
 			   kind_ == TypeTraitKind::IsTriviallyConstructible ||
 			   kind_ == TypeTraitKind::IsNothrowConstructible;
 	}
 
- // Check if this is a no-argument trait
+	// Check if this is a no-argument trait
 	bool is_no_arg_trait() const {
 		return kind_ == TypeTraitKind::IsConstantEvaluated;
 	}
 
- // Get the string name of the trait for error messages
+	// Get the string name of the trait for error messages
 	std::string_view trait_name() const {
 		switch (kind_) {
 		case TypeTraitKind::IsVoid:
@@ -610,7 +610,7 @@ public:
 	bool is_array() const { return is_array_; }
 	const std::optional<ASTNode>& size_expr() const { return size_expr_; }
 	const ChunkedVector<ASTNode, 128, 256>& constructor_args() const { return constructor_args_; }
- // Legacy single-arg accessor (returns first placement arg if present)
+	// Legacy single-arg accessor (returns first placement arg if present)
 	std::optional<ASTNode> placement_address() const {
 		if (placement_args_.empty())
 			return std::nullopt;
@@ -707,7 +707,7 @@ private:
 // Typeid expression node: typeid(expr) or typeid(Type)
 class TypeidNode {
 public:
- // Constructor for typeid(expr)
+	// Constructor for typeid(expr)
 	explicit TypeidNode(ASTNode operand, bool is_type, Token typeid_token)
 		: operand_(operand), is_type_(is_type), typeid_token_(typeid_token) {}
 
@@ -822,7 +822,7 @@ public:
 	const InlineVector<StringHandle, 4>& outer_template_param_names() const { return outer_template_param_names_; }
 	const InlineVector<TypeInfo::TemplateArgInfo, 4>& outer_template_args() const { return outer_template_args_; }
 
- // Generate a unique name for the lambda's generated function
+	// Generate a unique name for the lambda's generated function
 	StringHandle generate_lambda_name() const {
 		return StringTable::getOrInternStringHandle(StringBuilder().append("__lambda_"sv).append(lambda_id_));
 	}
@@ -893,11 +893,11 @@ private:
 // when throw is part of an expression (e.g., inside parentheses: (throw bad_access()))
 class ThrowExpressionNode {
 public:
- // throw expression
+	// throw expression
 	explicit ThrowExpressionNode(ASTNode expression, Token throw_token)
 		: expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
 
- // throw (rethrow)
+	// throw (rethrow)
 	explicit ThrowExpressionNode(Token throw_token)
 		: expression_(), throw_token_(throw_token), is_rethrow_(true) {}
 

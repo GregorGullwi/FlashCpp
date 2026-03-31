@@ -26,24 +26,24 @@ uint32_t codeViewTypeIndex(TypeCategory type_cat) {
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_view filename, const std::string_view source_filename, bool show_timing) {
 
-	// High-level timing (always enabled when show_timing=true)
+		// High-level timing (always enabled when show_timing=true)
 	auto convert_start = std::chrono::high_resolution_clock::now();
 
-	// Pre-allocate text section buffer based on IR instruction count.
-	// Empirical worst case: ~33 bytes of machine code per IR instruction
-	// (variadic functions with complex calling conventions).
-	// Use 36 bytes/instr to guarantee no reallocations during codegen.
+		// Pre-allocate text section buffer based on IR instruction count.
+		// Empirical worst case: ~33 bytes of machine code per IR instruction
+		// (variadic functions with complex calling conventions).
+		// Use 36 bytes/instr to guarantee no reallocations during codegen.
 	const size_t ir_count = ir.getInstructions().size();
 	constexpr size_t BYTES_PER_IR_INSTRUCTION = 36;
 	textSectionData.reserve(ir_count * BYTES_PER_IR_INSTRUCTION);
 
-	// Group instructions by function for stack space calculation
+		// Group instructions by function for stack space calculation
 	{
 		ProfilingTimer timer("Group instructions by function", show_timing);
 		groupInstructionsByFunction(ir);
 	}
 
-  // Detailed profiling accumulators (only active when ENABLE_DETAILED_PROFILING is set)
+		// Detailed profiling accumulators (only active when ENABLE_DETAILED_PROFILING is set)
 #if ENABLE_DETAILED_PROFILING
 	ProfilingAccumulator funcDecl_accum("FunctionDecl instructions");
 	ProfilingAccumulator varDecl_accum("VariableDecl instructions");
@@ -61,11 +61,11 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 	for (size_t ir_idx = 0; ir_idx < instructions.size(); ++ir_idx) {
 		const auto& instruction = instructions[ir_idx];
 
-	// If we're skipping a failed function, only stop at the next FunctionDecl
+			// If we're skipping a failed function, only stop at the next FunctionDecl
 		if (skipping_function) {
 			if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
 				skipping_function = false;
-		// fall through to process this FunctionDecl
+					// fall through to process this FunctionDecl
 			} else {
 				continue;
 			}
@@ -75,7 +75,7 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 		auto instr_start = std::chrono::high_resolution_clock::now();
 #endif
 
-	// Add line mapping for debug information if line number is available
+			// Add line mapping for debug information if line number is available
 		if (instruction.getOpcode() != IrOpcode::FunctionDecl && instruction.getOpcode() != IrOpcode::Return && instruction.getLineNumber() > 0) {
 			addLineMapping(instruction.getLineNumber());
 		}
@@ -284,10 +284,10 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				handleLoopEnd(instruction);
 				break;
 			case IrOpcode::ScopeBegin:
-	// No code generation needed - just a marker
+				// No code generation needed - just a marker
 				break;
 			case IrOpcode::ScopeEnd:
-	// No code generation needed - destructors are already emitted before this
+				// No code generation needed - destructors are already emitted before this
 				break;
 			case IrOpcode::Break:
 				handleBreak(instruction);
@@ -409,7 +409,7 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 			case IrOpcode::ElfCatchNoMatch:
 				handleElfCatchNoMatch(instruction);
 				break;
-	// Windows SEH (Structured Exception Handling)
+			// Windows SEH (Structured Exception Handling)
 			case IrOpcode::SehTryBegin:
 				handleSehTryBegin(instruction);
 				break;
@@ -460,16 +460,16 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 				break;
 			}
 		} catch (const CompileError&) {
-	// Semantic errors must propagate — they are real compilation failures
+				// Semantic errors must propagate — they are real compilation failures
 			throw;
 		} catch (const InternalError& e) {
-	// Per-function error recovery: skip to the next function declaration
+				// Per-function error recovery: skip to the next function declaration
 			FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
 			skipping_function = true;
 			skip_previous_function_finalization_ = true;
 			continue;
 		} catch (const std::exception& e) {
-	// Per-function error recovery: skip to the next function declaration
+				// Per-function error recovery: skip to the next function declaration
 			FLASH_LOG(Codegen, Error, "Code generation error in function, skipping: ", e.what());
 			skipping_function = true;
 			skip_previous_function_finalization_ = true;
@@ -480,7 +480,7 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 		auto instr_end = std::chrono::high_resolution_clock::now();
 		auto instr_duration = std::chrono::duration_cast<std::chrono::microseconds>(instr_end - instr_start);
 
-	// Categorize and accumulate timing
+			// Categorize and accumulate timing
 		switch (instruction.getOpcode()) {
 		case IrOpcode::FunctionDecl:
 			funcDecl_accum.add(instr_duration);
@@ -591,14 +591,14 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 	printf("\n");
 #endif
 
-	// Use the provided source filename, or fall back to a default if not provided
+		// Use the provided source filename, or fall back to a default if not provided
 	std::string actual_source_file = source_filename.empty() ? "test_debug.cpp" : std::string(source_filename);
 	{
 		ProfilingTimer timer("Add source file", show_timing);
 		writer.add_source_file(actual_source_file);
 	}
 
-	// Emit dynamic_cast runtime helpers if needed
+		// Emit dynamic_cast runtime helpers if needed
 	if (needs_dynamic_cast_runtime_) {
 		ProfilingTimer timer("Emit dynamic_cast runtime helpers", show_timing);
 		emit_dynamic_cast_runtime_helpers();
@@ -609,8 +609,8 @@ void IrToObjConverter<TWriterClass>::convert(const Ir& ir, const std::string_vie
 		finalizeSections();
 	}
 
-	// Clean up the last function's variable scope AFTER finalizeSections has used it
-	// for stack size patching
+		// Clean up the last function's variable scope AFTER finalizeSections has used it
+		// for stack size patching
 	if (!variable_scopes.empty()) {
 		variable_scopes.pop_back();
 	}
@@ -646,19 +646,19 @@ std::pair<std::vector<ObjectFileWriter::TryBlockInfo>, std::vector<ObjectFileWri
 			handler_info.is_reference = handler.is_reference();
 			handler_info.is_rvalue_reference = handler.is_rvalue_reference();
 
-	// Use pre-computed frame offset for caught exception object
+				// Use pre-computed frame offset for caught exception object
 			handler_info.catch_obj_offset = handler.catch_obj_stack_offset;
 
-	// Get type name for type descriptor generation
+				// Get type name for type descriptor generation
 			if (!handler.is_catch_all) {
-		// Use IrType to detect struct-like types (both Type::Struct and Type::UserDefined
-		// map to IrType::Struct) and distinguish them from primitive built-in types.
+					// Use IrType to detect struct-like types (both Type::Struct and Type::UserDefined
+					// map to IrType::Struct) and distinguish them from primitive built-in types.
 				IrType exc_ir_type = toIrType(handler.type_index.category());
 				if (exc_ir_type != IrType::Void && !isIrStructType(exc_ir_type)) {
-		// Built-in type - get name from TypeCategory
+						// Built-in type - get name from TypeCategory
 					handler_info.type_name = getTypeName(handler.type_index.category());
 				} else if (const TypeInfo* ti = tryGetTypeInfo(handler.type_index)) {
-		// User-defined type - get name from gTypeInfo
+						// User-defined type - get name from gTypeInfo
 					handler_info.type_name = StringTable::getStringView(ti->name());
 				}
 			}
@@ -688,7 +688,7 @@ std::vector<ObjectFileWriter::SehTryBlockInfo> IrToObjConverter<TWriterClass>::c
 		block_info.try_start_offset = seh_try_block.try_start_offset;
 		block_info.try_end_offset = seh_try_block.try_end_offset;
 
-	// Check if this try block has an __except handler
+			// Check if this try block has an __except handler
 		if (seh_try_block.except_handler.has_value()) {
 			block_info.has_except_handler = true;
 			block_info.except_handler.handler_offset = seh_try_block.except_handler->handler_offset;
@@ -700,7 +700,7 @@ std::vector<ObjectFileWriter::SehTryBlockInfo> IrToObjConverter<TWriterClass>::c
 			block_info.has_except_handler = false;
 		}
 
-	// Check if this try block has a __finally handler
+			// Check if this try block has a __finally handler
 		if (seh_try_block.finally_handler.has_value()) {
 			block_info.has_finally_handler = true;
 			block_info.finally_handler.handler_offset = seh_try_block.finally_handler->handler_offset;
@@ -711,9 +711,9 @@ std::vector<ObjectFileWriter::SehTryBlockInfo> IrToObjConverter<TWriterClass>::c
 		seh_try_blocks.push_back(block_info);
 	}
 
-	// Reverse order: innermost scope entries must come first in the scope table
-	// __C_specific_handler walks entries linearly and for nested __try blocks,
-	// inner handlers (__finally) must be processed before outer handlers (__except)
+		// Reverse order: innermost scope entries must come first in the scope table
+		// __C_specific_handler walks entries linearly and for nested __try blocks,
+		// inner handlers (__finally) must be processed before outer handlers (__except)
 	std::reverse(seh_try_blocks.begin(), seh_try_blocks.end());
 
 	return seh_try_blocks;
@@ -723,31 +723,31 @@ template <class TWriterClass>
 typename IrToObjConverter<TWriterClass>::RegToRegEncoding IrToObjConverter<TWriterClass>::encodeRegToRegInstruction(X64Register reg_field, X64Register rm_field, bool include_rex_w) {
 	RegToRegEncoding result;
 
-	// Determine if we need REX prefix
+		// Determine if we need REX prefix
 	bool needs_rex = include_rex_w; // Always need REX for 64-bit (REX.W)
 
-	// Start with appropriate REX prefix
+		// Start with appropriate REX prefix
 	result.rex_prefix = include_rex_w ? 0x48 : 0x40; // REX.W for 64-bit, base REX for 32-bit
 
-	// Set REX.R if reg_field (source in Reg field of ModR/M) is R8-R15
+		// Set REX.R if reg_field (source in Reg field of ModR/M) is R8-R15
 	if (static_cast<uint8_t>(reg_field) >= 8) {
 		result.rex_prefix |= 0x04; // Set REX.R bit
 		needs_rex = true;
 	}
 
-	// Set REX.B if rm_field (destination in R/M field of ModR/M) is R8-R15
+		// Set REX.B if rm_field (destination in R/M field of ModR/M) is R8-R15
 	if (static_cast<uint8_t>(rm_field) >= 8) {
 		result.rex_prefix |= 0x01; // Set REX.B bit
 		needs_rex = true;
 	}
 
-	// If we don't need REX prefix (32-bit op with registers < 8), set to 0
-	// The caller should check if rex_prefix is 0 and skip emitting it
+		// If we don't need REX prefix (32-bit op with registers < 8), set to 0
+		// The caller should check if rex_prefix is 0 and skip emitting it
 	if (!needs_rex) {
 		result.rex_prefix = 0;
 	}
 
-	// Build ModR/M byte: Mod=11 (register-to-register), Reg=reg_field[2:0], R/M=rm_field[2:0]
+		// Build ModR/M byte: Mod=11 (register-to-register), Reg=reg_field[2:0], R/M=rm_field[2:0]
 	result.modrm_byte = 0xC0 +
 						((static_cast<uint8_t>(reg_field) & 0x07) << 3) +
 						(static_cast<uint8_t>(rm_field) & 0x07);
@@ -757,19 +757,19 @@ typename IrToObjConverter<TWriterClass>::RegToRegEncoding IrToObjConverter<TWrit
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitOpcodeExtInstruction(uint8_t opcode, typename IrToObjConverter<TWriterClass>::X64OpcodeExtension opcode_ext, X64Register rm_field, int size_in_bits) {
-	// Determine if we need REX.W based on operand size
+		// Determine if we need REX.W based on operand size
 	uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;
 
-	// Check if rm_field needs REX.B (registers R8-R15)
+		// Check if rm_field needs REX.B (registers R8-R15)
 	if (static_cast<uint8_t>(rm_field) >= 8) {
 		rex_prefix |= 0x01; // Set REX.B
 	}
 
-	// Build ModR/M byte: 11 (register mode) + opcode extension in reg field + rm bits
+		// Build ModR/M byte: 11 (register mode) + opcode extension in reg field + rm bits
 	uint8_t ext_value = static_cast<uint8_t>(opcode_ext);
 	uint8_t modrm_byte = 0xC0 | ((ext_value & 0x07) << 3) | (static_cast<uint8_t>(rm_field) & 0x07);
 
-	// Emit the instruction
+		// Emit the instruction
 	textSectionData.push_back(rex_prefix);
 	textSectionData.push_back(opcode);
 	textSectionData.push_back(modrm_byte);
@@ -777,11 +777,11 @@ void IrToObjConverter<TWriterClass>::emitOpcodeExtInstruction(uint8_t opcode, ty
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitBinaryOpInstruction(uint8_t opcode, X64Register src_reg, X64Register dst_reg, int size_in_bits) {
-	// Determine if we need a REX prefix
+		// Determine if we need a REX prefix
 	bool needs_rex = (size_in_bits == 64);  // Always need REX for 64-bit (REX.W)
 	uint8_t rex_prefix = (size_in_bits == 64) ? 0x48 : 0x40;	 // REX.W for 64-bit, base REX for 32-bit
 
-	// Check if registers need REX extensions
+		// Check if registers need REX extensions
 	if (static_cast<uint8_t>(src_reg) >= 8) {
 		rex_prefix |= 0x04; // Set REX.R for source (reg field)
 		needs_rex = true;
@@ -791,10 +791,10 @@ void IrToObjConverter<TWriterClass>::emitBinaryOpInstruction(uint8_t opcode, X64
 		needs_rex = true;
 	}
 
-	// Build ModR/M byte: 11 (register mode) + src in reg field + dst in rm field
+		// Build ModR/M byte: 11 (register mode) + src in reg field + dst in rm field
 	uint8_t modrm_byte = 0xC0 | ((static_cast<uint8_t>(src_reg) & 0x07) << 3) | (static_cast<uint8_t>(dst_reg) & 0x07);
 
-	// Emit the instruction
+		// Emit the instruction
 	if (needs_rex) {
 		textSectionData.push_back(rex_prefix);
 	}
@@ -809,59 +809,59 @@ void IrToObjConverter<TWriterClass>::emitMovRegToReg(X64Register src_reg, X64Reg
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitComparisonInstruction(const typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
-	// Compare operands: CMP dst, src (opcode 0x39)
-	// Use the operand size to determine whether to use 32-bit or 64-bit operation
+		// Compare operands: CMP dst, src (opcode 0x39)
+		// Use the operand size to determine whether to use 32-bit or 64-bit operation
 	emitBinaryOpInstruction(0x39, ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 
-	// Set result based on condition: setcc r8
-	// IMPORTANT: Always use REX prefix (at least 0x40) for byte operations
-	// Without REX, registers 4-7 map to AH, CH, DH, BH (high bytes)
-	// With REX, registers 4-7 map to SPL, BPL, SIL, DIL (low bytes)
-	// For registers 8-15, we need REX.B (0x41)
+		// Set result based on condition: setcc r8
+		// IMPORTANT: Always use REX prefix (at least 0x40) for byte operations
+		// Without REX, registers 4-7 map to AH, CH, DH, BH (high bytes)
+		// With REX, registers 4-7 map to SPL, BPL, SIL, DIL (low bytes)
+		// For registers 8-15, we need REX.B (0x41)
 	uint8_t setcc_rex = (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) ? 0x41 : 0x40;
 	textSectionData.push_back(setcc_rex);
 	std::array<uint8_t, 3> setccInst = {0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 + (static_cast<uint8_t>(ctx.result_physical_reg) & 0x07))};
 	textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
-	// Zero-extend the low byte to full register: movzx r64, r8
+		// Zero-extend the low byte to full register: movzx r64, r8
 	auto movzx_encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.result_physical_reg);
 	std::array<uint8_t, 4> movzxInst = {movzx_encoding.rex_prefix, 0x0F, 0xB6, movzx_encoding.modrm_byte};
 	textSectionData.insert(textSectionData.end(), movzxInst.begin(), movzxInst.end());
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatComparisonInstruction(typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext& ctx, uint8_t setcc_opcode) {
-	// Use SSE comiss/comisd for comparison
-	// Properly handles XMM8-XMM15 registers with REX prefix
+		// Use SSE comiss/comisd for comparison
+		// Properly handles XMM8-XMM15 registers with REX prefix
 	if (ctx.operand_type == TypeCategory::Float) {
-	// comiss xmm1, xmm2 ([REX] 0F 2F /r)
+			// comiss xmm1, xmm2 ([REX] 0F 2F /r)
 		auto inst = generateSSEInstructionNoPrefix(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else if (ctx.operand_type == TypeCategory::Double) {
-	// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
+			// comisd xmm1, xmm2 (66 [REX] 0F 2F /r)
 		auto inst = generateSSEInstructionDouble(0x0F, 0x2F, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
 
-	// Allocate a general-purpose register for the boolean result
+		// Allocate a general-purpose register for the boolean result
 	X64Register bool_reg = allocateRegisterWithSpilling();
 
-	// Set result based on condition flags: SETcc r8
-	// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
+		// Set result based on condition flags: SETcc r8
+		// IMPORTANT: Always use REX prefix for byte operations to avoid high-byte registers
 	uint8_t setcc_rex = (static_cast<uint8_t>(bool_reg) >= 8) ? REX_B : REX_BASE;
 	textSectionData.push_back(setcc_rex);
 	std::array<uint8_t, 3> setccInst = {0x0F, setcc_opcode, static_cast<uint8_t>(0xC0 | (static_cast<uint8_t>(bool_reg) & 0x07))};
 	textSectionData.insert(textSectionData.end(), setccInst.begin(), setccInst.end());
 
-	// Update context for boolean result (1 byte)
+		// Update context for boolean result (1 byte)
 	ctx.result_value.setType(TypeCategory::Bool);
 	ctx.result_value.size_in_bits = SizeInBits{8};
 	ctx.result_physical_reg = bool_reg;
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 }
 
@@ -877,14 +877,14 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 	for (const auto& global : global_variables_) {
 		std::string_view global_name = StringTable::getStringView(global.name);
 
-	// Match either exact name or qualified name ending with ::member_name
-	// This handles cases like "value" matching "int_constant<-5>::value"
+			// Match either exact name or qualified name ending with ::member_name
+			// This handles cases like "value" matching "int_constant<-5>::value"
 		if (global.name == var_handle) {
 			global_info = &global;
 			break;
 		}
 
-	// Check if global name ends with "::" + var_name using StringBuilder
+			// Check if global name ends with "::" + var_name using StringBuilder
 		StringBuilder suffix_builder;
 		suffix_builder.append("::"sv).append(var_name);
 		std::string_view suffix = suffix_builder.preview();
@@ -898,16 +898,16 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 		suffix_builder.reset();
 	}
 
-	// If no exact match but exactly one suffix match, use it
+		// If no exact match but exactly one suffix match, use it
 	if (!global_info && suffix_matches.size() == 1) {
 		global_info = suffix_matches[0];
 		FLASH_LOG(Codegen, Debug, "  Using unique suffix match: '", StringTable::getStringView(global_info->name), "'");
 	} else if (!global_info && suffix_matches.size() > 1) {
 		FLASH_LOG(Codegen, Warning, "  Ambiguous: ", suffix_matches.size(), " globals match suffix '", var_name, "'");
 
-	// Try to disambiguate by preferring the shortest qualified name (most specific match)
-	// This heuristic assumes that the most specific match (e.g., "Foo::value" over "ns::Foo::value")
-	// is more likely to be the intended target in the current context
+			// Try to disambiguate by preferring the shortest qualified name (most specific match)
+			// This heuristic assumes that the most specific match (e.g., "Foo::value" over "ns::Foo::value")
+			// is more likely to be the intended target in the current context
 		const GlobalVariableInfo* best_match = suffix_matches[0];
 		size_t shortest_length = StringTable::getStringView(best_match->name).size();
 
@@ -932,27 +932,27 @@ X64Register IrToObjConverter<TWriterClass>::loadGlobalVariable(StringHandle var_
 
 	X64Register result_reg;
 
-	// Handle floating-point vs integer/pointer types
+		// Handle floating-point vs integer/pointer types
 	if (is_floating_point_type(operand_type)) {
-	// For float/double, allocate an XMM register
+			// For float/double, allocate an XMM register
 		result_reg = allocateXMMRegisterWithSpilling();
 		bool is_float = (operand_type == TypeCategory::Float);
 		uint32_t reloc_offset = emitFloatMovRipRelative(result_reg, is_float);
 
-	// Add pending relocation for this global variable reference
+			// Add pending relocation for this global variable reference
 		pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
 	} else {
-	// For integers/pointers, allocate a general-purpose register
+			// For integers/pointers, allocate a general-purpose register
 		if (exclude_reg.has_value()) {
 			result_reg = allocateRegisterWithSpilling(exclude_reg.value());
 		} else {
 			result_reg = allocateRegisterWithSpilling();
 		}
 
-	// Emit MOV instruction with RIP-relative addressing
+			// Emit MOV instruction with RIP-relative addressing
 		uint32_t reloc_offset = emitMovRipRelative(result_reg, operand_size_in_bits);
 
-	// Add pending relocation for this global variable reference
+			// Add pending relocation for this global variable reference
 		pending_global_relocations_.push_back({reloc_offset, global_info->name, IMAGE_REL_AMD64_REL32});
 
 		regAlloc.flushSingleDirtyRegister(result_reg);
@@ -965,9 +965,9 @@ template <class TWriterClass>
 typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConverter<TWriterClass>::setupAndLoadArithmeticOperation(const IrInstruction& instruction, const char* operation_name) {
 	const BinaryOp& bin_op = *getTypedPayload<BinaryOp>(instruction);
 
-	// Determine result type based on operation
-	// For comparisons, result is bool (8 bits for code generation)
-	// For arithmetic operations, result type matches operand type
+		// Determine result type based on operation
+		// For comparisons, result is bool (8 bits for code generation)
+		// For arithmetic operations, result type matches operand type
 	TypeCategory result_type = bin_op.lhs.typeEnum();
 	int result_size = bin_op.lhs.size_in_bits.value;
 
@@ -981,7 +981,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						  opcode == IrOpcode::FloatLessThan || opcode == IrOpcode::FloatLessEqual ||
 						  opcode == IrOpcode::FloatGreaterThan || opcode == IrOpcode::FloatGreaterEqual);
 
-	// Store the operand type and size for register allocation and loading decisions
+		// Store the operand type and size for register allocation and loading decisions
 	TypeCategory operand_type = bin_op.lhs.typeEnum();
 	int operand_size = bin_op.lhs.size_in_bits.value;
 
@@ -990,30 +990,30 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		result_size = 8;	 // We store bool as 8 bits for register operations
 	}
 
-	// Create context with correct result type
+		// Create context with correct result type
 	ArithmeticOperationContext ctx = {
 		.result_value = makeTypedValue(result_type, SizeInBits{static_cast<int>(result_size)}, bin_op.result),
 		.result_physical_reg = X64Register::Count,
 		.rhs_physical_reg = X64Register::RCX,
 		.operand_type = operand_type,
 		.operand_size_in_bits = operand_size};
-	// Propagate signedness so downstream consumers don't need to query via ctx.result_value.is_signed.
-	// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
+		// Propagate signedness so downstream consumers don't need to query via ctx.result_value.is_signed.
+		// This is Phase 4 prep: once .type is removed, is_signed will be the only signedness source.
 	ctx.result_value.is_signed = isSignedType(result_type);
 
-	// Use IrType for runtime representation dispatch instead of branching on
-	// semantic Type::Enum / Type::UserDefined.  effectiveIrType() computes the
-	// correct IrType from the semantic type when ir_type hasn't been set yet
-	// (transition period: not all TypedValue construction sites populate ir_type).
+		// Use IrType for runtime representation dispatch instead of branching on
+		// semantic Type::Enum / Type::UserDefined.  effectiveIrType() computes the
+		// correct IrType from the semantic type when ir_type hasn't been set yet
+		// (transition period: not all TypedValue construction sites populate ir_type).
 	IrType operand_ir_type = bin_op.lhs.effectiveIrType();
 
 	if (operand_ir_type == IrType::Integer) {
-	// IrType::Integer covers all integer-like types including enums.
-	// If the semantic type is not recognized by is_integer_type()
-	// (e.g. Type::Enum), coerce to a concrete integer type matching
-	// the IR size so downstream register allocation picks the right width.
-	// This coercion will become unnecessary once ArithmeticOperationContext
-	// uses IrType instead of Type for operand_type (Phase 3).
+			// IrType::Integer covers all integer-like types including enums.
+			// If the semantic type is not recognized by is_integer_type()
+			// (e.g. Type::Enum), coerce to a concrete integer type matching
+			// the IR size so downstream register allocation picks the right width.
+			// This coercion will become unnecessary once ArithmeticOperationContext
+			// uses IrType instead of Type for operand_type (Phase 3).
 		if (!is_integer_type(operand_type)) {
 			TypeCategory int_type = (ctx.operand_size_in_bits <= 32) ? TypeCategory::Int : TypeCategory::UnsignedLongLong;
 			if (!is_comparison) {
@@ -1024,8 +1024,8 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		}
 	} else if (operand_ir_type == IrType::Struct || isIrPointerLikeType(operand_ir_type) ||
 			   operand_ir_type == IrType::Void) {
-	// Pointer-like and struct types: force 64-bit integer semantics
-	// for pointer offset calculations
+			// Pointer-like and struct types: force 64-bit integer semantics
+			// for pointer offset calculations
 		if (!is_comparison) {
 			ctx.result_value.setType(TypeCategory::UnsignedLongLong);
 			ctx.result_value.size_in_bits = SizeInBits{64};
@@ -1050,33 +1050,33 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				assert(variable_scopes.back().scope_stack_space <= lhs_var_id->second.offset);
 
 				if (is_floating_point_type(operand_type)) {
-		// For float/double, allocate an XMM register
+						// For float/double, allocate an XMM register
 					ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 					bool is_float = (operand_type == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
-		// Check if this is a reference - if so, we need to dereference it
+						// Check if this is a reference - if so, we need to dereference it
 					auto ref_info = getIndirectStackInfo(lhs_var_id->second.offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-		// This is a reference - load the pointer first, then dereference
+							// This is a reference - load the pointer first, then dereference
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
-		// Load the pointer into the register
+							// Load the pointer into the register
 						emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
-		// Now dereference: load from [register + 0]
+							// Now dereference: load from [register + 0]
 						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.result_physical_reg, ctx.result_physical_reg, 0, value_size_bytes);
 					} else if (ref_info.has_value()) {
-		// This holds an address value directly (e.g. addressof) - load it as-is
+							// This holds an address value directly (e.g. addressof) - load it as-is
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						emitMovFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 					} else if (lhs_var_id->second.is_array) {
-		// Source is an array - use LEA to get its address (array-to-pointer decay)
+							// Source is an array - use LEA to get its address (array-to-pointer decay)
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						emitLeaFromFrame(ctx.result_physical_reg, lhs_var_id->second.offset);
 					} else {
-		// Not a reference, load normally
-		// For integers, use regular MOV
+							// Not a reference, load normally
+							// For integers, use regular MOV
 						ctx.result_physical_reg = allocateRegisterWithSpilling();
 						emitMovFromFrameBySize(ctx.result_physical_reg, lhs_var_id->second.offset, ctx.operand_size_in_bits);
 					}
@@ -1084,7 +1084,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				}
 			}
 		} else {
-	// Not found in local variables - check if it's a global variable
+				// Not found in local variables - check if it's a global variable
 			std::string_view lhs_var_name = StringTable::getStringView(lhs_var_op);
 			ctx.result_physical_reg = loadGlobalVariable(lhs_var_op, lhs_var_name, operand_type, ctx.operand_size_in_bits);
 
@@ -1101,19 +1101,19 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			assert(variable_scopes.back().scope_stack_space <= lhs_stack_var_addr);
 
 			if (is_floating_point_type(operand_type)) {
-		// For float/double, allocate an XMM register
+					// For float/double, allocate an XMM register
 				ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 				bool is_float = (operand_type == TypeCategory::Float);
 				auto mov_opcodes = generateFloatMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr, is_float);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			} else {
-		// Check if this is a reference - if so, we need to dereference it
+					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(lhs_stack_var_addr);
 
-		// If not found with TempVar offset, try looking up by name
+					// If not found with TempVar offset, try looking up by name
 				if (!ref_info.has_value()) {
 					std::string_view var_name = lhs_var_op.name();
-		// Remove the '%' prefix if present
+						// Remove the '%' prefix if present
 					if (!var_name.empty() && var_name[0] == '%') {
 						var_name = var_name.substr(1);
 					}
@@ -1122,19 +1122,19 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						int32_t named_offset = named_var_it->second.offset;
 						ref_info = getIndirectStackInfo(named_offset);
 						if (ref_info.has_value()) {
-		// Found it! Update lhs_stack_var_addr to use the named variable offset
+								// Found it! Update lhs_stack_var_addr to use the named variable offset
 							lhs_stack_var_addr = named_offset;
 						}
 					}
 				}
 
 				if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-		// This is a reference - load the pointer first, then dereference
+						// This is a reference - load the pointer first, then dereference
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
-		// Load the pointer into the register
+						// Load the pointer into the register
 					auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 					textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
-		// Now dereference: load from [register + 0]
+						// Now dereference: load from [register + 0]
 					int value_size_bits = ref_info->value_size_bits.value;
 					OpCodeWithSize deref_opcodes;
 					if (value_size_bits == 64) {
@@ -1146,18 +1146,18 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 					} else if (value_size_bits == 8) {
 						deref_opcodes = generateMovFromMemory8(ctx.result_physical_reg, ctx.result_physical_reg, 0);
 					} else {
-		// Unsupported size - return default context
+							// Unsupported size - return default context
 						FLASH_LOG_FORMAT(Codegen, Warning, "handleBinaryOp: Unsupported reference value size {} bits, skipping", value_size_bits);
 						return ctx;
 					}
 					textSectionData.insert(textSectionData.end(), deref_opcodes.op_codes.begin(), deref_opcodes.op_codes.begin() + deref_opcodes.size_in_bytes);
 				} else if (ref_info.has_value() && !shouldImplicitlyDeref(ref_info.value())) {
-		// This holds an address value directly (from addressof) - load without dereferencing
+						// This holds an address value directly (from addressof) - load without dereferencing
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
 					auto load_ptr = generatePtrMovFromFrame(ctx.result_physical_reg, lhs_stack_var_addr);
 					textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 				} else {
-		// Not a reference, load normally with correct size
+						// Not a reference, load normally with correct size
 					ctx.result_physical_reg = allocateRegisterWithSpilling();
 					emitMovFromFrameBySize(ctx.result_physical_reg, lhs_stack_var_addr, ctx.operand_size_in_bits);
 				}
@@ -1165,19 +1165,19 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			}
 		}
 	} else if (std::holds_alternative<unsigned long long>(bin_op.lhs.value)) {
-	// LHS is a literal value
+			// LHS is a literal value
 		auto lhs_value = std::get<unsigned long long>(bin_op.lhs.value);
 		ctx.result_physical_reg = allocateRegisterWithSpilling();
 
-	// Load the literal value into the register
-	// Use the correct operand size for the move instruction
+			// Load the literal value into the register
+			// Use the correct operand size for the move instruction
 		uint8_t reg_num = static_cast<uint8_t>(ctx.result_physical_reg);
 
 		if (ctx.operand_size_in_bits == 64) {
-	// 64-bit: mov reg, imm64 with REX.W
+				// 64-bit: mov reg, imm64 with REX.W
 			uint8_t rex_prefix = 0x48; // REX.W
 
-	// For R8-R15, set REX.B bit
+				// For R8-R15, set REX.B bit
 			if (reg_num >= 8) {
 				rex_prefix |= 0x01; // Set REX.B
 				reg_num &= 0x07; // Use lower 3 bits for opcode
@@ -1187,8 +1187,8 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			std::memcpy(&movInst[2], &lhs_value, sizeof(lhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		} else {
-	// 32-bit (or smaller): mov r32, imm32
-	// Only use REX if we need extended registers (R8-R15)
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
 			bool needs_rex = (reg_num >= 8);
 
 			if (needs_rex) {
@@ -1198,7 +1198,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				reg_num &= 0x07; // Use lower 3 bits for opcode
 			}
 
-	// mov r32, imm32: opcode B8+r, imm32
+				// mov r32, imm32: opcode B8+r, imm32
 			textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
 			uint32_t imm32 = static_cast<uint32_t>(lhs_value);
 			textSectionData.push_back(imm32 & 0xFF);
@@ -1207,26 +1207,26 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			textSectionData.push_back((imm32 >> 24) & 0xFF);
 		}
 	} else if (instruction.isOperandType<double>(3)) {
-	// LHS is a floating-point literal value
+			// LHS is a floating-point literal value
 		auto lhs_value = instruction.getOperandAs<double>(3);
 		ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
 
-	// For floating-point, we need to load the value into an XMM register
-	// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
-	// 1. Load double bits into a GPR using movabs
-	// 2. Move from GPR to XMM using movq
+			// For floating-point, we need to load the value into an XMM register
+			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
+			// 1. Load double bits into a GPR using movabs
+			// 2. Move from GPR to XMM using movq
 
 		uint64_t bits;
 		std::memcpy(&bits, &lhs_value, sizeof(bits));
 
-	// Allocate a temporary GPR for the bit pattern
+			// Allocate a temporary GPR for the bit pattern
 		X64Register temp_gpr = allocateRegisterWithSpilling();
 
-	// movabs temp_gpr, imm64 (load bit pattern)
+			// movabs temp_gpr, imm64 (load bit pattern)
 		uint8_t rex_prefix = 0x48; // REX.W
 		uint8_t reg_num = static_cast<uint8_t>(temp_gpr);
 
-	// For R8-R15, set REX.B bit
+			// For R8-R15, set REX.B bit
 		if (reg_num >= 8) {
 			rex_prefix |= 0x01; // Set REX.B
 			reg_num &= 0x07; // Use lower 3 bits for opcode
@@ -1236,12 +1236,12 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		std::memcpy(&movInst[2], &bits, sizeof(bits));
 		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 
-	// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+			// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 		std::array<uint8_t, 5> movqInst = {0x66, 0x48, 0x0F, 0x6E, 0xC0};
 		movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.result_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
 		textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 
-	// Release the temporary GPR
+			// Release the temporary GPR
 		regAlloc.release(temp_gpr);
 	}
 
@@ -1256,32 +1256,32 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				assert(variable_scopes.back().scope_stack_space <= rhs_var_id->second.offset);
 
 				if (is_floating_point_type(operand_type)) {
-		// For float/double, allocate an XMM register
+						// For float/double, allocate an XMM register
 					ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 					bool is_float = (operand_type == TypeCategory::Float);
 					auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset, is_float);
 					textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 				} else {
-		// Check if this is a reference - if so, we need to dereference it
+						// Check if this is a reference - if so, we need to dereference it
 					auto ref_info = getIndirectStackInfo(rhs_var_id->second.offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-		// This is a reference - load the pointer first, then dereference
+							// This is a reference - load the pointer first, then dereference
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
-		// If RHS register conflicts with result register, we need to handle it
-		// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+							// If RHS register conflicts with result register, we need to handle it
+							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-		// Allocate a NEW register for RHS, excluding the LHS register
+								// Allocate a NEW register for RHS, excluding the LHS register
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 
-		// Load the pointer into the register
+							// Load the pointer into the register
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
-		// Now dereference: load from [register + 0]
+							// Now dereference: load from [register + 0]
 						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 					} else if (ref_info.has_value()) {
-		// This holds an address value directly (e.g. addressof) - load it as-is
+							// This holds an address value directly (e.g. addressof) - load it as-is
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
@@ -1290,26 +1290,26 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 						emitMovFromFrame(ctx.rhs_physical_reg, rhs_var_id->second.offset);
 					} else {
-		// Not a reference, load normally
-		// For integers, use regular MOV
+							// Not a reference, load normally
+							// For integers, use regular MOV
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
-		// If RHS register conflicts with result register, we need to handle it
-		// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+							// If RHS register conflicts with result register, we need to handle it
+							// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 						if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-		// Allocate a NEW register for RHS, excluding the LHS register
+								// Allocate a NEW register for RHS, excluding the LHS register
 							ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 						}
 
-		// Use the RHS's actual size for loading, not the LHS/operand size
-		// This is important when types are mixed (e.g., int + long)
+							// Use the RHS's actual size for loading, not the LHS/operand size
+							// This is important when types are mixed (e.g., int + long)
 						emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_var_id->second.offset, bin_op.rhs.size_in_bits.value);
 					}
 					regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 				}
 			}
 		} else {
-	// Not found in local variables - check if it's a global variable
+				// Not found in local variables - check if it's a global variable
 			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_op);
 			ctx.rhs_physical_reg = loadGlobalVariable(rhs_var_op, rhs_var_name, operand_type, bin_op.rhs.size_in_bits.value, ctx.result_physical_reg);
 
@@ -1326,19 +1326,19 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			assert(variable_scopes.back().scope_stack_space <= rhs_stack_var_addr);
 
 			if (is_floating_point_type(operand_type)) {
-		// For float/double, allocate an XMM register
+					// For float/double, allocate an XMM register
 				ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 				bool is_float = (operand_type == TypeCategory::Float);
 				auto mov_opcodes = generateFloatMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr, is_float);
 				textSectionData.insert(textSectionData.end(), mov_opcodes.op_codes.begin(), mov_opcodes.op_codes.begin() + mov_opcodes.size_in_bytes);
 			} else {
-		// Check if this is a reference - if so, we need to dereference it
+					// Check if this is a reference - if so, we need to dereference it
 				auto ref_info = getIndirectStackInfo(rhs_stack_var_addr);
 
-		// If not found with TempVar offset, try looking up by name
+					// If not found with TempVar offset, try looking up by name
 				if (!ref_info.has_value()) {
 					std::string_view var_name = rhs_var_op.name();
-		// Remove the '%' prefix if present
+						// Remove the '%' prefix if present
 					if (!var_name.empty() && var_name[0] == '%') {
 						var_name = var_name.substr(1);
 					}
@@ -1347,30 +1347,30 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 						int32_t named_offset = named_var_it->second.offset;
 						ref_info = getIndirectStackInfo(named_offset);
 						if (ref_info.has_value()) {
-		// Found it! Update rhs_stack_var_addr to use the named variable offset
+								// Found it! Update rhs_stack_var_addr to use the named variable offset
 							rhs_stack_var_addr = named_offset;
 						}
 					}
 				}
 
 				if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-		// This is a reference - load the pointer first, then dereference
+						// This is a reference - load the pointer first, then dereference
 					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
-		// If RHS register conflicts with result register, we need to handle it
-		// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+						// If RHS register conflicts with result register, we need to handle it
+						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 					if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-		// Allocate a NEW register for RHS, excluding the LHS register
+							// Allocate a NEW register for RHS, excluding the LHS register
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 					}
 
-		// Load the pointer into the register
+						// Load the pointer into the register
 					emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
-		// Now dereference: load from [register + 0]
+						// Now dereference: load from [register + 0]
 					int value_size_bytes = ref_info->value_size_bits.value / 8;
 					emitMovFromMemory(ctx.rhs_physical_reg, ctx.rhs_physical_reg, 0, value_size_bytes);
 				} else if (ref_info.has_value()) {
-		// This holds an address value directly (e.g. addressof) - load it as-is
+						// This holds an address value directly (e.g. addressof) - load it as-is
 					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
 					if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
@@ -1379,44 +1379,44 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 					emitMovFromFrame(ctx.rhs_physical_reg, rhs_stack_var_addr);
 				} else {
-		// Not a reference, load normally with correct size
+						// Not a reference, load normally with correct size
 					ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
-		// If RHS register conflicts with result register, we need to handle it
-		// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+						// If RHS register conflicts with result register, we need to handle it
+						// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 					if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-		// Allocate a NEW register for RHS, excluding the LHS register
+							// Allocate a NEW register for RHS, excluding the LHS register
 						ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 					}
 
-		// Use the RHS's actual size for loading, not the LHS/operand size
-		// This is important when types are mixed (e.g., int + long)
+						// Use the RHS's actual size for loading, not the LHS/operand size
+						// This is important when types are mixed (e.g., int + long)
 					emitMovFromFrameBySize(ctx.rhs_physical_reg, rhs_stack_var_addr, bin_op.rhs.size_in_bits.value);
 				}
 				regAlloc.flushSingleDirtyRegister(ctx.rhs_physical_reg);
 			}
 		}
 	} else if (std::holds_alternative<unsigned long long>(bin_op.rhs.value)) {
-	// RHS is a literal value
+			// RHS is a literal value
 		auto rhs_value = std::get<unsigned long long>(bin_op.rhs.value);
 		ctx.rhs_physical_reg = allocateRegisterWithSpilling();
 
-	// If RHS register conflicts with result register, we need to handle it
-	// Strategy: Keep LHS in its register, allocate a fresh register for RHS
+			// If RHS register conflicts with result register, we need to handle it
+			// Strategy: Keep LHS in its register, allocate a fresh register for RHS
 		if (ctx.rhs_physical_reg == ctx.result_physical_reg) {
-	// Allocate a NEW register for RHS, excluding the LHS register
+				// Allocate a NEW register for RHS, excluding the LHS register
 			ctx.rhs_physical_reg = allocateRegisterWithSpilling(ctx.result_physical_reg);
 		}
 
-	// Load the literal value into the register
-	// Use the correct operand size for the move instruction
+			// Load the literal value into the register
+			// Use the correct operand size for the move instruction
 		uint8_t reg_num = static_cast<uint8_t>(ctx.rhs_physical_reg);
 
 		if (ctx.operand_size_in_bits == 64) {
-	// 64-bit: mov reg, imm64 with REX.W
+				// 64-bit: mov reg, imm64 with REX.W
 			uint8_t rex_prefix = 0x48; // REX.W
 
-	// For R8-R15, set REX.B bit
+				// For R8-R15, set REX.B bit
 			if (reg_num >= 8) {
 				rex_prefix |= 0x01; // Set REX.B
 				reg_num &= 0x07; // Use lower 3 bits for opcode
@@ -1426,8 +1426,8 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			std::memcpy(&movInst[2], &rhs_value, sizeof(rhs_value));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 		} else {
-	// 32-bit (or smaller): mov r32, imm32
-	// Only use REX if we need extended registers (R8-R15)
+				// 32-bit (or smaller): mov r32, imm32
+				// Only use REX if we need extended registers (R8-R15)
 			bool needs_rex = (reg_num >= 8);
 
 			if (needs_rex) {
@@ -1437,7 +1437,7 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 				reg_num &= 0x07; // Use lower 3 bits for opcode
 			}
 
-	// mov r32, imm32: opcode B8+r, imm32
+				// mov r32, imm32: opcode B8+r, imm32
 			textSectionData.push_back(static_cast<uint8_t>(0xB8 + reg_num));
 			uint32_t imm32 = static_cast<uint32_t>(rhs_value);
 			textSectionData.push_back(imm32 & 0xFF);
@@ -1446,28 +1446,28 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			textSectionData.push_back((imm32 >> 24) & 0xFF);
 		}
 	} else if (std::holds_alternative<double>(bin_op.rhs.value)) {
-	// RHS is a floating-point literal value
+			// RHS is a floating-point literal value
 		auto rhs_value = std::get<double>(bin_op.rhs.value);
 		ctx.rhs_physical_reg = allocateXMMRegisterWithSpilling(ctx.result_physical_reg);
 
-	// For floating-point, we need to load the value into an XMM register
-	// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
-	// 1. Load bits into a GPR using movabs
-	// 2. Move from GPR to XMM using movq (for double) or movd (for float)
+			// For floating-point, we need to load the value into an XMM register
+			// Strategy: Load the bit pattern as integer into a GPR, then move to XMM
+			// 1. Load bits into a GPR using movabs
+			// 2. Move from GPR to XMM using movq (for double) or movd (for float)
 
-	// Allocate a temporary GPR for the bit pattern
+			// Allocate a temporary GPR for the bit pattern
 		X64Register temp_gpr = allocateRegisterWithSpilling();
 
 		if (operand_type == TypeCategory::Float) {
-	// For float (single precision), convert double to float and get 32-bit representation
+				// For float (single precision), convert double to float and get 32-bit representation
 			float float_value = static_cast<float>(rhs_value);
 			uint32_t bits;
 			std::memcpy(&bits, &float_value, sizeof(bits));
 
-	// mov temp_gpr_32, imm32 (load 32-bit bit pattern)
+				// mov temp_gpr_32, imm32 (load 32-bit bit pattern)
 			uint8_t reg_num = static_cast<uint8_t>(temp_gpr);
 
-	// For R8-R15, we need a REX prefix with REX.B set
+				// For R8-R15, we need a REX prefix with REX.B set
 			if (reg_num >= 8) {
 				textSectionData.push_back(0x41); // REX.B
 				reg_num &= 0x07; // Use lower 3 bits for opcode
@@ -1477,9 +1477,9 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			std::memcpy(&movInst[1], &bits, sizeof(bits));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 
-	// movd xmm, r32 (66 0F 6E /r) - move 32-bit from GPR to XMM
+				// movd xmm, r32 (66 0F 6E /r) - move 32-bit from GPR to XMM
 			std::array<uint8_t, 4> movdInst = {0x66, 0x0F, 0x6E, 0xC0};
-	// Add REX prefix if either XMM or GPR is extended
+				// Add REX prefix if either XMM or GPR is extended
 			uint8_t xmm_num = xmm_modrm_bits(ctx.rhs_physical_reg);
 			uint8_t gpr_num = static_cast<uint8_t>(temp_gpr);
 			if (xmm_num >= 8 || gpr_num >= 8) {
@@ -1493,15 +1493,15 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			movdInst[3] = 0xC0 + ((xmm_num & 0x07) << 3) + (gpr_num & 0x07);
 			textSectionData.insert(textSectionData.end(), movdInst.begin(), movdInst.end());
 		} else {
-	// For double, load 64-bit representation
+				// For double, load 64-bit representation
 			uint64_t bits;
 			std::memcpy(&bits, &rhs_value, sizeof(bits));
 
-	// movabs temp_gpr, imm64 (load bit pattern)
+				// movabs temp_gpr, imm64 (load bit pattern)
 			uint8_t rex_prefix = 0x48; // REX.W
 			uint8_t reg_num = static_cast<uint8_t>(temp_gpr);
 
-	// For R8-R15, set REX.B bit
+				// For R8-R15, set REX.B bit
 			if (reg_num >= 8) {
 				rex_prefix |= 0x01; // Set REX.B
 				reg_num &= 0x07; // Use lower 3 bits for opcode
@@ -1511,17 +1511,17 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 			std::memcpy(&movInst[2], &bits, sizeof(bits));
 			textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 
-	// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+				// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 			std::array<uint8_t, 5> movqInst = {0x66, 0x48, 0x0F, 0x6E, 0xC0};
 			movqInst[4] = 0xC0 + (xmm_modrm_bits(ctx.rhs_physical_reg) << 3) + static_cast<uint8_t>(temp_gpr);
 			textSectionData.insert(textSectionData.end(), movqInst.begin(), movqInst.end());
 		}
 
-	// Release the temporary GPR
+			// Release the temporary GPR
 		regAlloc.release(temp_gpr);
 	}
 
-	// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
+		// If result register hasn't been allocated yet (e.g., LHS is a literal), allocate one now
 	if (ctx.result_physical_reg == X64Register::Count) {
 		if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
 			ctx.result_physical_reg = allocateXMMRegisterWithSpilling();
@@ -1535,18 +1535,18 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		const int32_t stack_offset = getStackOffsetFromTempVar(temp_var);
 		StringHandle reassign_handle = StringTable::getOrInternStringHandle(temp_var.name());
 		variable_scopes.back().variables[reassign_handle].offset = stack_offset;
-	// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
+			// Only set stack variable offset for allocated registers (not XMM0/XMM1 used directly)
 		if (ctx.result_physical_reg < X64Register::XMM0 || regAlloc.is_allocated(ctx.result_physical_reg)) {
-	// IMPORTANT: Before reassigning this register to the result TempVar's offset,
-	// we must flush its current value to the OLD offset if it was dirty.
-	// This happens when the LHS operand was in a register that we're reusing for the result.
-	// Without flushing, the LHS value would be lost (crucial for post-increment).
+				// IMPORTANT: Before reassigning this register to the result TempVar's offset,
+				// we must flush its current value to the OLD offset if it was dirty.
+				// This happens when the LHS operand was in a register that we're reusing for the result.
+				// Without flushing, the LHS value would be lost (crucial for post-increment).
 			auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 			if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN &&
 				reg_info.stackVariableOffset != stack_offset) {
 				FLASH_LOG_FORMAT(Codegen, Debug, "FLUSHING dirty reg {} from old offset {} to new offset {}, size={}",
 								 static_cast<int>(ctx.result_physical_reg), reg_info.stackVariableOffset, stack_offset, reg_info.size_in_bits);
-		// Use the actual register size from reg_info, not hardcoded 64 bits
+					// Use the actual register size from reg_info, not hardcoded 64 bits
 				emitMovToFrameSized(
 					SizedRegister{ctx.result_physical_reg, static_cast<uint8_t>(reg_info.size_in_bits.value), false},
 					SizedStackSlot{reg_info.stackVariableOffset, reg_info.size_in_bits.value, false});
@@ -1555,21 +1555,21 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 		}
 	}
 
-	// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
-	// This can happen when all registers are in use and spilling picks the same register twice
+		// Final safety check: if LHS and RHS ended up in the same register, we need to fix it
+		// This can happen when all registers are in use and spilling picks the same register twice
 	if (ctx.result_physical_reg == ctx.rhs_physical_reg && !isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
-	// Get the LHS variable's stack location and reload it into a different register
+			// Get the LHS variable's stack location and reload it into a different register
 		auto& reg_info = regAlloc.registers[static_cast<int>(ctx.result_physical_reg)];
 		if (reg_info.stackVariableOffset != INT_MIN) {
-	// Allocate a fresh register for LHS and reload it from the stack
+				// Allocate a fresh register for LHS and reload it from the stack
 			X64Register new_lhs_reg = allocateRegisterWithSpilling();
 			emitMovFromFrameBySize(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits.value);
 
-	// Update tracking: the new register now holds the LHS variable
+				// Update tracking: the new register now holds the LHS variable
 			regAlloc.set_stack_variable_offset(new_lhs_reg, reg_info.stackVariableOffset, reg_info.size_in_bits.value);
 			regAlloc.registers[static_cast<int>(new_lhs_reg)].isDirty = reg_info.isDirty;
 
-	// Clear the old register's tracking (it now only holds RHS)
+				// Clear the old register's tracking (it now only holds RHS)
 			regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].stackVariableOffset = INT_MIN;
 			regAlloc.registers[static_cast<int>(ctx.result_physical_reg)].isDirty = false;
 
@@ -1582,38 +1582,38 @@ typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext IrToObjConve
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToObjConverter<TWriterClass>::ArithmeticOperationContext& ctx, X64Register source_reg) {
-	// Use the result register by default, or the specified source register (e.g., RAX for division)
+		// Use the result register by default, or the specified source register (e.g., RAX for division)
 	X64Register actual_source_reg = (source_reg == X64Register::Count) ? ctx.result_physical_reg : source_reg;
 
-	// Check if we're dealing with floating-point types
+		// Check if we're dealing with floating-point types
 	bool is_float_type = isIrFloatingPointType(ctx.result_value.effectiveIrType());
 
-	// Track whether we should release the source register after storing
+		// Track whether we should release the source register after storing
 	bool should_release_source = false;
 
-	// Determine the final destination of the result (register or memory)
+		// Determine the final destination of the result (register or memory)
 	if (std::holds_alternative<StringHandle>(ctx.result_value.value)) {
-	// If the result is a named variable, find its stack offset - Phase 5: Convert to StringHandle
+			// If the result is a named variable, find its stack offset - Phase 5: Convert to StringHandle
 		int final_result_offset = variable_scopes.back().variables[std::get<StringHandle>(ctx.result_value.value)].offset;
 
-	// Check if this is a reference - if so, we need to store through the pointer
+			// Check if this is a reference - if so, we need to store through the pointer
 		auto ref_info = getIndirectStackInfo(final_result_offset);
 		if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-	// This is a reference - load the pointer, then store the value through it
+				// This is a reference - load the pointer, then store the value through it
 			X64Register ptr_reg = allocateRegisterWithSpilling();
-	// Load the pointer into the register
+				// Load the pointer into the register
 			auto load_ptr = generatePtrMovFromFrame(ptr_reg, final_result_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
-	// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
 			int value_size_bits = ref_info->value_size_bits.value;
 			int value_size_bytes = value_size_bits / 8;
 			emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 			regAlloc.release(ptr_reg);
 		} else {
-	// Not a reference, store normally
-	// Store the computed result from actual_source_reg to memory
+				// Not a reference, store normally
+				// Store the computed result from actual_source_reg to memory
 			if (is_float_type) {
-		// Use SSE movss/movsd for float/double
+					// Use SSE movss/movsd for float/double
 				bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 				auto store_opcodes = generateFloatMovToFrame(actual_source_reg, final_result_offset, is_single_precision);
 				textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
@@ -1625,29 +1625,29 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 				);
 			}
 		}
-	// For named variables, we can release the source register since the value is now in memory
+			// For named variables, we can release the source register since the value is now in memory
 		should_release_source = true;
 	} else if (std::holds_alternative<TempVar>(ctx.result_value.value)) {
 		auto res_var_op = std::get<TempVar>(ctx.result_value.value);
 		auto res_stack_var_addr = getStackOffsetFromTempVar(res_var_op, ctx.result_value.size_in_bits.value);
 
-	// Check if this is a reference - if so, we need to store through the pointer
+			// Check if this is a reference - if so, we need to store through the pointer
 		auto ref_info = getIndirectStackInfo(res_stack_var_addr);
 		if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value())) {
-	// This is a reference - load the pointer, then store the value through it
+				// This is a reference - load the pointer, then store the value through it
 			X64Register ptr_reg = allocateRegisterWithSpilling();
-	// Load the pointer into the register
+				// Load the pointer into the register
 			emitMovFromFrame(ptr_reg, res_stack_var_addr);
-	// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
+				// Now store the value through the pointer: [ptr_reg + 0] = actual_source_reg
 			int value_size_bits = ref_info->value_size_bits.value;
 			int value_size_bytes = value_size_bits / 8;
 			emitStoreToMemory(textSectionData, actual_source_reg, ptr_reg, 0, value_size_bytes);
 			regAlloc.release(ptr_reg);
 			should_release_source = true;
 		} else {
-	// Not a reference, handle as before
-	// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
-	// This prevents using an old register value that was from a previous unrelated operation
+				// Not a reference, handle as before
+				// IMPORTANT: Clear any stale register mappings for this stack variable BEFORE checking
+				// This prevents using an old register value that was from a previous unrelated operation
 			for (size_t i = 0; i < regAlloc.registers.size(); ++i) {
 				auto& r = regAlloc.registers[i];
 				if (r.stackVariableOffset == res_stack_var_addr && r.reg != actual_source_reg) {
@@ -1659,7 +1659,7 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 			if (auto res_reg = regAlloc.tryGetStackVariableRegister(res_stack_var_addr); res_reg.has_value()) {
 				if (res_reg != actual_source_reg) {
 					if (is_float_type) {
-		// For float types, use SSE mov instructions for register-to-register moves
+							// For float types, use SSE mov instructions for register-to-register moves
 						bool is_double = (ctx.result_value.effectiveIrType() == IrType::Double);
 						emitFloatMovRegToReg(res_reg.value(), actual_source_reg, is_double);
 					} else {
@@ -1667,9 +1667,9 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 						textSectionData.insert(textSectionData.end(), moveFromRax.op_codes.begin(), moveFromRax.op_codes.begin() + moveFromRax.size_in_bytes);
 					}
 				}
-		// Result is already in the correct register, no move needed
-		// For floating-point types, we MUST also write to memory even when register is correct
-		// because the return handling will load from memory (XMM registers aren't fully tracked)
+					// Result is already in the correct register, no move needed
+					// For floating-point types, we MUST also write to memory even when register is correct
+					// because the return handling will load from memory (XMM registers aren't fully tracked)
 				if (is_float_type) {
 					bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
@@ -1678,20 +1678,20 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 						SizedRegister{actual_source_reg, 64, false},
 						SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed});
 				}
-		// Can release source register since result is now tracked in the destination register
+					// Can release source register since result is now tracked in the destination register
 				should_release_source = true;
 			} else {
-		// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
-		// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
-		// before the register is reassigned to the result TempVar's offset.
+					// Temp variable not currently in a register - keep it in actual_source_reg instead of spilling
+					// NOTE: The flushing of old register values is now handled in setupAndLoadArithmeticOperation
+					// before the register is reassigned to the result TempVar's offset.
 
-		// Tell the register allocator that this register now holds this temp variable
+					// Tell the register allocator that this register now holds this temp variable
 				assert(variable_scopes.back().scope_stack_space <= res_stack_var_addr);
 				regAlloc.set_stack_variable_offset(actual_source_reg, res_stack_var_addr, ctx.result_value.size_in_bits.value);
 
-		// For floating-point types, we MUST write to memory immediately because the register
-		// allocator doesn't properly track XMM registers across all operations.
-		// Without this, subsequent loads from the stack location will read garbage.
+					// For floating-point types, we MUST write to memory immediately because the register
+					// allocator doesn't properly track XMM registers across all operations.
+					// Without this, subsequent loads from the stack location will read garbage.
 				if (is_float_type) {
 					bool is_single_precision = (ctx.result_value.effectiveIrType() == IrType::Float);
 					emitFloatMovToFrame(actual_source_reg, res_stack_var_addr, is_single_precision);
@@ -1700,8 +1700,8 @@ void IrToObjConverter<TWriterClass>::storeArithmeticResult(const typename IrToOb
 						SizedRegister{actual_source_reg, 64, false},
 						SizedStackSlot{res_stack_var_addr, ctx.result_value.size_in_bits.value, ctx.result_value.is_signed});
 				}
-		// Keep the value in the register for subsequent operations
-		// DON'T release the source register for integer temps - keeping value in register for optimization
+					// Keep the value in the register for subsequent operations
+					// DON'T release the source register for integer temps - keeping value in register for optimization
 				should_release_source = false;
 			}
 		}
@@ -1726,16 +1726,16 @@ void IrToObjConverter<TWriterClass>::groupInstructionsByFunction(const Ir& ir) {
 	for (size_t i = 0; i < instructions.size(); ++i) {
 		const auto& instruction = instructions[i];
 		if (instruction.getOpcode() == IrOpcode::FunctionDecl) {
-	// Save previous function's span
+				// Save previous function's span
 			if (!current_func_name.empty()) {
 				function_spans[std::string(current_func_name)] = std::span<const IrInstruction>(
 					&instructions[current_func_start], i - current_func_start);
 			}
 
-	// Extract function name from typed payload
+				// Extract function name from typed payload
 			const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-	// Use mangled name if available (for member functions like lambda operator()),
-	// otherwise use function_name (Phase 4: Use helpers)
+				// Use mangled name if available (for member functions like lambda operator()),
+				// otherwise use function_name (Phase 4: Use helpers)
 			StringHandle mangled_handle = func_decl.getMangledName();
 			StringHandle func_name_handle = func_decl.getFunctionName();
 			current_func_name = mangled_handle.handle != 0 ? StringTable::getStringView(mangled_handle) : StringTable::getStringView(func_name_handle);
@@ -1743,7 +1743,7 @@ void IrToObjConverter<TWriterClass>::groupInstructionsByFunction(const Ir& ir) {
 		}
 	}
 
-	// Save the last function's span
+		// Save the last function's span
 	if (!current_func_name.empty()) {
 		function_spans[std::string(current_func_name)] = std::span<const IrInstruction>(
 			&instructions[current_func_start], instructions.size() - current_func_start);
@@ -1772,7 +1772,7 @@ void IrToObjConverter<TWriterClass>::setIndirectStorageInfo(int32_t stack_offset
 		current_function_tempvar_indirect_info_[temp_var.var_number] = info;
 	}
 
-	// Sync TempVar metadata with stack storage info
+		// Sync TempVar metadata with stack storage info
 	if (temp_var.var_number != 0) {
 		reference_temp_var_numbers_.push_back(temp_var.var_number);
 		if (holds_address_only) {
@@ -1857,11 +1857,11 @@ bool IrToObjConverter<TWriterClass>::shouldImplicitlyDeref(const typename IrToOb
 
 template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::isPointerBaseStorage(int32_t stack_offset, TempVar temp_var) const {
-	// Check stack-offset map first (covers named variables including 'this')
+		// Check stack-offset map first (covers named variables including 'this')
 	if (hasIndirectStackStorage(stack_offset)) {
 		return true;
 	}
-	// Check TempVar metadata if provided
+		// Check TempVar metadata if provided
 	if (temp_var.var_number != 0) {
 		if (isTempVarReference(temp_var) || isTempVarAddressOnly(temp_var)) {
 			return true;
@@ -1914,7 +1914,7 @@ std::optional<typename IrToObjConverter<TWriterClass>::IndirectStorageInfo> IrTo
 			return current_function_it->second;
 		}
 
-	// Check TempVar metadata next
+			// Check TempVar metadata next
 		if (isTempVarReference(temp_var)) {
 			TypeCategory vt = getTempVarValueType(temp_var);
 			return IndirectStorageInfo{
@@ -1959,15 +1959,15 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 	};
 	std::vector<VarDecl> local_vars;
 
-	// Clear temp_var_sizes for this function
+		// Clear temp_var_sizes for this function
 	temp_var_sizes_.clear();
 
-	// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
-	// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
-	// destructible locals that require unwind actions even without a local catch.
-	// Plain DestructorCall only describes normal in-function scope cleanup and must
-	// not force the EH-style prologue on its own, otherwise the emitted prologue can
-	// diverge from the writer-side unwind-code selection.
+		// Pre-scan: detect Windows/MSVC C++ EH needs in this function.
+		// Try/catch needs FH3 metadata, and FunctionCleanupLP means the function has
+		// destructible locals that require unwind actions even without a local catch.
+		// Plain DestructorCall only describes normal in-function scope cleanup and must
+		// not force the EH-style prologue on its own, otherwise the emitted prologue can
+		// diverge from the writer-side unwind-code selection.
 	current_function_has_cpp_eh_ = false;
 	for (const auto& instruction : it->second) {
 		if (instruction.getOpcode() == IrOpcode::TryBegin ||
@@ -1977,28 +1977,28 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-	// Track maximum outgoing call argument space needed
+		// Track maximum outgoing call argument space needed
 	size_t max_outgoing_arg_bytes = 0;
 
 	for (const auto& instruction : it->second) {
-	// Look for TempVar operands in the instruction
+			// Look for TempVar operands in the instruction
 		func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall && instruction.getOpcode() != IrOpcode::ConstructorCall));
 
-	// Pre-reserve the catch funclet return slot on Windows: the funclet needs
-	// a fixed-size slot (16 bytes) above the normal locals so that
-	// ensureCatchFuncletReturnSlot does not have to spill below existing locals.
+			// Pre-reserve the catch funclet return slot on Windows: the funclet needs
+			// a fixed-size slot (16 bytes) above the normal locals so that
+			// ensureCatchFuncletReturnSlot does not have to spill below existing locals.
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (instruction.getOpcode() == IrOpcode::CatchBegin) {
 				current_function_reserved_catch_return_slot_size_ = 16;
 			}
 		}
 
-	// Track outgoing call argument space for function calls AND constructor calls.
-	// Both place overflow arguments at RSP-relative offsets, so we must pre-allocate
-	// enough outgoing arg space for the largest call in this function.
+			// Track outgoing call argument space for function calls AND constructor calls.
+			// Both place overflow arguments at RSP-relative offsets, so we must pre-allocate
+			// enough outgoing arg space for the largest call in this function.
 
-	// Lambda: compute outgoing stack bytes for a set of arguments on Linux SysV AMD64.
-	// int_slots_start: number of integer register slots already consumed (e.g., 1 for 'this').
+			// Lambda: compute outgoing stack bytes for a set of arguments on Linux SysV AMD64.
+			// int_slots_start: number of integer register slots already consumed (e.g., 1 for 'this').
 		auto computeSysVOutgoingBytes = [](const std::vector<TypedValue>& args, size_t int_slots_start) -> size_t {
 			size_t int_slots_used = int_slots_start;
 			size_t float_slots_used = 0;
@@ -2020,7 +2020,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 					if (int_slots_used + slots <= max_int_regs) {
 						int_slots_used += slots;
 					} else if (int_slots_used < max_int_regs) {
-		// Partial overflow: struct needs 2 but only 1 slot left — all goes to stack
+							// Partial overflow: struct needs 2 but only 1 slot left — all goes to stack
 						int_stack_slots += slots;
 						int_slots_used = max_int_regs;
 					} else {
@@ -2033,22 +2033,22 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 		if (instruction.getOpcode() == IrOpcode::FunctionCall && instruction.hasTypedPayload()) {
 			if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-		// For Windows variadic calls: ALL args on stack starting at RSP+0
-		// For Windows normal calls: Args beyond 4 on stack starting at RSP+32 (shadow space)
-		// For Linux: Args beyond 6 on stack starting at RSP+0
+					// For Windows variadic calls: ALL args on stack starting at RSP+0
+					// For Windows normal calls: Args beyond 4 on stack starting at RSP+32 (shadow space)
+					// For Linux: Args beyond 6 on stack starting at RSP+0
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				size_t arg_count = call_op->args.size();
 				size_t outgoing_bytes = 0;
 
 				if (is_coff_format) {
 					if (call_op->is_variadic) {
-		// Windows variadic: ALL args on stack, starting at RSP+0
-		// Need at least 32 bytes shadow space for first 4 register params
-		// Align to 16 bytes for stack alignment requirements
+							// Windows variadic: ALL args on stack, starting at RSP+0
+							// Need at least 32 bytes shadow space for first 4 register params
+							// Align to 16 bytes for stack alignment requirements
 						outgoing_bytes = std::max(arg_count * 8, static_cast<size_t>(32));
 						outgoing_bytes = (outgoing_bytes + 15) & ~static_cast<size_t>(15);
 					} else {
-		// Windows normal: First 4 in registers, rest on stack starting at RSP+32
+							// Windows normal: First 4 in registers, rest on stack starting at RSP+32
 						if (arg_count > 4) {
 							outgoing_bytes = 32 + (arg_count - 4) * 8;
 						} else {
@@ -2056,7 +2056,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						}
 					}
 				} else {
-		// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
+						// Linux SysV AMD64: hidden return param consumes int reg 0 when present.
 					size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
 					outgoing_bytes = computeSysVOutgoingBytes(call_op->args, int_slots_start);
 				}
@@ -2067,8 +2067,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			}
 		}
 
-	// Constructor calls: 'this' always occupies integer register 0, so explicit
-	// arguments start with int_slots_used = 1.
+			// Constructor calls: 'this' always occupies integer register 0, so explicit
+			// arguments start with int_slots_used = 1.
 		if (instruction.getOpcode() == IrOpcode::ConstructorCall && instruction.hasTypedPayload()) {
 			if (const ConstructorCallOp* ctor_op = std::any_cast<ConstructorCallOp>(&instruction.getTypedPayload())) {
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
@@ -2076,7 +2076,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				size_t outgoing_bytes = 0;
 
 				if (is_coff_format) {
-		// Windows: 'this' uses position 0, so effective arg count = args + 1
+						// Windows: 'this' uses position 0, so effective arg count = args + 1
 					size_t total = arg_count + 1;  // +1 for 'this'
 					if (total > 4) {
 						outgoing_bytes = 32 + (total - 4) * 8;
@@ -2084,7 +2084,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						outgoing_bytes = 32;	 // Shadow space
 					}
 				} else {
-		// Linux SysV: 'this' consumes 1 int register slot
+						// Linux SysV: 'this' consumes 1 int register slot
 					outgoing_bytes = computeSysVOutgoingBytes(ctor_op->arguments, /*int_slots_start=*/1);
 				}
 
@@ -2097,7 +2097,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		if (instruction.getOpcode() == IrOpcode::VariableDecl) {
 			const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
 			auto size_in_bits = op.size_in_bits;
-	// Get variable name (Phase 4: Use helper)
+				// Get variable name (Phase 4: Use helper)
 			std::string_view var_name = op.getVarName();
 			size_t custom_alignment = op.custom_alignment;
 
@@ -2113,13 +2113,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			}
 
 			func_stack_space.named_vars_size += (total_size_bits / 8);
-	// Phase 5: Store StringHandle directly for efficient variable tracking
+				// Phase 5: Store StringHandle directly for efficient variable tracking
 			local_vars.push_back(VarDecl{.var_name = StringTable::getOrInternStringHandle(var_name), .size_in_bits = SizeInBits{total_size_bits}, .alignment = custom_alignment, .is_array = is_array});
 		} else {
-	// Track TempVars and their sizes from typed payloads or legacy operand format
+				// Track TempVars and their sizes from typed payloads or legacy operand format
 			bool handled_by_typed_payload = false;
 
-	// For typed payload instructions, try common payload types
+				// For typed payload instructions, try common payload types
 			if (instruction.hasTypedPayload()) {
 				try {
 					if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -2160,13 +2160,13 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						}
 					}
 
-		// Try BinaryOp (arithmetic, comparisons, logic)
+						// Try BinaryOp (arithmetic, comparisons, logic)
 					if (const BinaryOp* bin_op = std::any_cast<BinaryOp>(&instruction.getTypedPayload())) {
 						if (std::holds_alternative<TempVar>(bin_op->result)) {
 							auto temp_var = std::get<TempVar>(bin_op->result);
-		// Phase 5: Convert temp var name to StringHandle
-		// For comparison operations, result is always bool (8 bits)
-		// For arithmetic/logical operations, result size matches operand size
+								// Phase 5: Convert temp var name to StringHandle
+								// For comparison operations, result is always bool (8 bits)
+								// For arithmetic/logical operations, result size matches operand size
 							auto opcode = instruction.getOpcode();
 							bool is_comparison = (opcode == IrOpcode::Equal || opcode == IrOpcode::NotEqual ||
 												  opcode == IrOpcode::LessThan || opcode == IrOpcode::LessEqual ||
@@ -2181,63 +2181,63 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-		// Try UnaryOp (logical not, bitwise not, negate)
+						// Try UnaryOp (logical not, bitwise not, negate)
 					else if (const UnaryOp* unary_op = std::any_cast<UnaryOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
-		// For logical not, result is always bool (8 bits)
-		// For bitwise not and negate, result size matches operand size
+							// Phase 5: Convert temp var name to StringHandle
+							// For logical not, result is always bool (8 bits)
+							// For bitwise not and negate, result size matches operand size
 						temp_var_sizes_[StringTable::getOrInternStringHandle(unary_op->result.name())] = unary_op->value.size_in_bits.value;
 						handled_by_typed_payload = true;
 					}
-		// Try CallOp (function calls)
+						// Try CallOp (function calls)
 					else if (const CallOp* call_op = std::any_cast<CallOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
+							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits.value;
 						handled_by_typed_payload = true;
 					}
-		// Try ArrayAccessOp (array element load)
+						// Try ArrayAccessOp (array element load)
 					else if (const ArrayAccessOp* array_op = std::any_cast<ArrayAccessOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
+							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(array_op->result.name())] = array_op->element_size_in_bits;
 						handled_by_typed_payload = true;
 					}
-		// Try ArrayElementAddressOp (get address of array element)
+						// Try ArrayElementAddressOp (get address of array element)
 					else if (const ArrayElementAddressOp* addr_op = std::any_cast<ArrayElementAddressOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
+							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
-		// Try DereferenceOp (for dereferencing pointers/references)
+						// Try DereferenceOp (for dereferencing pointers/references)
 					else if (const DereferenceOp* deref_op = std::any_cast<DereferenceOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
-		// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
+							// Phase 5: Convert temp var name to StringHandle
+							// Determine size based on pointer depth: if depth > 1, result is a pointer (64 bits)
 						int result_size = (deref_op->pointer.pointer_depth.value > 1) ? 64 : deref_op->pointer.size_in_bits.value;
 						temp_var_sizes_[StringTable::getOrInternStringHandle(deref_op->result.name())] = result_size;
 						handled_by_typed_payload = true;
 					}
-		// Try AssignmentOp (for materializing literals to temporaries)
+						// Try AssignmentOp (for materializing literals to temporaries)
 					else if (const AssignmentOp* assign_op = std::any_cast<AssignmentOp>(&instruction.getTypedPayload())) {
-		// Track the LHS TempVar if it's a TempVar
+							// Track the LHS TempVar if it's a TempVar
 						if (const auto* temp_var_ptr = std::get_if<TempVar>(&assign_op->lhs.value)) {
 							auto temp_var = *temp_var_ptr;
-		// Phase 5: Convert temp var name to StringHandle
+								// Phase 5: Convert temp var name to StringHandle
 							temp_var_sizes_[StringTable::getOrInternStringHandle(temp_var.name())] = assign_op->lhs.size_in_bits.value;
 							handled_by_typed_payload = true;
 						}
 					}
-		// Try AddressOfOp (for taking address of temporaries)
+						// Try AddressOfOp (for taking address of temporaries)
 					else if (const AddressOfOp* addr_of_op = std::any_cast<AddressOfOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
+							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_of_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
-		// Try AddressOfMemberOp (for taking address of struct members)
+						// Try AddressOfMemberOp (for taking address of struct members)
 					else if (const AddressOfMemberOp* addr_member_op = std::any_cast<AddressOfMemberOp>(&instruction.getTypedPayload())) {
-		// Phase 5: Convert temp var name to StringHandle
+							// Phase 5: Convert temp var name to StringHandle
 						temp_var_sizes_[StringTable::getOrInternStringHandle(addr_member_op->result.name())] = 64; // Pointer is always 64-bit
 						handled_by_typed_payload = true;
 					}
-		// Try GlobalLoadOp (for loading global variables)
+						// Try GlobalLoadOp (for loading global variables)
 					else if (const GlobalLoadOp* global_load_op = std::any_cast<GlobalLoadOp>(&instruction.getTypedPayload())) {
 						if (const auto* temp_var_ptr = std::get_if<TempVar>(&global_load_op->result.value)) {
 							auto temp_var = *temp_var_ptr;
@@ -2245,10 +2245,10 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-		// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
-		// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
-		// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
-		// incomplete/void members; treat those as 64-bit pointers as well.
+						// Try MemberLoadOp (member access — e.g. %2 = member_access bool8 %obj.flag)
+						// Large struct members (>64 bits) are stored as pointer addresses (64-bit) by
+						// handleMemberAccess, so clamp to 64 in that case.  Zero size can arise from
+						// incomplete/void members; treat those as 64-bit pointers as well.
 					else if (const MemberLoadOp* member_load_op = std::any_cast<MemberLoadOp>(&instruction.getTypedPayload())) {
 						if (std::holds_alternative<TempVar>(member_load_op->result.value)) {
 							auto temp_var = std::get<TempVar>(member_load_op->result.value);
@@ -2258,7 +2258,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 							handled_by_typed_payload = true;
 						}
 					}
-		// Add more payload types here as they produce TempVars
+						// Add more payload types here as they produce TempVars
 				} catch (const std::exception& e) {
 					FLASH_LOG(Codegen, Warning, "[calculateFunctionStackSpace]: Exception while processing typed payload for opcode ",
 							  static_cast<int>(instruction.getOpcode()), ": ", e.what());
@@ -2268,9 +2268,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				}
 			}
 
-	// Fallback: Track TempVars from legacy operand format
-	// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
-	// where operand 0 is result, operand 1 is type, operand 2 is size
+				// Fallback: Track TempVars from legacy operand format
+				// Most arithmetic/logic instructions have format: [result_var, type, size, ...]
+				// where operand 0 is result, operand 1 is type, operand 2 is size
 			if (!handled_by_typed_payload &&
 				instruction.getOperandCount() >= 3 &&
 				instruction.isOperandType<TempVar>(0) &&
@@ -2282,35 +2282,35 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-	// TempVars are now allocated dynamically via formula, not pre-allocated
+		// TempVars are now allocated dynamically via formula, not pre-allocated
 
-	// Start stack allocation AFTER parameter home space
-	// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
-	// Additional parameters are passed on the stack at positive RBP offsets
-	// Local variables start AFTER the parameter home space
+		// Start stack allocation AFTER parameter home space
+		// Windows x64 ABI: first 4 parameters get home space at [rbp-8], [rbp-16], [rbp-24], [rbp-32]
+		// Additional parameters are passed on the stack at positive RBP offsets
+		// Local variables start AFTER the parameter home space
 	int param_home_space = std::max(static_cast<int>(param_count), 4) * 8;  // At least 32 bytes for register parameters
-	// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
-	// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
+		// For C++ EH functions, reserve [rbp-8] for the FH3 unwind help state variable.
+		// Shift parameter home space down by 8 bytes so it starts at [rbp-16].
 	int eh_state_reserve = (current_function_has_cpp_eh_ && !std::is_same_v<TWriterClass, ElfFileWriter>) ? 8 : 0;
 	int_fast32_t stack_offset = -(param_home_space + eh_state_reserve);
 
 	for (const VarDecl& local_var : local_vars) {
-	// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
+			// Apply alignment if specified, otherwise use natural alignment (8 bytes for x64)
 		size_t var_alignment = local_var.alignment > 0 ? local_var.alignment : 8;
 
-	// Align the stack offset down to the required alignment
-	// Stack grows downward, so we need to align down (toward more negative values)
+			// Align the stack offset down to the required alignment
+			// Stack grows downward, so we need to align down (toward more negative values)
 		int_fast32_t aligned_offset = stack_offset;
 		if (var_alignment > 1) {
-	// Round down to nearest multiple of alignment
-	// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
+				// Round down to nearest multiple of alignment
+				// For negative offsets: (-16 & ~15) = -16, (-15 & ~15) = -16, (-17 & ~15) = -32
 			aligned_offset = (stack_offset - static_cast<int_fast32_t>(var_alignment) + 1) & ~(static_cast<int_fast32_t>(var_alignment) - 1);
 		}
 
-	// Allocate space for the variable
+			// Allocate space for the variable
 		stack_offset = aligned_offset - (local_var.size_in_bits.value / 8);
 
-	// Store both offset and size in unified structure, including is_array flag
+			// Store both offset and size in unified structure, including is_array flag
 		var_scope.variables.insert_or_assign(local_var.var_name, VariableInfo{static_cast<int>(stack_offset), local_var.size_in_bits, local_var.is_array});
 	}
 
@@ -2326,9 +2326,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		}
 	}
 
-	// Calculate space needed for TempVars
-	// Each TempVar uses 8 bytes (64-bit alignment)
-	// Calculate space for temp vars using actual sizes, not just count * 8
+		// Calculate space needed for TempVars
+		// Each TempVar uses 8 bytes (64-bit alignment)
+		// Calculate space for temp vars using actual sizes, not just count * 8
 	int temp_var_space = 0;
 	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
 		int size_in_bytes = (size_bits + 7) / 8;
@@ -2336,25 +2336,25 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 		temp_var_space += size_in_bytes;
 	}
 
-	// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
+		// Don't subtract from stack_offset - TempVars are allocated separately via getStackOffsetFromTempVar
 
-	// Store TempVar sizes for later use during code generation
-	// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
-	// Use INT_MIN as a sentinel value to indicate "not yet allocated"
+		// Store TempVar sizes for later use during code generation
+		// TempVars will have their offsets set when actually allocated via getStackOffsetFromTempVar
+		// Use INT_MIN as a sentinel value to indicate "not yet allocated"
 	for (const auto& [temp_var_name, size_bits] : temp_var_sizes_) {
-	// Initialize with sentinel offset (INT_MIN), actual offset set later
+			// Initialize with sentinel offset (INT_MIN), actual offset set later
 		var_scope.variables.insert_or_assign(temp_var_name, VariableInfo{INT_MIN, SizeInBits{size_bits}});
 	}
 
-	// Calculate total stack space needed
+		// Calculate total stack space needed
 	func_stack_space.temp_vars_size = temp_var_space;  // TempVar space (added to total separately)
 	func_stack_space.named_vars_size = -stack_offset;  // Just named variables space
 	func_stack_space.outgoing_args_space = static_cast<uint16_t>(max_outgoing_arg_bytes);  // Outgoing call argument space
 
-	// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
-	//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
-	//return 0;
-	//}
+		// if we are a leaf function (don't call other functions), we can get by with just register if we don't have more than 8 * 64 bytes of values to store
+		//if (shadow_stack_space == 0 && max_temp_var_index <= 8) {
+			//return 0;
+		//}
 
 	return func_stack_space;
 }
@@ -2374,7 +2374,7 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 		actual_size_in_bits = size_it->second;  // Use pre-calculated size if larger
 	}
 
-	// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
+		// Check if this TempVar was pre-allocated (named variables or previously computed TempVars)
 	if (!variable_scopes.empty()) {
 		auto* current_scope = &variable_scopes.back();
 		for (auto scope_it = variable_scopes.rbegin(); scope_it != variable_scopes.rend(); ++scope_it) {
@@ -2386,9 +2386,9 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 			int existing_offset = existing_it->second.offset;
 			current_scope->variables[lookup_handle].offset = existing_offset;
 
-	// Check if we need to extend the allocation for a larger size
-	// This can happen when a TempVar is first allocated with default size,
-	// then later used for a large struct (e.g., constructor call result)
+				// Check if we need to extend the allocation for a larger size
+				// This can happen when a TempVar is first allocated with default size,
+				// then later used for a large struct (e.g., constructor call result)
 			int size_in_bytes = (actual_size_in_bits + 7) / 8;
 			size_in_bytes = (size_in_bytes + 7) & ~7;  // 8-byte alignment
 
@@ -2406,46 +2406,46 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 			return existing_offset;	// Use pre-allocated offset (if it's been properly set)
 		}
 
-	// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
-	// allocated named variable (tracked in handleVariableDecl)
-	// This handles the duplicate entry problem where named variables get both a name entry
-	// and a TempVar entry
+			// CRITICAL FIX: If TempVar entry has INT_MIN, check if it corresponds to the most recently
+			// allocated named variable (tracked in handleVariableDecl)
+			// This handles the duplicate entry problem where named variables get both a name entry
+			// and a TempVar entry
 		auto it = current_scope->variables.find(lookup_handle);
 		if (it != current_scope->variables.end() && it->second.offset == INT_MIN) {
 			if (last_allocated_variable_name_.isValid() && last_allocated_variable_offset_ != 0) {
-		// Use the last allocated variable's offset for this TempVar
-		// Update the TempVar entry so future lookups are O(1)
+					// Use the last allocated variable's offset for this TempVar
+					// Update the TempVar entry so future lookups are O(1)
 				it->second.offset = last_allocated_variable_offset_;
 				return last_allocated_variable_offset_;
 			}
 		}
 	}
-	// Allocate TempVars sequentially after named_vars + shadow space
-	// Use next_temp_var_offset_ to track the next available slot
-	// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
-	// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
-	// This ensures large struct returns are allocated with correct size from the start
+		// Allocate TempVars sequentially after named_vars + shadow space
+		// Use next_temp_var_offset_ to track the next available slot
+		// Each TempVar gets size_in_bits bytes (rounded up to 8-byte alignment)
+		// Check temp_var_sizes_ for pre-calculated size (from calculateFunctionStackSpace)
+		// This ensures large struct returns are allocated with correct size from the start
 	StringHandle temp_var_handle = lookup_handle;
 
 	int size_in_bytes = (actual_size_in_bits + 7) / 8;  // Round up to nearest byte
 	size_in_bytes = (size_in_bytes + 7) & ~7;	  // Round up to 8-byte alignment
 
-	// Advance next_temp_var_offset_ FIRST to reserve space for this allocation
-	// This ensures large structs don't overlap with previously allocated variables
-	// The offset points to the BASE of the struct (lowest address), and the struct
-	// extends UPWARD in memory by size_in_bytes
+		// Advance next_temp_var_offset_ FIRST to reserve space for this allocation
+		// This ensures large structs don't overlap with previously allocated variables
+		// The offset points to the BASE of the struct (lowest address), and the struct
+		// extends UPWARD in memory by size_in_bytes
 	next_temp_var_offset_ += size_in_bytes;
 	int32_t offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 
-	// Track the maximum TempVar index for stack size calculation
+		// Track the maximum TempVar index for stack size calculation
 	if (tempVar.var_number > max_temp_var_index_) {
 		max_temp_var_index_ = tempVar.var_number;
 	}
 
-	// Extend scope_stack_space if the computed offset exceeds current allocation
-	// This ensures assertions checking scope_stack_space <= offset remain valid
-	// NOTE: offset is the LOWEST address of the allocation (next_temp_var_offset_ was
-	// already incremented above), so it is itself the end_offset we must track.
+		// Extend scope_stack_space if the computed offset exceeds current allocation
+		// This ensures assertions checking scope_stack_space <= offset remain valid
+		// NOTE: offset is the LOWEST address of the allocation (next_temp_var_offset_ was
+		// already incremented above), so it is itself the end_offset we must track.
 	int32_t end_offset = offset;
 	if (end_offset < variable_scopes.back().scope_stack_space) {
 		FLASH_LOG_FORMAT(Codegen, Debug,
@@ -2454,9 +2454,9 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 		variable_scopes.back().scope_stack_space = end_offset;
 	}
 
-	// Register the TempVar's offset in variables map so subsequent lookups
-	// return the same offset even if scope_stack_space changes
-	// Note: temp_var_handle was already created above for the size lookup
+		// Register the TempVar's offset in variables map so subsequent lookups
+		// return the same offset even if scope_stack_space changes
+		// Note: temp_var_handle was already created above for the size lookup
 	variable_scopes.back().variables[temp_var_handle].offset = offset;
 
 	return offset;
@@ -2465,20 +2465,20 @@ int32_t IrToObjConverter<TWriterClass>::getStackOffsetFromTempVar(TempVar tempVa
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::flushAllDirtyRegisters() {
 	regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int size_in_bits) {
-	// Always flush dirty registers to stack, regardless of offset alignment.
-	// This fixes the register flush bug where non-8-byte-aligned offsets
-	// (from structured bindings) would cause getTempVarFromOffset to return
-	// nullopt, preventing the register from being flushed.
+				// Always flush dirty registers to stack, regardless of offset alignment.
+				// This fixes the register flush bug where non-8-byte-aligned offsets
+				// (from structured bindings) would cause getTempVarFromOffset to return
+				// nullopt, preventing the register from being flushed.
 
-	// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
-	// However, during code generation, constructors may create additional TempVars beyond pre-calculated space.
-	// Extend scope_stack_space dynamically if needed.
+				// Note: stackVariableOffset should be within allocated space (scope_stack_space <= stackVariableOffset <= 0)
+				// However, during code generation, constructors may create additional TempVars beyond pre-calculated space.
+				// Extend scope_stack_space dynamically if needed.
 		if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
 			variable_scopes.back().scope_stack_space = stackVariableOffset;
 		}
 		assert(variable_scopes.back().scope_stack_space <= stackVariableOffset && stackVariableOffset <= 0);
 
-	// Store the computed result from register to stack using size-appropriate MOV
+				// Store the computed result from register to stack using size-appropriate MOV
 		emitMovToFrameSized(
 			SizedRegister{reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{stackVariableOffset, size_in_bits, false}	 // dest: sized stack slot
@@ -2496,20 +2496,20 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, SizedStackSlot dest) {
 	OpCodeWithSize opcodes;
 
-	// Check if source is an XMM register (enum values >= 16)
+		// Check if source is an XMM register (enum values >= 16)
 	bool is_xmm_source = static_cast<uint8_t>(source.reg) >= 16;
 
-	// Use the destination size to determine the store instruction
+		// Use the destination size to determine the store instruction
 	if (dest.size_in_bits == SizeInBits{64}) {
 		if (is_xmm_source) {
-	// For XMM registers, use MOVSD (double) instruction
+				// For XMM registers, use MOVSD (double) instruction
 			opcodes = generateFloatMovToFrame(source.reg, dest.offset, false);
 		} else {
 			opcodes = generatePtrMovToFrame(source.reg, dest.offset);
 		}
 	} else if (dest.size_in_bits == SizeInBits{32}) {
 		if (is_xmm_source) {
-	// For XMM registers, use MOVSS (float) instruction
+				// For XMM registers, use MOVSS (float) instruction
 			opcodes = generateFloatMovToFrame(source.reg, dest.offset, true);
 		} else {
 			opcodes = generateMovToFrame32(source.reg, dest.offset);
@@ -2519,10 +2519,10 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 	} else if (dest.size_in_bits == SizeInBits{8}) {
 		opcodes = generateMovToFrame8(source.reg, dest.offset);
 	} else {
-	// Non-standard size (e.g. 24-bit 3-byte struct returned in a register).
-	// All temp-vars are 8-byte aligned on the stack, so rounding the write up
-	// to the next power-of-2 size is safe and ensures all bytes are present
-	// before the struct-copy code reads them back in chunks.
+			// Non-standard size (e.g. 24-bit 3-byte struct returned in a register).
+			// All temp-vars are 8-byte aligned on the stack, so rounding the write up
+			// to the next power-of-2 size is safe and ensures all bytes are present
+			// before the struct-copy code reads them back in chunks.
 		if (dest.size_in_bits.value <= 8) {
 			opcodes = generateMovToFrame8(source.reg, dest.offset);
 		} else if (dest.size_in_bits.value <= 16) {
@@ -2534,7 +2534,7 @@ void IrToObjConverter<TWriterClass>::emitMovToFrameSized(SizedRegister source, S
 		}
 	}
 
-	// Insert opcodes into text section
+		// Insert opcodes into text section
 	if (opcodes.size_in_bytes > 0 && opcodes.size_in_bytes <= MAX_MOV_INSTRUCTION_SIZE) {
 		textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 	}
@@ -2560,7 +2560,7 @@ void IrToObjConverter<TWriterClass>::emitPtrMovFromFrame(X64Register destination
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitCmpFrameImm32(int32_t frame_offset, int32_t imm_value) {
-	// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
+		// CMP dword [rbp+disp32], imm32: 81 BD <disp32> <imm32>
 	textSectionData.push_back(0x81);
 	textSectionData.push_back(0xBD);	 // ModR/M: mod=10, reg=7(/7=CMP), rm=5(rbp)
 	auto disp = std::bit_cast<std::array<uint8_t, 4>>(frame_offset);
@@ -2585,9 +2585,9 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovFromFrameSized(SizedRegister dest, SizedStackSlot source) {
 	OpCodeWithSize opcodes;
 
-	// Currently, x64 registers always load to 64-bit (using sign/zero extension)
-	// The dest.size_in_bits indicates what portion of the register is meaningful
-	// but the actual load always goes to the full 64-bit register
+		// Currently, x64 registers always load to 64-bit (using sign/zero extension)
+		// The dest.size_in_bits indicates what portion of the register is meaningful
+		// but the actual load always goes to the full 64-bit register
 
 	if (source.size_in_bits == SizeInBits{64}) {
 		opcodes = generatePtrMovFromFrame(dest.reg, source.offset);
@@ -2622,16 +2622,16 @@ void IrToObjConverter<TWriterClass>::emitLeaFromFrame(X64Register destinationReg
 
 template <class TWriterClass>
 uint32_t IrToObjConverter<TWriterClass>::emitLeaRipRelative(X64Register destinationRegister) {
-	// LEA reg, [RIP + disp32]
+		// LEA reg, [RIP + disp32]
 	uint8_t dest_enc = static_cast<uint8_t>(destinationRegister);
 	textSectionData.push_back(0x48 | (((dest_enc >> 3) & 0x01) << 2)); // REX.W | REX.R branchless
 	textSectionData.push_back(0x8D); // LEA opcode
 
-	// ModR/M byte: mod=00 (indirect), reg=destination, r/m=101 ([RIP+disp32])
+		// ModR/M byte: mod=00 (indirect), reg=destination, r/m=101 ([RIP+disp32])
 	uint8_t dest_bits = dest_enc & 0x07;
 	textSectionData.push_back(0x05 | (dest_bits << 3)); // ModR/M: [RIP + disp32]
 
-	// Add placeholder for the displacement (will be filled by relocation)
+		// Add placeholder for the displacement (will be filled by relocation)
 	uint32_t relocation_offset = static_cast<uint32_t>(textSectionData.size());
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
@@ -2645,7 +2645,7 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToFrame(X64Register sourceRegister, int32_t offset, int size_in_bits) {
 	auto opcodes = generateMovToFrameBySize(sourceRegister, offset, size_in_bits);
 
-	// Only build debug string and log if Codegen is set to Debug or higher
+		// Only build debug string and log if Codegen is set to Debug or higher
 	if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
 		std::string bytes_str;
 		for (size_t i = 0; i < opcodes.size_in_bytes; i++) {
@@ -2661,9 +2661,9 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovqXmmToGpr(X64Register xmm_src, X64Register gpr_dest) {
 	uint8_t xmm_val = static_cast<uint8_t>(xmm_src);
 	uint8_t gpr_val = static_cast<uint8_t>(gpr_dest);
-	// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
+		// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
 	uint8_t xmm_idx = (xmm_val >= 16) ? (xmm_val - 16) : xmm_val;
-	// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
+		// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
 	uint8_t rex = 0x48 | ((xmm_idx >> 3) << 2) | (gpr_val >> 3);
 	uint8_t xmm_bits = xmm_idx & 0x07;
 	uint8_t gpr_bits = gpr_val & 0x07;
@@ -2671,7 +2671,7 @@ void IrToObjConverter<TWriterClass>::emitMovqXmmToGpr(X64Register xmm_src, X64Re
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x7E);
-	// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
+		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
 	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
 }
 
@@ -2679,9 +2679,9 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovqGprToXmm(X64Register gpr_src, X64Register xmm_dest) {
 	uint8_t gpr_val = static_cast<uint8_t>(gpr_src);
 	uint8_t xmm_val = static_cast<uint8_t>(xmm_dest);
-	// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
+		// XMM registers are encoded as 16+ in our enum, so subtract 16 to get 0-15 range
 	uint8_t xmm_idx = (xmm_val >= 16) ? (xmm_val - 16) : xmm_val;
-	// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
+		// Branchless REX: REX.W=1, REX.R from XMM high bit, REX.B from GPR high bit
 	uint8_t rex = 0x48 | ((xmm_idx >> 3) << 2) | (gpr_val >> 3);
 	uint8_t xmm_bits = xmm_idx & 0x07;
 	uint8_t gpr_bits = gpr_val & 0x07;
@@ -2689,7 +2689,7 @@ void IrToObjConverter<TWriterClass>::emitMovqGprToXmm(X64Register gpr_src, X64Re
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x6E);
-	// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
+		// ModR/M: mod=11 (register), reg=xmm, r/m=gpr
 	textSectionData.push_back(0xC0 | (xmm_bits << 3) | gpr_bits);
 }
 
@@ -2718,14 +2718,14 @@ void IrToObjConverter<TWriterClass>::emitFloatMovToFrame(X64Register sourceRegis
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFloatMovFromMemory(X64Register xmm_dest, X64Register base_reg, int32_t offset, bool is_float) {
-	// Assert that xmm_dest is an XMM register
+		// Assert that xmm_dest is an XMM register
 	assert(static_cast<uint8_t>(xmm_dest) >= 16 && static_cast<uint8_t>(xmm_dest) < 32 &&
 		   "emitFloatMovFromMemory requires XMM destination register (XMM0-XMM15)");
-	// Assert that base_reg is NOT an XMM register
+		// Assert that base_reg is NOT an XMM register
 	assert(static_cast<uint8_t>(base_reg) < 16 &&
 		   "emitFloatMovFromMemory requires non-XMM base register");
 
-	// Generate the float mov instruction from memory
+		// Generate the float mov instruction from memory
 	auto opcodes = generateFloatMovFromMemory(xmm_dest, base_reg, offset, is_float);
 	textSectionData.insert(textSectionData.end(), opcodes.op_codes.begin(), opcodes.op_codes.begin() + opcodes.size_in_bytes);
 }
@@ -2735,7 +2735,7 @@ void IrToObjConverter<TWriterClass>::emitFloatMovRegToReg(X64Register xmm_dest, 
 	uint8_t src_xmm_num = static_cast<uint8_t>(xmm_src) - static_cast<uint8_t>(X64Register::XMM0);
 	uint8_t dst_xmm_num = static_cast<uint8_t>(xmm_dest) - static_cast<uint8_t>(X64Register::XMM0);
 	textSectionData.push_back(is_double ? 0xF2 : 0xF3);
-	// REX prefix needed when either register is XMM8-XMM15
+		// REX prefix needed when either register is XMM8-XMM15
 	if (dst_xmm_num >= 8 || src_xmm_num >= 8) {
 		uint8_t rex = 0x40;
 		if (dst_xmm_num >= 8)
@@ -2751,12 +2751,12 @@ void IrToObjConverter<TWriterClass>::emitFloatMovRegToReg(X64Register xmm_dest, 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovdquToFrame(X64Register xmm_src, int32_t offset) {
-	// Assert that xmm_src is actually an XMM register (16-31 for XMM0-XMM15)
+		// Assert that xmm_src is actually an XMM register (16-31 for XMM0-XMM15)
 	assert(static_cast<uint8_t>(xmm_src) >= 16 && static_cast<uint8_t>(xmm_src) < 32 &&
 		   "emitMovdquToFrame requires XMM register (XMM0-XMM15)");
 	uint8_t xmm_idx = xmm_modrm_bits(xmm_src);
 
-	// MOVDQU [RBP + offset], xmm: F3 0F 7F /r
+		// MOVDQU [RBP + offset], xmm: F3 0F 7F /r
 	textSectionData.push_back(0xF3);	 // movdqu prefix
 	if (xmm_idx >= 8) {
 		textSectionData.push_back(0x44);	 // REX.R for XMM8-15
@@ -2764,7 +2764,7 @@ void IrToObjConverter<TWriterClass>::emitMovdquToFrame(X64Register xmm_src, int3
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x7F);	 // movdqu [mem], xmm
 
-	// Encode [RBP + offset]
+		// Encode [RBP + offset]
 	if (offset >= -128 && offset <= 127) {
 		uint8_t modrm = 0x45 | ((xmm_idx & 0x07) << 3);	// Mod=01, Reg=XMM, R/M=101 (RBP)
 		textSectionData.push_back(modrm);
@@ -2781,23 +2781,23 @@ void IrToObjConverter<TWriterClass>::emitMovdquToFrame(X64Register xmm_src, int3
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovDwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
-	// Assert that base_reg is NOT an XMM register
+		// Assert that base_reg is NOT an XMM register
 	assert(static_cast<uint8_t>(base_reg) < 16 &&
 		   "emitMovDwordPtrImmToRegOffset requires non-XMM base register");
-	// MOV r/m32, imm32: C7 /0
+		// MOV r/m32, imm32: C7 /0
 	textSectionData.push_back(0xC7);
 
-	// ModR/M and offset encoding
+		// ModR/M and offset encoding
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
-	// Mod=00, no displacement
+			// Mod=00, no displacement
 		textSectionData.push_back(0x00 | base_bits);
 	} else if (offset >= -128 && offset <= 127) {
-	// Mod=01, 8-bit displacement
+			// Mod=01, 8-bit displacement
 		textSectionData.push_back(0x40 | base_bits);
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
-	// Mod=10, 32-bit displacement
+			// Mod=10, 32-bit displacement
 		textSectionData.push_back(0x80 | base_bits);
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -2805,7 +2805,7 @@ void IrToObjConverter<TWriterClass>::emitMovDwordPtrImmToRegOffset(X64Register b
 		textSectionData.push_back((offset >> 24) & 0xFF);
 	}
 
-	// Immediate value (32-bit little-endian)
+		// Immediate value (32-bit little-endian)
 	textSectionData.push_back((imm32 >> 0) & 0xFF);
 	textSectionData.push_back((imm32 >> 8) & 0xFF);
 	textSectionData.push_back((imm32 >> 16) & 0xFF);
@@ -2814,26 +2814,26 @@ void IrToObjConverter<TWriterClass>::emitMovDwordPtrImmToRegOffset(X64Register b
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovQwordPtrImmToRegOffset(X64Register base_reg, int32_t offset, uint32_t imm32) {
-	// Assert that base_reg is NOT an XMM register
+		// Assert that base_reg is NOT an XMM register
 	assert(static_cast<uint8_t>(base_reg) < 16 &&
 		   "emitMovQwordPtrImmToRegOffset requires non-XMM base register");
-	// REX.W prefix for 64-bit operation
+		// REX.W prefix for 64-bit operation
 	textSectionData.push_back(0x48);
 
-	// MOV r/m64, imm32: C7 /0 (imm32 is sign-extended to 64-bit)
+		// MOV r/m64, imm32: C7 /0 (imm32 is sign-extended to 64-bit)
 	textSectionData.push_back(0xC7);
 
-	// ModR/M and offset encoding
+		// ModR/M and offset encoding
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
-	// Mod=00, no displacement
+			// Mod=00, no displacement
 		textSectionData.push_back(0x00 | base_bits);
 	} else if (offset >= -128 && offset <= 127) {
-	// Mod=01, 8-bit displacement
+			// Mod=01, 8-bit displacement
 		textSectionData.push_back(0x40 | base_bits);
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
-	// Mod=10, 32-bit displacement
+			// Mod=10, 32-bit displacement
 		textSectionData.push_back(0x80 | base_bits);
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -2841,7 +2841,7 @@ void IrToObjConverter<TWriterClass>::emitMovQwordPtrImmToRegOffset(X64Register b
 		textSectionData.push_back((offset >> 24) & 0xFF);
 	}
 
-	// Immediate value (32-bit little-endian, will be sign-extended)
+		// Immediate value (32-bit little-endian, will be sign-extended)
 	textSectionData.push_back((imm32 >> 0) & 0xFF);
 	textSectionData.push_back((imm32 >> 8) & 0xFF);
 	textSectionData.push_back((imm32 >> 16) & 0xFF);
@@ -2850,13 +2850,13 @@ void IrToObjConverter<TWriterClass>::emitMovQwordPtrImmToRegOffset(X64Register b
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovQwordPtrRegToRegOffset(X64Register base_reg, int32_t offset, X64Register src_reg) {
-	// Assert that base_reg is NOT an XMM register
+		// Assert that base_reg is NOT an XMM register
 	assert(static_cast<uint8_t>(base_reg) < 16 &&
 		   "emitMovQwordPtrRegToRegOffset requires non-XMM base register");
-	// Assert that src_reg is NOT an XMM register
+		// Assert that src_reg is NOT an XMM register
 	assert(static_cast<uint8_t>(src_reg) < 16 &&
 		   "emitMovQwordPtrRegToRegOffset requires non-XMM source register");
-	// REX.W prefix for 64-bit operation
+		// REX.W prefix for 64-bit operation
 	uint8_t rex = 0x48;
 	if (static_cast<uint8_t>(src_reg) >= 8)
 		rex |= 0x04;	 // REX.R if src is R8-R15
@@ -2864,22 +2864,22 @@ void IrToObjConverter<TWriterClass>::emitMovQwordPtrRegToRegOffset(X64Register b
 		rex |= 0x01; // REX.B if base is R8-R15
 	textSectionData.push_back(rex);
 
-	// MOV r/m64, r64: 89 /r
+		// MOV r/m64, r64: 89 /r
 	textSectionData.push_back(0x89);
 
-	// ModR/M encoding
+		// ModR/M encoding
 	uint8_t src_bits = (static_cast<uint8_t>(src_reg) & 0x07) << 3;
 	uint8_t base_bits = static_cast<uint8_t>(base_reg) & 0x07;
 
 	if (offset == 0 && base_reg != X64Register::RBP && base_reg != X64Register::R13) {
-	// Mod=00, no displacement
+			// Mod=00, no displacement
 		textSectionData.push_back(0x00 | src_bits | base_bits);
 	} else if (offset >= -128 && offset <= 127) {
-	// Mod=01, 8-bit displacement
+			// Mod=01, 8-bit displacement
 		textSectionData.push_back(0x40 | src_bits | base_bits);
 		textSectionData.push_back(static_cast<uint8_t>(offset));
 	} else {
-	// Mod=10, 32-bit displacement
+			// Mod=10, 32-bit displacement
 		textSectionData.push_back(0x80 | src_bits | base_bits);
 		textSectionData.push_back((offset >> 0) & 0xFF);
 		textSectionData.push_back((offset >> 8) & 0xFF);
@@ -2890,15 +2890,15 @@ void IrToObjConverter<TWriterClass>::emitMovQwordPtrRegToRegOffset(X64Register b
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovImm32(X64Register destinationRegister, uint32_t immediate_value) {
-	// MOV r32, imm32 (zero-extends to 64-bit in x64 mode)
-	// REX.B prefix needed if destination is R8-R15 (for lower 32-bit access)
+		// MOV r32, imm32 (zero-extends to 64-bit in x64 mode)
+		// REX.B prefix needed if destination is R8-R15 (for lower 32-bit access)
 	uint8_t reg_encoding = static_cast<uint8_t>(destinationRegister);
 	if (reg_encoding >= 8) {
 		textSectionData.push_back(0x41); // REX.B for R8-R15
 	}
-	// MOV r32, imm32 opcode (0xB8 + lower 3 bits of register encoding)
+		// MOV r32, imm32 opcode (0xB8 + lower 3 bits of register encoding)
 	textSectionData.push_back(0xB8 + (reg_encoding & 0x07));
-	// Encode the 32-bit immediate value (little-endian)
+		// Encode the 32-bit immediate value (little-endian)
 	for (int j = 0; j < 4; ++j) {
 		textSectionData.push_back(static_cast<uint8_t>((immediate_value >> (j * 8)) & 0xFF));
 	}
@@ -2906,16 +2906,16 @@ void IrToObjConverter<TWriterClass>::emitMovImm32(X64Register destinationRegiste
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovImm64(X64Register destinationRegister, uint64_t immediate_value) {
-	// REX prefix: REX.W for 64-bit operation, REX.B if destination is R8-R15
+		// REX prefix: REX.W for 64-bit operation, REX.B if destination is R8-R15
 	uint8_t rex_prefix = 0x48; // REX.W
 	uint8_t reg_encoding = static_cast<uint8_t>(destinationRegister);
 	if (reg_encoding >= 8) {
 		rex_prefix |= 0x01; // REX.B for R8-R15
 	}
 	textSectionData.push_back(rex_prefix);
-	// MOV r64, imm64 opcode (0xB8 + lower 3 bits of register encoding)
+		// MOV r64, imm64 opcode (0xB8 + lower 3 bits of register encoding)
 	textSectionData.push_back(0xB8 + (reg_encoding & 0x07));
-	// Encode the 64-bit immediate value (little-endian)
+		// Encode the 64-bit immediate value (little-endian)
 	for (int j = 0; j < 8; ++j) {
 		textSectionData.push_back(static_cast<uint8_t>((immediate_value >> (j * 8)) & 0xFF));
 	}
@@ -2942,13 +2942,13 @@ void IrToObjConverter<TWriterClass>::emitAndImm64(X64Register reg, uint64_t mask
 	uint8_t reg_enc = static_cast<uint8_t>(reg);
 	uint8_t rex = 0x48 | ((reg_enc >> 3) & 0x01); // REX.W + REX.B branchless
 	if (mask <= 0x7F) {
-	// AND r/m64, imm8 (sign-extended)
+			// AND r/m64, imm8 (sign-extended)
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x83);
 		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
 		textSectionData.push_back(static_cast<uint8_t>(mask));
 	} else if (mask <= 0x7FFFFFFF) {
-	// AND r/m64, imm32 (sign-extended)
+			// AND r/m64, imm32 (sign-extended)
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x81);
 		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
@@ -2958,13 +2958,13 @@ void IrToObjConverter<TWriterClass>::emitAndImm64(X64Register reg, uint64_t mask
 		textSectionData.push_back((m >> 16) & 0xFF);
 		textSectionData.push_back((m >> 24) & 0xFF);
 	} else if (mask >= 0xFFFFFFFFFFFFFF80ULL) {
-	// AND r/m64, imm8 (sign-extended negative, e.g. 0xFFFFFFFFFFFFFFF8 -> imm8=0xF8)
+			// AND r/m64, imm8 (sign-extended negative, e.g. 0xFFFFFFFFFFFFFFF8 -> imm8=0xF8)
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x83);
 		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
 		textSectionData.push_back(static_cast<uint8_t>(mask & 0xFF));
 	} else if (mask >= 0xFFFFFFFF80000000ULL) {
-	// AND r/m64, imm32 (sign-extended negative, e.g. 0xFFFFFFFF80000000 -> imm32=0x80000000)
+			// AND r/m64, imm32 (sign-extended negative, e.g. 0xFFFFFFFF80000000 -> imm32=0x80000000)
 		textSectionData.push_back(rex);
 		textSectionData.push_back(0x81);
 		textSectionData.push_back(0xE0 | (reg_enc & 0x07));
@@ -2974,10 +2974,10 @@ void IrToObjConverter<TWriterClass>::emitAndImm64(X64Register reg, uint64_t mask
 		textSectionData.push_back((m >> 16) & 0xFF);
 		textSectionData.push_back((m >> 24) & 0xFF);
 	} else {
-	// Full 64-bit: MOV scratch, imm64; AND reg, scratch
+			// Full 64-bit: MOV scratch, imm64; AND reg, scratch
 		X64Register scratch = (reg == X64Register::RAX) ? X64Register::RCX : X64Register::RAX;
 		uint8_t scratch_enc = static_cast<uint8_t>(scratch);
-	// Save scratch if it might be in use - use a simple push/pop
+			// Save scratch if it might be in use - use a simple push/pop
 		textSectionData.push_back(0x50 + (scratch_enc & 0x07)); // PUSH scratch
 		emitMovImm64(scratch, mask);
 		uint8_t rex2 = 0x48 | (((scratch_enc >> 3) & 0x01) << 2) | ((reg_enc >> 3) & 0x01); // REX.W + REX.R(scratch) + REX.B(reg) branchless
@@ -3033,9 +3033,9 @@ void IrToObjConverter<TWriterClass>::emitCall(const std::string& symbol_name) {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovRegReg(X64Register dest, X64Register src) {
-	// MOV r/m64, r64 (opcode 0x89)
-	// ModR/M: reg = source, r/m = destination
-	// Determine REX prefix based on registers
+		// MOV r/m64, r64 (opcode 0x89)
+		// ModR/M: reg = source, r/m = destination
+		// Determine REX prefix based on registers
 	uint8_t rex = 0x48; // REX.W for 64-bit
 	if (static_cast<uint8_t>(src) >= 8)
 		rex |= 0x04;	 // REX.R extends reg field (source)
@@ -3045,7 +3045,7 @@ void IrToObjConverter<TWriterClass>::emitMovRegReg(X64Register dest, X64Register
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x89); // MOV r/m64, r64
 
-	// ModR/M byte: mod=11 (register), reg=src, r/m=dest
+		// ModR/M byte: mod=11 (register), reg=src, r/m=dest
 	uint8_t modrm = 0xC0;
 	modrm |= ((static_cast<uint8_t>(src) & 0x07) << 3);
 	modrm |= (static_cast<uint8_t>(dest) & 0x07);
@@ -3064,11 +3064,11 @@ void IrToObjConverter<TWriterClass>::emitMovFromMemory(X64Register dest, X64Regi
 	} else if (size_bytes == 1) {
 		opcode_result = generateMovFromMemory8(dest, base, offset);
 	} else {
-	// Default to 8 bytes
+			// Default to 8 bytes
 		opcode_result = generateMovFromMemory(dest, base, offset);
 	}
 
-	// Emit the opcodes
+		// Emit the opcodes
 	for (size_t i = 0; i < opcode_result.size_in_bytes; ++i) {
 		textSectionData.push_back(opcode_result.op_codes[i]);
 	}
@@ -3085,7 +3085,7 @@ void IrToObjConverter<TWriterClass>::emitMovRegFromMemRegDisp8(X64Register dest,
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x8B); // MOV r64, r/m64
 
-	// ModR/M: mod=01 (indirect + disp8), reg=dest, r/m=src_addr
+		// ModR/M: mod=01 (indirect + disp8), reg=dest, r/m=src_addr
 	uint8_t modrm = 0x40;
 	modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
 	modrm |= (static_cast<uint8_t>(src_addr) & 0x07);
@@ -3101,20 +3101,20 @@ void IrToObjConverter<TWriterClass>::emitMovRegFromMemRegSized(X64Register dest,
 	uint8_t mod_field = needs_disp ? 0x01 : 0x00;
 
 	if (size_in_bits == 8) {
-	// MOVZX dest, byte ptr [src_addr]
-	// For 8-bit loads, always zero-extend into 32-bit register (dest will be RAX for simplicity in handleDereference)
+			// MOVZX dest, byte ptr [src_addr]
+			// For 8-bit loads, always zero-extend into 32-bit register (dest will be RAX for simplicity in handleDereference)
 		assert(dest == X64Register::RAX && "8-bit dereference should use RAX as destination");
 
-	// REX prefix if src_addr is R8-R15
+			// REX prefix if src_addr is R8-R15
 		if (static_cast<uint8_t>(src_addr) >= 8) {
 			textSectionData.push_back(0x41); // REX with B bit
 		}
 
-	// MOVZX opcode: 0F B6
+			// MOVZX opcode: 0F B6
 		textSectionData.push_back(0x0F);
 		textSectionData.push_back(0xB6);
 
-	// ModR/M: mod depends on disp, reg=0 (RAX/AL), r/m=src_addr
+			// ModR/M: mod depends on disp, reg=0 (RAX/AL), r/m=src_addr
 		uint8_t modrm = (mod_field << 6) | (0x00 << 3) | src_encoding;
 		textSectionData.push_back(modrm);
 
@@ -3125,10 +3125,10 @@ void IrToObjConverter<TWriterClass>::emitMovRegFromMemRegSized(X64Register dest,
 			textSectionData.push_back(0x00); // disp8 = 0 for RBP/R13
 		}
 	} else if (size_in_bits == 16) {
-	// MOV dest, word ptr [src_addr] - needs 0x66 prefix
+			// MOV dest, word ptr [src_addr] - needs 0x66 prefix
 		textSectionData.push_back(0x66); // Operand size override
 
-	// REX prefix for extended registers
+			// REX prefix for extended registers
 		uint8_t rex = 0x40;
 		if (static_cast<uint8_t>(dest) >= 8)
 			rex |= 0x04;	 // R bit
@@ -3152,14 +3152,14 @@ void IrToObjConverter<TWriterClass>::emitMovRegFromMemRegSized(X64Register dest,
 			textSectionData.push_back(0x00);
 		}
 	} else if (size_in_bits == 32) {
-	// MOV dest, dword ptr [src_addr]
+			// MOV dest, dword ptr [src_addr]
 		uint8_t rex = 0x40;
 		if (static_cast<uint8_t>(dest) >= 8)
 			rex |= 0x04;	 // R bit
 		if (static_cast<uint8_t>(src_addr) >= 8)
 			rex |= 0x01;	 // B bit
 
-	// Only emit REX if we need it for extended registers
+			// Only emit REX if we need it for extended registers
 		if (rex != 0x40) {
 			textSectionData.push_back(rex);
 		}
@@ -3178,7 +3178,7 @@ void IrToObjConverter<TWriterClass>::emitMovRegFromMemRegSized(X64Register dest,
 			textSectionData.push_back(0x00);
 		}
 	} else {
-	// 64-bit (default): MOV dest, qword ptr [src_addr]
+			// 64-bit (default): MOV dest, qword ptr [src_addr]
 		uint8_t rex = 0x48; // REX.W for 64-bit
 		if (static_cast<uint8_t>(dest) >= 8)
 			rex |= 0x04;	 // R bit
@@ -3206,15 +3206,15 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitTestRegReg(X64Register reg) {
 	uint8_t rex = 0x48; // REX.W
 	if (static_cast<uint8_t>(reg) >= static_cast<uint8_t>(X64Register::R8)) {
-	// TEST r/m64, r64 uses both ModR/M reg and r/m fields. For TEST reg,reg
-	// with an extended register (R8-R15), set both REX.R and REX.B.
+			// TEST r/m64, r64 uses both ModR/M reg and r/m fields. For TEST reg,reg
+			// with an extended register (R8-R15), set both REX.R and REX.B.
 		rex |= 0x04; // REX.R
 		rex |= 0x01; // REX.B
 	}
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x85); // TEST r64, r64
 
-	// ModR/M: mod=11, reg=reg, r/m=reg
+		// ModR/M: mod=11, reg=reg, r/m=reg
 	uint8_t modrm = 0xC0;
 	uint8_t reg_val = static_cast<uint8_t>(reg) & 0x07;
 	modrm |= (reg_val << 3) | reg_val;
@@ -3236,13 +3236,13 @@ void IrToObjConverter<TWriterClass>::emitLeaRipRelativeWithRelocation(X64Registe
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x8D); // LEA r64, m
 
-	// ModR/M: mod=00, reg=dest, r/m=101 (RIP-relative)
+		// ModR/M: mod=00, reg=dest, r/m=101 (RIP-relative)
 	uint8_t modrm = 0x05;
 	modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
 	textSectionData.push_back(modrm);
 
-	// LEA uses RIP-relative addressing for data symbols
-	// Use R_X86_64_PC32 (not PLT32) for data references like typeinfo
+		// LEA uses RIP-relative addressing for data symbols
+		// Use R_X86_64_PC32 (not PLT32) for data references like typeinfo
 	size_t relocation_offset = textSectionData.size();
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
@@ -3250,29 +3250,29 @@ void IrToObjConverter<TWriterClass>::emitLeaRipRelativeWithRelocation(X64Registe
 	textSectionData.push_back(0x00);
 
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// For ELF: Use R_X86_64_PC32 for data symbols (typeinfo, vtables, etc.)
-	// PLT32 is only for function calls
+			// For ELF: Use R_X86_64_PC32 for data symbols (typeinfo, vtables, etc.)
+			// PLT32 is only for function calls
 		writer.add_relocation(relocation_offset, std::string(symbol_name), 2 /* R_X86_64_PC32 */);
 	} else {
-	// For COFF: Use default relocation type
+			// For COFF: Use default relocation type
 		writer.add_relocation(relocation_offset, std::string(symbol_name));
 	}
 }
 
 template <class TWriterClass>
 uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelative(X64Register dest, int size_in_bits) {
-	// For 64-bit: MOV RAX, [RIP + disp32] - 48 8B 05 [disp32]
-	// For 32-bit: MOV EAX, [RIP + disp32] - 8B 05 [disp32]
-	// For 16-bit: MOVZX EAX, word [RIP + disp32] - 0F B7 05 [disp32]
-	// For 8-bit:  MOVZX EAX, byte [RIP + disp32] - 0F B6 05 [disp32]
+		// For 64-bit: MOV RAX, [RIP + disp32] - 48 8B 05 [disp32]
+		// For 32-bit: MOV EAX, [RIP + disp32] - 8B 05 [disp32]
+		// For 16-bit: MOVZX EAX, word [RIP + disp32] - 0F B7 05 [disp32]
+		// For 8-bit:  MOVZX EAX, byte [RIP + disp32] - 0F B6 05 [disp32]
 	uint8_t dest_val = static_cast<uint8_t>(dest);
 	uint8_t dest_bits = dest_val & 0x07;
 
-	// Handle small sizes with MOVZX to zero-extend
-	// For extended registers (R8-R15), REX.R (0x44) must precede the 0F Bx opcode
+		// Handle small sizes with MOVZX to zero-extend
+		// For extended registers (R8-R15), REX.R (0x44) must precede the 0F Bx opcode
 	uint8_t needs_rex_r = (dest_val >> 3) & 0x01; // 1 if R8-R15, else 0
 	if (size_in_bits <= 8) {
-	// MOVZX r32, byte ptr [RIP + disp32]: [44] 0F B6 05+reg [disp32]
+			// MOVZX r32, byte ptr [RIP + disp32]: [44] 0F B6 05+reg [disp32]
 		size_t base = textSectionData.size();
 		textSectionData.resize(base + 7 + needs_rex_r);
 		uint8_t* p = textSectionData.data() + base;
@@ -3287,7 +3287,7 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelative(X64Register dest, in
 		p[6] = 0x00;
 		return static_cast<uint32_t>(base + 3 + needs_rex_r);
 	} else if (size_in_bits == 16) {
-	// MOVZX r32, word ptr [RIP + disp32]: [44] 0F B7 05+reg [disp32]
+			// MOVZX r32, word ptr [RIP + disp32]: [44] 0F B7 05+reg [disp32]
 		size_t base = textSectionData.size();
 		textSectionData.resize(base + 7 + needs_rex_r);
 		uint8_t* p = textSectionData.data() + base;
@@ -3303,23 +3303,23 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelative(X64Register dest, in
 		return static_cast<uint32_t>(base + 3 + needs_rex_r);
 	}
 
-	// For 32-bit and 64-bit, use regular MOV
-	// For RIP-relative MOV, destination is in the REG field of ModR/M (R/M=101 is fixed),
-	// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
+		// For 32-bit and 64-bit, use regular MOV
+		// For RIP-relative MOV, destination is in the REG field of ModR/M (R/M=101 is fixed),
+		// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
 	uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
 	uint8_t rex_r_bit = needs_rex_r << 2; // shift flag to REX.R position (bit 2 = 0x04)
 	uint8_t rex = 0x40 | needs_rex_w | rex_r_bit;
-	// Only emit REX if any bits are set beyond base 0x40
+		// Only emit REX if any bits are set beyond base 0x40
 	uint8_t emit_rex = (needs_rex_w | rex_r_bit) != 0;
-	// Use reserve + direct writes for branchless emission
+		// Use reserve + direct writes for branchless emission
 	size_t base = textSectionData.size();
 	textSectionData.resize(base + 6 + emit_rex);
 	uint8_t* p = textSectionData.data() + base;
-	// Branchless write: if emit_rex, write rex and shift; else start at opcode
+		// Branchless write: if emit_rex, write rex and shift; else start at opcode
 	p[0] = emit_rex ? rex : 0x8B;
 	p[emit_rex] = 0x8B; // MOV r32/r64, r/m32/r/m64
 	p[1 + emit_rex] = 0x05 | (dest_bits << 3); // ModR/M: reg, [RIP + disp32]
-	// disp32 placeholder (4 bytes of zeros)
+		// disp32 placeholder (4 bytes of zeros)
 	p[2 + emit_rex] = 0x00;
 	p[3 + emit_rex] = 0x00;
 	p[4 + emit_rex] = 0x00;
@@ -3329,12 +3329,12 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelative(X64Register dest, in
 
 template <class TWriterClass>
 uint32_t IrToObjConverter<TWriterClass>::emitFloatMovRipRelative(X64Register xmm_dest, bool is_float) {
-	// MOVSD XMM0, [RIP + disp32]: F2 0F 10 05 [disp32]
-	// MOVSS XMM0, [RIP + disp32]: F3 0F 10 05 [disp32]
-	// For XMM8-XMM15: F2 44 0F 10 05 [disp32] (REX.R prefix needed)
+		// MOVSD XMM0, [RIP + disp32]: F2 0F 10 05 [disp32]
+		// MOVSS XMM0, [RIP + disp32]: F3 0F 10 05 [disp32]
+		// For XMM8-XMM15: F2 44 0F 10 05 [disp32] (REX.R prefix needed)
 	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
 
-	// REX prefix if XMM8-XMM15
+		// REX prefix if XMM8-XMM15
 	if (xmm_needs_rex(xmm_dest)) {
 		textSectionData.push_back(0x44); // REX.R for XMM8-XMM15
 	}
@@ -3354,16 +3354,16 @@ uint32_t IrToObjConverter<TWriterClass>::emitFloatMovRipRelative(X64Register xmm
 
 template <class TWriterClass>
 uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelativeStore(X64Register src, int size_in_bits) {
-	// For 64-bit: MOV [RIP + disp32], RAX - 48 89 05 [disp32]
-	// For 32-bit: MOV [RIP + disp32], EAX - 89 05 [disp32]
-	// For 16-bit: MOV WORD PTR [RIP + disp32], AX - 66 [44] 89 05 [disp32]
-	// For 8-bit:  MOV BYTE PTR [RIP + disp32], AL - [40|44] 88 05 [disp32]
+		// For 64-bit: MOV [RIP + disp32], RAX - 48 89 05 [disp32]
+		// For 32-bit: MOV [RIP + disp32], EAX - 89 05 [disp32]
+		// For 16-bit: MOV WORD PTR [RIP + disp32], AX - 66 [44] 89 05 [disp32]
+		// For 8-bit:  MOV BYTE PTR [RIP + disp32], AL - [40|44] 88 05 [disp32]
 	uint8_t src_val = static_cast<uint8_t>(src);
 	uint8_t src_bits = src_val & 0x07;
 
 	if (size_in_bits <= 8) {
-	// MOV BYTE PTR [RIP + disp32], reg8: [REX] 88 ModRM d0 d1 d2 d3
-	// REX needed for reg >= 4: 0x40 base, plus REX.R (0x04) if extended (reg >= 8)
+			// MOV BYTE PTR [RIP + disp32], reg8: [REX] 88 ModRM d0 d1 d2 d3
+			// REX needed for reg >= 4: 0x40 base, plus REX.R (0x04) if extended (reg >= 8)
 		bool needs_rex = src_val >= 4;
 		uint8_t rex_byte = static_cast<uint8_t>(0x40 | ((src_val >> 3) << 2));
 		size_t base = textSectionData.size();
@@ -3379,7 +3379,7 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelativeStore(X64Register src
 		p[5] = 0x00;
 		return static_cast<uint32_t>(base + 2 + needs_rex);
 	} else if (size_in_bits == 16) {
-	// MOV WORD PTR [RIP + disp32], reg16: 66 [REX] 89 ModRM d0 d1 d2 d3
+			// MOV WORD PTR [RIP + disp32], reg16: 66 [REX] 89 ModRM d0 d1 d2 d3
 		uint8_t needs_rex_r = (src_val >> 3) & 0x01; // 1 if R8-R15
 		size_t base = textSectionData.size();
 		textSectionData.resize(base + 7 + needs_rex_r);
@@ -3396,23 +3396,23 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelativeStore(X64Register src
 		return static_cast<uint32_t>(base + 3 + needs_rex_r);
 	}
 
-	// For 32-bit and 64-bit, use regular MOV
-	// For RIP-relative MOV, source is in the REG field of ModR/M (R/M=101 is fixed),
-	// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
+		// For 32-bit and 64-bit, use regular MOV
+		// For RIP-relative MOV, source is in the REG field of ModR/M (R/M=101 is fixed),
+		// so REX.R (bit 2 = 0x04) extends it — not REX.B (bit 0 = 0x01)
 	uint8_t needs_rex_w = (size_in_bits == 64) ? 0x08 : 0x00;
 	uint8_t needs_rex_r = ((src_val >> 3) & 0x01) << 2; // 0x04 if R8-R15, else 0
 	uint8_t rex = 0x40 | needs_rex_w | needs_rex_r;
-	// Only emit REX if any bits are set beyond base 0x40
+		// Only emit REX if any bits are set beyond base 0x40
 	uint8_t emit_rex = (needs_rex_w | needs_rex_r) != 0;
-	// Use reserve + direct writes for branchless emission
+		// Use reserve + direct writes for branchless emission
 	size_t base = textSectionData.size();
 	textSectionData.resize(base + 6 + emit_rex);
 	uint8_t* p = textSectionData.data() + base;
-	// Branchless write: if emit_rex, write rex and shift; else start at opcode
+		// Branchless write: if emit_rex, write rex and shift; else start at opcode
 	p[0] = emit_rex ? rex : 0x89;
 	p[emit_rex] = 0x89; // MOV r/m32/r/m64, r32/r64 (store variant)
 	p[1 + emit_rex] = 0x05 | (src_bits << 3); // ModR/M: reg, [RIP + disp32]
-	// disp32 placeholder (4 bytes of zeros)
+		// disp32 placeholder (4 bytes of zeros)
 	p[2 + emit_rex] = 0x00;
 	p[3 + emit_rex] = 0x00;
 	p[4 + emit_rex] = 0x00;
@@ -3422,8 +3422,8 @@ uint32_t IrToObjConverter<TWriterClass>::emitMovRipRelativeStore(X64Register src
 
 template <class TWriterClass>
 uint32_t IrToObjConverter<TWriterClass>::emitFloatMovRipRelativeStore(X64Register xmm_src, bool is_float) {
-	// MOVSD [RIP + disp32], XMM0: F2 0F 11 05 [disp32]
-	// MOVSS [RIP + disp32], XMM0: F3 0F 11 05 [disp32]
+		// MOVSD [RIP + disp32], XMM0: F2 0F 11 05 [disp32]
+		// MOVSS [RIP + disp32], XMM0: F3 0F 11 05 [disp32]
 	textSectionData.push_back(is_float ? 0xF3 : 0xF2);
 	textSectionData.push_back(0x0F);
 	textSectionData.push_back(0x11); // MOVSD/MOVSS m, xmm (store variant)
@@ -3449,7 +3449,7 @@ void IrToObjConverter<TWriterClass>::emitCmpRegReg(X64Register r1, X64Register r
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x39); // CMP r/m64, r64
 
-	// ModR/M: mod=11 (register), reg=r2, r/m=r1
+		// ModR/M: mod=11 (register), reg=r2, r/m=r1
 	uint8_t modrm = 0xC0;
 	modrm |= ((static_cast<uint8_t>(r2) & 0x07) << 3);
 	modrm |= (static_cast<uint8_t>(r1) & 0x07);
@@ -3458,7 +3458,7 @@ void IrToObjConverter<TWriterClass>::emitCmpRegReg(X64Register r1, X64Register r
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitCmpRegWithMem(X64Register reg, X64Register mem_base) {
-	// CMP reg, [mem_base]
+		// CMP reg, [mem_base]
 	uint8_t rex = 0x48; // REX.W
 	if (static_cast<uint8_t>(reg) >= 8)
 		rex |= 0x04; // REX.R
@@ -3468,7 +3468,7 @@ void IrToObjConverter<TWriterClass>::emitCmpRegWithMem(X64Register reg, X64Regis
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x3B); // CMP r64, r/m64
 
-	// ModR/M: mod=00 (no disp), reg=reg, r/m=mem_base
+		// ModR/M: mod=00 (no disp), reg=reg, r/m=mem_base
 	uint8_t modrm = 0x00;
 	modrm |= ((static_cast<uint8_t>(reg) & 0x07) << 3);
 	modrm |= (static_cast<uint8_t>(mem_base) & 0x07);
@@ -3501,7 +3501,7 @@ void IrToObjConverter<TWriterClass>::emitJumpUnconditional(int8_t offset) {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitXorRegReg(X64Register reg) {
-	// XOR reg, reg (zero register)
+		// XOR reg, reg (zero register)
 	uint8_t rex = 0x48; // REX.W
 	if (static_cast<uint8_t>(reg) >= 8)
 		rex |= 0x05; // REX.R | REX.B
@@ -3509,7 +3509,7 @@ void IrToObjConverter<TWriterClass>::emitXorRegReg(X64Register reg) {
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x31); // XOR r/m64, r64
 
-	// ModR/M: mod=11, reg=reg, r/m=reg
+		// ModR/M: mod=11, reg=reg, r/m=reg
 	uint8_t modrm = 0xC0;
 	modrm |= ((static_cast<uint8_t>(reg) & 0x07) << 3);
 	modrm |= (static_cast<uint8_t>(reg) & 0x07);
@@ -3524,14 +3524,14 @@ void IrToObjConverter<TWriterClass>::emitRepMovsb() {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovToRSPDisp8(X64Register sourceRegister, int8_t displacement) {
-	// MOV [RSP+disp8], reg
+		// MOV [RSP+disp8], reg
 	uint8_t rex = 0x48; // REX.W for 64-bit
 	if (static_cast<uint8_t>(sourceRegister) >= 8) {
 		rex |= 0x04; // REX.R for extended register
 	}
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x89); // MOV r/m64, r64
-	// ModR/M: mod=01 (disp8), reg=sourceRegister, r/m=100 (SIB follows)
+		// ModR/M: mod=01 (disp8), reg=sourceRegister, r/m=100 (SIB follows)
 	uint8_t modrm = 0x44 | ((static_cast<uint8_t>(sourceRegister) & 0x07) << 3);
 	textSectionData.push_back(modrm);
 	textSectionData.push_back(0x24); // SIB: scale=0, index=RSP(4), base=RSP(4)
@@ -3540,14 +3540,14 @@ void IrToObjConverter<TWriterClass>::emitMovToRSPDisp8(X64Register sourceRegiste
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitLeaFromRSPDisp8(X64Register destinationRegister, int8_t displacement) {
-	// LEA reg, [RSP+disp8]
+		// LEA reg, [RSP+disp8]
 	uint8_t rex = 0x48; // REX.W for 64-bit
 	if (static_cast<uint8_t>(destinationRegister) >= 8) {
 		rex |= 0x04; // REX.R for extended register
 	}
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x8D); // LEA
-	// ModR/M: mod=01 (disp8), reg=destinationRegister, r/m=100 (SIB follows)
+		// ModR/M: mod=01 (disp8), reg=destinationRegister, r/m=100 (SIB follows)
 	uint8_t modrm = 0x44 | ((static_cast<uint8_t>(destinationRegister) & 0x07) << 3);
 	textSectionData.push_back(modrm);
 	textSectionData.push_back(0x24); // SIB: scale=0, index=RSP(4), base=RSP(4)
@@ -3561,12 +3561,12 @@ void IrToObjConverter<TWriterClass>::emitRet() {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitMovRegImm8(X64Register reg, uint8_t imm) {
-	// MOV reg, imm8 (using AL/BL/CL etc. encoding)
+		// MOV reg, imm8 (using AL/BL/CL etc. encoding)
 	if (reg == X64Register::RAX) {
 		textSectionData.push_back(0xB0); // MOV AL, imm8
 		textSectionData.push_back(imm);
 	} else {
-	// For other registers, use MOV r8, imm8
+			// For other registers, use MOV r8, imm8
 		uint8_t rex = 0x40; // REX prefix (needed for SPL, BPL, SIL, DIL)
 		if (static_cast<uint8_t>(reg) >= 8)
 			rex |= 0x01; // REX.B
@@ -3605,7 +3605,7 @@ void IrToObjConverter<TWriterClass>::emitIncReg(X64Register reg) {
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0xFF); // INC/DEC r/m64
 
-	// ModR/M: mod=11, reg=0 (INC), r/m=reg
+		// ModR/M: mod=11, reg=0 (INC), r/m=reg
 	uint8_t modrm = 0xC0;
 	modrm |= (static_cast<uint8_t>(reg) & 0x07);
 	textSectionData.push_back(modrm);
@@ -3623,12 +3623,12 @@ void IrToObjConverter<TWriterClass>::emitCmpRegImm32(X64Register reg, uint32_t i
 		textSectionData.push_back(0x3D); // CMP EAX, imm32 (shorter encoding)
 	} else {
 		textSectionData.push_back(0x81); // CMP r/m64, imm32
-	// ModR/M: mod=11, reg=7 (CMP), r/m=reg
+			// ModR/M: mod=11, reg=7 (CMP), r/m=reg
 		uint8_t modrm = 0xF8 | (static_cast<uint8_t>(reg) & 0x07);
 		textSectionData.push_back(modrm);
 	}
 
-	// Emit imm32 (little-endian)
+		// Emit imm32 (little-endian)
 	textSectionData.push_back(static_cast<uint8_t>(imm));
 	textSectionData.push_back(static_cast<uint8_t>(imm >> 8));
 	textSectionData.push_back(static_cast<uint8_t>(imm >> 16));
@@ -3649,7 +3649,7 @@ void IrToObjConverter<TWriterClass>::emitJumpIfBelow(int8_t offset) {
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitLeaRegScaledIndex(X64Register dest, X64Register base, X64Register index, uint8_t scale, int8_t disp) {
-	// LEA dest, [base + index*scale + disp]
+		// LEA dest, [base + index*scale + disp]
 	uint8_t rex = 0x48; // REX.W
 	if (static_cast<uint8_t>(dest) >= 8)
 		rex |= 0x04; // REX.R
@@ -3661,12 +3661,12 @@ void IrToObjConverter<TWriterClass>::emitLeaRegScaledIndex(X64Register dest, X64
 	textSectionData.push_back(rex);
 	textSectionData.push_back(0x8D); // LEA r64, m
 
-	// ModR/M: mod=01 (disp8), reg=dest, r/m=100 (SIB follows)
+		// ModR/M: mod=01 (disp8), reg=dest, r/m=100 (SIB follows)
 	uint8_t modrm = 0x44;
 	modrm |= ((static_cast<uint8_t>(dest) & 0x07) << 3);
 	textSectionData.push_back(modrm);
 
-	// SIB: scale, index, base
+		// SIB: scale, index, base
 	uint8_t scale_bits = 0;
 	if (scale == 2)
 		scale_bits = 1;
@@ -3678,7 +3678,7 @@ void IrToObjConverter<TWriterClass>::emitLeaRegScaledIndex(X64Register dest, X64
 	uint8_t sib = (scale_bits << 6) | ((static_cast<uint8_t>(index) & 0x07) << 3) | (static_cast<uint8_t>(base) & 0x07);
 	textSectionData.push_back(sib);
 
-	// disp8
+		// disp8
 	textSectionData.push_back(static_cast<uint8_t>(disp));
 }
 
@@ -3711,7 +3711,7 @@ bool IrToObjConverter<TWriterClass>::isRestrictedCatchFuncletRegister(X64Registe
 
 template <class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Register exclude) {
-	// Try to allocate a free register first (excluding the specified one)
+		// Try to allocate a free register first (excluding the specified one)
 	for (auto& reg : regAlloc.registers) {
 		if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude && !isRestrictedCatchFuncletRegister(reg.reg)) {
 			reg.isAllocated = true;
@@ -3719,7 +3719,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 		}
 	}
 
-	// No free registers - need to spill one (excluding the specified one)
+		// No free registers - need to spill one (excluding the specified one)
 	auto reg_to_spill = [&]() -> std::optional<X64Register> {
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
@@ -3748,7 +3748,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 	X64Register spill_reg = reg_to_spill.value();
 	auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
 
-	// If the register is dirty, write it back to the stack using size-appropriate MOV
+		// If the register is dirty, write it back to the stack using size-appropriate MOV
 	if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
 		emitMovToFrameSized(
 			SizedRegister{spill_reg, 64, false},	 // source: 64-bit register
@@ -3756,7 +3756,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 		);
 	}
 
-	// Release the register and allocate it again
+		// Release the register and allocate it again
 	regAlloc.release(spill_reg);
 	reg_info.isAllocated = true;
 	return spill_reg;
@@ -3764,7 +3764,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 
 template <class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Register exclude1, X64Register exclude2) {
-	// Try to allocate a free register first (excluding both specified registers)
+		// Try to allocate a free register first (excluding both specified registers)
 	for (auto& reg : regAlloc.registers) {
 		if (!reg.isAllocated && reg.reg < X64Register::XMM0 && reg.reg != exclude1 && reg.reg != exclude2 && !isRestrictedCatchFuncletRegister(reg.reg)) {
 			reg.isAllocated = true;
@@ -3772,7 +3772,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 		}
 	}
 
-	// No free registers - need to spill one (excluding both specified registers)
+		// No free registers - need to spill one (excluding both specified registers)
 	auto reg_to_spill = [&]() -> std::optional<X64Register> {
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
@@ -3801,7 +3801,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 	X64Register spill_reg = reg_to_spill.value();
 	auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
 
-	// If the register is dirty, write it back to the stack using size-appropriate MOV
+		// If the register is dirty, write it back to the stack using size-appropriate MOV
 	if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
 		emitMovToFrameSized(
 			SizedRegister{spill_reg, 64, false},	 // source: 64-bit register
@@ -3809,7 +3809,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateRegisterWithSpilling(X64Regi
 		);
 	}
 
-	// Release the register and allocate it again
+		// Release the register and allocate it again
 	regAlloc.release(spill_reg);
 	reg_info.isAllocated = true;
 	return spill_reg;
@@ -3822,7 +3822,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling() {
 
 template <class TWriterClass>
 X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling(X64Register exclude) {
-	// Try to allocate a free XMM register first
+		// Try to allocate a free XMM register first
 	for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 		if (!regAlloc.registers[i].isAllocated && regAlloc.registers[i].reg != exclude) {
 			regAlloc.registers[i].isAllocated = true;
@@ -3830,7 +3830,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling(X64R
 		}
 	}
 
-	// No free XMM registers - need to spill one
+		// No free XMM registers - need to spill one
 	auto reg_to_spill = [&]() -> std::optional<X64Register> {
 		X64Register best_candidate = X64Register::Count;
 		bool found_dirty = false;
@@ -3859,7 +3859,7 @@ X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling(X64R
 	X64Register spill_reg = reg_to_spill.value();
 	auto& reg_info = regAlloc.registers[static_cast<int>(spill_reg)];
 
-	// If the register is dirty, write it back to the stack
+		// If the register is dirty, write it back to the stack
 	if (reg_info.isDirty && reg_info.stackVariableOffset != INT_MIN) {
 		int spill_size_bits = reg_info.size_in_bits.value;
 		if (spill_size_bits <= 0) {
@@ -3882,14 +3882,14 @@ X64Register IrToObjConverter<TWriterClass>::allocateXMMRegisterWithSpilling(X64R
 			throw InternalError("Missing XMM spill size metadata for stack offset " + std::to_string(reg_info.stackVariableOffset));
 		}
 
-	// For XMM registers, use float mov to frame
+			// For XMM registers, use float mov to frame
 		bool is_float = spill_size_bits <= 32;
 		auto store_opcodes = generateFloatMovToFrame(spill_reg, reg_info.stackVariableOffset, is_float);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 							   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 	}
 
-	// Release the register and allocate it again
+		// Release the register and allocate it again
 	regAlloc.release(spill_reg);
 	reg_info.isAllocated = true;
 	return spill_reg;
@@ -3916,13 +3916,13 @@ template <class TWriterClass>
 bool IrToObjConverter<TWriterClass>::shouldPassStructByAddress(const TypedValue& arg, bool is_two_register_struct) const {
 	if (!isIrStructType(arg.effectiveIrType()) || arg.is_reference())
 		return false;
-	// SysV AMD64 two-register structs (9-16 bytes) must pass their bytes in
-	// registers, NOT a pointer.
+		// SysV AMD64 two-register structs (9-16 bytes) must pass their bytes in
+		// registers, NOT a pointer.
 	if (is_two_register_struct)
 		return false;
-	// FlashCpp passes all other structs > 64 bits by pointer on both Linux and Windows,
-	// matching the callee prologue which always dereferences the incoming pointer for
-	// structs whose size exceeds one general-purpose register.
+		// FlashCpp passes all other structs > 64 bits by pointer on both Linux and Windows,
+		// matching the callee prologue which always dereferences the incoming pointer for
+		// structs whose size exceeds one general-purpose register.
 	return arg.size_in_bits.value > 64;
 }
 
@@ -4021,25 +4021,25 @@ void IrToObjConverter<TWriterClass>::emitTwoRegStructToRegs(int src_offset, X64R
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& instruction) {
-	// Use typed payload
+		// Use typed payload
 	if (instruction.hasTypedPayload()) {
 		const auto& call_op = instruction.getTypedPayload<CallOp>();
 
 		flushAllDirtyRegisters();
 
-	// Determine effective return size; fall back to type size if not provided
+			// Determine effective return size; fall back to type size if not provided
 		int return_size_bits = call_op.return_size_in_bits.value;
 		if (return_size_bits == 0) {
 			int computed_size = get_type_size_bits(call_op.returnType());
 			if (computed_size > 0) {
 				return_size_bits = computed_size;
 			} else {
-		// Default to pointer size to ensure unique stack slot
+					// Default to pointer size to ensure unique stack slot
 				return_size_bits = static_cast<int>(sizeof(void*) * 8);
 			}
 		}
 
-	// Get result offset - use actual return size for proper stack allocation
+			// Get result offset - use actual return size for proper stack allocation
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "handleFunctionCall: allocating result {} (var_number={}) with return_size_in_bits={}",
 						 call_op.result.name(), call_op.result.var_number, return_size_bits);
@@ -4049,11 +4049,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						 result_offset, call_op.result.name(), call_op.result.var_number);
 		variable_scopes.back().variables[StringTable::getOrInternStringHandle(call_op.result.name())].offset = result_offset;
 
-	// Platform-specific format check for ABI differences
+			// Platform-specific format check for ABI differences
 		constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 
-	// For functions returning struct by value, prepare hidden return parameter
-	// The return slot address will be passed as the first argument
+			// For functions returning struct by value, prepare hidden return parameter
+			// The return slot address will be passed as the first argument
 		int param_shift = 0;	 // Tracks how many parameters to shift (for hidden return param)
 		if (call_op.usesReturnSlot()) {
 			param_shift = 1;	 // Regular parameters shift by 1 to make room for hidden return param
@@ -4063,16 +4063,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							 call_op.result.var_number);
 		}
 
-	// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
-	// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
-	// we reserve all parameter registers before processing stack arguments.
-	// Platform-specific: Windows has 4 int regs, Linux has 6 int regs
+			// IMPORTANT: Process stack arguments (beyond register count) FIRST, before loading register arguments.
+			// To prevent loadTypedValueIntoRegister from clobbering parameter registers,
+			// we reserve all parameter registers before processing stack arguments.
+			// Platform-specific: Windows has 4 int regs, Linux has 6 int regs
 		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 		size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-	// Reserve parameter registers to prevent them from being allocated as temporaries
-	// Only reserve registers that aren't already allocated
+			// Reserve parameter registers to prevent them from being allocated as temporaries
+			// Only reserve registers that aren't already allocated
 		std::vector<X64Register> reserved_regs;
 		for (size_t i = 0; i < max_int_regs; ++i) {
 			X64Register reg = getIntParamReg<TWriterClass>(i);
@@ -4082,49 +4082,49 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 		}
 
-	// Enhanced stack overflow logic: Track both int and float register usage independently
-	// to correctly identify which arguments overflow to stack.
-	// For variadic functions, register-passed args (first 4 on Windows, 6 on Linux) go in
-	// registers as normal. Only args beyond the register count go on the stack at RSP+32+
-	// (Windows) or RSP+0+ (Linux). The callee is responsible for homing its own register
-	// parameters to shadow space; the caller must not pre-populate shadow space since it
-	// overlaps with local variable storage in the caller's frame.
-	//
-	// Windows x64 ABI uses a UNIFIED position counter: position 0 is always RCX or XMM0,
-	// position 1 is always RDX or XMM1, etc. — float and int arguments share the same
-	// 4 register slots. Linux SysV AMD64 uses SEPARATE banks (6 int + 8 float).
+			// Enhanced stack overflow logic: Track both int and float register usage independently
+			// to correctly identify which arguments overflow to stack.
+			// For variadic functions, register-passed args (first 4 on Windows, 6 on Linux) go in
+			// registers as normal. Only args beyond the register count go on the stack at RSP+32+
+			// (Windows) or RSP+0+ (Linux). The callee is responsible for homing its own register
+			// parameters to shadow space; the caller must not pre-populate shadow space since it
+			// overlaps with local variable storage in the caller's frame.
+			//
+			// Windows x64 ABI uses a UNIFIED position counter: position 0 is always RCX or XMM0,
+			// position 1 is always RDX or XMM1, etc. — float and int arguments share the same
+			// 4 register slots. Linux SysV AMD64 uses SEPARATE banks (6 int + 8 float).
 		size_t temp_int_idx = param_shift;  // Account for hidden return param (same as second pass)
 		size_t temp_float_idx = 0;
 		size_t stack_arg_count = 0;
 
 		for (size_t i = 0; i < call_op.args.size(); ++i) {
 			const auto& arg = call_op.args[i];
-	// Reference arguments (including rvalue references) are passed as pointers,
-	// so they should use integer registers, not floating-point registers
+				// Reference arguments (including rvalue references) are passed as pointers,
+				// so they should use integer registers, not floating-point registers
 			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 			bool is_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
-	// Determine if this argument goes on stack (overflows register file)
+				// Determine if this argument goes on stack (overflows register file)
 			bool goes_on_stack = false;
 			if (is_coff_format && call_op.is_variadic) {
-		// Windows x64 VARIADIC: unified position counter — int and float share the same 4 slots.
-		// Position i uses RCX/XMM0 (i=0), RDX/XMM1 (i=1), R8/XMM2 (i=2), R9/XMM3 (i=3).
-		// Any arg at position i >= max_int_regs goes to the stack.
+					// Windows x64 VARIADIC: unified position counter — int and float share the same 4 slots.
+					// Position i uses RCX/XMM0 (i=0), RDX/XMM1 (i=1), R8/XMM2 (i=2), R9/XMM3 (i=3).
+					// Any arg at position i >= max_int_regs goes to the stack.
 				goes_on_stack = (i + param_shift >= max_int_regs);
 				if (is_float_arg)
 					temp_float_idx++;
 				else
 					temp_int_idx++;
 			} else {
-		// Linux SysV (all calls) and Windows non-variadic: separate register banks.
-		// Both caller and callee agree on this sequential convention, so it works.
+					// Linux SysV (all calls) and Windows non-variadic: separate register banks.
+					// Both caller and callee agree on this sequential convention, so it works.
 				if (is_float_arg) {
 					if (temp_float_idx >= max_float_regs) {
 						goes_on_stack = true;
 					}
 					temp_float_idx++;
 				} else {
-		// For two-register structs, need two consecutive int registers
+						// For two-register structs, need two consecutive int registers
 					size_t regs_needed = is_two_reg_struct ? 2 : 1;
 					if (temp_int_idx + regs_needed > max_int_regs) {
 						goes_on_stack = true;
@@ -4134,18 +4134,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 
 			if (goes_on_stack) {
-		// Stack args placement:
-		// Windows: RSP+32 (shadow space) + stack_arg_count*8
-		// Linux: RSP+0 (no shadow space) + stack_arg_count*8
+					// Stack args placement:
+					// Windows: RSP+32 (shadow space) + stack_arg_count*8
+					// Linux: RSP+0 (no shadow space) + stack_arg_count*8
 				int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 
-		// Determine if this stack argument needs to pass an address instead of its value.
-		// For SysV variadic two-register structs, pass bytes directly (not a pointer) —
-		// the callee's va_arg reads from the overflow area by value.
+					// Determine if this stack argument needs to pass an address instead of its value.
+					// For SysV variadic two-register structs, pass bytes directly (not a pointer) —
+					// the callee's va_arg reads from the overflow area by value.
 				bool stack_pass_address = arg.is_reference() || shouldPassStructByAddress(arg, is_two_reg_struct);
 
 				if (stack_pass_address) {
-		// Store address of the argument on the stack
+						// Store address of the argument on the stack
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
 						throw InternalError("Stack call argument marked pass-by-address is not addressable");
@@ -4154,12 +4154,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					regAlloc.release(temp_reg);
 					stack_arg_count++;
 				} else if (is_float_arg) {
-		// For floating-point arguments, load into XMM register and store with float instruction
+						// For floating-point arguments, load into XMM register and store with float instruction
 					X64Register temp_xmm = allocateXMMRegisterWithSpilling();
 
-		// Load the float value into XMM register
+						// Load the float value into XMM register
 					if (std::holds_alternative<double>(arg.value)) {
-		// Handle floating-point literal
+							// Handle floating-point literal
 						double float_value = std::get<double>(arg.value);
 						uint64_t bits;
 						if (arg.effectiveIrType() == IrType::Float) {
@@ -4171,11 +4171,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							std::memcpy(&bits, &float_value, sizeof(bits));
 						}
 
-		// Load bit pattern into temp GPR first
+							// Load bit pattern into temp GPR first
 						X64Register temp_gpr = allocateRegisterWithSpilling();
 						emitMovImm64(temp_gpr, bits);
 
-		// Move from GPR to XMM register
+							// Move from GPR to XMM register
 						emitMovqGprToXmm(temp_gpr, temp_xmm);
 
 						regAlloc.release(temp_gpr);
@@ -4190,7 +4190,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						emitFloatMovFromFrame(temp_xmm, var_offset, is_float);
 					}
 
-		// Store XMM register to stack using float store instruction
+						// Store XMM register to stack using float store instruction
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
 					emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, is_float);
 
@@ -4200,7 +4200,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					emitTwoRegStructToStack(arg, stack_offset);
 					stack_arg_count += 2;
 				} else {
-		// For integer arguments, use the existing code path
+						// For integer arguments, use the existing code path
 					X64Register temp_reg = loadTypedValueIntoRegister(arg);
 					emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 					regAlloc.release(temp_reg);
@@ -4209,65 +4209,65 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 		}
 
-	// Release reserved parameter registers now that stack arguments are processed
+			// Release reserved parameter registers now that stack arguments are processed
 		for (X64Register reg : reserved_regs) {
 			regAlloc.release(reg);
 		}
 
-	// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
-	// Note: max_int_regs and max_float_regs already declared above for stack arg processing
-	// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
-	// If function uses return slot, start at index param_shift to leave room for hidden parameter
+			// Now process register arguments (platform-specific: 4 on Windows, 6 on Linux for integers)
+			// Note: max_int_regs and max_float_regs already declared above for stack arg processing
+			// Use separate counters for integer and float registers (System V AMD64 ABI requirement)
+			// If function uses return slot, start at index param_shift to leave room for hidden parameter
 		size_t int_reg_index = param_shift;	// Start at param_shift if hidden return param present
 		size_t float_reg_index = 0;
 
 		for (size_t i = 0; i < call_op.args.size(); ++i) {
 			const auto& arg = call_op.args[i];
 
-	// Determine if this is a floating-point argument
-	// Reference arguments (including rvalue references) are passed as pointers (addresses),
-	// so they should use integer registers regardless of the underlying type
+				// Determine if this is a floating-point argument
+				// Reference arguments (including rvalue references) are passed as pointers (addresses),
+				// so they should use integer registers regardless of the underlying type
 			bool is_float_arg = is_floating_point_type(arg.category()) && !arg.is_reference();
 			bool is_potential_two_reg_struct = isTwoRegisterStruct(arg, call_op.is_variadic);
 
-	// Check if this argument fits in a register (accounting for param_shift)
-	// Windows x64 variadic: unified position counter — int and float share the same 4 slots.
-	// Windows x64 non-variadic + Linux SysV: separate integer and float register banks.
+				// Check if this argument fits in a register (accounting for param_shift)
+				// Windows x64 variadic: unified position counter — int and float share the same 4 slots.
+				// Windows x64 non-variadic + Linux SysV: separate integer and float register banks.
 			bool use_register = false;
 			if (is_coff_format && call_op.is_variadic) {
-		// Windows x64 VARIADIC: position (i + param_shift) determines register use
+					// Windows x64 VARIADIC: position (i + param_shift) determines register use
 				use_register = (i + param_shift < max_int_regs);
 			} else if (is_float_arg) {
 				if (float_reg_index < max_float_regs) {
 					use_register = true;
 				}
 			} else {
-		// For two-register structs, need two consecutive int registers
+					// For two-register structs, need two consecutive int registers
 				size_t regs_needed = is_potential_two_reg_struct ? 2 : 1;
 				if (int_reg_index + regs_needed <= max_int_regs) {
 					use_register = true;
 				}
 			}
 
-	// Skip arguments that go on stack (already handled)
+				// Skip arguments that go on stack (already handled)
 			if (!use_register) {
 				if (is_float_arg)
 					float_reg_index++;
 				else {
-		// Two-register structs count as 2 slots, matching the first-pass increment.
+						// Two-register structs count as 2 slots, matching the first-pass increment.
 					size_t regs_needed = is_potential_two_reg_struct ? 2 : 1;
 					int_reg_index += regs_needed;
 				}
 				continue;
 			}
 
-	// Get the platform-specific calling convention register
-	// Windows x64 variadic: position-aligned registers (position = i + param_shift)
-	// Windows x64 non-variadic + Linux SysV: separate int and float indices
+				// Get the platform-specific calling convention register
+				// Windows x64 variadic: position-aligned registers (position = i + param_shift)
+				// Windows x64 non-variadic + Linux SysV: separate int and float indices
 			X64Register target_reg;
 			if (is_coff_format && call_op.is_variadic) {
-		// Windows x64 VARIADIC: both int and float use the same position counter.
-		// This ensures the shadow-space homing + va_arg walking lines up correctly.
+					// Windows x64 VARIADIC: both int and float use the same position counter.
+					// This ensures the shadow-space homing + va_arg walking lines up correctly.
 				size_t position = i + param_shift;
 				target_reg = is_float_arg
 								 ? getFloatParamReg<TWriterClass>(position)
@@ -4282,26 +4282,26 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 								 : getIntParamReg<TWriterClass>(int_reg_index++);
 			}
 
-	// Special handling for passing addresses (this pointer or large struct references)
-	// For member functions: first arg is always "this" pointer (pass address)
-	// System V AMD64 ABI (Linux):
-	//   - Structs ≤8 bytes: pass by value in one register
-	//   - Structs 9-16 bytes (all calls): pass by value in TWO consecutive integer registers
-	//   - Structs >16 bytes: pass by pointer
-	// x64 Windows ABI:
-	//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
-	//   - All other structs: pass by pointer
+				// Special handling for passing addresses (this pointer or large struct references)
+				// For member functions: first arg is always "this" pointer (pass address)
+				// System V AMD64 ABI (Linux):
+				//   - Structs ≤8 bytes: pass by value in one register
+				//   - Structs 9-16 bytes (all calls): pass by value in TWO consecutive integer registers
+				//   - Structs >16 bytes: pass by pointer
+				// x64 Windows ABI:
+				//   - Structs of 1, 2, 4, or 8 bytes: pass by value in one register
+				//   - All other structs: pass by pointer
 			bool should_pass_address = false;
 			bool is_two_register_struct = false;
 			if (call_op.is_member_function && i == 0) {
-		// First argument of member function is always "this" pointer
+					// First argument of member function is always "this" pointer
 				should_pass_address = true;
 			} else if (arg.is_reference()) {
-		// Parameter is explicitly a reference - always pass by address
+					// Parameter is explicitly a reference - always pass by address
 				should_pass_address = true;
 			} else if (is_potential_two_reg_struct) {
-		// SysV AMD64: 9-16 byte structs go in two consecutive GP registers (all calls).
-		// Must check before shouldPassStructByAddress (which would wrongly return true).
+					// SysV AMD64: 9-16 byte structs go in two consecutive GP registers (all calls).
+					// Must check before shouldPassStructByAddress (which would wrongly return true).
 				is_two_register_struct = true;
 			} else if (shouldPassStructByAddress(arg)) {
 				should_pass_address = true;
@@ -4314,14 +4314,14 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				continue;
 			}
 
-	// Handle System V AMD64 ABI: Structs 9-16 bytes passed in TWO consecutive registers
+				// Handle System V AMD64 ABI: Structs 9-16 bytes passed in TWO consecutive registers
 			if (is_two_register_struct && (std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<TempVar>(arg.value))) {
 				int src_offset = resolveTypedValueFrameOffset(arg);
 				emitTwoRegStructToRegs(src_offset, target_reg, int_reg_index, max_int_regs);
 				continue;
 			}
 
-	// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
+				// Handle TempVar arguments that should pass an address (e.g., constructor calls passed to rvalue reference params)
 			if (should_pass_address && std::holds_alternative<TempVar>(arg.value)) {
 				if (!emitLoadAddressLikeArgument(target_reg, arg)) {
 					throw InternalError("Register call TempVar marked pass-by-address is not addressable");
@@ -4329,12 +4329,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				continue;
 			}
 
-	// Handle floating-point immediate values (double literals)
+				// Handle floating-point immediate values (double literals)
 			if (is_float_arg && std::holds_alternative<double>(arg.value)) {
-		// Load floating-point literal into XMM register
+					// Load floating-point literal into XMM register
 				double float_value = std::get<double>(arg.value);
 
-		// For float (32-bit), we need to convert the double to float first
+					// For float (32-bit), we need to convert the double to float first
 				uint64_t bits;
 				if (arg.effectiveIrType() == IrType::Float) {
 					float float_val = static_cast<float>(float_value);
@@ -4345,13 +4345,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					std::memcpy(&bits, &float_value, sizeof(bits));
 				}
 
-		// Allocate a temporary GPR for the bit pattern
+					// Allocate a temporary GPR for the bit pattern
 				X64Register temp_gpr = allocateRegisterWithSpilling();
 
-		// Load bit pattern into temp GPR
+					// Load bit pattern into temp GPR
 				emitMovImm64(temp_gpr, bits);
 
-		// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
+					// movq xmm, r64 (66 REX.W 0F 6E /r) - move from GPR to XMM
 				textSectionData.push_back(0x66);
 				uint8_t xmm_idx = xmm_modrm_bits(target_reg);
 				uint8_t rex_movq = 0x48;	 // REX.W
@@ -4367,54 +4367,54 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 				uint8_t modrm_movq = 0xC0 + ((xmm_idx & 0x07) << 3) + (static_cast<uint8_t>(temp_gpr) & 0x07);
 				textSectionData.push_back(modrm_movq);
 
-		// For varargs functions, Windows x64 requires copying XMM value to the
-		// corresponding integer register at the same position (for shadow-space homing).
-		// System V AMD64 does NOT require this - floats stay in XMM registers only.
-		// Use position = i + param_shift for the correct integer register slot.
+					// For varargs functions, Windows x64 requires copying XMM value to the
+					// corresponding integer register at the same position (for shadow-space homing).
+					// System V AMD64 does NOT require this - floats stay in XMM registers only.
+					// Use position = i + param_shift for the correct integer register slot.
 				if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
 					emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 				}
 
-		// Release the temporary GPR
+					// Release the temporary GPR
 				regAlloc.release(temp_gpr);
 				continue;
 			}
 
-	// Load value into target register
+				// Load value into target register
 			if (std::holds_alternative<unsigned long long>(arg.value)) {
-		// Load immediate directly into target register
+					// Load immediate directly into target register
 				unsigned long long value = std::get<unsigned long long>(arg.value);
-		// Use 32-bit mov for 32-bit arguments (automatically zero-extends to 64-bit)
-		// This ensures proper handling of signed 32-bit values like -1
+					// Use 32-bit mov for 32-bit arguments (automatically zero-extends to 64-bit)
+					// This ensures proper handling of signed 32-bit values like -1
 				if (arg.size_in_bits == SizeInBits{32}) {
-		// Cast to uint32_t truncates to lower 32 bits (intended behavior)
-		// For signed values like -1 (0xFFFFFFFFFFFFFFFF), this gives 0xFFFFFFFF
+						// Cast to uint32_t truncates to lower 32 bits (intended behavior)
+						// For signed values like -1 (0xFFFFFFFFFFFFFFFF), this gives 0xFFFFFFFF
 					emitMovImm32(target_reg, static_cast<uint32_t>(value));
 				} else {
 					emitMovImm64(target_reg, value);
 				}
 			} else if (std::holds_alternative<TempVar>(arg.value)) {
-		// Load from stack
+					// Load from stack
 				const auto& temp_var = std::get<TempVar>(arg.value);
 				int var_offset = getStackOffsetFromTempVar(temp_var);
 				if (is_float_arg) {
-		// For floating-point, use movsd/movss into XMM register
+						// For floating-point, use movsd/movss into XMM register
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
 
-		// For varargs: floats must be promoted to double (C standard)
+						// For varargs: floats must be promoted to double (C standard)
 					if (call_op.is_variadic && is_float) {
 						emitCvtss2sd(target_reg, target_reg);
 					}
 
-		// For varargs: also copy to corresponding INT register (Windows x64 only)
-		// System V AMD64 ABI does NOT require this
+						// For varargs: also copy to corresponding INT register (Windows x64 only)
+						// System V AMD64 ABI does NOT require this
 					if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
 						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 					}
 				} else {
-		// Use size-aware load: source (stack slot) -> destination (register)
-		// Both sizes are explicit for clarity
+						// Use size-aware load: source (stack slot) -> destination (register)
+						// Both sizes are explicit for clarity
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
 						SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}	 // source: sized stack slot
@@ -4422,26 +4422,26 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 					regAlloc.flushSingleDirtyRegister(target_reg);
 				}
 			} else if (std::holds_alternative<StringHandle>(arg.value)) {
-		// Load variable
+					// Load variable
 				StringHandle var_name_handle = std::get<StringHandle>(arg.value);
 				int var_offset = getVariableOffsetOrThrow(var_name_handle, "handleFunctionCall register arg");
 				if (is_float_arg) {
-		// For floating-point, use movsd/movss into XMM register
+						// For floating-point, use movsd/movss into XMM register
 					bool is_float = (arg.effectiveIrType() == IrType::Float);
 					emitFloatMovFromFrame(target_reg, var_offset, is_float);
 
-		// For varargs: floats must be promoted to double (C standard)
+						// For varargs: floats must be promoted to double (C standard)
 					if (call_op.is_variadic && is_float) {
 						emitCvtss2sd(target_reg, target_reg);
 					}
 
-		// For varargs: also copy to corresponding INT register (Windows x64 only)
-		// System V AMD64 ABI does NOT require this
+						// For varargs: also copy to corresponding INT register (Windows x64 only)
+						// System V AMD64 ABI does NOT require this
 					if (call_op.is_variadic && (i + param_shift) < max_int_regs && is_coff_format) {
 						emitMovqXmmToGpr(target_reg, getIntParamReg<TWriterClass>(i + param_shift));
 					}
 				} else {
-		// Use size-aware load: source (stack slot) -> destination (register)
+						// Use size-aware load: source (stack slot) -> destination (register)
 					emitMovFromFrameSized(
 						SizedRegister{target_reg, 64, false},  // dest: always load into 64-bit register
 						SizedStackSlot{var_offset, arg.size_in_bits.value, isSignedType(arg.category())}	 // source: sized stack slot
@@ -4451,10 +4451,10 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 			}
 		}
 
-	// For varargs functions on System V AMD64, set AL to number of XMM registers actually used
+			// For varargs functions on System V AMD64, set AL to number of XMM registers actually used
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (call_op.is_variadic) {
-		// Count XMM registers actually allocated (need to track float_reg_index)
+					// Count XMM registers actually allocated (need to track float_reg_index)
 				size_t xmm_count = 0;
 				size_t va_temp_float_idx = 0;
 				for (size_t i = 0; i < call_op.args.size(); ++i) {
@@ -4466,19 +4466,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 						}
 					}
 				}
-		// Set AL (lower 8 bits of RAX) to the count
-		// MOV AL, imm8: B0 + imm8
+					// Set AL (lower 8 bits of RAX) to the count
+					// MOV AL, imm8: B0 + imm8
 				textSectionData.push_back(0xB0);
 				textSectionData.push_back(static_cast<uint8_t>(xmm_count));
 			}
 		}
 
-	// If function uses return slot, pass the address of the result location as hidden first parameter
+			// If function uses return slot, pass the address of the result location as hidden first parameter
 		if (call_op.usesReturnSlot()) {
-	// Load address of return slot (result_offset) into first integer parameter register
+				// Load address of return slot (result_offset) into first integer parameter register
 			X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
 
-	// LEA return_slot_reg, [RBP + result_offset]
+				// LEA return_slot_reg, [RBP + result_offset]
 			emitLeaFromFrame(return_slot_reg, result_offset);
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
@@ -4486,80 +4486,80 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							 result_offset, static_cast<int>(return_slot_reg));
 		}
 
-	// Generate call instruction
+			// Generate call instruction
 		if (call_op.is_indirect_call) {
-	// Indirect call: the function_name is actually the variable name holding the function pointer
-	// Allocate a register using the register allocator, load the function pointer, then call through it
+				// Indirect call: the function_name is actually the variable name holding the function pointer
+				// Allocate a register using the register allocator, load the function pointer, then call through it
 			StringHandle func_ptr_name = call_op.getFunctionName();
 			int func_ptr_offset = getVariableOffsetOrThrow(func_ptr_name, "handleFunctionCall indirect call target");
 
-	// Note: Both function pointers and function references are handled the same way here.
-	// The reference variable holds the function address directly (function references
-	// decay to function pointers, so we just load the 64-bit function address from the
-	// stack location and call through it).
+				// Note: Both function pointers and function references are handled the same way here.
+				// The reference variable holds the function address directly (function references
+				// decay to function pointers, so we just load the 64-bit function address from the
+				// stack location and call through it).
 
-	// Allocate a scratch register for the indirect call
+				// Allocate a scratch register for the indirect call
 			X64Register call_reg = allocateRegisterWithSpilling();
 
-	// Load the function pointer/reference value
+				// Load the function pointer/reference value
 			emitMovFromFrame(call_reg, func_ptr_offset);
 
-	// Emit indirect call through the allocated register
+				// Emit indirect call through the allocated register
 			emitCallReg(textSectionData, call_reg);
 
-	// Release the register after the call
+				// Release the register after the call
 			regAlloc.release(call_reg);
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
 							 "Generated indirect call through {} at offset {}",
 							 static_cast<int>(call_reg), func_ptr_offset);
 		} else {
-	// Direct call: E8 + 32-bit relative offset
+				// Direct call: E8 + 32-bit relative offset
 			std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 			textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-	// Add relocation for function name (Phase 4: Use helper)
+				// Add relocation for function name (Phase 4: Use helper)
 			StringHandle func_name_handle = call_op.getFunctionName();
 			std::string mangled_name(StringTable::getStringView(func_name_handle));
 			writer.add_relocation(textSectionData.size() - 4, mangled_name);
 		}
 
-	// Invalidate caller-saved registers (function calls clobber them)
+			// Invalidate caller-saved registers (function calls clobber them)
 		regAlloc.invalidateCallerSavedRegisters();
 
-	// Phase 5: Copy elision opportunity detection
-	// Check if this is a prvalue return being used to initialize a variable
+			// Phase 5: Copy elision opportunity detection
+			// Check if this is a prvalue return being used to initialize a variable
 		bool is_prvalue_return = isTempVarPRValue(call_op.result);
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "FunctionCall result: {} is_prvalue={}",
 						 call_op.result.name(), is_prvalue_return);
 
-	// Store return value - RAX for integers, XMM0 for floats
-	// For struct returns using return slot, the struct is already in place - no copy needed
+			// Store return value - RAX for integers, XMM0 for floats
+			// For struct returns using return slot, the struct is already in place - no copy needed
 		if (call_op.return_type_index.category() != TypeCategory::Void && !call_op.usesReturnSlot()) {
 			if (isFloatingPointType(call_op.return_type_index.category())) {
-		// Float return value is in XMM0
+					// Float return value is in XMM0
 				bool is_float = (call_op.return_type_index.category() == TypeCategory::Float);
 				emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 			} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
+					// SystemV AMD64 ABI: structs 9-16 bytes return in RAX (low 8 bytes) and RDX (high 8 bytes)
 				if (call_op.return_type_index.category() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
-		// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+						// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 					emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);  // Store low 8 bytes
 					emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);	// Store high 8 bytes
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Storing two-register struct return ({} bits): RAX->offset {}, RDX->offset {}",
 									 return_size_bits, result_offset, result_offset + 8);
 				} else {
-		// Single-register return (≤64 bits) in RAX
+						// Single-register return (≤64 bits) in RAX
 					emitMovToFrameSized(
 						SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 						SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}	// dest
 					);
 				}
 			} else {
-		// Windows x64 ABI: small structs (≤64 bits) return in RAX only
+					// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 				emitMovToFrameSized(
 					SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 					SizedStackSlot{result_offset, return_size_bits, isSignedType(call_op.returnType())}	// dest
@@ -4571,12 +4571,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							 result_offset);
 		}
 
-	// Seed current-function stack-side reference tracking for object reference
-	// call results. Some later lowering paths query call-result slots by
-	// offset alone, so they need the call IR to describe whether the returned
-	// 64-bit value is a true object reference and what size object it refers to.
-	// Function references are different: they carry a callable address and must
-	// not be registered as implicitly-dereferenced object references.
+			// Seed current-function stack-side reference tracking for object reference
+			// call results. Some later lowering paths query call-result slots by
+			// offset alone, so they need the call IR to describe whether the returned
+			// 64-bit value is a true object reference and what size object it refers to.
+			// Function references are different: they carry a callable address and must
+			// not be registered as implicitly-dereferenced object references.
 		if (call_op.returns_reference && call_op.return_type_index.category() != TypeCategory::Function) {
 			registerObjectReferenceCallResult(
 				result_offset,
@@ -4589,15 +4589,15 @@ void IrToObjConverter<TWriterClass>::handleFunctionCall(const IrInstruction& ins
 							 result_offset);
 		}
 
-	// No stack cleanup needed after call:
-	// - Windows x64 ABI: Uses pre-allocated shadow space, not PUSH
-	// - Linux System V AMD64: Arguments in registers or pushed before call, stack pointer already adjusted
+			// No stack cleanup needed after call:
+			// - Windows x64 ABI: Uses pre-allocated shadow space, not PUSH
+			// - Linux System V AMD64: Arguments in registers or pushed before call, stack pointer already adjusted
 
 		return;
 	}
 
-	// All function calls should use typed payload (CallOp)
-	// Legacy operand-based path has been removed for better maintainability
+		// All function calls should use typed payload (CallOp)
+		// Legacy operand-based path has been removed for better maintainability
 	throw InternalError("Function call without typed payload - should not happen");
 }
 
@@ -4624,9 +4624,9 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 		return false;
 	}
 
-	// If the constructor has more than 1 parameter (e.g. Foo(const Foo&, int=0)),
-	// fall through to the handleConstructorCall path which supports
-	// fillInConstructorDefaultArguments for multi-param ctors.
+		// If the constructor has more than 1 parameter (e.g. Foo(const Foo&, int=0)),
+		// fall through to the handleConstructorCall path which supports
+		// fillInConstructorDefaultArguments for multi-param ctors.
 	if (ctor_node.parameter_nodes().size() > 1) {
 		return false;
 	}
@@ -4643,9 +4643,9 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 	X64Register source_reg = getIntParamReg<TWriterClass>(1);
 	if (std::holds_alternative<TempVar>(source_arg.value)) {
 		TempVar source_temp = std::get<TempVar>(source_arg.value);
-	// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
-	// metadata is populated during IR generation and later reused across multiple
-	// functions. Use only current-function stack-side indirect-storage info.
+			// Backend lowering must not rely on GlobalTempVarMetadataStorage here because that
+			// metadata is populated during IR generation and later reused across multiple
+			// functions. Use only current-function stack-side indirect-storage info.
 		int32_t source_offset = getStackOffsetFromTempVar(source_temp, source_arg.size_in_bits.value);
 		auto source_ref_info = getIndirectStackInfo(source_offset);
 		if (!source_ref_info.has_value() && source_arg.size_in_bits != SizeInBits{64}) {
@@ -4701,33 +4701,33 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& instruction) {
-	// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
+		// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
 	const ConstructorCallOp& ctor_op = instruction.getTypedPayload<ConstructorCallOp>();
 
 	flushAllDirtyRegisters();
 
 	std::string_view struct_name = StringTable::getStringView(ctor_op.struct_name);
 
-	// Get the object's stack offset
+		// Get the object's stack offset
 	int object_offset = 0;
 	bool object_is_pointer = false;	// Declare early so RVO branch can set it
 
-	// If using return slot (RVO), get offset from return_slot_offset or look up __return_slot
+		// If using return slot (RVO), get offset from return_slot_offset or look up __return_slot
 	if (ctor_op.use_return_slot) {
 		if (ctor_op.return_slot_offset.has_value()) {
 			object_offset = ctor_op.return_slot_offset.value();
 		} else {
-	// Look up __return_slot in the variables map
+				// Look up __return_slot in the variables map
 			auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 			if (return_slot_it != variable_scopes.back().variables.end()) {
-		// __return_slot holds the address where we should construct
-		// Load this address into RDI for the constructor call
+					// __return_slot holds the address where we should construct
+					// Load this address into RDI for the constructor call
 				int return_slot_param_offset = return_slot_it->second.offset;
 				X64Register dest_reg = X64Register::RDI;
 				emitMovFromFrame(dest_reg, return_slot_param_offset);
 
-		// Store the address in a temp location so we can use it as object_offset
-		// Actually, we'll pass it differently - set object_is_pointer flag
+					// Store the address in a temp location so we can use it as object_offset
+					// Actually, we'll pass it differently - set object_is_pointer flag
 				object_offset = return_slot_param_offset;
 				object_is_pointer = true;  // The offset holds a pointer to where object should be
 
@@ -4737,7 +4737,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			} else {
 				FLASH_LOG(Codegen, Error,
 						  "Constructor marked for RVO but __return_slot not found in variables");
-		// Fall through to regular handling
+					// Fall through to regular handling
 			}
 		}
 
@@ -4747,7 +4747,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	} else if (std::holds_alternative<TempVar>(ctor_op.object)) {
 		const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 
-	// Get struct size for proper stack allocation
+			// Get struct size for proper stack allocation
 		int struct_size_bits = 64;  // Default to 8 bytes
 		auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_type_it != getTypesByNameMap().end()) {
@@ -4768,10 +4768,10 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 							 struct_name);
 		}
 
-	// TempVars can be either stack-allocated or heap-allocated
-	// Use is_heap_allocated flag to distinguish:
-	// - Heap-allocated (from new): TempVar holds a pointer, use MOV to load it
-	// - Stack-allocated (RVO/NRVO): TempVar is the object location, use LEA to get address
+			// TempVars can be either stack-allocated or heap-allocated
+			// Use is_heap_allocated flag to distinguish:
+			// - Heap-allocated (from new): TempVar holds a pointer, use MOV to load it
+			// - Stack-allocated (RVO/NRVO): TempVar is the object location, use LEA to get address
 		object_offset = getStackOffsetFromTempVar(temp_var, struct_size_bits);
 		object_is_pointer = ctor_op.is_heap_allocated;
 	} else {
@@ -4783,24 +4783,24 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		object_offset = it->second.offset;
 		object_is_pointer = (StringTable::getStringView(var_name_handle) == "this");
 
-	// If this is an array element constructor call, adjust offset for the specific element
+			// If this is an array element constructor call, adjust offset for the specific element
 		if (ctor_op.array_index.has_value()) {
-	// Look up struct size to calculate element offset
+				// Look up struct size to calculate element offset
 			auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 			if (struct_type_it != getTypesByNameMap().end()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
 					size_t element_size = struct_info->total_size;
 					size_t index = ctor_op.array_index.value();
-		// Adjust offset: base_offset + (index * element_size)
+						// Adjust offset: base_offset + (index * element_size)
 					object_offset += static_cast<int>(index * element_size);
 				}
 			}
 		}
 	}
 
-	// Load the address of the object into the first parameter register ('this' pointer)
-	// Use platform-specific register: RDI on Linux, RCX on Windows
+		// Load the address of the object into the first parameter register ('this' pointer)
+		// Use platform-specific register: RDI on Linux, RCX on Windows
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
@@ -4808,28 +4808,28 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					 struct_name, object_is_pointer, object_offset, ctor_op.base_class_offset);
 
 	if (object_is_pointer) {
-	// For pointers (this, heap-allocated): reload the pointer value (not its address)
-	// MOV this_reg, [RBP + object_offset]
+			// For pointers (this, heap-allocated): reload the pointer value (not its address)
+			// MOV this_reg, [RBP + object_offset]
 		emitMovFromFrame(this_reg, object_offset);
-	// Add base_class_offset for multiple inheritance (adjust pointer to base subobject)
+			// Add base_class_offset for multiple inheritance (adjust pointer to base subobject)
 		if (ctor_op.base_class_offset != 0) {
 			emitAddRegImm32(textSectionData, this_reg, ctor_op.base_class_offset);
 		}
 	} else {
-	// For regular stack objects: get the address
-	// LEA this_reg, [RBP + object_offset + base_class_offset]
-	// The base_class_offset adjusts for multiple inheritance
+			// For regular stack objects: get the address
+			// LEA this_reg, [RBP + object_offset + base_class_offset]
+			// The base_class_offset adjusts for multiple inheritance
 		auto lea_inst = generateLeaFromFrame(this_reg, object_offset + ctor_op.base_class_offset);
 		textSectionData.insert(textSectionData.end(), lea_inst.op_codes.begin(), lea_inst.op_codes.begin() + lea_inst.size_in_bytes);
 	}
 
-	// Process constructor parameters (if any) - similar to function call
+		// Process constructor parameters (if any) - similar to function call
 	const size_t num_params = ctor_op.arguments.size();
 
-	// Phase 4 helper: builds a TypeSpecifierNode from TypedValue metadata.
-	// Centralises the .type dependency so it can later be replaced with IrType-based logic.
-	// TODO(Phase 5): Replace arg.type with IrType-based TypeSpecifierNode construction
-	// once TypeSpecifierNode supports construction from IrType + metadata.
+		// Phase 4 helper: builds a TypeSpecifierNode from TypedValue metadata.
+		// Centralises the .type dependency so it can later be replaced with IrType-based logic.
+		// TODO(Phase 5): Replace arg.type with IrType-based TypeSpecifierNode construction
+		// once TypeSpecifierNode supports construction from IrType + metadata.
 	auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 		TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
 								   ? TypeSpecifierNode(arg.type_index.withCategory(arg.typeEnum()), arg.size_in_bits.value, Token{}, CVQualifier::None, ReferenceQualifier::None)
@@ -4844,25 +4844,25 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		return ts;
 	};
 
-	// Look up the struct type once for use in both loops
+		// Look up the struct type once for use in both loops
 	auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 
-	// Find the actual constructor to get the correct parameter types
-	// This is more reliable than trying to infer from argument types
+		// Find the actual constructor to get the correct parameter types
+		// This is more reliable than trying to infer from argument types
 	const ConstructorDeclarationNode* actual_ctor = nullptr;
 	if (struct_type_it != getTypesByNameMap().end()) {
 		const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 		if (struct_info) {
-	// FIRST: If we have exactly one IR-level argument that's a reference to the same
-	// struct type, prefer the corresponding same-type copy/move constructor.
-	// Note: num_params == 1 is correct here because:
-	//   (a) For direct-init `Foo b(a)` with `Foo(const Foo&, int=0)`, the IrGenerator
-	//       calls fillInConstructorDefaultArguments before emitting ConstructorCallOp,
-	//       producing num_params==2 which skips this branch and falls through to
-	//       resolve_constructor_overload below.
-	//   (b) For copy-init `Foo b = a` with `Foo(const Foo&, int=0)`, the IrGenerator
-	//       also fills in defaults (IrGenerator_Stmt_Decl.cpp copy-init path),
-	//       again producing num_params==2.
+				// FIRST: If we have exactly one IR-level argument that's a reference to the same
+				// struct type, prefer the corresponding same-type copy/move constructor.
+				// Note: num_params == 1 is correct here because:
+				//   (a) For direct-init `Foo b(a)` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       calls fillInConstructorDefaultArguments before emitting ConstructorCallOp,
+				//       producing num_params==2 which skips this branch and falls through to
+				//       resolve_constructor_overload below.
+				//   (b) For copy-init `Foo b = a` with `Foo(const Foo&, int=0)`, the IrGenerator
+				//       also fills in defaults (IrGenerator_Stmt_Decl.cpp copy-init path),
+				//       again producing num_params==2.
 			if (num_params == 1 && !ctor_op.arguments.empty()) {
 				const TypedValue& arg = ctor_op.arguments[0];
 				bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
@@ -4882,7 +4882,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				}
 			}
 
-	// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
+				// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
 			if (!actual_ctor) {
 				std::vector<TypeSpecifierNode> arg_types;
 				arg_types.reserve(num_params);
@@ -4903,10 +4903,10 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-	// Extract parameter types for overload resolution
+		// Extract parameter types for overload resolution
 	std::vector<TypeSpecifierNode> parameter_types;
 
-	// If we found the actual constructor, use its parameter types directly
+		// If we found the actual constructor, use its parameter types directly
 	if (actual_ctor) {
 		const auto& ctor_params = actual_ctor->parameter_nodes();
 		for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
@@ -4918,12 +4918,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					continue;
 				}
 			}
-	// Fallback: if we can't get the param type, build from the TypedValue
+				// Fallback: if we can't get the param type, build from the TypedValue
 			const TypedValue& arg = ctor_op.arguments[i];
 			parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 		}
 	} else {
-	// Fallback to old logic: infer from argument types
+			// Fallback to old logic: infer from argument types
 		for (size_t i = 0; i < num_params; ++i) {
 			const TypedValue& arg = ctor_op.arguments[i];
 			TypeCategory paramType = arg.typeEnum();
@@ -4933,58 +4933,58 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			int arg_pointer_depth = arg.pointer_depth.value;
 			CVQualifier arg_cv_qualifier = arg.cv_qualifier;
 
-	// Build TypeSpecifierNode for this parameter
-	// For pointers, use the base type size, not the pointer size (64 bits)
+				// Build TypeSpecifierNode for this parameter
+				// For pointers, use the base type size, not the pointer size (64 bits)
 			int actual_size = paramSize;
 			if (arg_pointer_depth > 0) {
-		// This is a pointer - set size to pointee type size
-		// For basic types, use get_type_size_bits
+					// This is a pointer - set size to pointee type size
+					// For basic types, use get_type_size_bits
 				int basic_size = get_type_size_bits(paramType);
 				if (basic_size > 0) {
 					actual_size = basic_size;
 				}
-		// For struct types, keep the size as-is (basic_size will be 0)
+					// For struct types, keep the size as-is (basic_size will be 0)
 			}
 
 			TypeSpecifierNode param_type(paramType, TypeQualifier::None, static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier);
 
-	// Add pointer levels
+				// Add pointer levels
 			for (int p = 0; p < arg_pointer_depth; ++p) {
 				param_type.add_pointer_level(CVQualifier::None);
 			}
 
-	// If the argument is marked as a reference, set it as such
+				// If the argument is marked as a reference, set it as such
 			if (arg_is_reference) {
 				param_type.set_reference_qualifier(arg.ref_qualifier);
 			}
 
-	// For copy/move constructors: if parameter is the same struct type, it should be a reference
-	// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Struct and same as struct_name
-	// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
+				// For copy/move constructors: if parameter is the same struct type, it should be a reference
+				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Struct and same as struct_name
+				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
 			bool is_same_struct_type = false;
 			if (struct_type_it != getTypesByNameMap().end() && arg_type_index.is_valid()) {
 				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
 			}
 
 			if (num_params == 1 && paramType == TypeCategory::Struct && is_same_struct_type && !arg_is_reference) {
-		// This is likely a copy constructor, but arg_is_reference wasn't set
-		// Determine the actual CV qualifier from the constructor signature
+					// This is likely a copy constructor, but arg_is_reference wasn't set
+					// Determine the actual CV qualifier from the constructor signature
 				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 				if (type_it != getTypesByNameMap().end()) {
 					TypeIndex struct_type_index = type_it->second->type_index_;
 					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
 
-		// Default to const reference (standard implicit copy constructor)
+						// Default to const reference (standard implicit copy constructor)
 					CVQualifier copy_ctor_cv = CVQualifier::Const;
 
-		// Check if there's an explicit copy constructor with a different signature
+						// Check if there's an explicit copy constructor with a different signature
 					if (struct_info) {
 						const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
 						if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 							const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
 							const auto& params = ctor_node.parameter_nodes();
-		// findCopyConstructor() can return ctors with trailing defaults
-		// (e.g. Foo(const Foo&, int=0)), so use !params.empty().
+								// findCopyConstructor() can return ctors with trailing defaults
+								// (e.g. Foo(const Foo&, int=0)), so use !params.empty().
 							if (!params.empty() && params[0].is<DeclarationNode>()) {
 								const auto& param_decl = params[0].as<DeclarationNode>();
 								if (param_decl.type_node().is<TypeSpecifierNode>()) {
@@ -4999,13 +4999,13 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);	 // set_reference(false) creates an lvalue reference (not rvalue)
 				}
 			} else if (paramType == TypeCategory::Struct && arg_type_index.is_valid()) {
-		// Not a copy constructor, but still a struct parameter - set the type_index
+					// Not a copy constructor, but still a struct parameter - set the type_index
 				param_type = TypeSpecifierNode(arg_type_index.withCategory(paramType), static_cast<unsigned char>(actual_size), Token{}, arg_cv_qualifier, ReferenceQualifier::None);
-		// Add pointer levels (rebuild after creating with type_index)
+					// Add pointer levels (rebuild after creating with type_index)
 				for (int p = 0; p < arg_pointer_depth; ++p) {
 					param_type.add_pointer_level(CVQualifier::None);
 				}
-		// Also preserve the reference flag if it was set
+					// Also preserve the reference flag if it was set
 				if (arg_is_reference) {
 					param_type.set_reference_qualifier(arg.ref_qualifier);
 				}
@@ -5015,13 +5015,13 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}  // End of fallback for loop
 	}  // End of if (actual_ctor) else block
 
-	// Process constructor parameters: first handle stack overflow args, then register args
+		// Process constructor parameters: first handle stack overflow args, then register args
 	const size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 	const size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 	size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-	// First pass: identify and place stack arguments (params that don't fit in registers)
-	// Register index 0 is used by 'this', so effective int reg capacity is max_int_regs - 1
+		// First pass: identify and place stack arguments (params that don't fit in registers)
+		// Register index 0 is used by 'this', so effective int reg capacity is max_int_regs - 1
 	{
 		size_t temp_int_idx = 1;	 // Start at 1 because 'this' uses register 0
 		size_t temp_float_idx = 0;
@@ -5084,8 +5084,8 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					regAlloc.release(temp_xmm);
 					stack_arg_count++;
 				} else if (is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
-		// Match handleFunctionCall: references and ABI-required by-address
-		// struct arguments must spill their address, not their value.
+						// Match handleFunctionCall: references and ABI-required by-address
+						// struct arguments must spill their address, not their value.
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					if (!emitLoadAddressLikeArgument(temp_reg, arg, source_base_adjustment)) {
 						throw InternalError("Stack constructor argument marked pass-by-address is not addressable");
@@ -5106,9 +5106,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-	// Second pass: load register arguments
-	// Integer regs: index 0 is 'this', so start at index 1 for first explicit param
-	// Float regs: XMM0-XMM7 for floating-point parameters
+		// Second pass: load register arguments
+		// Integer regs: index 0 is 'this', so start at index 1 for first explicit param
+		// Float regs: XMM0-XMM7 for floating-point parameters
 	size_t int_reg_index = 1;  // Start at 1 because index 0 (RDI/RCX) is 'this' pointer
 	size_t float_reg_index = 0;
 
@@ -5126,16 +5126,16 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		bool is_float_arg = (paramType == TypeCategory::Float || paramType == TypeCategory::Double) && (!param_type_spec || param_type_spec->pointer_depth() == 0) && !arg_is_reference;
 		bool is_reference_param = arg_is_reference;
 
-	// Determine which register to use based on parameter type
+			// Determine which register to use based on parameter type
 		if (is_float_arg && float_reg_index < max_float_regs) {
-	// Use XMM register for floating-point parameters
+				// Use XMM register for floating-point parameters
 			X64Register target_xmm = getFloatParamReg<TWriterClass>(float_reg_index++);
 
-	// Handle floating-point immediate values (double literals)
+				// Handle floating-point immediate values (double literals)
 			if (std::holds_alternative<double>(paramValue)) {
 				double float_value = std::get<double>(paramValue);
 
-		// Convert to appropriate bit pattern (float or double)
+					// Convert to appropriate bit pattern (float or double)
 				uint64_t bits;
 				if (paramType == TypeCategory::Float) {
 					float float_val = static_cast<float>(float_value);
@@ -5146,22 +5146,22 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					std::memcpy(&bits, &float_value, sizeof(bits));
 				}
 
-		// Load bit pattern into temp GPR first
+					// Load bit pattern into temp GPR first
 				X64Register temp_gpr = allocateRegisterWithSpilling();
 				emitMovImm64(temp_gpr, bits);
 
-		// Move from GPR to XMM register using movq
+					// Move from GPR to XMM register using movq
 				emitMovqGprToXmm(temp_gpr, target_xmm);
 
 				regAlloc.release(temp_gpr);
 			} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&paramValue)) {
-		// Load from temp variable
+					// Load from temp variable
 				const TempVar temp_var = *temp_var_ptr;
 				int param_offset = getStackOffsetFromTempVar(temp_var);
 				bool is_float = (paramType == TypeCategory::Float);
 				emitFloatMovFromFrame(target_xmm, param_offset, is_float);
 			} else if (std::holds_alternative<StringHandle>(paramValue)) {
-		// Load from variable
+					// Load from variable
 				StringHandle var_name_handle = std::get<StringHandle>(paramValue);
 				auto it = variable_scopes.back().variables.find(var_name_handle);
 				if (it != variable_scopes.back().variables.end()) {
@@ -5171,13 +5171,13 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				}
 			}
 		} else if (!is_float_arg) {
-	// Integer (non-float) parameter.
-	// SysV AMD64: 9-16 byte by-value structs consume two consecutive registers; verify space up front.
+				// Integer (non-float) parameter.
+				// SysV AMD64: 9-16 byte by-value structs consume two consecutive registers; verify space up front.
 			bool is_two_reg_sysv = isTwoRegisterStruct(arg, false /* non-variadic */);
 			size_t regs_needed = is_two_reg_sysv ? 2 : 1;
 
 			if (int_reg_index + regs_needed <= max_int_regs) {
-		// Use integer register(s) for non-floating-point parameters
+					// Use integer register(s) for non-floating-point parameters
 				X64Register target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
 				bool should_pass_address = is_reference_param || shouldPassStructByAddress(arg, is_two_reg_sysv);
 
@@ -5189,33 +5189,33 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				}
 
 				if (std::holds_alternative<unsigned long long>(paramValue)) {
-		// Immediate value
+						// Immediate value
 					unsigned long long value = std::get<unsigned long long>(paramValue);
 
-		// For 32-bit parameters, use 32-bit MOV to properly handle signed values
-		// For negative values stored as 64-bit unsigned, truncate to 32-bit
+						// For 32-bit parameters, use 32-bit MOV to properly handle signed values
+						// For negative values stored as 64-bit unsigned, truncate to 32-bit
 					if (paramSize == 32) {
 						uint32_t value32 = static_cast<uint32_t>(value);
 						emitMovImm32(target_reg, value32);
 					} else {
-		// For 64-bit parameters or other sizes, use 64-bit MOV
+							// For 64-bit parameters or other sizes, use 64-bit MOV
 						emitMovImm64(target_reg, value);
 					}
 				} else if (std::holds_alternative<TempVar>(paramValue)) {
-		// Load from temp variable
+						// Load from temp variable
 					const TempVar temp_var = std::get<TempVar>(paramValue);
 					int param_offset = getStackOffsetFromTempVar(temp_var);
 					if (is_two_reg_sysv) {
 						emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
 					} else {
-		// For value parameters: source (sized stack slot) -> dest (64-bit register)
+							// For value parameters: source (sized stack slot) -> dest (64-bit register)
 						emitMovFromFrameSized(
 							SizedRegister{target_reg, 64, false},  // dest: 64-bit register
 							SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}	 // source: sized stack slot
 						);
 					}
 				} else if (std::holds_alternative<StringHandle>(paramValue)) {
-		// Load from variable
+						// Load from variable
 					StringHandle var_name_handle = std::get<StringHandle>(paramValue);
 					auto it = variable_scopes.back().variables.find(var_name_handle);
 					if (it != variable_scopes.back().variables.end()) {
@@ -5223,7 +5223,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 						if (is_two_reg_sysv) {
 							emitTwoRegStructToRegs(param_offset, target_reg, int_reg_index, max_int_regs);
 						} else {
-		// For value parameters: source (sized stack slot) -> dest (64-bit register)
+								// For value parameters: source (sized stack slot) -> dest (64-bit register)
 							emitMovFromFrameSized(
 								SizedRegister{target_reg, 64, false},  // dest: 64-bit register
 								SizedStackSlot{param_offset, paramSize, isSignedType(paramType)}	 // source: sized stack slot
@@ -5232,30 +5232,30 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					}
 				}
 			} else {
-		// Struct doesn't fit in registers — advance counter to stay in sync with first pass
+					// Struct doesn't fit in registers — advance counter to stay in sync with first pass
 				int_reg_index += regs_needed;
 			}
 		}
-	// Args that don't fit in registers were already placed on the stack in the first pass above
+			// Args that don't fit in registers were already placed on the stack in the first pass above
 	}
 
-	// Generate the call instruction
-	// For constructors, the function name is the last component of the class name
-	// For nested classes like "Outer::Inner", function_name="Inner" and class_name="Outer::Inner"
+		// Generate the call instruction
+		// For constructors, the function name is the last component of the class name
+		// For nested classes like "Outer::Inner", function_name="Inner" and class_name="Outer::Inner"
 	std::string function_name;
 	std::string class_name;
 	size_t last_colon_pos = struct_name.rfind("::");
 	if (last_colon_pos != std::string::npos) {
-	// Nested class: "Outer::Inner" -> function="Inner", class="Outer::Inner" (full name)
+			// Nested class: "Outer::Inner" -> function="Inner", class="Outer::Inner" (full name)
 		function_name = struct_name.substr(last_colon_pos + 2);
 		class_name = struct_name;  // Keep full name for proper constructor detection
 	} else {
-	// Regular class: function_name = class_name = struct_name
+			// Regular class: function_name = class_name = struct_name
 		function_name = struct_name;
 		class_name = struct_name;
-	// Check if the struct's constructors are registered under a namespace-qualified name.
-	// This happens when a struct is defined inside a namespace (e.g., std::my_type)
-	// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
+			// Check if the struct's constructors are registered under a namespace-qualified name.
+			// This happens when a struct is defined inside a namespace (e.g., std::my_type)
+			// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
 		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 			const StructTypeInfo* si = type_it->second->getStructInfo();
@@ -5277,16 +5277,16 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-	// Build FunctionSignature for proper overload resolution
+		// Build FunctionSignature for proper overload resolution
 	TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 	sig.class_name = class_name;
 
-	// Generate the correct mangled name for this specific constructor overload
+		// Generate the correct mangled name for this specific constructor overload
 	auto mangled_name = writer.generateMangledName(function_name, sig);
 	writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
 	regAlloc.reset();
@@ -5294,14 +5294,14 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& instruction) {
-	// Destructor call format: DestructorCallOp {struct_name, object}
+		// Destructor call format: DestructorCallOp {struct_name, object}
 	const DestructorCallOp& dtor_op = instruction.getTypedPayload<DestructorCallOp>();
 
 	flushAllDirtyRegisters();
 
 	std::string_view struct_name = StringTable::getStringView(dtor_op.struct_name);
 
-	// Get the object's stack offset
+		// Get the object's stack offset
 	int object_offset = 0;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&dtor_op.object)) {
 		const TempVar temp_var = *temp_var_ptr;
@@ -5315,38 +5315,38 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 		object_offset = var_info->offset;
 	}
 
-	// Check if the object is a pointer (needs to be loaded, not addressed)
-	// This includes 'this' pointer, heap pointers, and any frontend-marked pointer temp.
+		// Check if the object is a pointer (needs to be loaded, not addressed)
+		// This includes 'this' pointer, heap pointers, and any frontend-marked pointer temp.
 	bool object_is_pointer = dtor_op.object_is_pointer;
 	if (const auto* string_ptr = std::get_if<StringHandle>(&dtor_op.object)) {
 		StringHandle obj_handle = *string_ptr;
 		object_is_pointer = object_is_pointer || (StringTable::getStringView(obj_handle) == "this");
 	}
 
-	// Load the address of the object into the first parameter register ('this' pointer)
-	// Use platform-specific register: RDI on Linux, RCX on Windows
+		// Load the address of the object into the first parameter register ('this' pointer)
+		// Use platform-specific register: RDI on Linux, RCX on Windows
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 	if (object_is_pointer) {
-	// For pointers (this, heap-allocated): reload the pointer value (not its address)
-	// MOV this_reg, [RBP + object_offset]
+			// For pointers (this, heap-allocated): reload the pointer value (not its address)
+			// MOV this_reg, [RBP + object_offset]
 		emitMovFromFrame(this_reg, object_offset);
 	} else {
-	// For regular stack objects: get the address
-	// LEA this_reg, [RBP + object_offset]
+			// For regular stack objects: get the address
+			// LEA this_reg, [RBP + object_offset]
 		emitLeaFromFrame(this_reg, object_offset);
 	}
 
-	// Generate the call instruction
-	// For nested classes, split "Outer::Inner" into class="Outer" and function="~Inner"
+		// Generate the call instruction
+		// For nested classes, split "Outer::Inner" into class="Outer" and function="~Inner"
 	std::string function_name;
 	std::string class_name;
 	size_t last_colon_pos = struct_name.rfind("::");
 	if (last_colon_pos != std::string::npos) {
-	// Nested class: "Outer::Inner" -> class="Outer", function="~Inner"
+			// Nested class: "Outer::Inner" -> class="Outer", function="~Inner"
 		class_name = std::string(struct_name.substr(0, last_colon_pos));
 		function_name = std::string("~") + std::string(struct_name.substr(last_colon_pos + 2));
 	} else {
-	// Regular class: function_name = "~ClassName", class_name = struct_name
+			// Regular class: function_name = "~ClassName", class_name = struct_name
 		function_name = std::string("~") + std::string(struct_name);
 		class_name = std::string(struct_name);
 	}
@@ -5354,17 +5354,17 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 
-	// Build FunctionSignature for destructor (destructors take no parameters and return void)
+		// Build FunctionSignature for destructor (destructors take no parameters and return void)
 	std::vector<TypeSpecifierNode> empty_params;	 // Destructors have no parameters
 	TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	ObjectFileWriter::FunctionSignature sig(void_return, empty_params);
 	sig.class_name = class_name;
 
-	// Generate the correct mangled name for the destructor
+		// Generate the correct mangled name for the destructor
 	auto mangled_name = writer.generateMangledName(function_name, sig);
 	writer.add_relocation(textSectionData.size() - 4, mangled_name);
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
 	regAlloc.reset();
@@ -5372,18 +5372,18 @@ void IrToObjConverter<TWriterClass>::handleDestructorCall(const IrInstruction& i
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& instruction) {
-	// Extract VirtualCallOp typed payload
+		// Extract VirtualCallOp typed payload
 	const VirtualCallOp& op = instruction.getTypedPayload<VirtualCallOp>();
 
 	flushAllDirtyRegisters();
 
-	// Get result offset
+		// Get result offset
 	assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
 	const TempVar& result_var = std::get<TempVar>(op.result.value);
 	int result_offset = getStackOffsetFromTempVar(result_var);
 	variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = result_offset;
 
-	// Get object offset
+		// Get object offset
 	int object_offset = 0;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.object)) {
 		const TempVar& temp_var = *temp_var_ptr;
@@ -5393,68 +5393,68 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		object_offset = getVariableOffsetOrThrow(var_name_handle, "handleVirtualCall object");
 	}
 
-	// Virtual call sequence varies based on whether object is a pointer or direct:
-	// For pointers (is_pointer_access == true, e.g., ptr->method()):
-	//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
-	// For direct objects (is_pointer_access == false, e.g., obj.method()):
-	//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
+		// Virtual call sequence varies based on whether object is a pointer or direct:
+		// For pointers (is_pointer_access == true, e.g., ptr->method()):
+		//   1. Load object pointer value → 2. Load vptr from [pointer] → 3. Load func from [vptr + index*8] → 4. Call
+		// For direct objects (is_pointer_access == false, e.g., obj.method()):
+		//   1. Get object address → 2. Load vptr from [address] → 3. Load func from [vptr + index*8] → 4. Call
 
 	const X64Register this_reg = getIntParamReg<TWriterClass>(0); // First parameter register
 
-	// Use is_pointer_access flag to determine if object is a pointer or direct object
-	// Previously we used (op.object_size == 64) but that's wrong for small structs (like those with only vptr)
+		// Use is_pointer_access flag to determine if object is a pointer or direct object
+		// Previously we used (op.object_size == 64) but that's wrong for small structs (like those with only vptr)
 	bool is_pointer_object = op.is_pointer_access;
 
 	if (is_pointer_object) {
-	// Step 1a: Load pointer value from stack into this_reg
-	// MOV this_reg, [RBP + object_offset]
+			// Step 1a: Load pointer value from stack into this_reg
+			// MOV this_reg, [RBP + object_offset]
 		emitMovFromFrame(this_reg, object_offset);
 
-	// Step 2a: Load vptr from object (dereference the pointer)
-	// MOV RAX, [this_reg + 0]
+			// Step 2a: Load vptr from object (dereference the pointer)
+			// MOV RAX, [this_reg + 0]
 		emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
 	} else {
-	// Step 1b: Load object address into this_reg
-	// LEA this_reg, [RBP + object_offset]
+			// Step 1b: Load object address into this_reg
+			// LEA this_reg, [RBP + object_offset]
 		emitLeaFromFrame(this_reg, object_offset);
 
-	// Step 2b: Load vptr from object (object address is in this_reg)
-	// MOV RAX, [this_reg + 0]
+			// Step 2b: Load vptr from object (object address is in this_reg)
+			// MOV RAX, [this_reg + 0]
 		emitMovRegFromMemRegSized(X64Register::RAX, this_reg, 64);
 	}
 
-	// Step 3: Load function pointer from vtable into RAX
-	// MOV RAX, [RAX + vtable_index * 8]
+		// Step 3: Load function pointer from vtable into RAX
+		// MOV RAX, [RAX + vtable_index * 8]
 	int vtable_offset = op.vtable_index * 8;
 	if (vtable_offset == 0) {
-	// No offset, use simple dereference
+			// No offset, use simple dereference
 		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 	} else if (vtable_offset >= -128 && vtable_offset <= 127) {
-	// Use 8-bit displacement
+			// Use 8-bit displacement
 		emitMovRegFromMemRegDisp8(X64Register::RAX, X64Register::RAX, static_cast<int8_t>(vtable_offset));
 	} else {
-	// Use 32-bit displacement with emitMovFromMemory
+			// Use 32-bit displacement with emitMovFromMemory
 		emitMovFromMemory(X64Register::RAX, X64Register::RAX, vtable_offset, 8);
 	}
 
-	// Step 4: 'this' pointer is already in the correct register from Step 1
-	// No need to recalculate or reload - it's preserved throughout
+		// Step 4: 'this' pointer is already in the correct register from Step 1
+		// No need to recalculate or reload - it's preserved throughout
 
-	// Step 5: Handle additional function arguments (beyond 'this')
-	// Virtual member functions have 'this' as first parameter (already in this_reg)
-	// Additional arguments start at parameter index 1
+		// Step 5: Handle additional function arguments (beyond 'this')
+		// Virtual member functions have 'this' as first parameter (already in this_reg)
+		// Additional arguments start at parameter index 1
 	if (!op.arguments.empty()) {
-	// Get platform-specific parameter counts
+			// Get platform-specific parameter counts
 		size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 		size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
 		size_t shadow_space = getShadowSpaceSize<TWriterClass>();
 
-	// Start at index 1 because 'this' is already in parameter register 0
+			// Start at index 1 because 'this' is already in parameter register 0
 		size_t int_reg_index = 1;
 		size_t float_reg_index = 0;
 		size_t stack_arg_count = 0;
 
-	// First pass: handle stack arguments
+			// First pass: handle stack arguments
 		for (size_t i = 0; i < op.arguments.size(); ++i) {
 			const auto& arg = op.arguments[i];
 			bool is_float_arg = is_floating_point_type(arg.category());
@@ -5469,7 +5469,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			}
 
 			if (!use_register) {
-		// Argument goes on stack
+					// Argument goes on stack
 				int stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 				X64Register temp_reg = loadTypedValueIntoRegister(arg);
 				emitStoreToRSP(textSectionData, temp_reg, stack_offset);
@@ -5478,7 +5478,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			}
 		}
 
-	// Second pass: handle register arguments
+			// Second pass: handle register arguments
 		int_reg_index = 1;  // Reset, 'this' is in register 0
 		float_reg_index = 0;
 
@@ -5503,9 +5503,9 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 			}
 
 			if (use_register) {
-		// Load argument into parameter register
+					// Load argument into parameter register
 				if (is_float_arg) {
-		// Handle float arguments
+						// Handle float arguments
 					if (std::holds_alternative<double>(arg.value)) {
 						double float_value = std::get<double>(arg.value);
 						uint64_t bits;
@@ -5532,7 +5532,7 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 						emitFloatMovFromFrame(target_reg, var_offset, is_float);
 					}
 				} else {
-		// Handle integer/pointer arguments
+						// Handle integer/pointer arguments
 					if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
 						uint64_t imm_value = *ull_val;
 						emitMovImm64(target_reg, imm_value);
@@ -5549,12 +5549,12 @@ void IrToObjConverter<TWriterClass>::handleVirtualCall(const IrInstruction& inst
 		}
 	}
 
-	// Step 6: Call through function pointer in RAX
-	// CALL RAX
+		// Step 6: Call through function pointer in RAX
+		// CALL RAX
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-	// Step 7: Store return value from RAX to result variable using the correct size
+		// Step 7: Store return value from RAX to result variable using the correct size
 	if (op.result.effectiveIrType() != IrType::Void) {
 		emitMovToFrameSized(
 			SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
@@ -5578,22 +5578,22 @@ void IrToObjConverter<TWriterClass>::handleHeapAlloc(const IrInstruction& instru
 
 	flushAllDirtyRegisters();
 
-	// Call malloc(size)
-	// Use platform-correct first parameter register (RDI on Linux, RCX on Windows)
+		// Call malloc(size)
+		// Use platform-correct first parameter register (RDI on Linux, RCX on Windows)
 	constexpr X64Register alloc_param_reg = getIntParamReg<TWriterClass>(0);
 
-	// Move size into first parameter register
+		// Move size into first parameter register
 	emitMovImm64(alloc_param_reg, static_cast<uint64_t>(op.size_in_bytes));
 
-	// Call malloc
+		// Call malloc
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 	writer.add_relocation(textSectionData.size() - 4, "malloc");
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
-	// Result is in RAX, store it to the result variable (pointer is always 64-bit)
+		// Result is in RAX, store it to the result variable (pointer is always 64-bit)
 	int result_offset = getStackOffsetFromTempVar(op.result);
 
 	emitMovToFrameSized(
@@ -5610,10 +5610,10 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 
 	flushAllDirtyRegisters();
 
-	// Load count into RAX - handle TempVar, std::string_view (identifier), and constant values
-	// Array counts are typically size_t (unsigned 64-bit on x64)
+		// Load count into RAX - handle TempVar, std::string_view (identifier), and constant values
+		// Array counts are typically size_t (unsigned 64-bit on x64)
 	if (std::holds_alternative<TempVar>(op.count)) {
-	// Count is a TempVar - load from stack (assume 64-bit for size_t)
+			// Count is a TempVar - load from stack (assume 64-bit for size_t)
 		TempVar count_var = std::get<TempVar>(op.count);
 		int count_offset = getStackOffsetFromTempVar(count_var);
 		emitMovFromFrameSized(
@@ -5621,7 +5621,7 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 			SizedStackSlot{count_offset, 64, false}	// size_t is 64-bit unsigned
 		);
 	} else if (std::holds_alternative<StringHandle>(op.count)) {
-	// Count is an identifier (variable name) - load from stack
+			// Count is an identifier (variable name) - load from stack
 		StringHandle count_name_handle = std::get<StringHandle>(op.count);
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.variables.find(count_name_handle);
@@ -5635,10 +5635,10 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 			SizedStackSlot{count_offset, 64, false}	// size_t is 64-bit unsigned
 		);
 	} else if (std::holds_alternative<unsigned long long>(op.count)) {
-	// Count is a constant - load immediate value
+			// Count is a constant - load immediate value
 		uint64_t count_value = std::get<unsigned long long>(op.count);
 
-	// MOV RAX, immediate
+			// MOV RAX, immediate
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0xB8); // MOV RAX, imm64
 		for (int i = 0; i < 8; ++i) {
@@ -5648,7 +5648,7 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 		throw InternalError("Count must be TempVar, std::string_view, or unsigned long long");
 	}
 
-	// Multiply count by element_size: IMUL RAX, element_size
+		// Multiply count by element_size: IMUL RAX, element_size
 	textSectionData.push_back(0x48); // REX.W prefix
 	textSectionData.push_back(0x69); // IMUL r64, r/m64, imm32
 	textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
@@ -5657,36 +5657,36 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 	}
 
 	if (op.needs_cookie) {
-	// Add 8 bytes for the array count cookie: ADD RAX, 8
+			// Add 8 bytes for the array count cookie: ADD RAX, 8
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x83); // ADD r/m64, imm8
 		textSectionData.push_back(0xC0); // ModR/M: RAX
 		textSectionData.push_back(0x08); // imm8 = 8
 	}
 
-	// Move result to first parameter register for malloc
-	// Use platform-correct register (RDI on Linux, RCX on Windows)
+		// Move result to first parameter register for malloc
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
 	constexpr X64Register alloc_param_reg = getIntParamReg<TWriterClass>(0);
 	emitMovRegReg(alloc_param_reg, X64Register::RAX);
 
-	// Save count in RCX/RSI before clobbering it with the malloc call
-	// We'll need it to store in the cookie after malloc returns.
-	// Save count operand to a second parameter register (not clobbered by malloc result).
-	// We reload the count after malloc since RAX is the only volatile we care about here.
+		// Save count in RCX/RSI before clobbering it with the malloc call
+		// We'll need it to store in the cookie after malloc returns.
+		// Save count operand to a second parameter register (not clobbered by malloc result).
+		// We reload the count after malloc since RAX is the only volatile we care about here.
 
-	// Call malloc
+		// Call malloc
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 	writer.add_relocation(textSectionData.size() - 4, "malloc");
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
 	if (op.needs_cookie) {
-	// Store the element count at [RAX]: MOV [RAX], count
-	// Re-load the count into RCX (2nd param reg) or another temp register
+			// Store the element count at [RAX]: MOV [RAX], count
+			// Re-load the count into RCX (2nd param reg) or another temp register
 		X64Register count_reg = getIntParamReg<TWriterClass>(1);	 // RDX on Linux, RDX on Windows
-	// Load count value into count_reg
+			// Load count value into count_reg
 		if (const auto* temp_var = std::get_if<TempVar>(&op.count)) {
 			TempVar count_var = *temp_var;
 			int count_offset = getStackOffsetFromTempVar(count_var);
@@ -5700,16 +5700,16 @@ void IrToObjConverter<TWriterClass>::handleHeapAllocArray(const IrInstruction& i
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.count)) {
 			emitMovImm64(count_reg, *ull_val);
 		}
-	// MOV QWORD PTR [RAX], count_reg
+			// MOV QWORD PTR [RAX], count_reg
 		emitStoreToMemory(textSectionData, count_reg, X64Register::RAX, 0, 8);
-	// Advance RAX past the cookie: ADD RAX, 8
+			// Advance RAX past the cookie: ADD RAX, 8
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x83); // ADD r/m64, imm8
 		textSectionData.push_back(0xC0); // ModR/M: RAX
 		textSectionData.push_back(0x08); // imm8 = 8
 	}
 
-	// Result is in RAX (user pointer, past cookie if applicable)
+		// Result is in RAX (user pointer, past cookie if applicable)
 	int result_offset = getStackOffsetFromTempVar(op.result);
 
 	emitMovToFrameSized(
@@ -5726,7 +5726,7 @@ void IrToObjConverter<TWriterClass>::handleHeapFree(const IrInstruction& instruc
 
 	flushAllDirtyRegisters();
 
-	// Get the pointer offset (from either TempVar or identifier)
+		// Get the pointer offset (from either TempVar or identifier)
 	int ptr_offset = 0;
 	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer)) {
 		TempVar ptr_var = *temp_var;
@@ -5745,17 +5745,17 @@ void IrToObjConverter<TWriterClass>::handleHeapFree(const IrInstruction& instruc
 		return;
 	}
 
-	// Load pointer from stack into first parameter register for free
-	// Use platform-correct register (RDI on Linux, RCX on Windows)
+		// Load pointer from stack into first parameter register for free
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
 	constexpr X64Register free_param_reg = getIntParamReg<TWriterClass>(0);
 	emitMovFromFrame(free_param_reg, ptr_offset);
 
-	// Call free
+		// Call free
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 	writer.add_relocation(textSectionData.size() - 4, "free");
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
 	regAlloc.reset();
@@ -5767,7 +5767,7 @@ void IrToObjConverter<TWriterClass>::handleHeapFreeArray(const IrInstruction& in
 
 	flushAllDirtyRegisters();
 
-	// Get the pointer offset (from either TempVar or identifier)
+		// Get the pointer offset (from either TempVar or identifier)
 	int ptr_offset = 0;
 	if (const auto* temp_var = std::get_if<TempVar>(&op.pointer)) {
 		TempVar ptr_var = *temp_var;
@@ -5786,13 +5786,13 @@ void IrToObjConverter<TWriterClass>::handleHeapFreeArray(const IrInstruction& in
 		return;
 	}
 
-	// Load pointer from stack into first parameter register for free
-	// Use platform-correct register (RDI on Linux, RCX on Windows)
+		// Load pointer from stack into first parameter register for free
+		// Use platform-correct register (RDI on Linux, RCX on Windows)
 	constexpr X64Register free_param_reg = getIntParamReg<TWriterClass>(0);
 	emitMovFromFrame(free_param_reg, ptr_offset);
 
 	if (op.has_cookie) {
-	// Adjust pointer back past the cookie: SUB free_param_reg, 8
+			// Adjust pointer back past the cookie: SUB free_param_reg, 8
 		uint8_t rex = 0x48;
 		uint8_t rm = static_cast<uint8_t>(free_param_reg);
 		if (rm >= 8) {
@@ -5805,12 +5805,12 @@ void IrToObjConverter<TWriterClass>::handleHeapFreeArray(const IrInstruction& in
 		textSectionData.push_back(0x08);			 // imm8 = 8
 	}
 
-	// Call free
+		// Call free
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
 	textSectionData.insert(textSectionData.end(), callInst.begin(), callInst.end());
 	writer.add_relocation(textSectionData.size() - 4, "free");
 
-	// Invalidate caller-saved registers (function calls clobber them)
+		// Invalidate caller-saved registers (function calls clobber them)
 	regAlloc.invalidateCallerSavedRegisters();
 
 	regAlloc.reset();
@@ -5822,15 +5822,15 @@ void IrToObjConverter<TWriterClass>::handlePlacementNew(const IrInstruction& ins
 
 	flushAllDirtyRegisters();
 
-	// Load the placement address into RAX
-	// The address can be a TempVar, identifier, or constant
+		// Load the placement address into RAX
+		// The address can be a TempVar, identifier, or constant
 	if (const auto* temp_var = std::get_if<TempVar>(&op.address)) {
-	// Address is a TempVar - load from stack
+			// Address is a TempVar - load from stack
 		TempVar address_var = *temp_var;
 		int address_offset = getStackOffsetFromTempVar(address_var);
 		emitMovFromFrame(X64Register::RAX, address_offset);
 	} else if (std::holds_alternative<StringHandle>(op.address)) {
-	// Address is an identifier (variable name)
+			// Address is an identifier (variable name)
 		StringHandle address_name_handle = std::get<StringHandle>(op.address);
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.variables.find(address_name_handle);
@@ -5839,15 +5839,15 @@ void IrToObjConverter<TWriterClass>::handlePlacementNew(const IrInstruction& ins
 			return;
 		}
 		int address_offset = it->second.offset;
-	// Arrays decay to pointers, so we compute their base address (LEA).
-	// Regular pointer variables store an address value that needs to be loaded (MOV).
+			// Arrays decay to pointers, so we compute their base address (LEA).
+			// Regular pointer variables store an address value that needs to be loaded (MOV).
 		if (it->second.is_array) {
 			emitLeaFromFrame(X64Register::RAX, address_offset);
 		} else {
 			emitMovFromFrame(X64Register::RAX, address_offset);
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.address)) {
-	// Address is a constant - load immediate value
+			// Address is a constant - load immediate value
 		uint64_t address_value = *ull_val;
 		emitMovImm64(X64Register::RAX, address_value);
 	} else {
@@ -5855,8 +5855,8 @@ void IrToObjConverter<TWriterClass>::handlePlacementNew(const IrInstruction& ins
 		return;
 	}
 
-	// Store the placement address to the result variable (pointer is always 64-bit)
-	// No malloc call - we just use the provided address
+		// Store the placement address to the result variable (pointer is always 64-bit)
+		// No malloc call - we just use the provided address
 	int result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
@@ -5868,32 +5868,32 @@ void IrToObjConverter<TWriterClass>::handlePlacementNew(const IrInstruction& ins
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instruction) {
-	// Typeid: returns pointer to type_info
+		// Typeid: returns pointer to type_info
 	auto& op = instruction.getTypedPayload<TypeidOp>();
 
 	flushAllDirtyRegisters();
 
 	if (op.is_type) {
-	// typeid(Type) - compile-time constant
-	// For now, return a dummy pointer (in a full implementation, we'd have a .rdata section with type_info)
+			// typeid(Type) - compile-time constant
+			// For now, return a dummy pointer (in a full implementation, we'd have a .rdata section with type_info)
 		StringHandle type_name_handle = std::get<StringHandle>(op.operand);
 		std::string_view type_name = StringTable::getStringView(type_name_handle);
 
-	// Load address of type_info into RAX (using a placeholder address for now)
-	// In a real implementation, we'd have a symbol for each type's RTTI data
-	// Use a hash of the type name as a placeholder address
+			// Load address of type_info into RAX (using a placeholder address for now)
+			// In a real implementation, we'd have a symbol for each type's RTTI data
+			// Use a hash of the type name as a placeholder address
 		size_t type_hash = std::hash<std::string_view>{}(type_name);
 		emitMovImm64(X64Register::RAX, type_hash);
 	} else {
-	// typeid(expr) - may need runtime lookup for polymorphic types
-	// For polymorphic types, RTTI pointer is at vtable[-1]
-	// For non-polymorphic types, return compile-time constant
+			// typeid(expr) - may need runtime lookup for polymorphic types
+			// For polymorphic types, RTTI pointer is at vtable[-1]
+			// For non-polymorphic types, return compile-time constant
 
-	// Load the expression result (should be a pointer to object)
+			// Load the expression result (should be a pointer to object)
 		TempVar expr_var = std::get<TempVar>(op.operand);
 		int expr_offset = getStackOffsetFromTempVar(expr_var);
 
-	// Load object pointer into RAX
+			// Load object pointer into RAX
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		if (expr_offset >= -128 && expr_offset <= 127) {
@@ -5907,21 +5907,21 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 			}
 		}
 
-	// Load vtable pointer from object (first 8 bytes)
-	// MOV RAX, [RAX]
+			// Load vtable pointer from object (first 8 bytes)
+			// MOV RAX, [RAX]
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		textSectionData.push_back(0x00); // ModR/M: RAX, [RAX]
 
-	// Load RTTI pointer from vtable[-1] (8 bytes before vtable)
-	// MOV RAX, [RAX - 8]
+			// Load RTTI pointer from vtable[-1] (8 bytes before vtable)
+			// MOV RAX, [RAX - 8]
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x8B); // MOV r64, r/m64
 		textSectionData.push_back(0x40); // ModR/M: RAX, [RAX + disp8]
 		textSectionData.push_back(static_cast<uint8_t>(-8)); // -8 offset
 	}
 
-	// Store result to stack
+		// Store result to stack
 	int result_offset = getStackOffsetFromTempVar(op.result);
 	textSectionData.push_back(0x48); // REX.W prefix
 	textSectionData.push_back(0x89); // MOV r/m64, r64
@@ -5941,46 +5941,46 @@ void IrToObjConverter<TWriterClass>::handleTypeid(const IrInstruction& instructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& instruction) {
-	// DynamicCast: Returns nullptr for failed pointer casts, throws for failed reference casts
+		// DynamicCast: Returns nullptr for failed pointer casts, throws for failed reference casts
 	auto& op = instruction.getTypedPayload<DynamicCastOp>();
 
 	flushAllDirtyRegisters();
 
-	// Mark that we need the dynamic_cast runtime helpers
+		// Mark that we need the dynamic_cast runtime helpers
 	needs_dynamic_cast_runtime_ = true;
 
-	// Implementation using auto-generated runtime helper __dynamic_cast_check
-	// (Generated at end of compilation - see emit_dynamic_cast_check_function)
-	//
-	// C++ equivalent logic:
-	//   bool __dynamic_cast_check(RTTIInfo* source, RTTIInfo* target) {
-	//     if (!source || !target) return false;
-	//     if (source == target) return true;
-	//     if (source->class_hash == target->class_hash) return true;
-	//     // Check each base class recursively
-	//     for (size_t i = 0; i < source->num_bases && i < 64; i++) {
-	//       if (__dynamic_cast_check(source->base_ptrs[i], target)) return true;
-	//     }
-	//     return false;
-	//   }
-	//
-	// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
-	// Arguments:
-	//   RCX = source RTTI pointer (loaded from vtable[-1])
-	//   RDX = target RTTI pointer
-	// Returns: RAX = 1 if cast is valid, 0 otherwise
+		// Implementation using auto-generated runtime helper __dynamic_cast_check
+		// (Generated at end of compilation - see emit_dynamic_cast_check_function)
+		//
+		// C++ equivalent logic:
+		//   bool __dynamic_cast_check(RTTIInfo* source, RTTIInfo* target) {
+		//     if (!source || !target) return false;
+		//     if (source == target) return true;
+		//     if (source->class_hash == target->class_hash) return true;
+		//     // Check each base class recursively
+		//     for (size_t i = 0; i < source->num_bases && i < 64; i++) {
+		//       if (__dynamic_cast_check(source->base_ptrs[i], target)) return true;
+		//     }
+		//     return false;
+		//   }
+		//
+		// Calling convention: Windows x64 (first 4 args in RCX, RDX, R8, R9)
+		// Arguments:
+		//   RCX = source RTTI pointer (loaded from vtable[-1])
+		//   RDX = target RTTI pointer
+		// Returns: RAX = 1 if cast is valid, 0 otherwise
 
-	// Step 1: Load source pointer from stack
+		// Step 1: Load source pointer from stack
 	int source_offset = getStackOffsetFromTempVar(op.source);
 	emitMovFromFrame(X64Register::RAX, source_offset);
 
-	// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
+		// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
 	emitMovRegReg(X64Register::R8, X64Register::RAX);
 
-	// Step 3: Check if source pointer is null
+		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
 
-	// JZ to null_result (if source is null, return null)
+		// JZ to null_result (if source is null, return null)
 	textSectionData.push_back(0x0F); // Two-byte opcode prefix
 	textSectionData.push_back(0x84); // JZ rel32
 	size_t null_check_offset = textSectionData.size();
@@ -5989,43 +5989,43 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-	// Step 4: Load vtable pointer from object (first 8 bytes)
+		// Step 4: Load vtable pointer from object (first 8 bytes)
 	emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RAX, 64);
 
-	// Step 5: Load source RTTI pointer from vtable[-1] into first parameter register
+		// Step 5: Load source RTTI pointer from vtable[-1] into first parameter register
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Linux: First parameter in RDI
+			// Linux: First parameter in RDI
 		emitMovRegFromMemRegDisp8(X64Register::RDI, X64Register::RAX, -8);
 	} else {
-	// Windows: First parameter in RCX
+			// Windows: First parameter in RCX
 		emitMovRegFromMemRegDisp8(X64Register::RCX, X64Register::RAX, -8);
 	}
 
-	// Step 6: Load target RTTI pointer into second parameter register
-	// Generate platform-specific RTTI symbol
+		// Step 6: Load target RTTI pointer into second parameter register
+		// Generate platform-specific RTTI symbol
 	StringBuilder sb;
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Linux/ELF: Use Itanium C++ ABI typeinfo symbol: _ZTI<length><classname>
-	// Example: class "Derived" -> "_ZTI7Derived"
+			// Linux/ELF: Use Itanium C++ ABI typeinfo symbol: _ZTI<length><classname>
+			// Example: class "Derived" -> "_ZTI7Derived"
 		sb.append("_ZTI");
 		sb.append(op.target_type_name.length());
 		sb.append(op.target_type_name);
 	} else {
-	// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
+			// Windows/COFF: Use MSVC Complete Object Locator symbol: ??_R4.?AV<classname>@@6B@
 		sb.append("??_R4.?AV");
 		sb.append(op.target_type_name);
 		sb.append("@@6B@");
 	}
 	std::string_view target_rtti_symbol = sb.commit();
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Linux: Second parameter in RSI
+			// Linux: Second parameter in RSI
 		emitLeaRipRelativeWithRelocation(X64Register::RSI, target_rtti_symbol);
 	} else {
-	// Windows: Second parameter in RDX
+			// Windows: Second parameter in RDX
 		emitLeaRipRelativeWithRelocation(X64Register::RDX, target_rtti_symbol);
 	}
 
-	// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
+		// Step 7: Call __dynamic_cast_check(source_rtti, target_rtti)
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 		emitSubRSP(32);	// Shadow space for Windows x64 calling convention
 	}
@@ -6034,10 +6034,10 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		emitAddRSP(32);	// Restore stack
 	}
 
-	// Step 8: Check return value (RAX contains 0 or 1)
+		// Step 8: Check return value (RAX contains 0 or 1)
 	emitTestAL();
 
-	// JZ to null_result (if check failed, return null)
+		// JZ to null_result (if check failed, return null)
 	textSectionData.push_back(0x0F); // Two-byte opcode prefix
 	textSectionData.push_back(0x84); // JZ rel32
 	size_t check_failed_offset = textSectionData.size();
@@ -6046,38 +6046,38 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-	// Step 9: Cast succeeded - return source pointer (which we saved in R8)
+		// Step 9: Cast succeeded - return source pointer (which we saved in R8)
 	emitMovRegReg(X64Register::RAX, X64Register::R8);
 
-	// JMP to end
+		// JMP to end
 	textSectionData.push_back(0xEB); // JMP rel8
 	size_t success_jmp_offset = textSectionData.size();
 	textSectionData.push_back(0x00); // Placeholder
 
-	// null_result label:
+		// null_result label:
 	size_t null_result_offset = textSectionData.size();
 
-	// Check if this is a reference cast (needs to throw exception on failure)
+		// Check if this is a reference cast (needs to throw exception on failure)
 	if (op.is_reference) {
-	// For reference casts, throw std::bad_cast instead of returning nullptr
-	// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
+			// For reference casts, throw std::bad_cast instead of returning nullptr
+			// Call __dynamic_cast_throw_bad_cast (no arguments, never returns)
 		if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 			emitSubRSP(32);	// Shadow space for Windows x64 calling convention
 		}
 		emitCall("__dynamic_cast_throw_bad_cast");
-	// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
+			// Note: We don't restore RSP or add code after this because __dynamic_cast_throw_bad_cast never returns
 	} else {
-	// For pointer casts, return nullptr
-	// XOR RAX, RAX  ; set result to nullptr
+			// For pointer casts, return nullptr
+			// XOR RAX, RAX  ; set result to nullptr
 		textSectionData.push_back(0x48); // REX.W prefix
 		textSectionData.push_back(0x31); // XOR r64, r64
 		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
 	}
 
-	// end label:
+		// end label:
 	size_t end_offset = textSectionData.size();
 
-	// Patch jump offsets
+		// Patch jump offsets
 	int32_t null_check_delta = static_cast<int32_t>(null_result_offset - null_check_offset - 4);
 	textSectionData[null_check_offset + 0] = static_cast<uint8_t>(null_check_delta & 0xFF);
 	textSectionData[null_check_offset + 1] = static_cast<uint8_t>((null_check_delta >> 8) & 0xFF);
@@ -6093,7 +6093,7 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	int8_t success_jmp_delta = static_cast<int8_t>(end_offset - success_jmp_offset - 1);
 	textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);
 
-	// Step 10: Store result to stack (pointer is always 64-bit)
+		// Step 10: Store result to stack (pointer is always 64-bit)
 	int result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
@@ -6122,10 +6122,10 @@ void IrToObjConverter<TWriterClass>::spillAndInvalidateRegisterForManualOverwrit
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstruction& instruction) {
-	// Extract typed payload
+		// Extract typed payload
 	const GlobalVariableDeclOp& op = std::any_cast<const GlobalVariableDeclOp&>(instruction.getTypedPayload());
 
-	// Store global variable info for later use
+		// Store global variable info for later use
 	GlobalVariableInfo global_info;
 	global_info.name = op.var_name;
 	global_info.type_index = op.type_index;
@@ -6134,7 +6134,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 	global_info.reloc_target = op.reloc_target;
 	global_info.is_rodata = op.is_rodata;
 
-	// Copy raw init data if present
+		// Copy raw init data if present
 	if (op.is_initialized) {
 		global_info.init_data = op.init_data;
 	}
@@ -6144,17 +6144,17 @@ void IrToObjConverter<TWriterClass>::handleGlobalVariableDecl(const IrInstructio
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instruction) {
-	// BUGFIX: GlobalLoad requires a function context for stack allocation.
-	// If we're outside a function (e.g., in global initializer context), skip this instruction.
-	// This can happen when the IR generator emits GlobalLoad for built-in function references
-	// that appear in global variable initializers.
+		// BUGFIX: GlobalLoad requires a function context for stack allocation.
+		// If we're outside a function (e.g., in global initializer context), skip this instruction.
+		// This can happen when the IR generator emits GlobalLoad for built-in function references
+		// that appear in global variable initializers.
 	if (variable_scopes.empty()) {
-	// Extract the global name to provide a better diagnostic
+			// Extract the global name to provide a better diagnostic
 		const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 		std::string_view global_name = StringTable::getStringView(op.getGlobalName());
 
-	// Silently skip builtin functions - they are expected to be evaluated at compile time
-	// but can end up here when templates are instantiated with dependent arguments
+			// Silently skip builtin functions - they are expected to be evaluated at compile time
+			// but can end up here when templates are instantiated with dependent arguments
 		if (global_name.starts_with("__builtin")) {
 			FLASH_LOG(Codegen, Debug, "Skipping GlobalLoad for builtin '", global_name, "' outside function context");
 			return;
@@ -6164,7 +6164,7 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 		return;
 	}
 
-	// Extract typed payload - all GlobalLoad instructions use typed payloads
+		// Extract typed payload - all GlobalLoad instructions use typed payloads
 	const GlobalLoadOp& op = std::any_cast<const GlobalLoadOp&>(instruction.getTypedPayload());
 
 	TempVar result_temp = std::get<TempVar>(op.result.value);
@@ -6174,35 +6174,35 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 	bool is_floating_point = (result_type == TypeCategory::Float || result_type == TypeCategory::Double);
 	bool is_float = (result_type == TypeCategory::Float);
 
-	// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
-	// This prevents overwriting intermediate results in chained operations
+		// BUGFIX: Before using RAX or XMM0, flush them if they hold dirty data
+		// This prevents overwriting intermediate results in chained operations
 	X64Register target_reg = is_floating_point ? X64Register::XMM0 : X64Register::RAX;
 	spillAndInvalidateRegisterForManualOverwrite(target_reg);
 
-	// Load the global value/address using RIP-relative addressing
+		// Load the global value/address using RIP-relative addressing
 	uint32_t reloc_offset;
 	if (op.is_array) {
-	// For arrays: use LEA to get the address of the global
+			// For arrays: use LEA to get the address of the global
 		reloc_offset = emitLeaRipRelative(X64Register::RAX);
 	} else if (is_floating_point) {
-	// For floating-point scalars: use MOVSD/MOVSS to load into XMM0
+			// For floating-point scalars: use MOVSD/MOVSS to load into XMM0
 		reloc_offset = emitFloatMovRipRelative(X64Register::XMM0, is_float);
 	} else {
-	// For integer scalars: load the value using MOV
+			// For integer scalars: load the value using MOV
 		reloc_offset = emitMovRipRelative(X64Register::RAX, size_in_bits);
 	}
 
-	// Add a pending relocation for this global variable reference
+		// Add a pending relocation for this global variable reference
 	pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 
-	// Store the loaded value/address to the stack
+		// Store the loaded value/address to the stack
 	int result_offset = allocateStackSlotForTempVar(result_temp.var_number);
 
 	if (is_floating_point && !op.is_array) {
-	// For floating-point: use emitFloatMovToFrame
+			// For floating-point: use emitFloatMovToFrame
 		emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 	} else {
-	// For integers/pointers: use emitMovToFrameBySize
+			// For integers/pointers: use emitMovToFrameBySize
 		int store_size = op.is_array ? 64 : size_in_bits;
 		emitMovToFrameBySize(X64Register::RAX, result_offset, store_size);
 	}
@@ -6210,14 +6210,14 @@ void IrToObjConverter<TWriterClass>::handleGlobalLoad(const IrInstruction& instr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& instruction) {
-	// Format: [global_name, source_temp]
+		// Format: [global_name, source_temp]
 	assert(instruction.getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
 
 	StringHandle global_name = instruction.getOperandAs<StringHandle>(0);
 	TempVar source_temp = instruction.getOperandAs<TempVar>(1);
 
-	// Determine the size and type of the global variable
-	// We need to look it up in the global variables vector
+		// Determine the size and type of the global variable
+		// We need to look it up in the global variables vector
 	const GlobalVariableInfo* global_info = nullptr;
 	for (const auto& global : global_variables_) {
 		if (global.name == global_name) {
@@ -6237,19 +6237,19 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 	bool is_floating_point = (var_type == TypeCategory::Float || var_type == TypeCategory::Double);
 	bool is_float = (var_type == TypeCategory::Float);
 
-	// Load the source value from stack into a register
+		// Load the source value from stack into a register
 	int source_offset = getStackOffsetFromTempVar(source_temp);
 
 	if (is_floating_point) {
-	// Load floating-point value into XMM0
+			// Load floating-point value into XMM0
 		emitFloatMovFromFrame(X64Register::XMM0, source_offset, is_float);
-	// Store to global using RIP-relative addressing
+			// Store to global using RIP-relative addressing
 		uint32_t reloc_offset = emitFloatMovRipRelativeStore(X64Register::XMM0, is_float);
 		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
 	} else {
-	// Load integer value into RAX
+			// Load integer value into RAX
 		emitMovFromFrameBySize(X64Register::RAX, source_offset, size_in_bits);
-	// Store to global using RIP-relative addressing
+			// Store to global using RIP-relative addressing
 		uint32_t reloc_offset = emitMovRipRelativeStore(X64Register::RAX, size_in_bits);
 		pending_global_relocations_.push_back({reloc_offset, global_name, IMAGE_REL_AMD64_REL32});
 	}
@@ -6257,10 +6257,10 @@ void IrToObjConverter<TWriterClass>::handleGlobalStore(const IrInstruction& inst
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& instruction) {
-	// Extract typed payload
+		// Extract typed payload
 	const VariableDeclOp& op = std::any_cast<const VariableDeclOp&>(instruction.getTypedPayload());
 
-	// Get variable name as StringHandle
+		// Get variable name as StringHandle
 	StringHandle var_name_handle = op.var_name;
 	std::string var_name_str = std::string(StringTable::getStringView(var_name_handle));
 
@@ -6276,32 +6276,32 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
-	// Store mapping from variable name to offset for reference lookups
+		// Store mapping from variable name to offset for reference lookups
 	variable_name_to_offset_[var_name_str] = var_it->second.offset;
 
-	// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
-	// of this slot was a reference, stale metadata would cause later by-value variables
-	// at the same offset to be treated as pointers. Clear that before handling any
-	// non-reference declaration that reuses the slot.
+		// Stack slots can be reused across disjoint scopes/catches. If a previous occupant
+		// of this slot was a reference, stale metadata would cause later by-value variables
+		// at the same offset to be treated as pointers. Clear that before handling any
+		// non-reference declaration that reuses the slot.
 	if (!is_reference) {
 		indirect_stack_info_.erase(var_it->second.offset);
 		tempvar_indirect_stack_info_.erase(var_it->second.offset);
 	}
 
-	// REMOVED: Flawed TempVar linking heuristic
-	// Track the most recently allocated named variable for TempVar linking
-	//last_allocated_variable_name_ = var_name_str;
-	//last_allocated_variable_offset_ = var_it->second.offset;
+		// REMOVED: Flawed TempVar linking heuristic
+		// Track the most recently allocated named variable for TempVar linking
+		//last_allocated_variable_name_ = var_name_str;
+		//last_allocated_variable_offset_ = var_it->second.offset;
 
 	if (is_reference) {
-	// For references, we need to determine the size of the VALUE being referenced,
-	// not the size of the reference itself (which is always 64 bits for a pointer)
+			// For references, we need to determine the size of the VALUE being referenced,
+			// not the size of the reference itself (which is always 64 bits for a pointer)
 		int value_size_bits = op.size_in_bits.value;
 
-	// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
-	// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
+			// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
+			// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
 		if (op.size_in_bits == SizeInBits{64}) {
-	// Try to get the actual size from the type
+				// Try to get the actual size from the type
 			int calculated_size = get_type_size_bits(var_type);
 			if (calculated_size > 0 && calculated_size != 64) {
 				value_size_bits = calculated_size;
@@ -6314,8 +6314,8 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		X64Register pointer_reg = allocateRegisterWithSpilling();
 		bool pointer_initialized = false;
 		if (is_initialized) {
-	// For reference initialization from typed payload
-	// We need to handle TempVar or string_view in the initializer value
+				// For reference initialization from typed payload
+				// We need to handle TempVar or string_view in the initializer value
 			const TypedValue& init = op.initializer.value();
 			if (std::holds_alternative<TempVar>(init.value)) {
 				auto temp_var = std::get<TempVar>(init.value);
@@ -6323,23 +6323,23 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				FLASH_LOG(Codegen, Debug, "Reference init from TempVar: src_offset=", src_offset,
 						  " init.ir_type=", static_cast<int>(init.effectiveIrType()),
 						  " init.size_in_bits=", init.size_in_bits);
-		// Check if source is itself a pointer/reference - if so, load the value
-		// Otherwise, take the address
+					// Check if source is itself a pointer/reference - if so, load the value
+					// Otherwise, take the address
 				auto src_ref_info = getReferenceInfo(temp_var, src_offset);
 				if (src_ref_info.has_value()) {
-		// Source is a reference - copy the pointer value
+						// Source is a reference - copy the pointer value
 					FLASH_LOG(Codegen, Debug, "Source uses indirect storage, using MOV");
 					emitMovFromFrame(pointer_reg, src_offset);
 				} else {
-		// Determine MOV vs LEA from the explicit ValueStorage annotation on the initializer.
+						// Determine MOV vs LEA from the explicit ValueStorage annotation on the initializer.
 					const bool is_likely_pointer = (init.storage == ValueStorage::ContainsAddress);
 					FLASH_LOG(Codegen, Debug, "is_likely_pointer=", is_likely_pointer,
 							  " storage=", static_cast<int>(init.storage));
 					if (is_likely_pointer) {
-		// Load the pointer value
+							// Load the pointer value
 						emitMovFromFrame(pointer_reg, src_offset);
 					} else {
-		// Load address of the source variable (materialise temporary)
+							// Load address of the source variable (materialise temporary)
 						emitLeaFromFrame(pointer_reg, src_offset);
 					}
 				}
@@ -6350,16 +6350,16 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				auto src_it = current_scope.variables.find(rvalue_var_name_handle);
 				if (src_it != current_scope.variables.end()) {
 					FLASH_LOG(Codegen, Debug, "Initializing reference from: '", StringTable::getStringView(rvalue_var_name_handle), "', ir_type=", static_cast<int>(init.effectiveIrType()), ", size=", init.size_in_bits);
-		// Check if source is a reference
+						// Check if source is a reference
 					auto src_ref_info = getIndirectStackInfo(src_it->second.offset);
 					if (src_ref_info.has_value()) {
-		// Source is a reference - copy the pointer value
+							// Source is a reference - copy the pointer value
 						FLASH_LOG(Codegen, Debug, "Using MOV (source is reference)");
 						emitMovFromFrame(pointer_reg, src_it->second.offset);
 					} else {
-		// Named variable: take its address via LEA.
-		// This is correct for all types including pointer variables
-		// (int*& pr = p; needs the address OF p, not p's value).
+							// Named variable: take its address via LEA.
+							// This is correct for all types including pointer variables
+							// (int*& pr = p; needs the address OF p, not p's value).
 						FLASH_LOG(Codegen, Debug, "Using LEA (named variable)");
 						emitLeaFromFrame(pointer_reg, src_it->second.offset);
 					}
@@ -6367,14 +6367,14 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 			} else if (std::holds_alternative<unsigned long long>(init.value) ||
 					   std::holds_alternative<double>(init.value)) {
-		// Literal initializer for reference: materialize a temporary.
-		// C++ allows binding rvalue references and const lvalue references
-		// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
-		// extending the lifetime of a temporary.
+					// Literal initializer for reference: materialize a temporary.
+					// C++ allows binding rvalue references and const lvalue references
+					// to literals (e.g., int&& rr = 42; const int& cr = 42;) by
+					// extending the lifetime of a temporary.
 				int lit_size = op.size_in_bits.value;
 				if (lit_size == 64) {
-		// For references, size_in_bits is 64 (pointer size);
-		// use the actual value size from get_type_size_bits
+						// For references, size_in_bits is 64 (pointer size);
+						// use the actual value size from get_type_size_bits
 					int actual = get_type_size_bits(var_type);
 					if (actual > 0 && actual != 64)
 						lit_size = actual;
@@ -6382,13 +6382,13 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				int lit_bytes = (lit_size + 7) / 8;
 				lit_bytes = (lit_bytes + 7) & ~7;  // 8-byte aligned
 
-		// Allocate hidden stack space for the temporary
+					// Allocate hidden stack space for the temporary
 				next_temp_var_offset_ += lit_bytes;
 				int32_t temp_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
 				if (temp_offset < variable_scopes.back().scope_stack_space)
 					variable_scopes.back().scope_stack_space = temp_offset;
 
-		// Store the literal value into the temporary
+					// Store the literal value into the temporary
 				X64Register lit_reg = allocateRegisterWithSpilling();
 				if (std::holds_alternative<double>(init.value)) {
 					double value = std::get<double>(init.value);
@@ -6414,7 +6414,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 				regAlloc.release(lit_reg);
 
-		// Take address of the temporary
+					// Take address of the temporary
 				FLASH_LOG(Codegen, Debug, "Materializing temporary for reference literal at offset=", temp_offset);
 				emitLeaFromFrame(pointer_reg, temp_offset);
 				pointer_initialized = true;
@@ -6449,21 +6449,21 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 			regAlloc.release(ptr_reg);
 		};
 
-	// Check if the initializer is a literal value
+			// Check if the initializer is a literal value
 		bool is_literal = std::holds_alternative<unsigned long long>(init.value) ||
 						  std::holds_alternative<double>(init.value);
 
 		if (is_literal) {
 			if (std::holds_alternative<double>(init.value)) {
-		// Handle double/float literals
+					// Handle double/float literals
 				double value = std::get<double>(init.value);
 
 				FLASH_LOG(Codegen, Debug, "Initializing ", (var_type == TypeCategory::Float ? "float" : "double"), " literal: ", value);
 
-		// Convert double to bit pattern
+					// Convert double to bit pattern
 				uint64_t bits;
 
-		// If the variable type is Float (32-bit), convert the double to float first
+					// If the variable type is Float (32-bit), convert the double to float first
 				if (var_type == TypeCategory::Float) {
 					float float_value = static_cast<float>(value);
 					uint32_t float_bits;
@@ -6471,61 +6471,61 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 					FLASH_LOG(Codegen, Debug, "Storing float immediate to [RBP+", dst_offset, "], bits=0x", std::hex, float_bits, std::dec);
 
-		// For 32-bit floats, store immediate directly to memory
-		// This is more efficient and avoids register allocation
+						// For 32-bit floats, store immediate directly to memory
+						// This is more efficient and avoids register allocation
 					emitMovDwordPtrImmToRegOffset(X64Register::RBP, dst_offset, float_bits);
 				} else {
-		// For 64-bit doubles, load into GPR then store to memory
+						// For 64-bit doubles, load into GPR then store to memory
 					std::memcpy(&bits, &value, sizeof(bits));
 
 					FLASH_LOG(Codegen, Debug, "Storing double via GPR to [RBP+", dst_offset, "], bits=0x", std::hex, bits, std::dec);
 
-		// Allocate a GPR temporarily
+						// Allocate a GPR temporarily
 					allocated_reg_val = allocateRegisterWithSpilling();
 
-		// MOV reg, imm64 (load bit pattern) - use emit function
+						// MOV reg, imm64 (load bit pattern) - use emit function
 					emitMovImm64(allocated_reg_val, bits);
 
-		// Store the 64-bit value to stack
+						// Store the 64-bit value to stack
 					emitMovToFrameSized(
 						SizedRegister{allocated_reg_val, 64, false},
 						SizedStackSlot{dst_offset, 64, false});
 
-		// Release the register
+						// Release the register
 					regAlloc.release(allocated_reg_val);
 				}
 			} else if (std::holds_alternative<unsigned long long>(init.value)) {
 				uint64_t value = std::get<unsigned long long>(init.value);
 
-		// For integer literals, allocate a register temporarily
+					// For integer literals, allocate a register temporarily
 				allocated_reg_val = allocateRegisterWithSpilling();
 
-		// MOV reg, imm64 - use emit function
+					// MOV reg, imm64 - use emit function
 				emitMovImm64(allocated_reg_val, value);
 
-		// Store the value from register to stack (size-aware)
+					// Store the value from register to stack (size-aware)
 				emitMovToFrameSized(
 					SizedRegister{allocated_reg_val, 64, false},	 // source: 64-bit register
 					SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())}	 // dest
 				);
 
-		// Release the register since the value is now in the stack
+					// Release the register since the value is now in the stack
 				regAlloc.release(allocated_reg_val);
 			}
 		} else {
-	// Load from memory (TempVar or variable)
-	// For non-literal initialization, we don't allocate a register
-	// We just copy the value from source to destination on the stack
+				// Load from memory (TempVar or variable)
+				// For non-literal initialization, we don't allocate a register
+				// We just copy the value from source to destination on the stack
 			int src_offset = 0;
 			bool src_is_pointer = false;	 // Track if source is a pointer to the actual data
 			std::optional<IndirectStorageInfo> src_ref_info;
 			if (std::holds_alternative<TempVar>(init.value)) {
 				auto temp_var = std::get<TempVar>(init.value);
 				src_offset = getStackOffsetFromTempVar(temp_var, init.size_in_bits.value);
-		// Backend lowering must use current-function indirect-storage state here.
-		// Frontend TempVar metadata can describe a different function by the time
-		// we lower this VariableDecl, which can misclassify inline struct storage
-		// (such as large return-slot results) as an indirect pointer source.
+						// Backend lowering must use current-function indirect-storage state here.
+						// Frontend TempVar metadata can describe a different function by the time
+						// we lower this VariableDecl, which can misclassify inline struct storage
+						// (such as large return-slot results) as an indirect pointer source.
 				auto ref_info = getIndirectStackInfo(src_offset);
 				if (!ref_info.has_value() && init.size_in_bits != SizeInBits{64}) {
 					int32_t pointer_src_offset = getStackOffsetFromTempVar(temp_var, 64);
@@ -6538,7 +6538,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					}
 				}
 				if (ref_info.has_value()) {
-		// This is a reference - need to dereference it
+						// This is a reference - need to dereference it
 					src_is_pointer = true;
 					src_ref_info = ref_info;
 				}
@@ -6549,7 +6549,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					FLASH_LOG(Codegen, Error, "Variable '", StringTable::getStringView(rvalue_var_name_handle), "' not found in symbol table");
 					FLASH_LOG(Codegen, Error, "Available variables in current scope:");
 					for (const auto& [name, var_info] : current_scope.variables) {
-		// Phase 5: Convert StringHandle to string_view for logging
+							// Phase 5: Convert StringHandle to string_view for logging
 						FLASH_LOG(Codegen, Error, "  - ", StringTable::getStringView(name), " at var_info.offset ");
 					}
 				}
@@ -6560,9 +6560,9 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 				src_offset = src_it->second.offset;
 
-		// Check if source is an array - for array-to-pointer decay, we need LEA
+					// Check if source is an array - for array-to-pointer decay, we need LEA
 				if (src_it->second.is_array) {
-		// Source is an array being assigned to a pointer - use LEA to get address
+						// Source is an array being assigned to a pointer - use LEA to get address
 					X64Register addr_reg = allocateRegisterWithSpilling();
 					emitLeaFromFrame(addr_reg, src_offset);
 					emitMovToFrameSized(
@@ -6588,19 +6588,19 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 			const bool should_deref_reference_source =
 				src_ref_info.has_value() && shouldImplicitlyDeref(src_ref_info.value());
 			if (auto src_reg = regAlloc.tryGetStackVariableRegister(src_offset); src_reg.has_value()) {
-		// Source value is already in a register (e.g., from function return or arithmetic)
-		// Store it directly to the destination stack location
+					// Source value is already in a register (e.g., from function return or arithmetic)
+					// Store it directly to the destination stack location
 				if (is_floating_point_type(var_type)) {
-		// For floating-point types, the value is in an XMM register
-		// Use float mov instructions instead of integer mov
+						// For floating-point types, the value is in an XMM register
+						// Use float mov instructions instead of integer mov
 					bool is_float = (var_type == TypeCategory::Float);
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, is_float);
 					}
 					emitFloatMovToFrame(src_reg.value(), dst_offset, is_float);
 				} else {
-		// For integer types, use regular mov
-		// Use the actual size from the variable type, not hardcoded 64 bits
+						// For integer types, use regular mov
+						// Use the actual size from the variable type, not hardcoded 64 bits
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, false);
 					}
@@ -6609,32 +6609,32 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						SizedStackSlot{dst_offset, op.size_in_bits.value, isSignedType(op.opType())});
 				}
 			} else {
-		// Source is on the stack, load it to a temporary register and store to destination
+					// Source is on the stack, load it to a temporary register and store to destination
 				if (var_type == TypeCategory::Struct) {
-		// For struct types, copy entire struct using 8-byte chunks
+						// For struct types, copy entire struct using 8-byte chunks
 					int struct_size_bytes = (op.size_in_bits.value + 7) / 8;
 
 					FLASH_LOG(Codegen, Info, "==================== STRUCT COPY IN HANDLEVARIABLE ====================");
 					FLASH_LOG(Codegen, Info, "size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset, ", src_is_pointer=", src_is_pointer);
 
-		// Determine actual source address
+						// Determine actual source address
 					int32_t actual_src_offset;
 					if (src_is_pointer) {
-		// Source is a pointer to the struct - dereference it
-		// Load the pointer value into a register
+							// Source is a pointer to the struct - dereference it
+							// Load the pointer value into a register
 						X64Register ptr_reg = allocateRegisterWithSpilling();
 						emitMovFromFrame(ptr_reg, src_offset);
 						FLASH_LOG(Codegen, Debug, "Struct copy (via pointer): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", ptr_at_offset=", src_offset, ", dst_offset=", dst_offset);
 
-		// Now copy from the address in ptr_reg to dst_offset
-		// We need to use memory-to-memory copy via a temporary register
+							// Now copy from the address in ptr_reg to dst_offset
+							// We need to use memory-to-memory copy via a temporary register
 						for (int offset = 0; offset < struct_size_bytes;) {
 							if (offset + 8 <= struct_size_bytes) {
-			// Copy 8 bytes: load from [ptr_reg + offset], store to [rbp + dst_offset + offset]
+									// Copy 8 bytes: load from [ptr_reg + offset], store to [rbp + dst_offset + offset]
 								X64Register temp_reg = allocateRegisterWithSpilling();
-			// MOV temp_reg, [ptr_reg + offset]
+									// MOV temp_reg, [ptr_reg + offset]
 								emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
-			// MOV [rbp + dst_offset + offset], temp_reg
+									// MOV [rbp + dst_offset + offset], temp_reg
 								emitMovToFrameSized(
 									SizedRegister{temp_reg, 64, false},
 									SizedStackSlot{dst_offset + offset, 64, false});
@@ -6668,27 +6668,27 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						regAlloc.release(ptr_reg);
 					} else {
-		// Source is the struct itself on the stack
+							// Source is the struct itself on the stack
 						actual_src_offset = src_offset;
 						FLASH_LOG(Codegen, Debug, "Struct copy (direct): size_in_bits=", op.size_in_bits, ", size_bytes=", struct_size_bytes, ", src_offset=", src_offset, ", dst_offset=", dst_offset);
 
-		// Copy struct using 8-byte chunks, then handle remaining bytes
-		// Use an allocated register to avoid clobbering dirty registers
+							// Copy struct using 8-byte chunks, then handle remaining bytes
+							// Use an allocated register to avoid clobbering dirty registers
 						X64Register copy_reg = allocateRegisterWithSpilling();
 						int offset = 0;
 						while (offset + 8 <= struct_size_bytes) {
-		// Load 8 bytes from source
+								// Load 8 bytes from source
 							emitMovFromFrameSized(
 								SizedRegister{copy_reg, 64, false},
 								SizedStackSlot{actual_src_offset + offset, 64, false});
-		// Store 8 bytes to destination
+								// Store 8 bytes to destination
 							emitMovToFrameSized(
 								SizedRegister{copy_reg, 64, false},
 								SizedStackSlot{dst_offset + offset, 64, false});
 							offset += 8;
 						}
 
-		// Handle remaining bytes (4, 2, 1)
+							// Handle remaining bytes (4, 2, 1)
 						if (offset + 4 <= struct_size_bytes) {
 							emitMovFromFrameSized(
 								SizedRegister{copy_reg, 64, false},
@@ -6718,7 +6718,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						regAlloc.release(copy_reg);
 					}
 				} else if (is_floating_point_type(var_type)) {
-		// For floating-point types, use XMM register and float moves
+						// For floating-point types, use XMM register and float moves
 					allocated_reg_val = allocateXMMRegisterWithSpilling();
 					bool is_float = (var_type == TypeCategory::Float);
 					if (should_deref_reference_source) {
@@ -6729,7 +6729,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					emitFloatMovToFrame(allocated_reg_val, dst_offset, is_float);
 					regAlloc.release(allocated_reg_val);
 				} else {
-		// For integer types, use GPR and integer moves
+						// For integer types, use GPR and integer moves
 					allocated_reg_val = allocateRegisterWithSpilling();
 					if (should_deref_reference_source) {
 						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, false);
@@ -6745,7 +6745,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 		} // end else (not literal)
 	} // end if (is_initialized)
 
-	// Add debug information for the local variable
+		// Add debug information for the local variable
 	if (current_function_name_.isValid()) {
 		const uint32_t type_index = codeViewTypeIndex(var_type);
 
@@ -6810,7 +6810,7 @@ uint16_t IrToObjConverter<TWriterClass>::getX64RegisterCodeViewCode(X64Register 
 		return 14;
 	case X64Register::R15:
 		return 15;
-	// XMM registers (SSE/AVX)
+			// XMM registers (SSE/AVX)
 	case X64Register::XMM0:
 		return 154;	// CV_AMD64_XMM0
 	case X64Register::XMM1:
@@ -6902,8 +6902,8 @@ void IrToObjConverter<TWriterClass>::injectNoexceptTerminateLPIfNeeded() {
 		if (g_enable_exceptions && current_function_is_noexcept_ && current_function_cleanup_lp_offset_ == 0) {
 			current_function_cleanup_lp_offset_ =
 				static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
-	// Exception pointer arrives in RAX (Itanium ABI landing-pad calling convention).
-	// Move it to RDI (first SysV integer argument) then call __cxa_call_terminate.
+				// Exception pointer arrives in RAX (Itanium ABI landing-pad calling convention).
+				// Move it to RDI (first SysV integer argument) then call __cxa_call_terminate.
 			emitMovRegReg(X64Register::RDI, X64Register::RAX);
 			emitCall("__cxa_call_terminate");
 		}
@@ -6914,17 +6914,17 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& instruction) {
 	assert(instruction.hasTypedPayload() && "FunctionDecl instruction must use typed payload");
 
-	// Reset register allocator state for the new function
-	// This ensures registers from previous functions don't interfere
+		// Reset register allocator state for the new function
+		// This ensures registers from previous functions don't interfere
 	regAlloc.reset();
 
-	// Use typed payload path
+		// Use typed payload path
 	const auto& func_decl = instruction.getTypedPayload<FunctionDeclOp>();
 
-	// Use mangled name if available (for member functions like lambda operator()),
-	// otherwise use function_name. This is important for nested lambdas where multiple
-	// operator() functions would otherwise have the same name.
-	// Phase 4: Use helpers
+		// Use mangled name if available (for member functions like lambda operator()),
+		// otherwise use function_name. This is important for nested lambdas where multiple
+		// operator() functions would otherwise have the same name.
+		// Phase 4: Use helpers
 	StringHandle mangled_handle = func_decl.getMangledName();
 	StringHandle func_name_handle = func_decl.getFunctionName();
 	StringHandle struct_name_handle = func_decl.getStructName();
@@ -6932,13 +6932,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	std::string_view func_name = mangled_handle.handle != 0 ? mangled : StringTable::getStringView(func_name_handle);
 	std::string_view struct_name = StringTable::getStringView(struct_name_handle);
 
-	// Construct return type
+		// Construct return type
 	TypeSpecifierNode return_type(func_decl.returnType(), TypeQualifier::None, static_cast<unsigned char>(func_decl.return_size_in_bits.value), Token{}, CVQualifier::None);
 	for (int i = 0; i < func_decl.return_pointer_depth.value; ++i) {
 		return_type.add_pointer_level();
 	}
 
-	// Extract parameters
+		// Extract parameters
 	std::vector<TypeSpecifierNode> parameter_types;
 	for (const auto& param : func_decl.parameters) {
 		TypeSpecifierNode param_type(param.paramType(), TypeQualifier::None, static_cast<unsigned char>(param.size_in_bits.value), Token{}, CVQualifier::None);
@@ -6952,31 +6952,31 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	bool is_variadic = func_decl.is_variadic;
 	std::string_view mangled_name = StringTable::getStringView(func_decl.getMangledName());	// Phase 4: Use helper
 
-	// Add function signature to the object file writer (still needed for debug info)
-	// but use the pre-computed mangled name instead of regenerating it
+		// Add function signature to the object file writer (still needed for debug info)
+		// but use the pre-computed mangled name instead of regenerating it
 	bool is_inline = func_decl.is_inline;
 	if (!struct_name.empty()) {
-	// Member function - include struct name
+			// Member function - include struct name
 		writer.addFunctionSignature(func_name, return_type, parameter_types, struct_name, linkage, is_variadic, mangled_name, is_inline);
 	} else {
-	// Regular function
+			// Regular function
 		writer.addFunctionSignature(func_name, return_type, parameter_types, linkage, is_variadic, mangled_name, is_inline);
 	}
 
-	// Finalize previous function before starting new one
+		// Finalize previous function before starting new one
 	if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
-	// Branch fixups and local labels are function-scoped. Patch and clear them now
-	// before finalizing the previous function so later functions cannot reuse or
-	// overwrite label state from this one.
+				// Branch fixups and local labels are function-scoped. Patch and clear them now
+				// before finalizing the previous function so later functions cannot reuse or
+				// overwrite label state from this one.
 		finalizeFunctionBranches();
 
-	// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
-	// scope_stack_space is negative (offset from RBP), so negate to get positive size
+			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
+			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 		size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 
-	// Ensure stack frame also covers any catch object slot used by FH3 materialization.
-	// Some catch temp offsets are reserved through EH paths and may not be reflected in
-	// scope_stack_space at this point.
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			// Some catch temp offsets are reserved through EH paths and may not be reflected in
+			// scope_stack_space at this point.
 		for (const auto& try_block : current_function_try_blocks_) {
 			for (const auto& handler : try_block.catch_handlers) {
 				if (handler.catch_obj_stack_offset < 0) {
@@ -6988,11 +6988,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-	// For C++ EH functions with the establisher-frame model (FrameOffset>0),
-	// ensure 32 bytes of shadow/home space at the bottom of the frame.
-	// The CRT's exception processing may clobber the first 32 bytes of the
-	// establisher frame (shadow space for callee use), so all meaningful
-	// variables must be allocated above that region.
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			// The CRT's exception processing may clobber the first 32 bytes of the
+			// establisher frame (shadow space for callee use), so all meaningful
+			// variables must be allocated above that region.
 		if (current_function_has_cpp_eh_) {
 			size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			if (total_stack < vars_used + 32) {
@@ -7000,21 +7000,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-	// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
-	// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
-	// Subtracting a 16-byte-aligned stack size keeps RSP % 16 == 8 at call sites,
-	// so align total_stack up to the next 16-byte boundary.
+			// Align stack so that after `push rbp; sub rsp, total_stack` the stack is 16-byte aligned
+			// System V AMD64 / MS x64: after `push rbp`, RSP is misaligned by 8 bytes.
+			// Subtracting a 16-byte-aligned stack size keeps RSP % 16 == 8 at call sites,
+			// so align total_stack up to the next 16-byte boundary.
 		if (total_stack % 16 != 0) {
 			total_stack = (total_stack + 15) & ~static_cast<size_t>(15);
 		}
 
 		emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
-	// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
-	// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
-	// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
-	// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
-	// accommodates any frame size in the single SUB RSP, so always use total_stack.
+				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
+				// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
+				// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
+				// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
+				// accommodates any frame size in the single SUB RSP, so always use total_stack.
 		uint32_t eh_effective_frame_size;
 		uint32_t eh_extra_stack_size;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -7029,7 +7029,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 									  : 0;
 		}
 
-	// Patch the main prologue SUB RSP immediate.
+				// Patch the main prologue SUB RSP immediate.
 		if (current_function_prologue_offset_ > 0) {
 			uint32_t patch_offset = current_function_prologue_offset_ + 3;
 			uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
@@ -7039,7 +7039,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-	// Patch the optional post-frame SUB RSP in the EH prologue.
+				// Patch the optional post-frame SUB RSP in the EH prologue.
 		if (eh_prologue_extra_sub_rsp_offset_ > 0) {
 			if (eh_extra_stack_size > 0) {
 				uint32_t patch_offset = eh_prologue_extra_sub_rsp_offset_ + 3;
@@ -7055,8 +7055,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-	// Patch catch continuation fixups to restore any post-frame stack space
-	// that lives below the establisher frame before resuming parent code.
+				// Patch catch continuation fixups to restore any post-frame stack space
+				// that lives below the establisher frame before resuming parent code.
 		for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
 			if (eh_extra_stack_size > 0) {
 				const auto bytes = std::bit_cast<std::array<uint8_t, 4>>(eh_extra_stack_size);
@@ -7081,7 +7081,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 		catch_continuation_lea_rbp_patches_.clear();
 
-	// Patch C++ EH prologue LEA RBP, [RSP + effective_frame_size]
+				// Patch C++ EH prologue LEA RBP, [RSP + effective_frame_size]
 		if (eh_prologue_lea_rbp_offset_ > 0) {
 			uint32_t lea_patch_offset = eh_prologue_lea_rbp_offset_ + 4;
 			const auto bytes = std::bit_cast<std::array<char, 4>>(eh_effective_frame_size);
@@ -7090,7 +7090,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 		}
 
-		// Patch catch/cleanup funclet LEA RBP, [RDX + effective_frame_size] instructions.
+					// Patch catch/cleanup funclet LEA RBP, [RDX + effective_frame_size] instructions.
 		uint32_t funclet_parent_rbp_disp = eh_effective_frame_size;
 		for (auto funclet_lea_offset : catch_funclet_lea_rbp_patches_) {
 			uint32_t lea_patch_offset = funclet_lea_offset + 3;
@@ -7113,21 +7113,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 		auto seh_try_blocks = convertSehInfoToWriterFormat();
 
-	// noexcept enforcement: inject terminate LP if needed (ELF only)
+			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();
 
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-	// Update function length
+			// Update function length
 		writer.update_function_length(mangled, function_length);
 		writer.set_function_debug_range(mangled, 0, 0); // doesn't seem needed
 
-	// Add exception handling information (required for x64) - uses mangled name
+			// Add exception handling information (required for x64) - uses mangled name
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Patch ELF catch handler selector filter values before passing to writer.
-	// The filter values must match the LSDA type table ordering.
+				// Patch ELF catch handler selector filter values before passing to writer.
+				// The filter values must match the LSDA type table ordering.
 			patchElfCatchFilterValues(try_blocks);
-	// Build cleanup block info for Phase 2 function-level cleanup LPs
+				// Build cleanup block info for Phase 2 function-level cleanup LPs
 			std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
 			if (current_function_cleanup_lp_offset_ > 0) {
 				cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
@@ -7138,44 +7138,44 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 		}
 
-	// Clean up the previous function's variable scope
-	// This happens when we start a NEW function, ensuring the previous function's scope is removed
+			// Clean up the previous function's variable scope
+			// This happens when we start a NEW function, ensuring the previous function's scope is removed
 		if (!variable_scopes.empty()) {
 			variable_scopes.pop_back();
 		}
 
-	// Reset for new function
+			// Reset for new function
 		resetFunctionState();
 	} else if (skip_previous_function_finalization_) {
-	// Previous function was skipped due to codegen error - just clean up state
+			// Previous function was skipped due to codegen error - just clean up state
 		if (!variable_scopes.empty()) {
 			variable_scopes.pop_back();
 		}
-	// Truncate textSectionData back to the start of the failed function
+			// Truncate textSectionData back to the start of the failed function
 		textSectionData.resize(current_function_offset_);
-	// Remove stale relocations from the failed function
+			// Remove stale relocations from the failed function
 		std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
 			return r.offset >= current_function_offset_;
 		});
 		resetFunctionState();
-	// Clear pending branches/labels from the skipped function
+			// Clear pending branches/labels from the skipped function
 		pending_branches_.clear();
 		label_positions_.clear();
 		elf_catch_filter_patches_.clear();
 		skip_previous_function_finalization_ = false;
 	}
 
-	// align the function to 16 bytes
+		// align the function to 16 bytes
 	static constexpr uint8_t nop = 0x90;
 	const uint32_t nop_count = 16 - (textSectionData.size() % 16);
 	if (nop_count < 16)
 		textSectionData.insert(textSectionData.end(), nop_count, nop);
 
-	// Windows x64 calling convention: Functions must provide home space for parameters
-	// Calculate param_count BEFORE calling calculateFunctionStackSpace so it can allocate
-	// local variables/temp vars AFTER the parameter home space.
-	// SysV AMD64: non-variadic 9-16 byte by-value struct params need TWO register slots each,
-	// so count them as 2 to ensure enough param_home_space is reserved.
+		// Windows x64 calling convention: Functions must provide home space for parameters
+		// Calculate param_count BEFORE calling calculateFunctionStackSpace so it can allocate
+		// local variables/temp vars AFTER the parameter home space.
+		// SysV AMD64: non-variadic 9-16 byte by-value struct params need TWO register slots each,
+		// so count them as 2 to ensure enough param_home_space is reserved.
 	size_t param_count = 0;
 	{
 		for (const auto& p : parameter_types) {
@@ -7188,12 +7188,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		param_count++;  // Count 'this' pointer for non-static member functions
 	}
 
-	// Function debug info is now added in add_function_symbol() with length 0
-	// Create std::string where needed for function calls that require it
+		// Function debug info is now added in add_function_symbol() with length 0
+		// Create std::string where needed for function calls that require it
 	std::string func_name_str(func_name);
 
-	// Pop the previous function's scope before creating the new one
-	// The finalization code above has already used the previous scope, so it's safe to pop now
+		// Pop the previous function's scope before creating the new one
+		// The finalization code above has already used the previous scope, so it's safe to pop now
 	if (!variable_scopes.empty()) {
 		variable_scopes.pop_back();
 	}
@@ -7201,30 +7201,30 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	StackVariableScope& var_scope = variable_scopes.emplace_back();
 	const auto func_stack_space = calculateFunctionStackSpace(func_name_str, var_scope, param_count);
 
-	// TempVars are now pre-counted in calculateFunctionStackSpace, include them in total
-	// Also include outgoing_args_space for function calls made from this function
-	// Note: named_vars_size already includes parameter home space, so don't add shadow_stack_space
+		// TempVars are now pre-counted in calculateFunctionStackSpace, include them in total
+		// Also include outgoing_args_space for function calls made from this function
+		// Note: named_vars_size already includes parameter home space, so don't add shadow_stack_space
 	uint32_t total_stack_space = func_stack_space.named_vars_size + func_stack_space.temp_vars_size + func_stack_space.outgoing_args_space;
 
-	// Even if parameters stay in registers, we need space to spill them if needed
-	// Member functions have implicit 'this' pointer as first parameter
+		// Even if parameters stay in registers, we need space to spill them if needed
+		// Member functions have implicit 'this' pointer as first parameter
 	if (param_count > 0 && total_stack_space < param_count * 8) {
 		total_stack_space = static_cast<uint32_t>(param_count * 8);
 	}
 
-	// Ensure stack alignment to 16 bytes
-	// System V AMD64 (Linux): After push rbp, RSP is at 16n. We need RSP at 16m+8 before calls.
-	// So total_stack_space should be 16k+8 (rounds up to next 16k+8)
-	// Windows x64: Different alignment rules, keep existing 16-byte alignment
+		// Ensure stack alignment to 16 bytes
+		// System V AMD64 (Linux): After push rbp, RSP is at 16n. We need RSP at 16m+8 before calls.
+		// So total_stack_space should be 16k+8 (rounds up to next 16k+8)
+		// Windows x64: Different alignment rules, keep existing 16-byte alignment
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Round up to 16k + 8 form for System V AMD64
+			// Round up to 16k + 8 form for System V AMD64
 		total_stack_space = ((total_stack_space + 7) & -16) + 8;
 	} else {
-	// Round up to 16k form for Windows x64
+			// Round up to 16k form for Windows x64
 		total_stack_space = (total_stack_space + 15) & -16;
 	}
 
-	// Save function prologue information before setup
+		// Save function prologue information before setup
 	current_function_offset_ = static_cast<uint32_t>(textSectionData.size());
 	current_function_name_ = func_name_handle;
 	current_function_prologue_offset_ = 0;
@@ -7233,7 +7233,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	writer.add_function_symbol(mangled_name, func_offset, total_stack_space, linkage);
 	functionSymbols[std::string(func_name)] = func_offset;
 
-	// Track function for debug information
+		// Track function for debug information
 	current_function_name_ = func_name_handle;
 	current_function_mangled_name_ = mangled_handle;
 	current_function_offset_ = func_offset;
@@ -7247,23 +7247,23 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		current_function_is_noexcept_ = func_decl.is_noexcept;
 	}
 
-	// Set up debug information for this function
-	// For now, use file ID 0 (first source file)
+		// Set up debug information for this function
+		// For now, use file ID 0 (first source file)
 	writer.set_current_function_for_debug(std::string(func_name), 0);
 
-	// If this is a member function, check if we need to register vtable for this class
+		// If this is a member function, check if we need to register vtable for this class
 	if (!struct_name.empty()) {
-	// Look up the struct type info
+			// Look up the struct type info
 		auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = struct_it->second;
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 			if (struct_info && struct_info->has_vtable) {
-		// Use the pre-generated vtable symbol from struct_info
+					// Use the pre-generated vtable symbol from struct_info
 				std::string_view vtable_symbol = struct_info->vtable_symbol;
 
-		// Check if we've already registered this vtable
+					// Check if we've already registered this vtable
 				bool vtable_exists = false;
 				for (const auto& vt : vtables_) {
 					if (vt.vtable_symbol == StringTable::getOrInternStringHandle(vtable_symbol)) {
@@ -7273,18 +7273,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				}
 
 				if (!vtable_exists) {
-		// Register this vtable - we'll populate function symbols as we encounter them
+						// Register this vtable - we'll populate function symbols as we encounter them
 					VTableInfo vtable_info;
 					vtable_info.vtable_symbol = StringTable::getOrInternStringHandle(vtable_symbol);
 					vtable_info.class_name = StringTable::getOrInternStringHandle(struct_name);
 
-		// Reserve space for vtable entries
+						// Reserve space for vtable entries
 					vtable_info.function_symbols.resize(struct_info->vtable.size());
 
-		// Initialize vtable entries with appropriate function symbols:
-		// - Pure virtual functions: __cxa_pure_virtual / _purecall
-		// - Inherited functions (from base classes): base class's mangled function name
-		// - Overridden functions: will be updated when we process the derived class's function definition
+						// Initialize vtable entries with appropriate function symbols:
+						// - Pure virtual functions: __cxa_pure_virtual / _purecall
+						// - Inherited functions (from base classes): base class's mangled function name
+						// - Overridden functions: will be updated when we process the derived class's function definition
 					const std::string_view pure_virtual_symbol = []() {
 						if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 							return "__cxa_pure_virtual"sv;
@@ -7296,26 +7296,26 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 							if (vfunc->is_pure_virtual) {
 								vtable_info.function_symbols[i] = pure_virtual_symbol;
 							} else {
-			// Generate mangled name for this function
-			// The function_decl contains information about which class owns this function
+									// Generate mangled name for this function
+									// The function_decl contains information about which class owns this function
 								std::string_view owning_struct_name;
 								[[maybe_unused]] std::string_view vtable_func_name;
 
 								if (vfunc->is_destructor) {
-			// Destructor - get struct name from DestructorDeclarationNode
+										// Destructor - get struct name from DestructorDeclarationNode
 									const auto& dtor_node = vfunc->function_decl.as<DestructorDeclarationNode>();
 									owning_struct_name = StringTable::getStringView(dtor_node.struct_name());
 
-			// Generate mangled destructor name
+										// Generate mangled destructor name
 									auto dtor_mangled = NameMangling::generateMangledNameFromNode(dtor_node);
 									vtable_info.function_symbols[i] = dtor_mangled.view();
 								} else if (!vfunc->is_constructor) {
-			// Regular virtual function - get struct name from FunctionDeclarationNode
+										// Regular virtual function - get struct name from FunctionDeclarationNode
 									const auto& func_node = vfunc->function_decl.as<FunctionDeclarationNode>();
 									owning_struct_name = func_node.parent_struct_name();
 									vtable_func_name = StringTable::getStringView(vfunc->getName());
 
-			// Generate mangled function name using the function's owning struct
+										// Generate mangled function name using the function's owning struct
 									auto vfunc_return_type = func_node.decl_node().type_node().as<TypeSpecifierNode>();
 									const auto& vfunc_params = func_node.parameter_nodes();
 									std::vector<std::string_view> empty_ns_path;
@@ -7330,7 +7330,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						++i;
 					}
 
-		// Populate base class names for RTTI
+						// Populate base class names for RTTI
 					for (const auto& base : struct_info->base_classes) {
 						if (const TypeInfo* base_ti = tryGetTypeInfo(base.type_index)) {
 							const TypeInfo& base_type = *base_ti;
@@ -7339,7 +7339,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 								if (base_struct) {
 									vtable_info.base_class_names.push_back(std::string(StringTable::getStringView(base_struct->getName())));
 
-			// Add detailed base class info
+										// Add detailed base class info
 									ObjectFileWriter::BaseClassDescriptorInfo bci;
 									bci.name = std::string(StringTable::getStringView(base_struct->getName()));
 									bci.num_contained_bases = static_cast<uint32_t>(base_struct->base_classes.size());
@@ -7351,16 +7351,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						}
 					}
 
-		// Add RTTI information for this class
+						// Add RTTI information for this class
 					vtable_info.rtti_info = struct_info->rtti_info;
 
 					vtables_.push_back(std::move(vtable_info));
 				}
 
-		// Check if this function is virtual and add it to the vtable
+					// Check if this function is virtual and add it to the vtable
 				const StructMemberFunction* member_func = nullptr;
-		// Use the unmangled function name for lookup (member_functions store unmangled names)
-		// Phase 4: Use helper
+					// Use the unmangled function name for lookup (member_functions store unmangled names)
+					// Phase 4: Use helper
 				StringHandle unmangled_func_name_handle = func_decl.getFunctionName();
 				for (const auto& func : struct_info->member_functions) {
 					if (func.getName() == unmangled_func_name_handle) {
@@ -7370,7 +7370,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				}
 
 				if (member_func && member_func->vtable_index >= 0) {
-		// Find the vtable entry and update it with the mangled name
+						// Find the vtable entry and update it with the mangled name
 					for (auto& vt : vtables_) {
 						if (vt.vtable_symbol == vtable_symbol) {
 							if (member_func->vtable_index < static_cast<int>(vt.function_symbols.size())) {
@@ -7386,24 +7386,24 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 	}
 
-	// Add line mapping for function declaration (now that current function is set)
+		// Add line mapping for function declaration (now that current function is set)
 	if (instruction.getLineNumber() > 0) {
-	// Also add line mapping for function opening brace (next line)
+			// Also add line mapping for function opening brace (next line)
 		addLineMapping(instruction.getLineNumber() + 1);
 	}
 
-	// Create a new function scope
+		// Create a new function scope
 	regAlloc.reset();
 
-	// MSVC-style prologue.
-	// For C++ EH functions (Windows): push rbp; sub rsp, N; lea rbp, [rsp+N]
-	//   This makes establisher_frame = RBP - FrameOffset*16 = RSP_after_prologue,
-	//   so _JumpToContinuation restores RSP to the fully-allocated frame level.
-	// For non-EH functions: push rbp; mov rbp, rsp; sub rsp, N (traditional style).
-	// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
+		// MSVC-style prologue.
+		// For C++ EH functions (Windows): push rbp; sub rsp, N; lea rbp, [rsp+N]
+		//   This makes establisher_frame = RBP - FrameOffset*16 = RSP_after_prologue,
+		//   so _JumpToContinuation restores RSP to the fully-allocated frame level.
+		// For non-EH functions: push rbp; mov rbp, rsp; sub rsp, N (traditional style).
+		// Always generate prologue - even if total_stack_space is 0, we need RBP for parameter access
 	textSectionData.push_back(0x55); // push rbp
 
-	// Track CFI: After push rbp, CFA = RSP+16, RBP at CFA-16
+		// Track CFI: After push rbp, CFA = RSP+16, RBP at CFA-16
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		current_function_cfi_.push_back({ElfFileWriter::CFIInstruction::PUSH_RBP,
 										 static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
@@ -7416,16 +7416,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 	}
 
 	if (use_eh_prologue_style) {
-	// C++ EH prologue:
-	//   push rbp
-	//   sub rsp, primary
-	//   lea rbp, [rsp+primary]
-	//   sub rsp, extra
-	// where primary is capped to the max encodable SET_FPREG offset (240 bytes)
-	// and extra is any remaining allocation. The final SUB is patched to a 7-byte
-	// NOP block when no extra allocation is needed.
+			// C++ EH prologue:
+			//   push rbp
+			//   sub rsp, primary
+			//   lea rbp, [rsp+primary]
+			//   sub rsp, extra
+			// where primary is capped to the max encodable SET_FPREG offset (240 bytes)
+			// and extra is any remaining allocation. The final SUB is patched to a 7-byte
+			// NOP block when no extra allocation is needed.
 
-	// SUB RSP, imm32 (7 bytes) for the establisher-frame allocation.
+			// SUB RSP, imm32 (7 bytes) for the establisher-frame allocation.
 		current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x81); // SUB with 32-bit immediate
@@ -7435,8 +7435,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 
-	// LEA RBP, [RSP + imm32] (8 bytes) - placeholder, patched at function end
-	// Encoding: 48 8D AC 24 XX XX XX XX (REX.W LEA RBP, [RSP+disp32])
+			// LEA RBP, [RSP + imm32] (8 bytes) - placeholder, patched at function end
+			// Encoding: 48 8D AC 24 XX XX XX XX (REX.W LEA RBP, [RSP+disp32])
 		eh_prologue_lea_rbp_offset_ = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x8D); // LEA
@@ -7447,8 +7447,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 
-	// Optional extra SUB RSP, imm32 (7 bytes) after SET_FPREG.
-	// Patched to either SUB RSP, extra or a 7-byte NOP sequence at function end.
+			// Optional extra SUB RSP, imm32 (7 bytes) after SET_FPREG.
+			// Patched to either SUB RSP, extra or a 7-byte NOP sequence at function end.
 		eh_prologue_extra_sub_rsp_offset_ = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x81); // SUB with 32-bit immediate
@@ -7458,19 +7458,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		textSectionData.push_back(0x00);
 		textSectionData.push_back(0x00);
 	} else {
-	// Traditional prologue: push rbp(1); mov rbp, rsp(3); sub rsp, N(7)
+			// Traditional prologue: push rbp(1); mov rbp, rsp(3); sub rsp, N(7)
 		textSectionData.push_back(0x48);
 		textSectionData.push_back(0x8B);
 		textSectionData.push_back(0xEC); // mov rbp, rsp
 
-	// Track CFI: After mov rbp, rsp, CFA = RBP+16
+			// Track CFI: After mov rbp, rsp, CFA = RBP+16
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_function_cfi_.push_back({ElfFileWriter::CFIInstruction::MOV_RSP_RBP,
 											 static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
 											 0});
 		}
 
-	// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
+			// SUB RSP, imm32 (7 bytes) - placeholder, patched at function end
 		current_function_prologue_offset_ = static_cast<uint32_t>(textSectionData.size());
 		textSectionData.push_back(0x48); // REX.W
 		textSectionData.push_back(0x81); // SUB with 32-bit immediate
@@ -7483,11 +7483,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		eh_prologue_lea_rbp_offset_ = 0; // Not used for non-EH functions
 	}
 
-	// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
-	// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
+		// For C++ EH functions on Windows, initialize the FH3 unwind help state variable at [rbp-8] to -2.
+		// FH3 reads this via dispUnwindHelp; value -2 means "use IP-to-state map" for lookup.
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (current_function_has_cpp_eh_) {
-	// mov qword [rbp-8], -2  (8 bytes: 48 C7 45 F8 FE FF FF FF)
+				// mov qword [rbp-8], -2  (8 bytes: 48 C7 45 F8 FE FF FF FF)
 			textSectionData.push_back(0x48); // REX.W
 			textSectionData.push_back(0xC7); // MOV r/m64, imm32
 			textSectionData.push_back(0x45); // [rbp + disp8]
@@ -7499,18 +7499,18 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 	}
 
-	// For RBP-relative addressing, we start with negative offset after total allocated space
+		// For RBP-relative addressing, we start with negative offset after total allocated space
 	if (variable_scopes.empty()) {
 		FLASH_LOG(Codegen, Error, "FATAL: variable_scopes is EMPTY!");
 		std::abort();
 	}
-	// Set scope_stack_space to include ALL pre-allocated space (named + shadow + temp_vars)
-	// TempVars are allocated within this space, not extending beyond it
+		// Set scope_stack_space to include ALL pre-allocated space (named + shadow + temp_vars)
+		// TempVars are allocated within this space, not extending beyond it
 	variable_scopes.back().scope_stack_space = -total_stack_space;
 
-	// Store named_vars size for TempVar offset calculation
-	// Note: named_vars_size already includes parameter home space
-	// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
+		// Store named_vars size for TempVar offset calculation
+		// Note: named_vars_size already includes parameter home space
+		// IMPORTANT: Don't include outgoing_args_space here - TempVars go AFTER named vars but BEFORE outgoing args
 	current_function_named_vars_size_ = func_stack_space.named_vars_size;
 	next_temp_var_offset_ = 8 + static_cast<int>(current_function_reserved_catch_obj_padding_size_ + current_function_reserved_catch_return_slot_size_);
 
@@ -7528,7 +7528,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 	}
 
-	// Handle parameters
+			// Handle parameters
 	const int coff_eh_param_home_bias = (!std::is_same_v<TWriterClass, ElfFileWriter> && current_function_has_cpp_eh_) ? 1 : 0;
 	struct ParameterInfo {
 		TypeCategory param_type;
@@ -7539,19 +7539,19 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		X64Register src_reg;
 		int pointer_depth;
 		bool is_reference;
-	// SysV AMD64: for 9-16 byte by-value struct params, the upper half is in a second register.
-	// X64Register::Count means this is a regular single-register parameter.
+				// SysV AMD64: for 9-16 byte by-value struct params, the upper half is in a second register.
+				// X64Register::Count means this is a regular single-register parameter.
 		X64Register second_reg = X64Register::Count;
 	};
 	std::vector<ParameterInfo> parameters;
 
-	// For member functions, add implicit 'this' pointer as first parameter
+			// For member functions, add implicit 'this' pointer as first parameter
 	int param_offset_adjustment = 0;
 
-	// For functions returning struct by value, add hidden return parameter FIRST
-	// This comes BEFORE all other parameters (including 'this' for member functions)
-	// System V AMD64: hidden param in RDI (first register)
-	// Windows x64: hidden param in RCX (first register)
+			// For functions returning struct by value, add hidden return parameter FIRST
+			// This comes BEFORE all other parameters (including 'this' for member functions)
+			// System V AMD64: hidden param in RDI (first register)
+			// Windows x64: hidden param in RCX (first register)
 	if (func_decl.has_hidden_return_param) {
 		int return_slot_offset = -(coff_eh_param_home_bias + 1) * 8;	 // Hidden return parameter is always first
 		variable_scopes.back().variables[StringTable::getOrInternStringHandle("__return_slot")].offset = return_slot_offset;
@@ -7567,21 +7567,21 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						 func_name, return_slot_offset, static_cast<int>(return_slot_reg));
 	}
 
-	// For non-static member functions, add 'this' pointer parameter
-	// This comes after hidden return parameter (if present)
-	// Static member functions have no 'this' pointer
+			// For non-static member functions, add 'this' pointer parameter
+			// This comes after hidden return parameter (if present)
+			// Static member functions have no 'this' pointer
 	int this_offset_saved = 0;  // Will be set if this is a member function
 	if (!struct_name.empty() && !func_decl.is_static_member) {
-	// 'this' offset depends on whether there's a hidden return parameter
+				// 'this' offset depends on whether there's a hidden return parameter
 		int this_offset = (param_offset_adjustment + coff_eh_param_home_bias + 1) * -8;
 		this_offset_saved = this_offset;	 // Save for later indirect_stack_info_ registration
 		current_function_this_offset_ = this_offset;
 		variable_scopes.back().variables[StringTable::getOrInternStringHandle("this")].offset = this_offset;
 
-	// Add 'this' parameter to debug information
+			// Add 'this' parameter to debug information
 		writer.add_function_parameter("this", 0x603, this_offset);  // 0x603 = T_64PVOID (pointer type)
 
-	// Store 'this' parameter info (register depends on param_offset_adjustment)
+			// Store 'this' parameter info (register depends on param_offset_adjustment)
 		X64Register this_reg = getIntParamReg<TWriterClass>(param_offset_adjustment);
 		parameters.push_back({TypeCategory::Struct, 64, "this", param_offset_adjustment, this_offset, this_reg, 1, false});
 		regAlloc.allocateSpecific(this_reg, this_offset);
@@ -7589,35 +7589,35 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		param_offset_adjustment++;  // Shift regular parameters by 1 more
 	}
 
-	// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
-	// For member functions, 'this' was already added above and consumed index 0,
-	// so we start counting from param_offset_adjustment (which is 1 for member functions)
-	// These counters are used to compute gp_offset/fp_offset for variadic functions
+		// Use separate counters for integer and float parameter registers (System V AMD64 ABI)
+		// For member functions, 'this' was already added above and consumed index 0,
+		// so we start counting from param_offset_adjustment (which is 1 for member functions)
+		// These counters are used to compute gp_offset/fp_offset for variadic functions
 	size_t int_param_reg_index = param_offset_adjustment;
 	size_t float_param_reg_index = 0;
 
-	// param_slot_index tracks the "effective slot number" used for offset calculation.
-	// For non-variadic SysV 9-16 byte by-value struct params, it advances by 2 (two register slots);
-	// for all other params it advances by 1.  This ensures their frame offsets don't collide.
+		// param_slot_index tracks the "effective slot number" used for offset calculation.
+		// For non-variadic SysV 9-16 byte by-value struct params, it advances by 2 (two register slots);
+		// for all other params it advances by 1.  This ensures their frame offsets don't collide.
 	int param_slot_index = static_cast<int>(param_offset_adjustment);
-	// stack_param_index counts how many parameter slots have overflowed to the stack so far,
-	// regardless of type (float vs int).  On SysV AMD64, float and int register banks are
-	// independent, so both can overflow at the same time — using a single unified counter
-	// ensures callee stack-param offsets match the caller's stack_arg_count-based layout.
+		// stack_param_index counts how many parameter slots have overflowed to the stack so far,
+		// regardless of type (float vs int).  On SysV AMD64, float and int register banks are
+		// independent, so both can overflow at the same time — using a single unified counter
+		// ensures callee stack-param offsets match the caller's stack_arg_count-based layout.
 	size_t stack_param_index = 0;
 
-	// First pass: collect all parameter information
+		// First pass: collect all parameter information
 	if (!instruction.hasTypedPayload()) {
-	// Operand-based path: extract parameters from operands
+			// Operand-based path: extract parameters from operands
 		size_t paramIndex = FunctionDeclLayout::FIRST_PARAM_INDEX;
-	// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
 		clearFunctionTempVarMetadata();
 
-	// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
-	// This is critical for member function calls that pass 'this' as an argument
-	// Without this, the codegen would use LEA (address-of) instead of MOV (load)
-	// Set holds_address_only = true because 'this' is a pointer, not a reference -
-	// when we return 'this', we should return the pointer value itself, not dereference it
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
+			// This is critical for member function calls that pass 'this' as an argument
+			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			// Set holds_address_only = true because 'this' is a pointer, not a reference -
+			// when we return 'this', we should return the pointer value itself, not dereference it
 		if (!struct_name.empty() && !func_decl.is_static_member) {
 			setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 		}
@@ -7626,48 +7626,48 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			auto param_type = instruction.getOperandAs<TypeCategory>(paramIndex + FunctionDeclLayout::PARAM_TYPE);
 			auto param_size = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_SIZE);
 			auto param_pointer_depth = instruction.getOperandAs<int>(paramIndex + FunctionDeclLayout::PARAM_POINTER_DEPTH);
-	// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
+				// Fetch is_reference early since it affects register selection (references use integer regs, not float regs)
 			bool is_reference = instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_REFERENCE);
 
-	// Calculate parameter number using FunctionDeclLayout helper
+				// Calculate parameter number using FunctionDeclLayout helper
 			size_t param_index_in_list = (paramIndex - FunctionDeclLayout::FIRST_PARAM_INDEX) / FunctionDeclLayout::OPERANDS_PER_PARAM;
 			int paramNumber = static_cast<int>(param_index_in_list) + param_offset_adjustment;
 
-	// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
-	// integer registers and materialized directly in the callee's frame (no pointer indirection).
-	// For variadic callees, the register-save-area prologue handles all register args,
-	// so this path is gated on !is_variadic.
+				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
+				// integer registers and materialized directly in the callee's frame (no pointer indirection).
+				// For variadic callees, the register-save-area prologue handles all register args,
+				// so this path is gated on !is_variadic.
 			bool is_two_reg_struct = !is_variadic &&
 									 isTwoRegisterStructRaw(toIrType(param_type), param_size, is_reference, param_pointer_depth);
 
-	// Platform-specific and type-aware offset calculation
+				// Platform-specific and type-aware offset calculation
 			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-	// Reference parameters (including rvalue references) are passed as pointers,
-	// so they should use integer registers regardless of the underlying type
+				// Reference parameters (including rvalue references) are passed as pointers,
+				// so they should use integer registers regardless of the underlying type
 			bool is_float_param = (param_type == TypeCategory::Float || param_type == TypeCategory::Double) && param_pointer_depth == 0 && !is_reference;
 
-	// Determine the register count threshold for this parameter type
+				// Determine the register count threshold for this parameter type
 			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
 			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 
-	// Calculate offset based on whether this parameter comes from a register or stack.
-	// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
-	// For SysV two-register structs: struct base = more-negative slot so field_offset-based
-	// access (base + field_offset) works correctly:
-	//   bytes 0-7 (first reg)  stored at offset       = (param_slot_index+2)*-8
-	//   bytes 8-15 (second reg) stored at offset+8    = (param_slot_index+1)*-8
+				// Calculate offset based on whether this parameter comes from a register or stack.
+				// For Windows variadic functions: ALL parameters are on caller's stack starting at [RBP+16]
+				// For SysV two-register structs: struct base = more-negative slot so field_offset-based
+				// access (base + field_offset) works correctly:
+				//   bytes 0-7 (first reg)  stored at offset       = (param_slot_index+2)*-8
+				//   bytes 8-15 (second reg) stored at offset+8    = (param_slot_index+1)*-8
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int offset;
 			if (is_variadic && is_coff_format) {
-		// Windows x64 variadic: ALL params at positive offsets from RBP
-		// paramNumber is 0-based, so first param is at +16, second at +24, etc.
+					// Windows x64 variadic: ALL params at positive offsets from RBP
+					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 				offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 				param_slot_index++;
 			} else if (type_specific_index + (is_two_reg_struct ? 2 : 1) <= reg_threshold) {
-		// Parameter comes from register - allocate home/shadow space.
-		// Use param_slot_index so two-register struct params don't collide with neighbours.
-		// For two-register structs, both slots must fit; otherwise fall through to stack path.
+					// Parameter comes from register - allocate home/shadow space.
+					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 				if (is_two_reg_struct) {
 					offset = (param_slot_index + coff_eh_param_home_bias + 2) * -8;	// struct base at more-negative slot
 					param_slot_index += 2;
@@ -7676,11 +7676,11 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					param_slot_index++;
 				}
 			} else {
-		// Parameter comes from stack - calculate positive offset
-		// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
-		// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
-		// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
-		// float and int stack params get consecutive slots matching the caller's layout.
+					// Parameter comes from stack - calculate positive offset
+					// Stack parameters start at [rbp+16] (after return address at [rbp+8] and saved rbp at [rbp+0])
+					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
+					// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
+					// float and int stack params get consecutive slots matching the caller's layout.
 				offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(stack_param_index) * 8;
 				stack_param_index += is_two_reg_struct ? 2 : 1;
 				param_slot_index += is_two_reg_struct ? 2 : 1;
@@ -7691,13 +7691,13 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			variable_scopes.back().variables[param_name_handle].offset = offset;
 			variable_scopes.back().variables[param_name_handle].size_in_bits = SizeInBits{static_cast<int>(param_size)};
 
-	// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
-	// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
-	// SysV two-register structs, which are materialized directly and need no dereferencing.
-	// NOTE: Pointer parameters (T*) are NOT tracked here. They hold pointer VALUES directly
-	// on the stack, not references. Accessing a pointer param should yield the pointer value;
-	// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
-	// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
+				// Track reference parameters by their stack offset (they need pointer dereferencing like 'this')
+				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
+				// SysV two-register structs, which are materialized directly and need no dereferencing.
+				// NOTE: Pointer parameters (T*) are NOT tracked here. They hold pointer VALUES directly
+				// on the stack, not references. Accessing a pointer param should yield the pointer value;
+				// explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				// Registering pointers here caused auto-dereferencing in comparisons (e.g., ptr == 0 crashes).
 			bool is_passed_by_reference = is_reference ||
 										  (!is_two_reg_struct && param_type == TypeCategory::Struct && param_size > 64);
 			if (is_passed_by_reference) {
@@ -7705,7 +7705,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 								 instruction.getOperandAs<bool>(paramIndex + FunctionDeclLayout::PARAM_IS_RVALUE_REFERENCE), TempVar{0});
 			}
 
-	// Add parameter to debug information
+				// Add parameter to debug information
 			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
 			if (param_pointer_depth > 0) {
 				param_type_index = 0x603;  // T_64PVOID for pointer types
@@ -7714,7 +7714,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			}
 			writer.add_function_parameter(std::string(param_name), param_type_index, offset);
 
-	// Check if parameter fits in a register using separate int/float counters
+				// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
 			X64Register second_reg = X64Register::Count;
@@ -7726,7 +7726,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					float_param_reg_index++;	 // Still increment counter for stack params
 				}
 			} else if (is_two_reg_struct) {
-		// Two-register struct: consume two consecutive integer registers
+					// Two-register struct: consume two consecutive integer registers
 				if (int_param_reg_index + 2 <= max_int_regs) {
 					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 					second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
@@ -7745,37 +7745,37 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 			if (use_register) {
 
-		// Don't allocate XMM registers in the general register allocator
+					// Don't allocate XMM registers in the general register allocator
 				if (!is_float_param) {
 					regAlloc.allocateSpecific(src_reg, offset);
-		// second_reg holds the upper half of the struct's bytes; it is stored to the
-		// frame immediately in the second pass, not tracked as a live register, so
-		// it does not need to be registered in regAlloc.
+						// second_reg holds the upper half of the struct's bytes; it is stored to the
+						// frame immediately in the second pass, not tracked as a live register, so
+						// it does not need to be registered in regAlloc.
 				}
 
-		// Store parameter info for later processing
+					// Store parameter info for later processing
 				parameters.push_back({param_type, param_size, param_name, paramNumber, offset, src_reg, param_pointer_depth, is_reference, second_reg});
 			}
 
 			paramIndex += FunctionDeclLayout::OPERANDS_PER_PARAM;
 		}
 	} else {
-	// Typed payload path: build ParameterInfo from already-extracted parameter_types
+			// Typed payload path: build ParameterInfo from already-extracted parameter_types
 		[[maybe_unused]] const auto& typed_func_decl = instruction.getTypedPayload<FunctionDeclOp>();
-	// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
+			// Clear indirect storage tracking (and stale TempVar reference metadata) from previous function
 		clearFunctionTempVarMetadata();
 
-	// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
-	// This is critical for member function calls that pass 'this' as an argument
-	// Without this, the codegen would use LEA (address-of) instead of MOV (load)
-	// Set holds_address_only = true because 'this' is a pointer, not a reference -
-	// when we return 'this', we should return the pointer value itself, not dereference it
+			// Register 'this' as address-only in indirect_stack_info_ (AFTER the clear)
+			// This is critical for member function calls that pass 'this' as an argument
+			// Without this, the codegen would use LEA (address-of) instead of MOV (load)
+			// Set holds_address_only = true because 'this' is a pointer, not a reference -
+			// when we return 'this', we should return the pointer value itself, not dereference it
 		if (!struct_name.empty() && !func_decl.is_static_member) {
 			setAddressOnlyInfo(this_offset_saved, nativeTypeIndex(TypeCategory::Struct), 64, TempVar{0});
 		}
 
-	// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
-	// The counters were already declared before the if/else block
+			// Reset counters for this code path (they start at param_offset_adjustment for int, 0 for float)
+			// The counters were already declared before the if/else block
 		int_param_reg_index = param_offset_adjustment;
 		float_param_reg_index = 0;
 		param_slot_index = static_cast<int>(param_offset_adjustment);
@@ -7785,40 +7785,40 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			const auto& param = func_decl.parameters[i];
 			int paramNumber = static_cast<int>(i) + param_offset_adjustment;
 
-	// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
-	// integer registers and materialized directly in the callee's frame (no pointer indirection).
-	// For variadic callees, the register-save-area prologue handles all register args,
-	// so this path is gated on !is_variadic.
+				// SysV AMD64: non-variadic 9-16 byte by-value structs are passed in two consecutive
+				// integer registers and materialized directly in the callee's frame (no pointer indirection).
+				// For variadic callees, the register-save-area prologue handles all register args,
+				// so this path is gated on !is_variadic.
 			bool is_two_reg_struct = !is_variadic &&
 									 isTwoRegisterStructRaw(toIrType(param.paramType()), param.size_in_bits.value, param.is_reference(), param.pointer_depth.value);
 
-	// Platform-specific and type-aware offset calculation
+				// Platform-specific and type-aware offset calculation
 			size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();
 			size_t max_float_regs = getMaxFloatParamRegs<TWriterClass>();
-	// Reference parameters (including rvalue references) are passed as pointers,
-	// so they should use integer registers regardless of the underlying type
+				// Reference parameters (including rvalue references) are passed as pointers,
+				// so they should use integer registers regardless of the underlying type
 			bool is_float_param = isIrFloatingPointType(toIrType(param.paramType())) && !param.pointer_depth.is_pointer() && !param.is_reference();
 
-	// Determine the register count threshold for this parameter type
+				// Determine the register count threshold for this parameter type
 			size_t reg_threshold = is_float_param ? max_float_regs : max_int_regs;
 			size_t type_specific_index = is_float_param ? float_param_reg_index : int_param_reg_index;
 
-	// Calculate offset based on whether this parameter comes from a register or stack.
-	// For SysV two-register structs: struct base = more-negative slot so field_offset-based
-	// access (base + field_offset) works correctly:
-	//   bytes 0-7 (first reg)   stored at offset       = (param_slot_index+2)*-8
-	//   bytes 8-15 (second reg) stored at offset+8     = (param_slot_index+1)*-8
+				// Calculate offset based on whether this parameter comes from a register or stack.
+				// For SysV two-register structs: struct base = more-negative slot so field_offset-based
+				// access (base + field_offset) works correctly:
+				//   bytes 0-7 (first reg)   stored at offset       = (param_slot_index+2)*-8
+				//   bytes 8-15 (second reg) stored at offset+8     = (param_slot_index+1)*-8
 			constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 			int offset;
 			if (is_variadic && is_coff_format) {
-		// Windows x64 variadic: ALL params at positive offsets from RBP
-		// paramNumber is 0-based, so first param is at +16, second at +24, etc.
+					// Windows x64 variadic: ALL params at positive offsets from RBP
+					// paramNumber is 0-based, so first param is at +16, second at +24, etc.
 				offset = 16 + (paramNumber - param_offset_adjustment) * 8;
 				param_slot_index++;
 			} else if (type_specific_index + (is_two_reg_struct ? 2 : 1) <= reg_threshold) {
-		// Parameter comes from register - allocate home/shadow space.
-		// Use param_slot_index so two-register struct params don't collide with neighbours.
-		// For two-register structs, both slots must fit; otherwise fall through to stack path.
+					// Parameter comes from register - allocate home/shadow space.
+					// Use param_slot_index so two-register struct params don't collide with neighbours.
+					// For two-register structs, both slots must fit; otherwise fall through to stack path.
 				if (is_two_reg_struct) {
 					offset = (param_slot_index + coff_eh_param_home_bias + 2) * -8;	// struct base at more-negative slot
 					param_slot_index += 2;
@@ -7827,42 +7827,42 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					param_slot_index++;
 				}
 			} else {
-		// Parameter comes from stack - calculate positive offset
-		// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
-		// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
-		// float and int stack params get consecutive slots matching the caller's layout.
+					// Parameter comes from stack - calculate positive offset
+					// Stack params start after: saved rbp [+0], return addr [+8], shadow space (32 on Win64, 0 on SysV)
+					// Use stack_param_index (not type_specific_index - reg_threshold) so that mixed
+					// float and int stack params get consecutive slots matching the caller's layout.
 				offset = 16 + static_cast<int>(getShadowSpaceSize<TWriterClass>()) + static_cast<int>(stack_param_index) * 8;
 				stack_param_index += is_two_reg_struct ? 2 : 1;
 				param_slot_index += is_two_reg_struct ? 2 : 1;
 			}
 
-	// Phase 4: Use helper to get param name for map key
+				// Phase 4: Use helper to get param name for map key
 			variable_scopes.back().variables[param.getName()].offset = offset;
 			variable_scopes.back().variables[param.getName()].size_in_bits = param.size_in_bits;
 
-	// Track reference parameters by their stack offset (they need pointer dereferencing)
-	// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
-	// SysV two-register structs, which are materialized directly and need no dereferencing.
-	// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
-	// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
+				// Track reference parameters by their stack offset (they need pointer dereferencing)
+				// Also track large struct parameters (> 64 bits) which are passed by pointer — EXCEPT for
+				// SysV two-register structs, which are materialized directly and need no dereferencing.
+				// NOTE: Pointer parameters (T*) are NOT tracked - they hold pointer VALUES directly.
+				// Explicit dereference (*ptr) is handled by handleDereference which loads from stack directly.
 			bool is_passed_by_reference = param.is_reference() ||
 										  (!is_two_reg_struct && isIrStructType(toIrType(param.paramType())) && param.size_in_bits.value > 64);
 			if (is_passed_by_reference) {
 				setReferenceInfo(offset, TypeIndex{0, param.paramType()}, param.size_in_bits.value, param.is_rvalue_reference(), TempVar{0});
 			}
 
-	// Add parameter to debug information
+				// Add parameter to debug information
 			uint32_t param_type_index = 0x74; // T_INT4 for int parameters
 			if (param.pointer_depth.is_pointer()) {
 				param_type_index = 0x603;  // T_64PVOID for pointer types
 			} else {
 				param_type_index = codeViewTypeIndex(param.paramType());
 			}
-	// Phase 4: Use helper to get param name
+				// Phase 4: Use helper to get param name
 			std::string param_name_str(StringTable::getStringView(param.getName()));
 			writer.add_function_parameter(param_name_str, param_type_index, offset);
 
-	// Check if parameter fits in a register using separate int/float counters
+				// Check if parameter fits in a register using separate int/float counters
 			bool use_register = false;
 			X64Register src_reg = X64Register::Count;
 			X64Register second_reg = X64Register::Count;
@@ -7874,7 +7874,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					float_param_reg_index++;	 // Still increment counter for stack params
 				}
 			} else if (is_two_reg_struct) {
-		// Two-register struct: consume two consecutive integer registers
+					// Two-register struct: consume two consecutive integer registers
 				if (int_param_reg_index + 2 <= max_int_regs) {
 					src_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
 					second_reg = getIntParamReg<TWriterClass>(int_param_reg_index++);
@@ -7895,9 +7895,9 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 				if (!is_float_param && !regAlloc.is_allocated(src_reg)) {
 					regAlloc.allocateSpecific(src_reg, offset);
-		// second_reg holds the upper half of the struct's bytes; it is stored to the
-		// frame immediately in the second pass, not tracked as a live register, so
-		// it does not need to be registered in regAlloc.
+						// second_reg holds the upper half of the struct's bytes; it is stored to the
+						// frame immediately in the second pass, not tracked as a live register, so
+						// it does not need to be registered in regAlloc.
 				}
 
 				parameters.push_back({param.type_index.category(), param.size_in_bits.value, StringTable::getStringView(param.getName()), paramNumber, offset, src_reg, param.pointer_depth.value, param.is_reference(), second_reg});
@@ -7905,16 +7905,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 	}
 
-	// Second pass: generate parameter storage code in the correct order
+		// Second pass: generate parameter storage code in the correct order
 
-	// The callee is always responsible for homing its register parameters to the shadow space
-	// (Windows x64) or its local frame (Linux). This ensures va_list/va_arg can walk a
-	// contiguous memory region and that parameter values are accessible at their assigned offsets.
+		// The callee is always responsible for homing its register parameters to the shadow space
+		// (Windows x64) or its local frame (Linux). This ensures va_list/va_arg can walk a
+		// contiguous memory region and that parameter values are accessible at their assigned offsets.
 	constexpr bool is_coff_format_spill = !std::is_same_v<TWriterClass, ElfFileWriter>;
 	if (is_variadic && is_coff_format_spill) {
-	// Windows x64 variadic: home ALL register arg slots (named + variadic) to shadow space.
-	// The caller must NOT pre-populate shadow space (doing so corrupts caller locals that
-	// share those addresses). The callee owns shadow space homing per the x64 ABI.
+			// Windows x64 variadic: home ALL register arg slots (named + variadic) to shadow space.
+			// The caller must NOT pre-populate shadow space (doing so corrupts caller locals that
+			// share those addresses). The callee owns shadow space homing per the x64 ABI.
 		const size_t max_regs = getMaxIntParamRegs<TWriterClass>();
 		for (size_t i = 0; i < max_regs; ++i) {
 			int slot_offset = 16 + static_cast<int>(i) * 8;
@@ -7922,24 +7922,24 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 		}
 	} else {
 		for (const auto& param : parameters) {
-	// MSVC-STYLE: Store parameters using RBP-relative addressing
+				// MSVC-STYLE: Store parameters using RBP-relative addressing
 			bool is_float_param = (param.param_type == TypeCategory::Float || param.param_type == TypeCategory::Double) && !param.pointer_depth && !param.is_reference;
 
 			if (is_float_param) {
-		// For floating-point parameters, use movss/movsd to store from XMM register
+					// For floating-point parameters, use movss/movsd to store from XMM register
 				bool is_float = (param.param_type == TypeCategory::Float);
 				emitFloatMovToFrame(param.src_reg, param.offset, is_float);
 			} else if (param.second_reg != X64Register::Count) {
-		// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
-		// bytes 8-15 in second_reg → offset+8 (the less-negative / higher-address slot).
+					// SysV AMD64 two-register struct: bytes 0-7 in src_reg → offset (struct base),
+					// bytes 8-15 in second_reg → offset+8 (the less-negative / higher-address slot).
 				emitMovToFrame(param.src_reg, param.offset, 64);
 				emitMovToFrame(param.second_reg, param.offset + 8, 64);
 				regAlloc.release(param.src_reg);
-		// second_reg was never added to regAlloc, so no release needed
+					// second_reg was never added to regAlloc, so no release needed
 			} else {
-		// For integer parameters, use size-appropriate MOV
-		// References are always passed as 64-bit pointers regardless of the type they refer to
-		// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
+					// For integer parameters, use size-appropriate MOV
+					// References are always passed as 64-bit pointers regardless of the type they refer to
+					// Large struct parameters (> 64 bits) that are NOT two-register structs are passed by pointer
 				bool is_passed_by_pointer = param.is_reference || param.pointer_depth > 0 ||
 											(param.param_type == TypeCategory::Struct && param.param_size > 64);
 				int store_size = is_passed_by_pointer ? 64 : param.param_size;
@@ -7948,49 +7948,49 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 					SizedStackSlot{param.offset, store_size, isSignedType(param.param_type)}	 // dest
 				);
 
-		// Release the parameter register from the register allocator
-		// Parameters are now on the stack, so the register allocator should not
-		// think they're still in registers
+					// Release the parameter register from the register allocator
+					// Parameters are now on the stack, so the register allocator should not
+					// think they're still in registers
 				regAlloc.release(param.src_reg);
 			}
 		}
 	}
 
-	// For Linux (System V AMD64) variadic functions: Create register save area and va_list structure
-	// On System V AMD64, variadic arguments are passed in registers, so we need to
-	// save all potential variadic argument registers to a register save area and
-	// create a va_list structure to track offsets
+		// For Linux (System V AMD64) variadic functions: Create register save area and va_list structure
+		// On System V AMD64, variadic arguments are passed in registers, so we need to
+		// save all potential variadic argument registers to a register save area and
+		// create a va_list structure to track offsets
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (is_variadic) {
-	// System V AMD64 ABI register save area layout:
-	// Integer registers: RDI, RSI, RDX, RCX, R8, R9  (6 registers * 8 bytes = 48 bytes)
-	// Float registers: XMM0-XMM7  (8 registers * 16 bytes = 128 bytes, need full 16 for alignment)
-	// Total register save area: 176 bytes
-	//
-	// Additionally, we need a va_list structure (compatible with System V AMD64):
-	// struct __va_list_tag {
-	//     unsigned int gp_offset;       // 4 bytes - offset into integer registers (0-48)
-	//     unsigned int fp_offset;       // 4 bytes - offset into float registers (48-176)
-	//     void *overflow_arg_area;      // 8 bytes - stack overflow area
-	//     void *reg_save_area;          // 8 bytes - pointer to register save area
-	// };  // Total: 24 bytes
+				// System V AMD64 ABI register save area layout:
+				// Integer registers: RDI, RSI, RDX, RCX, R8, R9  (6 registers * 8 bytes = 48 bytes)
+				// Float registers: XMM0-XMM7  (8 registers * 16 bytes = 128 bytes, need full 16 for alignment)
+				// Total register save area: 176 bytes
+				//
+				// Additionally, we need a va_list structure (compatible with System V AMD64):
+				// struct __va_list_tag {
+				//     unsigned int gp_offset;       // 4 bytes - offset into integer registers (0-48)
+				//     unsigned int fp_offset;       // 4 bytes - offset into float registers (48-176)
+				//     void *overflow_arg_area;      // 8 bytes - stack overflow area
+				//     void *reg_save_area;          // 8 bytes - pointer to register save area
+				// };  // Total: 24 bytes
 
-	// Calculate layout offsets
+				// Calculate layout offsets
 			constexpr int INT_REG_AREA_SIZE = 6 * 8;		 // 48 bytes for integer registers
 			constexpr int FLOAT_REG_AREA_SIZE = 8 * 16;	// 128 bytes for XMM registers
 			constexpr int REG_SAVE_AREA_SIZE = INT_REG_AREA_SIZE + FLOAT_REG_AREA_SIZE;	// 176 bytes
 			constexpr int VA_LIST_STRUCT_SIZE = 24;		// Size of va_list structure
 
-	// Allocate space: register save area first, then va_list structure
+				// Allocate space: register save area first, then va_list structure
 			int32_t reg_save_area_base = variable_scopes.back().scope_stack_space - REG_SAVE_AREA_SIZE;
 			int32_t va_list_struct_base = reg_save_area_base - VA_LIST_STRUCT_SIZE;
 			current_function_varargs_reg_save_offset_ = reg_save_area_base;
 
-	// Update the scope stack space to include both areas
+				// Update the scope stack space to include both areas
 			variable_scopes.back().scope_stack_space = va_list_struct_base;
 
-	// Save all integer registers: RDI, RSI, RDX, RCX, R8, R9 at offsets 0-47
-	// (RDI is the first fixed param but we save it for completeness)
+				// Save all integer registers: RDI, RSI, RDX, RCX, R8, R9 at offsets 0-47
+				// (RDI is the first fixed param but we save it for completeness)
 			constexpr X64Register int_regs[] = {
 				X64Register::RDI,  // Offset 0
 				X64Register::RSI,  // Offset 8
@@ -8002,7 +8002,7 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 			constexpr size_t INT_REG_COUNT = sizeof(int_regs) / sizeof(int_regs[0]);
 			static_assert(INT_REG_COUNT == 6, "System V AMD64 ABI has exactly 6 integer argument registers");
 
-	// Number of XMM registers saved in register save area (System V AMD64 ABI)
+				// Number of XMM registers saved in register save area (System V AMD64 ABI)
 			constexpr size_t FLOAT_REG_COUNT = 8;
 
 			for (size_t i = 0; i < INT_REG_COUNT; ++i) {
@@ -8013,54 +8013,54 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 				);
 			}
 
-	// Save all float registers: XMM0-XMM7 at offsets 48-175
-	// Use full 16 bytes per register for proper alignment
+				// Save all float registers: XMM0-XMM7 at offsets 48-175
+				// Use full 16 bytes per register for proper alignment
 			for (size_t i = 0; i < FLOAT_REG_COUNT; ++i) {
 				X64Register xmm_reg = static_cast<X64Register>(static_cast<int>(X64Register::XMM0) + i);
 				int32_t offset = reg_save_area_base + INT_REG_AREA_SIZE + static_cast<int32_t>(i * 16);
 				emitMovdquToFrame(xmm_reg, offset);
 			}
 
-	// Register special variables for va_list structure and register save area
+				// Register special variables for va_list structure and register save area
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__varargs_va_list_struct__")].offset = va_list_struct_base;
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle("__varargs_reg_save_area__")].offset = reg_save_area_base;
 
-	// Initialize the va_list structure fields directly in the function prologue
-	// This avoids IR complexity with pointer arithmetic and dereferencing
-	// Structure layout (24 bytes total):
-	//   unsigned int gp_offset;       // offset 0 (4 bytes): Skip fixed integer parameters in registers
-	//   unsigned int fp_offset;       // offset 4 (4 bytes): Skip fixed float parameters in registers
-	//   void *overflow_arg_area;      // offset 8 (8 bytes): NULL for now (not used for register args)
-	//   void *reg_save_area;          // offset 16 (8 bytes): Pointer to register save area base
+				// Initialize the va_list structure fields directly in the function prologue
+				// This avoids IR complexity with pointer arithmetic and dereferencing
+				// Structure layout (24 bytes total):
+				//   unsigned int gp_offset;       // offset 0 (4 bytes): Skip fixed integer parameters in registers
+				//   unsigned int fp_offset;       // offset 4 (4 bytes): Skip fixed float parameters in registers
+				//   void *overflow_arg_area;      // offset 8 (8 bytes): NULL for now (not used for register args)
+				//   void *reg_save_area;          // offset 16 (8 bytes): Pointer to register save area base
 
-	// Calculate gp_offset: skip registers used by fixed integer parameters
-	// Each integer register slot is 8 bytes, capped at 6 (INT_REG_COUNT)
+				// Calculate gp_offset: skip registers used by fixed integer parameters
+				// Each integer register slot is 8 bytes, capped at 6 (INT_REG_COUNT)
 			size_t fixed_int_params = std::min(int_param_reg_index, static_cast<size_t>(INT_REG_COUNT));
 			int initial_gp_offset = static_cast<int>(fixed_int_params * 8);
 
-	// Calculate fp_offset: skip registers used by fixed float parameters
-	// Float registers start at offset 48 (after integer registers), each is 16 bytes
+				// Calculate fp_offset: skip registers used by fixed float parameters
+				// Float registers start at offset 48 (after integer registers), each is 16 bytes
 			size_t fixed_float_params = std::min(float_param_reg_index, FLOAT_REG_COUNT);
 			int initial_fp_offset = INT_REG_AREA_SIZE + static_cast<int>(fixed_float_params * 16);
 
-	// Load va_list structure base address into RAX
+				// Load va_list structure base address into RAX
 			emitLeaFromFrame(X64Register::RAX, va_list_struct_base);
 
-	// Store gp_offset at [RAX + 0]
+				// Store gp_offset at [RAX + 0]
 			emitMovDwordPtrImmToRegOffset(X64Register::RAX, 0, initial_gp_offset);
 
-	// Store fp_offset at [RAX + 4]
+				// Store fp_offset at [RAX + 4]
 			emitMovDwordPtrImmToRegOffset(X64Register::RAX, 4, initial_fp_offset);
 
-	// Store overflow_arg_area at [RAX + 8]
-	// For System V AMD64 ABI, overflow arguments are passed on the stack
-	// by the caller. They start at [RBP+16] (after saved RBP and return address).
-	// LEA RCX, [RBP + 16] then store to [RAX + 8]
+				// Store overflow_arg_area at [RAX + 8]
+				// For System V AMD64 ABI, overflow arguments are passed on the stack
+				// by the caller. They start at [RBP+16] (after saved RBP and return address).
+				// LEA RCX, [RBP + 16] then store to [RAX + 8]
 			emitLeaFromFrame(X64Register::RCX, 16);	// overflow args are at RBP+16
 			emitMovQwordPtrRegToRegOffset(X64Register::RAX, 8, X64Register::RCX);
 
-	// Store reg_save_area pointer at [RAX + 16]
-	// Load register save area address into RCX
+				// Store reg_save_area pointer at [RAX + 16]
+				// Load register save area address into RCX
 			emitLeaFromFrame(X64Register::RCX, reg_save_area_base);
 			emitMovQwordPtrRegToRegOffset(X64Register::RAX, 16, X64Register::RCX);
 		}
@@ -8076,7 +8076,7 @@ int IrToObjConverter<TWriterClass>::getActualVariableSize(StringHandle var_name,
 	const auto& current_scope = variable_scopes.back();
 	auto var_it = current_scope.variables.find(var_name);
 	if (var_it != current_scope.variables.end()) {
-	// Return the stored size if it's non-zero, otherwise use default
+			// Return the stored size if it's non-zero, otherwise use default
 		if (var_it->second.size_in_bits.is_set()) {
 			return var_it->second.size_in_bits.value;
 		}
@@ -8163,13 +8163,13 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		if (inside_catch_handler_ && g_enable_exceptions) {
-	// Flush all dirty registers to ensure the return value is safely spilled to
-	// the stack before we call __cxa_end_catch (which clobbers caller-saved regs).
+				// Flush all dirty registers to ensure the return value is safely spilled to
+				// the stack before we call __cxa_end_catch (which clobbers caller-saved regs).
 			flushAllDirtyRegisters();
 
-	// Count how many nested catch handlers we need to unwind through.
-	// The current handler counts as 1; for each saved context entry that
-	// was also inside a catch handler, add one more.
+				// Count how many nested catch handlers we need to unwind through.
+				// The current handler counts as 1; for each saved context entry that
+				// was also inside a catch handler, add one more.
 			int catch_depth = 1;
 			for (auto it = catch_codegen_context_stack_.rbegin(); it != catch_codegen_context_stack_.rend(); ++it) {
 				if (it->inside_catch_handler) {
@@ -8179,36 +8179,36 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 				}
 			}
 
-	// Call __cxa_end_catch for each active catch level, innermost first.
+				// Call __cxa_end_catch for each active catch level, innermost first.
 			for (int i = 0; i < catch_depth; ++i) {
 				emitCall("__cxa_end_catch");
 			}
 
-	// The __cxa_end_catch calls clobbered caller-saved registers.
-	// Reset the register allocator so the return value is reloaded from memory.
+				// The __cxa_end_catch calls clobbered caller-saved registers.
+				// Reset the register allocator so the return value is reloaded from memory.
 			regAlloc.reset();
 
 			inside_catch_handler_ = false;
 		}
 	}
 
-	// Add line mapping for the return statement itself
+		// Add line mapping for the return statement itself
 	if (instruction.getLineNumber() > 0) {
 		addLineMapping(instruction.getLineNumber());
 	}
 
-	// Check for typed payload first
+		// Check for typed payload first
 	if (instruction.hasTypedPayload()) {
 		const auto& ret_op = instruction.getTypedPayload<ReturnOp>();
 
-	// Void return - no value to return
+			// Void return - no value to return
 		if (!ret_op.return_value.has_value()) {
-	// Fall through to epilogue generation below
+				// Fall through to epilogue generation below
 		} else {
-	// Return with value
+				// Return with value
 			const auto& ret_val = ret_op.return_value.value();
 
-	// Debug: log what type of return value we have
+				// Debug: log what type of return value we have
 			if (std::holds_alternative<unsigned long long>(ret_val)) {
 				FLASH_LOG(Codegen, Debug, "Return value type: unsigned long long");
 			} else if (std::holds_alternative<TempVar>(ret_val)) {
@@ -8224,7 +8224,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 			if (std::holds_alternative<unsigned long long>(ret_val)) {
 				unsigned long long returnValue = std::get<unsigned long long>(ret_val);
 
-		// Check if this is actually a negative number stored as unsigned long long
+					// Check if this is actually a negative number stored as unsigned long long
 				if (returnValue > std::numeric_limits<uint32_t>::max()) {
 					uint32_t lower32 = static_cast<uint32_t>(returnValue);
 					if ((returnValue >> 32) == 0xFFFFFFFF) {
@@ -8234,7 +8234,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					}
 				}
 
-		// mov eax, immediate instruction has a fixed size of 5 bytes
+					// mov eax, immediate instruction has a fixed size of 5 bytes
 				spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 				std::array<uint8_t, 5> movEaxImmedInst = {0xB8, 0, 0, 0, 0};
 				for (size_t i = 0; i < 4; ++i) {
@@ -8242,7 +8242,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 				}
 				textSectionData.insert(textSectionData.end(), movEaxImmedInst.begin(), movEaxImmedInst.end());
 			} else if (std::holds_alternative<TempVar>(ret_val)) {
-		// Handle temporary variable (stored on stack)
+					// Handle temporary variable (stored on stack)
 				auto return_var = std::get<TempVar>(ret_val);
 				auto temp_var_name = StringTable::getOrInternStringHandle(return_var.name());
 				const StackVariableScope& current_scope = variable_scopes.back();
@@ -8252,7 +8252,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								 "handleReturn TempVar path: return_var={}, found_in_scope={}",
 								 return_var.name(), (it != current_scope.variables.end()));
 
-		// Check if return type is float/double
+					// Check if return type is float/double
 				bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
 				bool handled_reference_return = false;
@@ -8339,7 +8339,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						default:
 							break;
 						case LValueInfo::Kind::Global: {
-			// Returning a T& or T&& reference to a global: emit RIP-relative LEA
+									// Returning a T& or T&& reference to a global: emit RIP-relative LEA
 							StringHandle global_name = std::get<StringHandle>(lv_info.base);
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 							uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
@@ -8359,64 +8359,64 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 				}
 
 				if (handled_reference_return) {
-		// Address already loaded into RAX for reference return
+						// Address already loaded into RAX for reference return
 				} else if (it != current_scope.variables.end()) {
 					int var_offset = it->second.offset;
 
-		// Ensure stack space is allocated for large structs being returned
-		// The TempVar might have been pre-allocated with default size, so re-check with actual size
+						// Ensure stack space is allocated for large structs being returned
+						// The TempVar might have been pre-allocated with default size, so re-check with actual size
 					if (ret_op.return_size > 64) {
-		// Call getStackOffsetFromTempVar with the correct size to extend scope if needed
+							// Call getStackOffsetFromTempVar with the correct size to extend scope if needed
 						getStackOffsetFromTempVar(return_var, ret_op.return_size);
 					}
 
-		// Check if this is a reference variable - if so, dereference it
-		// EXCEPT when the function itself returns a reference - in that case, return the address as-is
-		// Also dereference rvalue references (from std::move) when returning by value
+					// Check if this is a reference variable - if so, dereference it
+						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
+						// Also dereference rvalue references (from std::move) when returning by value
 					auto ref_info = getIndirectStackInfo(var_offset);
 					if (ref_info.has_value() &&
 						(ref_info->is_rvalue_reference || shouldImplicitlyDeref(ref_info.value())) &&
 						!current_function_returns_reference_) {
-		// This is a reference and function returns by value
-		// Check if function uses hidden return parameter (struct return)
+							// This is a reference and function returns by value
+							// Check if function uses hidden return parameter (struct return)
 						if (current_function_has_hidden_return_param_) {
-		// Returning via rvalue reference (std::move) to a struct-returning function
-		// Need to copy the struct from the referenced location to the return slot
+								// Returning via rvalue reference (std::move) to a struct-returning function
+								// Need to copy the struct from the referenced location to the return slot
 							FLASH_LOG(Codegen, Debug, "handleReturn: Copying struct via rvalue reference at offset ", var_offset);
 
-		// Load return slot address from __return_slot parameter
+								// Load return slot address from __return_slot parameter
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 							if (return_slot_it != variable_scopes.back().variables.end()) {
 								int return_slot_param_offset = return_slot_it->second.offset;
 
-			// Load the source address (where the rvalue reference points)
+									// Load the source address (where the rvalue reference points)
 								X64Register src_reg = allocateRegisterWithSpilling();
 								emitMovFromFrame(src_reg, var_offset);  // Load the pointer from rvalue reference
 
-			// Load the destination address (return slot)
+									// Load the destination address (return slot)
 								X64Register dest_reg = allocateRegisterWithSpilling();
 								emitMovFromFrame(dest_reg, return_slot_param_offset);
 
-			// Get struct size from the return operation, not the reference info
-			// ref_it->second.value_size_bits would be 64 (pointer size), but we need
-			// the actual struct size that the function returns
+									// Get struct size from the return operation, not the reference info
+									// ref_it->second.value_size_bits would be 64 (pointer size), but we need
+									// the actual struct size that the function returns
 								int struct_size_bytes = ret_op.return_size / 8;
 								FLASH_LOG_FORMAT(Codegen, Debug,
 												 "Copying struct via rvalue ref: size={} bytes, from ref at offset {}, return_slot at offset {}",
 												 struct_size_bytes, var_offset, return_slot_param_offset);
 
-			// Copy struct from source to destination
+									// Copy struct from source to destination
 								int bytes_copied = 0;
 								X64Register temp_reg = allocateRegisterWithSpilling();
 
-			// Copy 8-byte chunks
+									// Copy 8-byte chunks
 								while (bytes_copied + 8 <= struct_size_bytes) {
 									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 8);
 									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 8);
 									bytes_copied += 8;
 								}
 
-			// Handle remaining bytes (4, 2, 1)
+									// Handle remaining bytes (4, 2, 1)
 								if (bytes_copied + 4 <= struct_size_bytes) {
 									emitMovFromMemory(temp_reg, src_reg, bytes_copied, 4);
 									emitStoreToMemory(textSectionData, temp_reg, dest_reg, bytes_copied, 4);
@@ -8437,7 +8437,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								regAlloc.release(dest_reg);
 								regAlloc.release(src_reg);
 
-			// For struct return, RAX should contain the return slot address (per ABI)
+									// For struct return, RAX should contain the return slot address (per ABI)
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 
@@ -8445,30 +8445,30 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 												 "Struct copy via rvalue ref complete: copied {} bytes", bytes_copied);
 							}
 						} else {
-		// Scalar return by value - load pointer and dereference
+								// Scalar return by value - load pointer and dereference
 							FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing reference at offset ", var_offset);
 							X64Register ptr_reg = X64Register::RAX;
 							spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 							emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
-		// Dereference to get the value
+								// Dereference to get the value
 							int value_size_bytes = ref_info->value_size_bits.value / 8;
 							emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
-		// Value is now in RAX, ready to return
+								// Value is now in RAX, ready to return
 						}
 					} else if (ref_info.has_value() && current_function_returns_reference_) {
-		// This is a reference and function returns a reference - return the address itself
+							// This is a reference and function returns a reference - return the address itself
 						FLASH_LOG(Codegen, Debug, "handleReturn: Returning reference address from offset ", var_offset);
 						X64Register ptr_reg = X64Register::RAX;
 						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
-		// Address is now in RAX, ready to return
+							// Address is now in RAX, ready to return
 					} else {
-		// Not a reference - normal variable return
-		// Get the actual size of the variable being returned
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
 						int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 
-		// Check if function uses hidden return parameter (RVO/NRVO)
-		// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
+							// Check if function uses hidden return parameter (RVO/NRVO)
+							// Only skip copy if this specific return value is RVO-eligible (was constructed via RVO)
 						bool is_rvo_eligible = isTempVarRVOEligible(return_var);
 						FLASH_LOG_FORMAT(Codegen, Debug,
 										 "Return statement check: hidden_param={}, rvo_eligible={}, return_var={}",
@@ -8478,8 +8478,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							FLASH_LOG_FORMAT(Codegen, Debug,
 											 "Return statement in function with hidden return parameter - RVO-eligible struct already in return slot at offset {}",
 											 var_offset);
-		// Struct already constructed in return slot via RVO
-		// For System V ABI: must return the hidden parameter (return slot address) in RAX
+								// Struct already constructed in return slot via RVO
+								// For System V ABI: must return the hidden parameter (return slot address) in RAX
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 							if (return_slot_it != variable_scopes.back().variables.end()) {
 								int return_slot_param_offset = return_slot_it->second.offset;
@@ -8487,17 +8487,17 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 							}
 						} else if (current_function_has_hidden_return_param_) {
-		// Function uses hidden return param but this value is NOT RVO-eligible
-		// Need to copy the struct to the return slot
+								// Function uses hidden return param but this value is NOT RVO-eligible
+								// Need to copy the struct to the return slot
 							FLASH_LOG_FORMAT(Codegen, Debug,
 											 "Return statement: copying non-RVO struct from offset {} to return slot (var_size={} bits)",
 											 var_offset, var_size);
 
-		// Load return slot address from __return_slot parameter
+								// Load return slot address from __return_slot parameter
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 							if (return_slot_it != variable_scopes.back().variables.end()) {
 								int return_slot_param_offset = return_slot_it->second.offset;
-			// Load the address from __return_slot into a register
+									// Load the address from __return_slot into a register
 								X64Register dest_reg = X64Register::RDI;
 								spillAndInvalidateRegisterForManualOverwrite(dest_reg);
 								emitMovFromFrame(dest_reg, return_slot_param_offset);
@@ -8506,20 +8506,20 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 												 "Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
 												 var_size / 8, var_offset, return_slot_param_offset);
 
-			// Copy struct from var_offset to address in dest_reg
-			// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
 								int struct_size_bytes = var_size / 8;
 								int bytes_copied = 0;
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 
-			// Copy 8-byte chunks
+									// Copy 8-byte chunks
 								while (bytes_copied + 8 <= struct_size_bytes) {
 									emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
 									emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 8);
 									bytes_copied += 8;
 								}
 
-			// Handle remaining bytes (4, 2, 1)
+									// Handle remaining bytes (4, 2, 1)
 								if (bytes_copied + 4 <= struct_size_bytes) {
 									emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 32);
 									emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 4);
@@ -8540,15 +8540,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 												 "Struct copy complete: copied {} bytes", bytes_copied);
 							}
 						} else if (is_float_return) {
-		// Load floating-point value into XMM0
+								// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
+								// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
 							if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 								var_size > 64 && var_size <= 128) {
-			// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+									// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
 								emitMovFromFrame(X64Register::RAX, var_offset);	// Load low 8 bytes
@@ -8559,7 +8559,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 								regAlloc.flushSingleDirtyRegister(X64Register::RDX);
 							} else {
-			// Single-register return (≤64 bits) in RAX - integer/pointer return
+									// Single-register return (≤64 bits) in RAX - integer/pointer return
 								if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 									if (reg_var.value() != X64Register::RAX) {
 										spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8571,15 +8571,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 									} else {
 									}
 								} else {
-			// Load from stack using RBP-relative addressing
-			// Use actual variable size for proper zero/sign extension
+										// Load from stack using RBP-relative addressing
+										// Use actual variable size for proper zero/sign extension
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 									emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 									regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 								}
 							}
 						} else {
-		// Windows x64 ABI: small structs (≤64 bits) return in RAX only - integer/pointer return
+								// Windows x64 ABI: small structs (≤64 bits) return in RAX only - integer/pointer return
 							if (auto reg_var = regAlloc.tryGetStackVariableRegister(var_offset); reg_var.has_value()) {
 								if (reg_var.value() != X64Register::RAX) {
 									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
@@ -8591,8 +8591,8 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 								} else {
 								}
 							} else {
-			// Load from stack using RBP-relative addressing
-			// Use actual variable size for proper zero/sign extension
+									// Load from stack using RBP-relative addressing
+									// Use actual variable size for proper zero/sign extension
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 								emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 								regAlloc.flushSingleDirtyRegister(X64Register::RAX);
@@ -8600,14 +8600,14 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						}
 					}
 				} else {
-		// Value not in variables - use fallback offset calculation
+						// Value not in variables - use fallback offset calculation
 					int var_offset = getStackOffsetFromTempVar(return_var);
 
-		// Get the actual size of the variable being returned
+						// Get the actual size of the variable being returned
 					int var_size = getActualVariableSize(temp_var_name, ret_op.return_size);
 
-		// Check if function uses hidden return parameter (RVO/NRVO)
-		// For System V ABI: must return the hidden parameter (return slot address) in RAX
+						// Check if function uses hidden return parameter (RVO/NRVO)
+						// For System V ABI: must return the hidden parameter (return slot address) in RAX
 					if (current_function_has_hidden_return_param_) {
 						FLASH_LOG(Codegen, Debug,
 								  "Return statement (fallback): function has hidden return parameter, loading return slot address into RAX");
@@ -8618,15 +8618,15 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							emitMovFromFrame(X64Register::RAX, return_slot_param_offset);
 						}
 					} else if (is_float_return) {
-		// Load floating-point value into XMM0
+							// Load floating-point value into XMM0
 						bool is_float = (ret_op.return_size == 32);
 						spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 						emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 					} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
+							// SystemV AMD64 ABI: check if this is a two-register struct return (9-16 bytes)
 						if (ret_op.return_type_index.category() == TypeCategory::Struct &&
 							var_size > 64 && var_size <= 128) {
-		// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
+								// Two-register struct return: first 8 bytes in RAX, next 8 bytes in RDX
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::RDX);
 							emitMovFromFrame(X64Register::RAX, var_offset);	// Load low 8 bytes
@@ -8637,67 +8637,67 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 							regAlloc.flushSingleDirtyRegister(X64Register::RDX);
 						} else {
-		// Single-register return (≤64 bits) in RAX
+								// Single-register return (≤64 bits) in RAX
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
 					} else {
-		// Windows x64 ABI: small structs (≤64 bits) return in RAX only
+							// Windows x64 ABI: small structs (≤64 bits) return in RAX only
 						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 						emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 					}
 				}
 			} else if (std::holds_alternative<StringHandle>(ret_val)) {
-		// Handle named variable
+					// Handle named variable
 				StringHandle var_name_handle = std::get<StringHandle>(ret_val);
 				const StackVariableScope& current_scope = variable_scopes.back();
 				auto it = current_scope.variables.find(var_name_handle);
 				if (it != current_scope.variables.end()) {
 					int var_offset = it->second.offset;
 
-		// Check if this is a reference variable - if so, dereference it
-		// EXCEPT when the function itself returns a reference - in that case, return the address as-is
-		// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
+						// Check if this is a reference variable - if so, dereference it
+						// EXCEPT when the function itself returns a reference - in that case, return the address as-is
+						// ALSO skip dereferencing if this is 'this' or holds_address_only is set (pointer, not reference)
 					auto ref_info = getIndirectStackInfo(var_offset);
 					if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && !current_function_returns_reference_) {
-		// This is a reference and function does not return a reference - load pointer and dereference to get value
+							// This is a reference and function does not return a reference - load pointer and dereference to get value
 						FLASH_LOG(Codegen, Debug, "handleReturn: Dereferencing named reference '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 						X64Register ptr_reg = X64Register::RAX;
 						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer
-		// Dereference to get the value
+							// Dereference to get the value
 						int value_size_bytes = ref_info->value_size_bits.value / 8;
 						emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
-		// Value is now in RAX, ready to return
+							// Value is now in RAX, ready to return
 					} else if (ref_info.has_value() && shouldImplicitlyDeref(ref_info.value()) && current_function_returns_reference_) {
-		// This is a reference and function returns a reference - return the address itself
+							// This is a reference and function returns a reference - return the address itself
 						FLASH_LOG(Codegen, Debug, "handleReturn: Returning named reference address '", StringTable::getStringView(var_name_handle), "' at offset ", var_offset);
 						X64Register ptr_reg = X64Register::RAX;
 						spillAndInvalidateRegisterForManualOverwrite(ptr_reg);
 						emitMovFromFrame(ptr_reg, var_offset);  // Load the pointer (address)
-		// Address is now in RAX, ready to return
+							// Address is now in RAX, ready to return
 					} else {
-		// Not a reference - normal variable return
-		// Get the actual size of the variable being returned
+							// Not a reference - normal variable return
+							// Get the actual size of the variable being returned
 						int var_size = getActualVariableSize(var_name_handle, ret_op.return_size);
 
-		// Check if return type is float/double
+							// Check if return type is float/double
 						bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
 
-		// Check if function uses hidden return parameter (for struct returns)
+							// Check if function uses hidden return parameter (for struct returns)
 						if (current_function_has_hidden_return_param_) {
-		// Function uses hidden return param - need to copy struct to return slot
+								// Function uses hidden return param - need to copy struct to return slot
 							FLASH_LOG_FORMAT(Codegen, Debug,
 											 "Return statement (StringHandle): copying struct '{}' from offset {} to return slot (size={} bits)",
 											 StringTable::getStringView(var_name_handle), var_offset, var_size);
 
-		// Load return slot address from __return_slot parameter
+								// Load return slot address from __return_slot parameter
 							auto return_slot_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle("__return_slot"));
 							if (return_slot_it != variable_scopes.back().variables.end()) {
 								int return_slot_param_offset = return_slot_it->second.offset;
-			// Load the address from __return_slot into a register
+									// Load the address from __return_slot into a register
 								X64Register dest_reg = X64Register::RDI;
 								spillAndInvalidateRegisterForManualOverwrite(dest_reg);
 								emitMovFromFrame(dest_reg, return_slot_param_offset);
@@ -8706,20 +8706,20 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 												 "Copying struct: size={} bytes, from offset {}, return_slot_param at offset {}",
 												 var_size / 8, var_offset, return_slot_param_offset);
 
-			// Copy struct from var_offset to address in dest_reg
-			// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
+									// Copy struct from var_offset to address in dest_reg
+									// Copy in 8-byte chunks, then handle remaining bytes (4, 2, 1)
 								int struct_size_bytes = var_size / 8;
 								int bytes_copied = 0;
 								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 
-			// Copy 8-byte chunks
+									// Copy 8-byte chunks
 								while (bytes_copied + 8 <= struct_size_bytes) {
 									emitMovFromFrame(X64Register::RAX, var_offset + bytes_copied);
 									emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 8);
 									bytes_copied += 8;
 								}
 
-			// Handle remaining bytes (4, 2, 1)
+									// Handle remaining bytes (4, 2, 1)
 								if (bytes_copied + 4 <= struct_size_bytes) {
 									emitMovFromFrameBySize(X64Register::RAX, var_offset + bytes_copied, 32);
 									emitStoreToMemory(textSectionData, X64Register::RAX, dest_reg, bytes_copied, 4);
@@ -8740,13 +8740,13 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 												 "Struct copy complete: copied {} bytes", bytes_copied);
 							}
 						} else if (is_float_return) {
-		// Load floating-point value into XMM0
+								// Load floating-point value into XMM0
 							bool is_float = (ret_op.return_size == 32);
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 							emitFloatMovFromFrame(X64Register::XMM0, var_offset, is_float);
 						} else {
-		// Load integer/pointer value into RAX
-		// Use actual variable size for proper zero/sign extension
+								// Load integer/pointer value into RAX
+								// Use actual variable size for proper zero/sign extension
 							spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 							emitMovFromFrameBySize(X64Register::RAX, var_offset, var_size);
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
@@ -8754,18 +8754,18 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					}
 				}
 			} else if (std::holds_alternative<double>(ret_val)) {
-		// Floating point return in XMM0
+					// Floating point return in XMM0
 				double returnValue = std::get<double>(ret_val);
 
-		// Determine if this is float or double based on return_size
+					// Determine if this is float or double based on return_size
 				bool is_float = (ret_op.return_size == 32);
 
-		// We need a temporary location on the stack to load from
-		// Use the shadow space / spill area at the end of the frame
-		// This is safe because we're about to return
+					// We need a temporary location on the stack to load from
+					// Use the shadow space / spill area at the end of the frame
+					// This is safe because we're about to return
 				int literal_offset = -8; // Use first slot in shadow space
 
-		// Store the literal bits to the stack via RAX
+					// Store the literal bits to the stack via RAX
 				uint64_t bits;
 				if (is_float) {
 					float float_val = static_cast<float>(returnValue);
@@ -8774,7 +8774,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					std::memcpy(&bits, &returnValue, sizeof(double));
 				}
 
-		// mov rax, immediate64
+					// mov rax, immediate64
 				spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
 				textSectionData.push_back(0x48);
 				textSectionData.push_back(0xB8);
@@ -8783,14 +8783,14 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					bits >>= 8;
 				}
 
-		// mov [rbp + offset], rax (store to stack - 64-bit)
+					// mov [rbp + offset], rax (store to stack - 64-bit)
 				emitMovToFrameSized(
 					SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 					SizedStackSlot{literal_offset, 64, false}  // dest: 64-bit for float bits
 				);
 
-		// Load from stack to XMM0
-		// movss/movsd xmm0, [rbp + offset]
+					// Load from stack to XMM0
+					// movss/movsd xmm0, [rbp + offset]
 				spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
 				emitFloatMovFromFrame(X64Register::XMM0, literal_offset, is_float);
 			}
@@ -8858,57 +8858,57 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 		}
 	}
 
-	// MSVC-style epilogue
-	//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
+		// MSVC-style epilogue
+		//int32_t total_stack_space = variable_scopes.back().scope_stack_space;
 
-	// Always generate epilogue since we always generate prologue
-	// mov rsp, rbp (restore stack pointer)
+		// Always generate epilogue since we always generate prologue
+		// mov rsp, rbp (restore stack pointer)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(0x89);
 	textSectionData.push_back(0xEC);
 
-	// pop rbp (restore caller's base pointer)
+		// pop rbp (restore caller's base pointer)
 	textSectionData.push_back(0x5D);
 
-	// Track CFI: Wrap epilogue in remember/restore state to handle early returns.
-	// Without this, the POP_RBP CFI would affect subsequent code in the function
-	// (e.g., throw statements after an if-return), making the unwinder think the
-	// frame is gone when it's still active.
+		// Track CFI: Wrap epilogue in remember/restore state to handle early returns.
+		// Without this, the POP_RBP CFI would affect subsequent code in the function
+		// (e.g., throw statements after an if-return), making the unwinder think the
+		// frame is gone when it's still active.
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// Save CFI state before epilogue
+			// Save CFI state before epilogue
 		current_function_cfi_.push_back({ElfFileWriter::CFIInstruction::REMEMBER_STATE,
 										 static_cast<uint32_t>(textSectionData.size() - current_function_offset_ - 4), // before mov rsp,rbp
 										 0});
-	// After pop rbp, CFA = RSP+8 (back to call site state)
+			// After pop rbp, CFA = RSP+8 (back to call site state)
 		current_function_cfi_.push_back({ElfFileWriter::CFIInstruction::POP_RBP,
 										 static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
 										 0});
 	}
 
-	// ret (return to caller)
+		// ret (return to caller)
 	textSectionData.push_back(0xC3);
 
-	// Track CFI: Restore state after ret so subsequent code has correct frame info
+		// Track CFI: Restore state after ret so subsequent code has correct frame info
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		current_function_cfi_.push_back({ElfFileWriter::CFIInstruction::RESTORE_STATE,
 										 static_cast<uint32_t>(textSectionData.size() - current_function_offset_),
 										 0});
 	}
 
-	// NOTE: We do NOT pop variable_scopes here because there may be multiple
-	// return statements in a function (e.g., early returns in if statements).
-	// The scope will be popped when we finish processing the entire function.
+		// NOTE: We do NOT pop variable_scopes here because there may be multiple
+		// return statements in a function (e.g., early returns in if statements).
+		// The scope will be popped when we finish processing the entire function.
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleStackAlloc([[maybe_unused]] const IrInstruction& instruction) {
-	// StackAlloc is not used in the current implementation
-	// Variables are allocated in handleVariableDecl instead
-	// Just return without doing anything
+		// StackAlloc is not used in the current implementation
+		// Variables are allocated in handleVariableDecl instead
+		// Just return without doing anything
 	return;
 
-	// Get the size of the allocation
-	/*auto sizeInBytes = instruction.getOperandAs<int>(1) / 8;
+		// Get the size of the allocation
+		/*auto sizeInBytes = instruction.getOperandAs<int>(1) / 8;
 
 		// Ensure the stack remains aligned to 16 bytes
 		sizeInBytes = (sizeInBytes + 15) & -16;
@@ -8996,15 +8996,15 @@ void IrToObjConverter<TWriterClass>::handleSubtract(const IrInstruction& instruc
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMultiply(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "multiplication");
 
-	// Perform the multiplication operation: IMUL dst, src (opcode 0x0F 0xAF)
-	// Determine if we need a REX prefix
+		// Perform the multiplication operation: IMUL dst, src (opcode 0x0F 0xAF)
+		// Determine if we need a REX prefix
 	bool needs_rex = (ctx.operand_size_in_bits == 64);
 	uint8_t rex_prefix = (ctx.operand_size_in_bits == 64) ? 0x48 : 0x40;
 
-	// Check if registers need REX extensions
+		// Check if registers need REX extensions
 	if (static_cast<uint8_t>(ctx.result_physical_reg) >= 8) {
 		rex_prefix |= 0x04; // Set REX.R for result_physical_reg (reg field)
 		needs_rex = true;
@@ -9014,10 +9014,10 @@ void IrToObjConverter<TWriterClass>::handleMultiply(const IrInstruction& instruc
 		needs_rex = true;
 	}
 
-	// Build ModR/M byte
+		// Build ModR/M byte
 	uint8_t modrm_byte = 0xC0 | ((static_cast<uint8_t>(ctx.result_physical_reg) & 0x07) << 3) | (static_cast<uint8_t>(ctx.rhs_physical_reg) & 0x07);
 
-	// Emit the instruction (IMUL is a two-byte opcode: 0x0F 0xAF)
+		// Emit the instruction (IMUL is a two-byte opcode: 0x0F 0xAF)
 	if (needs_rex) {
 		textSectionData.push_back(rex_prefix);
 	}
@@ -9025,47 +9025,47 @@ void IrToObjConverter<TWriterClass>::handleMultiply(const IrInstruction& instruc
 	textSectionData.push_back(0xAF);
 	textSectionData.push_back(modrm_byte);
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 
-	// Release the RHS register (we're done with it)
+		// Release the RHS register (we're done with it)
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
 	}
-	// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
+		// Note: Do NOT release result_physical_reg here - it may be holding a temp variable
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instruction) {
 	reserveDivisionFixedRegisters();
 
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "division");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Division requires special handling: dividend must be in RAX
-	// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
+		// Division requires special handling: dividend must be in RAX
+		// Move result_physical_reg to RAX (dividend must be in RAX for idiv)
 	auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 	textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-	// Sign extend RAX into RDX:RAX (CQO for 64-bit)
+		// Sign extend RAX into RDX:RAX (CQO for 64-bit)
 	if (ctx.result_value.size_in_bits.value == 64) {
-	// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
+			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
 		std::array<uint8_t, 2> cqoInst = {0x48, 0x99}; // REX.W + CQO
 		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
 	} else {
-	// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
+			// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
 		std::array<uint8_t, 1> cdqInst = {0x99};
 		textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 	}
 
-	 // idiv divisor_reg
+		// idiv divisor_reg
 	uint8_t rex = 0x40; // Base REX prefix
 	if (ctx.result_value.size_in_bits.value == 64) {
 		rex |= 0x08; // Set REX.W for 64-bit operation
 	}
 
-	// Check if we need REX.B for the divisor register
+		// Check if we need REX.B for the divisor register
 	if (static_cast<uint8_t>(divisor_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex |= 0x01; // Set REX.B
 	}
@@ -9077,7 +9077,7 @@ void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instructi
 	};
 	textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
-	// Store the result from RAX (quotient) to the appropriate destination
+		// Store the result from RAX (quotient) to the appropriate destination
 	storeArithmeticResult(ctx, X64Register::RAX);
 
 	regAlloc.release(divisor_reg);
@@ -9086,15 +9086,15 @@ void IrToObjConverter<TWriterClass>::handleDivide(const IrInstruction& instructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::relocateLhsOutOfRCX(ArithmeticOperationContext& ctx) {
-	// If the LHS operand is in RCX, we must move it elsewhere before overwriting
-	// RCX with the shift count, otherwise the shift operates on the count itself.
+		// If the LHS operand is in RCX, we must move it elsewhere before overwriting
+		// RCX with the shift count, otherwise the shift operates on the count itself.
 	if (ctx.result_physical_reg != X64Register::RCX)
 		return;
-	// Flush all dirty registers before allocating, so that
-	// allocateRegisterWithSpilling cannot evict a dirty value from its
-	// physical register while looking for a spill candidate.  Without this
-	// flush the RHS could be silently spilled, and the subsequent MOV from
-	// the old physical register would read garbage.
+		// Flush all dirty registers before allocating, so that
+		// allocateRegisterWithSpilling cannot evict a dirty value from its
+		// physical register while looking for a spill candidate.  Without this
+		// flush the RHS could be silently spilled, and the subsequent MOV from
+		// the old physical register would read garbage.
 	regAlloc.flushAllDirtyRegisters([this](X64Register reg, int32_t stackVariableOffset, int reg_size_in_bits) {
 		if (stackVariableOffset < variable_scopes.back().scope_stack_space) {
 			variable_scopes.back().scope_stack_space = stackVariableOffset;
@@ -9103,8 +9103,8 @@ void IrToObjConverter<TWriterClass>::relocateLhsOutOfRCX(ArithmeticOperationCont
 			SizedRegister{reg, 64, false},
 			SizedStackSlot{stackVariableOffset, reg_size_in_bits, false});
 	});
-	// Exclude both RCX (about to be overwritten with shift count) and the RHS
-	// register (holds the shift count value) so the allocator cannot pick either.
+		// Exclude both RCX (about to be overwritten with shift count) and the RHS
+		// register (holds the shift count value) so the allocator cannot pick either.
 	X64Register lhs_tmp = allocateRegisterWithSpilling(X64Register::RCX, ctx.rhs_physical_reg);
 	emitMovRegToReg(X64Register::RCX, lhs_tmp, ctx.result_value.size_in_bits.value);
 	regAlloc.release(X64Register::RCX);
@@ -9113,25 +9113,25 @@ void IrToObjConverter<TWriterClass>::relocateLhsOutOfRCX(ArithmeticOperationCont
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left");
 
-	// Save original result register identity before ensureNotInRCX may change it.
-	// If both operands resolved to the same register (RCX) and ensureNotInRCX moves
-	// the LHS away, ctx.rhs_physical_reg still points at RCX (already released).
-	// The final release must be skipped in that case to avoid a double-release.
+		// Save original result register identity before ensureNotInRCX may change it.
+		// If both operands resolved to the same register (RCX) and ensureNotInRCX moves
+		// the LHS away, ctx.rhs_physical_reg still points at RCX (already released).
+		// The final release must be skipped in that case to avoid a double-release.
 	X64Register original_result_reg = ctx.result_physical_reg;
 
-	// If the LHS is in RCX, save it before loading the shift count there.
+		// If the LHS is in RCX, save it before loading the shift count there.
 	relocateLhsOutOfRCX(ctx);
 
-	// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 	emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
-	// Perform the shift left operation: shl r/m, cl
+		// Perform the shift left operation: shl r/m, cl
 	emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9140,23 +9140,23 @@ void IrToObjConverter<TWriterClass>::handleShiftLeft(const IrInstruction& instru
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShiftRight(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right");
 
-	// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
 	X64Register original_result_reg = ctx.result_physical_reg;
 
-	// If the LHS is in RCX, save it before loading the shift count there.
+		// If the LHS is in RCX, save it before loading the shift count there.
 	relocateLhsOutOfRCX(ctx);
 
-	// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 	emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
-	// Perform the shift right operation: sar r/m, cl (arithmetic right shift)
-	// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
+		// Perform the shift right operation: sar r/m, cl (arithmetic right shift)
+		// Note: Using SAR (arithmetic) instead of SHR (logical) to preserve sign for signed integers
 	emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9167,23 +9167,23 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleUnsignedDivide(const IrInstruction& instruction) {
 	reserveDivisionFixedRegisters();
 
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned division");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Division requires special handling: dividend must be in RAX
-	// Move result_physical_reg to RAX (dividend must be in RAX for div)
+		// Division requires special handling: dividend must be in RAX
+		// Move result_physical_reg to RAX (dividend must be in RAX for div)
 	auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 	textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-	// xor edx, edx - clear upper 32 bits of dividend for unsigned division
+		// xor edx, edx - clear upper 32 bits of dividend for unsigned division
 	std::array<uint8_t, 2> xorEdxInst = {0x31, 0xD2};
 	textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
 
-	// div divisor_reg (unsigned division)
+		// div divisor_reg (unsigned division)
 	emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
 
-	// Store the result from RAX (quotient) to the appropriate destination
+		// Store the result from RAX (quotient) to the appropriate destination
 	storeArithmeticResult(ctx, X64Register::RAX);
 
 	regAlloc.release(divisor_reg);
@@ -9192,23 +9192,23 @@ void IrToObjConverter<TWriterClass>::handleUnsignedDivide(const IrInstruction& i
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleUnsignedShiftRight(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned shift right");
 
-	// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
+		// Save original result register before relocateLhsOutOfRCX may change it (double-release guard).
 	X64Register original_result_reg = ctx.result_physical_reg;
 
-	// If the LHS is in RCX, save it before loading the shift count there.
+		// If the LHS is in RCX, save it before loading the shift count there.
 	relocateLhsOutOfRCX(ctx);
 
-	// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
+		// Shift operations require the shift count to be in CL (lower 8 bits of RCX)
 	emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
-	// Perform the unsigned shift right operation: shr r/m, cl (logical right shift)
-	// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
+		// Perform the unsigned shift right operation: shr r/m, cl (logical right shift)
+		// Note: Using SHR (logical) instead of SAR (arithmetic) for unsigned integers
 	emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg && ctx.rhs_physical_reg != original_result_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9244,39 +9244,39 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instruction) {
 	reserveDivisionFixedRegisters();
 
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// For x86-64, modulo is implemented using division
-	// idiv instruction computes both quotient (RAX) and remainder (RDX)
-	// We need the remainder in RDX
+		// For x86-64, modulo is implemented using division
+		// idiv instruction computes both quotient (RAX) and remainder (RDX)
+		// We need the remainder in RDX
 
-	// Move dividend to RAX (dividend must be in RAX for idiv)
+		// Move dividend to RAX (dividend must be in RAX for idiv)
 	auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 	textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-	// Release the original result register since we moved its value to RAX
+		// Release the original result register since we moved its value to RAX
 	regAlloc.release(ctx.result_physical_reg);
 
-	// Sign extend RAX into RDX:RAX
+		// Sign extend RAX into RDX:RAX
 	if (ctx.result_value.size_in_bits.value == 64) {
-	// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
+			// CQO - sign extend RAX into RDX:RAX (fills RDX with 0 or -1)
 		std::array<uint8_t, 2> cqoInst = {0x48, 0x99}; // REX.W + CQO
 		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
 	} else {
-	// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
+			// CDQ - sign extend EAX into EDX:EAX (for 32-bit)
 		std::array<uint8_t, 1> cdqInst = {0x99};
 		textSectionData.insert(textSectionData.end(), cdqInst.begin(), cdqInst.end());
 	}
 
-	 // idiv divisor_reg
+		// idiv divisor_reg
 	uint8_t rex = 0x40; // Base REX prefix
 	if (ctx.result_value.size_in_bits.value == 64) {
 		rex |= 0x08; // Set REX.W for 64-bit operation
 	}
 
-	// Check if we need REX.B for the divisor register
+		// Check if we need REX.B for the divisor register
 	if (static_cast<uint8_t>(divisor_reg) >= static_cast<uint8_t>(X64Register::R8)) {
 		rex |= 0x01; // Set REX.B
 	}
@@ -9288,8 +9288,8 @@ void IrToObjConverter<TWriterClass>::handleModulo(const IrInstruction& instructi
 	};
 	textSectionData.insert(textSectionData.end(), divInst.begin(), divInst.end());
 
-	// Manually store remainder from RDX to the result variable's stack location
-	// Don't use storeArithmeticResult because it tries to be too clever with register tracking
+		// Manually store remainder from RDX to the result variable's stack location
+		// Don't use storeArithmeticResult because it tries to be too clever with register tracking
 	if (const auto* string = std::get_if<StringHandle>(&ctx.result_value.value)) {
 		int final_result_offset = variable_scopes.back().variables[*string].offset;
 		emitMovToFrameSized(
@@ -9313,26 +9313,26 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleUnsignedModulo(const IrInstruction& instruction) {
 	reserveDivisionFixedRegisters();
 
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "unsigned modulo");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
-	// Unsigned modulo via DIV: quotient→RAX, remainder→RDX.
-	// Move dividend to RAX.
+		// Unsigned modulo via DIV: quotient→RAX, remainder→RDX.
+		// Move dividend to RAX.
 	auto movResultToRax = regAlloc.get_reg_reg_move_op_code(X64Register::RAX, ctx.result_physical_reg, ctx.result_value.size_in_bits.value / 8);
 	textSectionData.insert(textSectionData.end(), movResultToRax.op_codes.begin(), movResultToRax.op_codes.begin() + movResultToRax.size_in_bytes);
 
-	// Release the original result register since we moved its value to RAX
+		// Release the original result register since we moved its value to RAX
 	regAlloc.release(ctx.result_physical_reg);
 
-	// Zero-extend: xor edx, edx  (RDX must be 0 before DIV, not sign-extended)
+		// Zero-extend: xor edx, edx  (RDX must be 0 before DIV, not sign-extended)
 	std::array<uint8_t, 2> xorEdxInst = {0x31, 0xD2};
 	textSectionData.insert(textSectionData.end(), xorEdxInst.begin(), xorEdxInst.end());
 
-	// div divisor_reg (unsigned division; F7 /6)
+		// div divisor_reg (unsigned division; F7 /6)
 	emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::DIV, divisor_reg, ctx.result_value.size_in_bits.value);
 
-	// Store remainder from RDX to the result variable's stack location.
+		// Store remainder from RDX to the result variable's stack location.
 	if (const auto* sh = std::get_if<StringHandle>(&ctx.result_value.value)) {
 		int final_result_offset = variable_scopes.back().variables[*sh].offset;
 		emitMovToFrameSized(
@@ -9411,17 +9411,17 @@ void IrToObjConverter<TWriterClass>::handleUnsignedGreaterEqual(const IrInstruct
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleLogicalAnd(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "logical AND");
 
-	// For logical AND, we need to implement short-circuit evaluation
-	// For now, implement as bitwise AND on boolean values
+		// For logical AND, we need to implement short-circuit evaluation
+		// For now, implement as bitwise AND on boolean values
 	auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
 	std::array<uint8_t, 3> andInst = {encoding.rex_prefix, 0x21, encoding.modrm_byte};
 	logAsmEmit("handleLogicalAnd AND", andInst.data(), andInst.size());
 	textSectionData.insert(textSectionData.end(), andInst.begin(), andInst.end());
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9430,16 +9430,16 @@ void IrToObjConverter<TWriterClass>::handleLogicalAnd(const IrInstruction& instr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleLogicalOr(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "logical OR");
 
-	// For logical OR, we need to implement short-circuit evaluation
-	// For now, implement as bitwise OR on boolean values
+		// For logical OR, we need to implement short-circuit evaluation
+		// For now, implement as bitwise OR on boolean values
 	auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg);
 	std::array<uint8_t, 3> orInst = {encoding.rex_prefix, 0x09, encoding.modrm_byte};
 	textSectionData.insert(textSectionData.end(), orInst.begin(), orInst.end());
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9487,22 +9487,22 @@ void IrToObjConverter<TWriterClass>::storeUnaryResult(const IrOperand& result_op
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatAdd(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point addition");
 
-	// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
-	// Now properly handles XMM8-XMM15 registers with REX prefix
+		// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 	if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
+			// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
 		auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
-	// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
+			// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
 		auto inst = generateSSEInstruction(0xF2, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9511,22 +9511,22 @@ void IrToObjConverter<TWriterClass>::handleFloatAdd(const IrInstruction& instruc
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatSubtract(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point subtraction");
 
-	// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
-	// Now properly handles XMM8-XMM15 registers with REX prefix
+		// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 	if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
+			// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
 		auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
-	// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
+			// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
 		auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 	if (ctx.rhs_physical_reg != ctx.result_physical_reg) {
 		regAlloc.release(ctx.rhs_physical_reg);
@@ -9535,17 +9535,17 @@ void IrToObjConverter<TWriterClass>::handleFloatSubtract(const IrInstruction& in
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatMultiply(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point multiplication");
 
-	// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
-	// Now properly handles XMM8-XMM15 registers with REX prefix
+		// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 	if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
+			// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
 		auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
-	// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
+			// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
 		auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
@@ -9554,23 +9554,23 @@ void IrToObjConverter<TWriterClass>::handleFloatMultiply(const IrInstruction& in
 		regAlloc.release(ctx.rhs_physical_reg);
 	}
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatDivide(const IrInstruction& instruction) {
-	// Setup and load operands
+		// Setup and load operands
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "floating-point division");
 
-	// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
-	// Now properly handles XMM8-XMM15 registers with REX prefix
+		// Use SSE divss (scalar single-precision) or divsd (scalar double-precision)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 	if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
+			// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
 		auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else if (ctx.result_value.effectiveIrType() == IrType::Double) {
-	// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
+			// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
 		auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
@@ -9579,7 +9579,7 @@ void IrToObjConverter<TWriterClass>::handleFloatDivide(const IrInstruction& inst
 		regAlloc.release(ctx.rhs_physical_reg);
 	}
 
-	// Store the result to the appropriate destination
+		// Store the result to the appropriate destination
 	storeArithmeticResult(ctx);
 }
 
@@ -9625,7 +9625,7 @@ X64Register IrToObjConverter<TWriterClass>::loadFromIndirectStorage(int32_t stac
 	if (shouldImplicitlyDeref(ref_info)) {
 		loadValueFromReferenceSlot(stack_offset, ref_info, reg);
 	} else {
-	// Address-only value: load the pointer itself without dereferencing
+			// Address-only value: load the pointer itself without dereferencing
 		emitPtrMovFromFrame(reg, stack_offset);
 	}
 	return reg;
@@ -9687,7 +9687,7 @@ X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const Typ
 			reg = reg_opt.value();
 		} else {
 			reg = allocateRegisterWithSpilling();
-	// Use size-aware loading: source (stack slot) -> destination (64-bit register)
+				// Use size-aware loading: source (stack slot) -> destination (64-bit register)
 			emitMovFromFrameSized(
 				SizedRegister{reg, 64, false},  // dest: 64-bit register
 				SizedStackSlot{stack_addr, typed_value.size_in_bits, is_signed}	// source: sized stack slot
@@ -9705,7 +9705,7 @@ X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const Typ
 				reg = reg_opt.value();
 			} else {
 				reg = allocateRegisterWithSpilling();
-		// Use size-aware loading: source (stack slot) -> destination (64-bit register)
+					// Use size-aware loading: source (stack slot) -> destination (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{reg, 64, false},  // dest: 64-bit register
 					SizedStackSlot{var_id->second.offset, typed_value.size_in_bits, is_signed}  // source: sized stack slot
@@ -9714,10 +9714,10 @@ X64Register IrToObjConverter<TWriterClass>::loadTypedValueIntoRegister(const Typ
 			}
 		}
 	} else if (std::holds_alternative<unsigned long long>(typed_value.value)) {
-	// Load immediate value
+			// Load immediate value
 		reg = allocateRegisterWithSpilling();
 		unsigned long long imm_value = std::get<unsigned long long>(typed_value.value);
-	// MOV reg, immediate (64-bit)
+			// MOV reg, immediate (64-bit)
 		uint8_t rex = 0x48; // REX.W
 		if (static_cast<uint8_t>(reg) >= 8)
 			rex |= 0x01; // REX.B
@@ -9816,7 +9816,7 @@ void IrToObjConverter<TWriterClass>::loadValueFromStack(int32_t offset, int size
 							   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 		break;
 	default:
-	// Unsupported size (0, 24, 40, 48, 56, etc.) - skip quietly
+			// Unsupported size (0, 24, 40, 48, 56, etc.) - skip quietly
 		FLASH_LOG_FORMAT(Codegen, Warning, "loadValueFromStack: Unsupported size {} bits, skipping", size_in_bits);
 		return;
 	}
@@ -9894,7 +9894,7 @@ void IrToObjConverter<TWriterClass>::storeValueToStack(int32_t offset, int size_
 		emitStoreByteToFrame(source_reg, offset);
 		break;
 	default:
-	// Unsupported size - skip quietly
+			// Unsupported size - skip quietly
 		FLASH_LOG_FORMAT(Codegen, Warning, "storeValueToStack: Unsupported size {} bits, skipping", size_in_bits);
 		break;
 	}
@@ -9942,7 +9942,7 @@ void IrToObjConverter<TWriterClass>::loadValueFromGlobal(StringHandle global_nam
 		break;
 	}
 	default:
-	// Unsupported size - skip quietly
+			// Unsupported size - skip quietly
 		FLASH_LOG_FORMAT(Codegen, Warning, "loadValueFromGlobal: Unsupported size {} bits, skipping", size_in_bits);
 		break;
 	}
@@ -9968,7 +9968,7 @@ void IrToObjConverter<TWriterClass>::loadValuePointedByRegister(X64Register reg,
 		element_size_bytes = 1;
 	}
 	if (element_size_bytes != 1 && element_size_bytes != 2 && element_size_bytes != 4 && element_size_bytes != 8) {
-	// Unsupported size - skip quietly
+			// Unsupported size - skip quietly
 		FLASH_LOG_FORMAT(Codegen, Warning, "loadValuePointedByRegister: Unsupported size {} bytes, skipping", element_size_bytes);
 		return;
 	}
@@ -10087,7 +10087,7 @@ void IrToObjConverter<TWriterClass>::storeValueToGlobal(StringHandle global_name
 		break;
 	}
 	default:
-	// Unsupported size - skip quietly
+			// Unsupported size - skip quietly
 		FLASH_LOG_FORMAT(Codegen, Warning, "storeValueToGlobal: Unsupported size {} bits, skipping", size_in_bits);
 		break;
 	}
@@ -10125,7 +10125,7 @@ void IrToObjConverter<TWriterClass>::storeUnaryOperandValue(const typename IrToO
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::storeIncDecResultValue(TempVar result_var, X64Register source_reg, int size_in_bits) {
-	// getStackOffsetFromTempVar automatically allocates stack space if needed
+		// getStackOffsetFromTempVar automatically allocates stack space if needed
 	int32_t offset = getStackOffsetFromTempVar(result_var);
 	storeValueToStack(offset, size_in_bits, source_reg);
 }
@@ -10145,8 +10145,8 @@ typename IrToObjConverter<TWriterClass>::UnaryOperandLocation IrToObjConverter<T
 		return UnaryOperandLocation::global(name);
 	}
 
-	// IrValue can also contain immediate values (unsigned long long, double)
-	// For inc/dec operations, these should not occur
+		// IrValue can also contain immediate values (unsigned long long, double)
+		// For inc/dec operations, these should not occur
 	throw InternalError("Unsupported typed value for unary operand location (immediate values not allowed)");
 	return UnaryOperandLocation::stack(0);
 }
@@ -10166,7 +10166,7 @@ void IrToObjConverter<TWriterClass>::emitIncDecInstruction(X64Register target_re
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleIncDecCommon(const IrInstruction& instruction, typename IrToObjConverter<TWriterClass>::IncDecKind kind) {
-	// Extract UnaryOp from typed payload
+		// Extract UnaryOp from typed payload
 	const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
 	int size_in_bits = unary_op.value.size_in_bits.value;
@@ -10192,7 +10192,7 @@ void IrToObjConverter<TWriterClass>::handleIncDecCommon(const IrInstruction& ins
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::storeConversionResult(const IrInstruction& instruction, X64Register result_reg, int size_in_bits) {
 	TempVar result_var;
-	// Try to get result from typed payload first
+		// Try to get result from typed payload first
 	if (instruction.hasTypedPayload()) {
 		const auto& op = instruction.getTypedPayload<TypeConversionOp>();
 		result_var = op.result;
@@ -10201,7 +10201,7 @@ void IrToObjConverter<TWriterClass>::storeConversionResult(const IrInstruction& 
 	}
 	int32_t result_offset = getStackOffsetFromTempVar(result_var);
 	regAlloc.set_stack_variable_offset(result_reg, result_offset, size_in_bits);
-	// Don't store to memory yet - keep the value in the register for efficiency
+		// Don't store to memory yet - keep the value in the register for efficiency
 }
 
 template <class TWriterClass>
@@ -10226,12 +10226,12 @@ void IrToObjConverter<TWriterClass>::handlePostDecrement(const IrInstruction& in
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& instruction, typename IrToObjConverter<TWriterClass>::UnaryOperation op) {
-	// Extract UnaryOp from typed payload
+		// Extract UnaryOp from typed payload
 	const UnaryOp& unary_op = instruction.getTypedPayload<UnaryOp>();
 
 	int size_in_bits = unary_op.value.size_in_bits.value;
 
-	// Load the operand into a register
+		// Load the operand into a register
 	X64Register result_physical_reg;
 	if (std::holds_alternative<TempVar>(unary_op.value.value)) {
 		auto temp_var = std::get<TempVar>(unary_op.value.value);
@@ -10244,7 +10244,7 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 			regAlloc.flushSingleDirtyRegister(result_physical_reg);
 		}
 	} else if (std::holds_alternative<unsigned long long>(unary_op.value.value)) {
-	// Load immediate value
+			// Load immediate value
 		result_physical_reg = allocateRegisterWithSpilling();
 		auto imm_value = std::get<unsigned long long>(unary_op.value.value);
 		uint8_t rex_prefix = 0x48;
@@ -10257,19 +10257,19 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		std::memcpy(&movInst[2], &imm_value, sizeof(imm_value));
 		textSectionData.insert(textSectionData.end(), movInst.begin(), movInst.end());
 	} else if (std::holds_alternative<StringHandle>(unary_op.value.value)) {
-	// Load from variable (could be local or global)
+			// Load from variable (could be local or global)
 		result_physical_reg = allocateRegisterWithSpilling();
 		StringHandle var_name = std::get<StringHandle>(unary_op.value.value);
 
-	// Check if it's a local variable first
+			// Check if it's a local variable first
 		auto var_id = variable_scopes.back().variables.find(var_name);
 		if (var_id != variable_scopes.back().variables.end()) {
-	// It's a local variable on the stack - use the correct size
+				// It's a local variable on the stack - use the correct size
 			auto stack_offset = var_id->second.offset;
 			emitMovFromFrameBySize(result_physical_reg, stack_offset, size_in_bits);
 		} else {
-	// It's a global variable - this shouldn't happen for unary ops on locals
-	// but we need to handle it for completeness
+				// It's a global variable - this shouldn't happen for unary ops on locals
+				// but we need to handle it for completeness
 			throw InternalError("Global variables not yet supported in unary operations");
 		}
 		regAlloc.flushSingleDirtyRegister(result_physical_reg);
@@ -10278,10 +10278,10 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		result_physical_reg = X64Register::RAX;
 	}
 
-	// Perform the specific unary operation
+		// Perform the specific unary operation
 	switch (op) {
 	case UnaryOperation::LogicalNot: {
-	// Compare with 0: cmp reg, 0 (using full instruction encoding with REX support)
+				// Compare with 0: cmp reg, 0 (using full instruction encoding with REX support)
 		uint8_t reg_num = static_cast<uint8_t>(result_physical_reg);
 		uint8_t rex_prefix = 0x48; // REX.W for 64-bit operation
 		if (reg_num >= 8) {
@@ -10292,14 +10292,14 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 		std::array<uint8_t, 4> cmpInst = {rex_prefix, 0x83, modrm, 0x00};
 		textSectionData.insert(textSectionData.end(), cmpInst.begin(), cmpInst.end());
 
-	// Set result to 1 if zero (sete), 0 otherwise
+				// Set result to 1 if zero (sete), 0 otherwise
 		uint8_t sete_rex = 0x00;
 		uint8_t sete_reg = static_cast<uint8_t>(result_physical_reg);
 		if (sete_reg >= 8) {
 			sete_rex = 0x41; // REX with B bit for R8-R15
 			sete_reg &= 0x07;
 		} else if (sete_reg >= 4) {
-		// RSP, RBP, RSI, RDI need REX to access low byte
+					// RSP, RBP, RSI, RDI need REX to access low byte
 			sete_rex = 0x40;
 		}
 		if (sete_rex != 0) {
@@ -10311,7 +10311,7 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 	}
 	case UnaryOperation::BitwiseNot:
 	case UnaryOperation::Negate: {
-	// Unified NOT/NEG instruction: REX.W F7 /opcode_ext r64
+				// Unified NOT/NEG instruction: REX.W F7 /opcode_ext r64
 		uint8_t opcode_ext = static_cast<uint8_t>(op);
 		std::array<uint8_t, 3> unaryInst = {0x48, 0xF7, 0xC0};
 		unaryInst[2] = 0xC0 + (opcode_ext << 3) + static_cast<uint8_t>(result_physical_reg);
@@ -10320,27 +10320,27 @@ void IrToObjConverter<TWriterClass>::handleUnaryOperation(const IrInstruction& i
 	}
 	}
 
-	// Store the result - associate register with result temp variable's stack offset
+		// Store the result - associate register with result temp variable's stack offset
 	int32_t result_offset = getStackOffsetFromTempVar(unary_op.result);
 	regAlloc.set_stack_variable_offset(result_physical_reg, result_offset, size_in_bits);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSignExtend(const IrInstruction& instruction) {
-	// Sign extension: movsx dest, src
+		// Sign extension: movsx dest, src
 	const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
 	int fromSize = conv_op.from.size_in_bits.value;
 	int toSize = conv_op.to_size;
 
-	// Get source value into a register
+		// Get source value into a register
 	X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
 
-	// Allocate result register
+		// Allocate result register
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-	// Generate movsx instruction based on size combination
+		// Generate movsx instruction based on size combination
 	if (fromSize == 8 && (toSize == 32 || toSize == 64)) {
-	// movsx r32/r64, r8: REX 0F BE /r (sign-extend byte to dword/qword)
+			// movsx r32/r64, r8: REX 0F BE /r (sign-extend byte to dword/qword)
 		uint8_t rex = (toSize == 64) ? 0x48 : 0x40;
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
@@ -10351,7 +10351,7 @@ void IrToObjConverter<TWriterClass>::handleSignExtend(const IrInstruction& instr
 		std::array<uint8_t, 4> movsx = {rex, 0x0F, 0xBE, modrm};
 		textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
 	} else if (fromSize == 16 && (toSize == 32 || toSize == 64)) {
-	// movsx r32/r64, r16: REX 0F BF /r (sign-extend word to dword/qword)
+			// movsx r32/r64, r16: REX 0F BF /r (sign-extend word to dword/qword)
 		uint8_t rex = (toSize == 64) ? 0x48 : 0x40;
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
@@ -10362,7 +10362,7 @@ void IrToObjConverter<TWriterClass>::handleSignExtend(const IrInstruction& instr
 		std::array<uint8_t, 4> movsx = {rex, 0x0F, 0xBF, modrm};
 		textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
 	} else if (fromSize == 32 && toSize == 64) {
-	// movsxd r64, r32: REX.W 63 /r (sign-extend dword to qword)
+			// movsxd r64, r32: REX.W 63 /r (sign-extend dword to qword)
 		uint8_t rex = 0x48; // REX.W
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
@@ -10373,86 +10373,86 @@ void IrToObjConverter<TWriterClass>::handleSignExtend(const IrInstruction& instr
 		std::array<uint8_t, 3> movsx = {rex, 0x63, modrm};
 		textSectionData.insert(textSectionData.end(), movsx.begin(), movsx.end());
 	} else {
-	// Fallback or no extension needed: just copy
+			// Fallback or no extension needed: just copy
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
 		std::array<uint8_t, 3> mov = {encoding.rex_prefix, 0x89, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 	}
 
-	// Store result - associate register with result temp variable's stack offset
+		// Store result - associate register with result temp variable's stack offset
 	int32_t result_offset = getStackOffsetFromTempVar(conv_op.result);
 	regAlloc.set_stack_variable_offset(result_reg, result_offset, toSize);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleZeroExtend(const IrInstruction& instruction) {
-	// Zero extension: movzx dest, src
+		// Zero extension: movzx dest, src
 	const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
 	int fromSize = conv_op.from.size_in_bits.value;
 	int toSize = conv_op.to_size;
 
-	// If source size is 0 (unknown/auto type) or equal to target size, this is a no-op.
-	// The value is already in the correct format, just ensure register tracking.
+		// If source size is 0 (unknown/auto type) or equal to target size, this is a no-op.
+		// The value is already in the correct format, just ensure register tracking.
 	if (fromSize == 0 || fromSize == toSize) {
-	// Get source value's register (or load it if needed)
+			// Get source value's register (or load it if needed)
 		X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
-	// Associate it with the result TempVar - no code generation needed
+			// Associate it with the result TempVar - no code generation needed
 		int32_t result_offset = getStackOffsetFromTempVar(conv_op.result);
 		regAlloc.set_stack_variable_offset(source_reg, result_offset, toSize);
 		return;
 	}
 
-	// Get source value into a register
+		// Get source value into a register
 	X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
 
-	// Allocate result register
+		// Allocate result register
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-	// Generate movzx instruction
+		// Generate movzx instruction
 	if (fromSize == 8 && toSize == 32) {
-	// movzx r32, r8: 0F B6 /r
+			// movzx r32, r8: 0F B6 /r
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
 		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, 0xB6, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (fromSize == 16 && toSize == 32) {
-	// movzx r32, r16: 0F B7 /r
+			// movzx r32, r16: 0F B7 /r
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
 		std::array<uint8_t, 4> movzx = {encoding.rex_prefix, 0x0F, 0xB7, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (fromSize == 32 && toSize == 64) {
-	// mov r32, r32 (implicitly zero-extends to 64 bits on x86-64)
+			// mov r32, r32 (implicitly zero-extends to 64 bits on x86-64)
 		std::array<uint8_t, 2> mov = {0x89, 0xC0};
 		mov[1] = 0xC0 + (static_cast<uint8_t>(source_reg) << 3) + static_cast<uint8_t>(result_reg);
 		textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 	} else {
-	// Fallback: just copy
+			// Fallback: just copy
 		auto encoding = encodeRegToRegInstruction(result_reg, source_reg);
 		std::array<uint8_t, 3> mov = {encoding.rex_prefix, 0x89, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 	}
 
-	// Store result - associate register with result temp variable's stack offset
+		// Store result - associate register with result temp variable's stack offset
 	int32_t result_offset = getStackOffsetFromTempVar(conv_op.result);
 	regAlloc.set_stack_variable_offset(result_reg, result_offset, toSize);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleTruncate(const IrInstruction& instruction) {
-	// Truncation: just use the lower bits by moving to a smaller register
+		// Truncation: just use the lower bits by moving to a smaller register
 	const ConversionOp& conv_op = instruction.getTypedPayload<ConversionOp>();
 	int toSize = conv_op.to_size;
 
-	// Get source value into a register
+		// Get source value into a register
 	X64Register source_reg = loadTypedValueIntoRegister(conv_op.from);
 
-	// Allocate result register
+		// Allocate result register
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-	// Generate appropriate MOV instruction based on target size
-	// On x86-64, moving to a smaller register automatically truncates
+		// Generate appropriate MOV instruction based on target size
+		// On x86-64, moving to a smaller register automatically truncates
 	if (toSize == 8) {
-	// mov r8, r8 (byte to byte) - just copy the low byte
-	// Use movzx to ensure we only get the low byte
+			// mov r8, r8 (byte to byte) - just copy the low byte
+			// Use movzx to ensure we only get the low byte
 		uint8_t rex = 0x40;
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
@@ -10464,8 +10464,8 @@ void IrToObjConverter<TWriterClass>::handleTruncate(const IrInstruction& instruc
 		logAsmEmit("handleTruncate 8-bit MOVZX", movzx.data(), movzx.size());
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (toSize == 16) {
-	// mov r16, r16 (word to word)
-	// Use movzx to ensure we only get the low word
+			// mov r16, r16 (word to word)
+			// Use movzx to ensure we only get the low word
 		uint8_t rex = 0x40;
 		if (static_cast<uint8_t>(result_reg) >= 8)
 			rex |= 0x04; // REX.R
@@ -10476,12 +10476,12 @@ void IrToObjConverter<TWriterClass>::handleTruncate(const IrInstruction& instruc
 		std::array<uint8_t, 4> movzx = {rex, 0x0F, 0xB7, modrm};
 		textSectionData.insert(textSectionData.end(), movzx.begin(), movzx.end());
 	} else if (toSize == 32) {
-	// mov r32, r32 (dword to dword) - implicitly zero-extends on x86-64
-	// For MOV r/m32, r32 (opcode 89): reg field is SOURCE, r/m field is DEST
-	// So we put source_reg in reg field and result_reg in r/m field
+			// mov r32, r32 (dword to dword) - implicitly zero-extends on x86-64
+			// For MOV r/m32, r32 (opcode 89): reg field is SOURCE, r/m field is DEST
+			// So we put source_reg in reg field and result_reg in r/m field
 		uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(source_reg) & 0x07) << 3) | (static_cast<uint8_t>(result_reg) & 0x07);
 
-	// Check if we need REX prefix
+			// Check if we need REX prefix
 		if (static_cast<uint8_t>(result_reg) >= 8 || static_cast<uint8_t>(source_reg) >= 8) {
 			uint8_t rex = 0x40;
 			if (static_cast<uint8_t>(source_reg) >= 8)
@@ -10495,29 +10495,29 @@ void IrToObjConverter<TWriterClass>::handleTruncate(const IrInstruction& instruc
 			textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 		}
 	} else {
-	// 64-bit or fallback: just copy the whole register
-	// For MOV r/m64, r64 (opcode 89): reg field is SOURCE, r/m field is DEST
+			// 64-bit or fallback: just copy the whole register
+			// For MOV r/m64, r64 (opcode 89): reg field is SOURCE, r/m field is DEST
 		auto encoding = encodeRegToRegInstruction(source_reg, result_reg);
 		std::array<uint8_t, 3> mov = {encoding.rex_prefix, 0x89, encoding.modrm_byte};
 		textSectionData.insert(textSectionData.end(), mov.begin(), mov.end());
 	}
 
-	// Store result - associate register with result temp variable's stack offset
+		// Store result - associate register with result temp variable's stack offset
 	int32_t result_offset = getStackOffsetFromTempVar(conv_op.result);
 	regAlloc.set_stack_variable_offset(result_reg, result_offset, toSize);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatToInt(const IrInstruction& instruction) {
-	// FloatToInt: convert float/double to integer
+		// FloatToInt: convert float/double to integer
 	auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
-	// Load source value into XMM register
+		// Load source value into XMM register
 	X64Register source_xmm = X64Register::Count;
 	if (std::holds_alternative<TempVar>(op.from.value)) {
 		auto temp_var = std::get<TempVar>(op.from.value);
 		auto stack_offset = getStackOffsetFromTempVar(temp_var);
-	// Check if the value is already in an XMM register
+			// Check if the value is already in an XMM register
 		if (auto existing_reg = regAlloc.tryGetStackVariableRegister(stack_offset); existing_reg.has_value()) {
 			source_xmm = existing_reg.value();
 		} else {
@@ -10532,7 +10532,7 @@ void IrToObjConverter<TWriterClass>::handleFloatToInt(const IrInstruction& instr
 		auto var_it = variable_scopes.back().variables.find(var_name);
 		if (var_it == variable_scopes.back().variables.end())
 			throw InternalError("handleFloatToInt: Variable not found in variables");
-	// Check if the value is already in an XMM register
+			// Check if the value is already in an XMM register
 		if (auto existing_reg = regAlloc.tryGetStackVariableRegister(var_it->second.offset); existing_reg.has_value()) {
 			source_xmm = existing_reg.value();
 		} else {
@@ -10542,31 +10542,31 @@ void IrToObjConverter<TWriterClass>::handleFloatToInt(const IrInstruction& instr
 		}
 	}
 
-	// Allocate result GPR
+		// Allocate result GPR
 	X64Register result_reg = allocateRegisterWithSpilling();
 
-	// cvttss2si (float to int) or cvttsd2si (double to int)
-	// For 32-bit: F3 0F 2C /r (cvttss2si r32, xmm) or F2 0F 2C /r (cvttsd2si r32, xmm)
-	// For 64-bit: F3 REX.W 0F 2C /r (cvttss2si r64, xmm) or F2 REX.W 0F 2C /r (cvttsd2si r64, xmm)
+		// cvttss2si (float to int) or cvttsd2si (double to int)
+		// For 32-bit: F3 0F 2C /r (cvttss2si r32, xmm) or F2 0F 2C /r (cvttsd2si r32, xmm)
+		// For 64-bit: F3 REX.W 0F 2C /r (cvttss2si r64, xmm) or F2 REX.W 0F 2C /r (cvttsd2si r64, xmm)
 	bool is_float = (op.from.effectiveIrType() == IrType::Float);
 	uint8_t prefix = is_float ? 0xF3 : 0xF2;
 
-	// Only use REX.W for 64-bit result
+		// Only use REX.W for 64-bit result
 	bool need_rex_w = (op.to_size_in_bits == SizeInBits{64});
 	uint8_t rex = need_rex_w ? 0x48 : 0x40;
 
-	// Add REX.R if result register >= 8
+		// Add REX.R if result register >= 8
 	if (static_cast<uint8_t>(result_reg) >= 8)
 		rex |= 0x04;
 
-	// Add REX.B if XMM register >= 8
+		// Add REX.B if XMM register >= 8
 	uint8_t xmm_bits = static_cast<uint8_t>(source_xmm) - static_cast<uint8_t>(X64Register::XMM0);
 	if (xmm_bits >= 8)
 		rex |= 0x01;
 
 	uint8_t modrm = 0xC0 | ((static_cast<uint8_t>(result_reg) & 0x07) << 3) | (xmm_bits & 0x07);
 
-	// Only emit REX prefix if needed (64-bit or extended registers)
+		// Only emit REX prefix if needed (64-bit or extended registers)
 	if (rex != 0x40) {
 		std::array<uint8_t, 5> cvtt = {prefix, rex, 0x0F, 0x2C, modrm};
 		textSectionData.insert(textSectionData.end(), cvtt.begin(), cvtt.end());
@@ -10575,27 +10575,27 @@ void IrToObjConverter<TWriterClass>::handleFloatToInt(const IrInstruction& instr
 		textSectionData.insert(textSectionData.end(), cvtt.begin(), cvtt.end());
 	}
 
-	// Release XMM register
+		// Release XMM register
 	regAlloc.release(source_xmm);
 
-	// Store result
+		// Store result
 	storeConversionResult(instruction, result_reg, op.to_size_in_bits.value);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleIntToFloat(const IrInstruction& instruction) {
-	// IntToFloat: convert integer to float/double
+		// IntToFloat: convert integer to float/double
 	auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
-	// Load source value into GPR
+		// Load source value into GPR
 	X64Register source_reg = loadTypedValueIntoRegister(op.from);
 
-	// Allocate result XMM register
+		// Allocate result XMM register
 	X64Register result_xmm = allocateXMMRegisterWithSpilling();
 
-	// cvtsi2ss (int to float) or cvtsi2sd (int to double)
-	// Opcode: F3 REX.W 0F 2A /r (cvtsi2ss xmm, r64) for float
-	// Opcode: F2 REX.W 0F 2A /r (cvtsi2sd xmm, r64) for double
+		// cvtsi2ss (int to float) or cvtsi2sd (int to double)
+		// Opcode: F3 REX.W 0F 2A /r (cvtsi2ss xmm, r64) for float
+		// Opcode: F2 REX.W 0F 2A /r (cvtsi2sd xmm, r64) for double
 	bool is_float = (op.to_type_index.category() == TypeCategory::Float);
 	uint8_t prefix = is_float ? 0xF3 : 0xF2;
 
@@ -10610,10 +10610,10 @@ void IrToObjConverter<TWriterClass>::handleIntToFloat(const IrInstruction& instr
 	std::array<uint8_t, 5> cvt = {prefix, rex, 0x0F, 0x2A, modrm};
 	textSectionData.insert(textSectionData.end(), cvt.begin(), cvt.end());
 
-	// Release source GPR
+		// Release source GPR
 	regAlloc.release(source_reg);
 
-	// Store result XMM to stack
+		// Store result XMM to stack
 	auto result_offset = getStackOffsetFromTempVar(op.result);
 	emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float);
 	regAlloc.set_stack_variable_offset(result_xmm, result_offset, op.to_size_in_bits.value);
@@ -10621,10 +10621,10 @@ void IrToObjConverter<TWriterClass>::handleIntToFloat(const IrInstruction& instr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& instruction) {
-	// FloatToFloat: convert float <-> double
+		// FloatToFloat: convert float <-> double
 	auto& op = instruction.getTypedPayload<TypeConversionOp>();
 
-	// Load source value into XMM register
+		// Load source value into XMM register
 	X64Register source_xmm = X64Register::Count;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.from.value)) {
 		auto temp_var = *temp_var_ptr;
@@ -10641,27 +10641,27 @@ void IrToObjConverter<TWriterClass>::handleFloatToFloat(const IrInstruction& ins
 		emitFloatMovFromFrame(source_xmm, var_it->second.offset, is_float);
 	}
 
-	// Allocate result XMM register
+		// Allocate result XMM register
 	X64Register result_xmm = allocateXMMRegisterWithSpilling();
 
-	// cvtss2sd (float to double) or cvtsd2ss (double to float)
-	// Now properly handles XMM8-XMM15 registers with REX prefix
+		// cvtss2sd (float to double) or cvtsd2ss (double to float)
+		// Now properly handles XMM8-XMM15 registers with REX prefix
 	if (op.from.effectiveIrType() == IrType::Float && op.to_type_index.category() == TypeCategory::Double) {
-	// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
+			// cvtss2sd xmm, xmm (F3 [REX] 0F 5A /r)
 		auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5A, result_xmm, source_xmm);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	} else {
-	// cvtsd2ss xmm, xmm (F2 [REX] 0F 5A /r)
+			// cvtsd2ss xmm, xmm (F2 [REX] 0F 5A /r)
 		auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5A, result_xmm, source_xmm);
 		textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 	}
 
-	// Release source XMM (guard against source == result under register pressure)
+		// Release source XMM (guard against source == result under register pressure)
 	if (source_xmm != result_xmm) {
 		regAlloc.release(source_xmm);
 	}
 
-	// Store result XMM to stack
+		// Store result XMM to stack
 	auto result_offset = getStackOffsetFromTempVar(op.result);
 	bool is_float_result = (op.to_type_index.category() == TypeCategory::Float);
 	emitFloatStoreToAddressWithOffset(textSectionData, result_xmm, X64Register::RBP, result_offset, is_float_result);
@@ -10672,25 +10672,25 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleAddAssign(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "add assignment");
 
-	// Check if this is floating-point addition
+		// Check if this is floating-point addition
 	if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
-	// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
+			// Use SSE addss (scalar single-precision) or addsd (scalar double-precision)
 		if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
+				// addss xmm_dst, xmm_src (F3 [REX] 0F 58 /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else {
-	// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
+				// addsd xmm_dst, xmm_src (F2 [REX] 0F 58 /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x58, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 	} else {
-	// Integer addition: Use correct register size based on operand size
-	// Pass include_rex_w=false for 32-bit operations
+			// Integer addition: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
 		bool include_rex_w = (ctx.operand_size_in_bits == 64);
 		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
 
-	// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
 		if (encoding.rex_prefix != 0) {
 			textSectionData.push_back(encoding.rex_prefix);
 		}
@@ -10704,25 +10704,25 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSubAssign(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "subtract assignment");
 
-	// Check if this is floating-point subtraction
+		// Check if this is floating-point subtraction
 	if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
-	// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
+			// Use SSE subss (scalar single-precision) or subsd (scalar double-precision)
 		if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
+				// subss xmm_dst, xmm_src (F3 [REX] 0F 5C /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else {
-	// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
+				// subsd xmm_dst, xmm_src (F2 [REX] 0F 5C /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5C, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 	} else {
-	// Integer subtraction: Use correct register size based on operand size
-	// Pass include_rex_w=false for 32-bit operations
+			// Integer subtraction: Use correct register size based on operand size
+			// Pass include_rex_w=false for 32-bit operations
 		bool include_rex_w = (ctx.operand_size_in_bits == 64);
 		auto encoding = encodeRegToRegInstruction(ctx.rhs_physical_reg, ctx.result_physical_reg, include_rex_w);
 
-	// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
+			// Only emit REX prefix if needed (will be 0 for 32-bit with regs < 8)
 		if (encoding.rex_prefix != 0) {
 			textSectionData.push_back(encoding.rex_prefix);
 		}
@@ -10736,26 +10736,26 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMulAssign(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "multiply assignment");
 
-	// Check if this is floating-point multiplication
+		// Check if this is floating-point multiplication
 	if (isIrFloatingPointType(ctx.result_value.effectiveIrType())) {
-	// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
+			// Use SSE mulss (scalar single-precision) or mulsd (scalar double-precision)
 		if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
+				// mulss xmm_dst, xmm_src (F3 [REX] 0F 59 /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else {
-	// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
+				// mulsd xmm_dst, xmm_src (F2 [REX] 0F 59 /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x59, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
 	} else {
-	// Integer multiplication: IMUL r64, r/m64
-	// Use correct register size based on operand size
-	// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
+			// Integer multiplication: IMUL r64, r/m64
+			// Use correct register size based on operand size
+			// Note: For IMUL, the reg field is the destination (result) and rm is the source (rhs)
 		bool include_rex_w = (ctx.operand_size_in_bits == 64);
 		auto encoding = encodeRegToRegInstruction(ctx.result_physical_reg, ctx.rhs_physical_reg, include_rex_w);
 
-	// Only emit REX prefix if needed
+			// Only emit REX prefix if needed
 		if (encoding.rex_prefix != 0) {
 			textSectionData.push_back(encoding.rex_prefix);
 		}
@@ -10770,15 +10770,15 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDivAssign(const IrInstruction& instruction) {
 	const BinaryOp& bin_op = instruction.getTypedPayload<BinaryOp>();
 
-	// Check if this is floating-point division
+		// Check if this is floating-point division
 	if (isIrFloatingPointType(bin_op.lhs.effectiveIrType())) {
 		auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
 		if (ctx.result_value.effectiveIrType() == IrType::Float) {
-	// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
+				// divss xmm_dst, xmm_src (F3 [REX] 0F 5E /r)
 			auto inst = generateSSEInstruction(0xF3, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		} else {
-	// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
+				// divsd xmm_dst, xmm_src (F2 [REX] 0F 5E /r)
 			auto inst = generateSSEInstruction(0xF2, 0x0F, 0x5E, ctx.result_physical_reg, ctx.rhs_physical_reg);
 			textSectionData.insert(textSectionData.end(), inst.op_codes.begin(), inst.op_codes.begin() + inst.size_in_bytes);
 		}
@@ -10789,15 +10789,15 @@ void IrToObjConverter<TWriterClass>::handleDivAssign(const IrInstruction& instru
 		return;
 	}
 
-	// Integer division
+		// Integer division
 	reserveDivisionFixedRegisters();
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "divide assignment");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 
-	// Use correct register size based on operand size
+		// Use correct register size based on operand size
 	bool include_rex_w = (ctx.operand_size_in_bits == 64);
 
-	// mov rax, result_reg (move dividend to RAX)
+		// mov rax, result_reg (move dividend to RAX)
 	auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
 	if (mov_to_rax.rex_prefix != 0) {
 		textSectionData.push_back(mov_to_rax.rex_prefix);
@@ -10805,20 +10805,20 @@ void IrToObjConverter<TWriterClass>::handleDivAssign(const IrInstruction& instru
 	textSectionData.push_back(0x89);
 	textSectionData.push_back(mov_to_rax.modrm_byte);
 
-	// Sign extend based on operand size
+		// Sign extend based on operand size
 	if (ctx.operand_size_in_bits == 64) {
-	// cqo (sign extend RAX to RDX:RAX)
+			// cqo (sign extend RAX to RDX:RAX)
 		std::array<uint8_t, 2> cqoInst = {0x48, 0x99};
 		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
 	} else {
-	// cdq (sign extend EAX to EDX:EAX) - 32-bit
+			// cdq (sign extend EAX to EDX:EAX) - 32-bit
 		textSectionData.push_back(0x99);
 	}
 
-	// idiv divisor_reg (divide RDX:RAX by divisor_reg, quotient in RAX)
+		// idiv divisor_reg (divide RDX:RAX by divisor_reg, quotient in RAX)
 	emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, divisor_reg, ctx.operand_size_in_bits);
 
-	// mov result_reg, rax (move quotient to result)
+		// mov result_reg, rax (move quotient to result)
 	auto mov_from_rax = encodeRegToRegInstruction(X64Register::RAX, ctx.result_physical_reg, include_rex_w);
 	if (mov_from_rax.rex_prefix != 0) {
 		textSectionData.push_back(mov_from_rax.rex_prefix);
@@ -10837,10 +10837,10 @@ void IrToObjConverter<TWriterClass>::handleModAssign(const IrInstruction& instru
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "modulo assignment");
 	X64Register divisor_reg = preserveDivisorAcrossRaxMove(ctx.rhs_physical_reg, ctx.result_physical_reg, ctx.operand_size_in_bits);
 
-	// Use correct register size based on operand size
+		// Use correct register size based on operand size
 	bool include_rex_w = (ctx.operand_size_in_bits == 64);
 
-	// mov rax, result_reg (move dividend to RAX)
+		// mov rax, result_reg (move dividend to RAX)
 	auto mov_to_rax = encodeRegToRegInstruction(ctx.result_physical_reg, X64Register::RAX, include_rex_w);
 	if (mov_to_rax.rex_prefix != 0) {
 		textSectionData.push_back(mov_to_rax.rex_prefix);
@@ -10848,20 +10848,20 @@ void IrToObjConverter<TWriterClass>::handleModAssign(const IrInstruction& instru
 	textSectionData.push_back(0x89);
 	textSectionData.push_back(mov_to_rax.modrm_byte);
 
-	// Sign extend based on operand size
+		// Sign extend based on operand size
 	if (ctx.operand_size_in_bits == 64) {
-	// cqo (sign extend RAX to RDX:RAX)
+			// cqo (sign extend RAX to RDX:RAX)
 		std::array<uint8_t, 2> cqoInst = {0x48, 0x99};
 		textSectionData.insert(textSectionData.end(), cqoInst.begin(), cqoInst.end());
 	} else {
-	// cdq (sign extend EAX to EDX:EAX) - 32-bit
+			// cdq (sign extend EAX to EDX:EAX) - 32-bit
 		textSectionData.push_back(0x99);
 	}
 
-	// idiv divisor_reg (divide RDX:RAX by divisor_reg, remainder in RDX)
+		// idiv divisor_reg (divide RDX:RAX by divisor_reg, remainder in RDX)
 	emitOpcodeExtInstruction(0xF7, X64OpcodeExtension::IDIV, divisor_reg, ctx.operand_size_in_bits);
 
-	// mov result_reg, rdx (move remainder to result)
+		// mov result_reg, rdx (move remainder to result)
 	auto mov_from_rdx = encodeRegToRegInstruction(X64Register::RDX, ctx.result_physical_reg, include_rex_w);
 	if (mov_from_rdx.rex_prefix != 0) {
 		textSectionData.push_back(mov_from_rdx.rex_prefix);
@@ -10899,13 +10899,13 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShlAssign(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "shift left assignment");
 
-	// If the LHS is in RCX, save it before loading the shift count there.
+		// If the LHS is in RCX, save it before loading the shift count there.
 	relocateLhsOutOfRCX(ctx);
 
-	// Move RHS to CL register
+		// Move RHS to CL register
 	emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
-	// Emit SHL instruction with correct size
+		// Emit SHL instruction with correct size
 	emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SHL, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 	storeArithmeticResult(ctx);
@@ -10915,13 +10915,13 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleShrAssign(const IrInstruction& instruction) {
 	auto ctx = setupAndLoadArithmeticOperation(instruction, "shift right assignment");
 
-	// If the LHS is in RCX, save it before loading the shift count there.
+		// If the LHS is in RCX, save it before loading the shift count there.
 	relocateLhsOutOfRCX(ctx);
 
-	// Move RHS to CL register
+		// Move RHS to CL register
 	emitMovRegToReg(ctx.rhs_physical_reg, X64Register::RCX, ctx.result_value.size_in_bits.value);
 
-	// Emit SAR instruction with correct size
+		// Emit SAR instruction with correct size
 	emitOpcodeExtInstruction(0xD3, X64OpcodeExtension::SAR, ctx.result_physical_reg, ctx.result_value.size_in_bits.value);
 
 	storeArithmeticResult(ctx);
@@ -10929,16 +10929,16 @@ void IrToObjConverter<TWriterClass>::handleShrAssign(const IrInstruction& instru
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instruction) {
-	// Use typed payload format
+		// Use typed payload format
 	const AssignmentOp& op = instruction.getTypedPayload<AssignmentOp>();
 	FLASH_LOG(Codegen, Debug, "handleAssignment called");
 	TypeCategory lhs_type = op.lhs.typeEnum();
-	//int lhs_size_bits = instruction.getOperandAs<int>(2);
+		//int lhs_size_bits = instruction.getOperandAs<int>(2);
 
-	// Special handling for pointer store (assignment through pointer)
+		// Special handling for pointer store (assignment through pointer)
 	if (op.is_pointer_store) {
-	// LHS is a pointer (TempVar), RHS is the value to store
-	// Load the pointer into a register
+			// LHS is a pointer (TempVar), RHS is the value to store
+			// Load the pointer into a register
 		X64Register ptr_reg = allocateRegisterWithSpilling();
 		if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
 			TempVar ptr_var = *temp_var;
@@ -10949,12 +10949,12 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Get the value to store
+			// Get the value to store
 		X64Register value_reg = allocateRegisterWithSpilling();
 		int value_size_bytes = op.rhs.size_in_bits.value / 8;
 
 		if (std::holds_alternative<unsigned long long>(op.rhs.value)) {
-	// Immediate integer value
+				// Immediate integer value
 			unsigned long long imm_value = std::get<unsigned long long>(op.rhs.value);
 			if (value_size_bytes == 8) {
 				emitMovImm64(value_reg, imm_value);
@@ -10962,13 +10962,13 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				moveImmediateToRegister(value_reg, static_cast<int32_t>(imm_value));
 			}
 		} else if (const auto* d_val = std::get_if<double>(&op.rhs.value)) {
-	// Immediate double value
+				// Immediate double value
 			double double_value = *d_val;
 			uint64_t bits;
 			std::memcpy(&bits, &double_value, sizeof(bits));
 			emitMovImm64(value_reg, bits);
 		} else if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
-	// Load from temp var
+				// Load from temp var
 			TempVar rhs_var = *temp_var_ptr;
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 			emitMovFromFrameBySize(value_reg, rhs_offset, op.rhs.size_in_bits.value);
@@ -10977,7 +10977,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Store through the pointer: [ptr_reg] = value_reg
+			// Store through the pointer: [ptr_reg] = value_reg
 		emitStoreToMemory(textSectionData, value_reg, ptr_reg, 0, value_size_bytes);
 
 		regAlloc.release(ptr_reg);
@@ -10985,9 +10985,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		return;
 	}
 
-	// Special handling for function pointer assignment
+		// Special handling for function pointer assignment
 	if (lhs_type == TypeCategory::FunctionPointer) {
-	// Get LHS destination
+			// Get LHS destination
 		int32_t lhs_offset = -1;
 
 		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
@@ -11007,41 +11007,41 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Get RHS source (function address or nullptr)
+			// Get RHS source (function address or nullptr)
 		X64Register source_reg = X64Register::RAX;
 
 		if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.rhs.value)) {
 			TempVar rhs_var = *temp_var_ptr;
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-	// Load function address from RHS stack location into RAX
+				// Load function address from RHS stack location into RAX
 			emitMovFromFrame(source_reg, rhs_offset);
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
-	// RHS is an immediate value (e.g., nullptr = 0)
+				// RHS is an immediate value (e.g., nullptr = 0)
 			unsigned long long rhs_value = *ull_val;
 			emitMovImm64(source_reg, rhs_value);
 		}
 
-	// Store RAX to LHS stack location (8 bytes for function pointer - always 64-bit)
+			// Store RAX to LHS stack location (8 bytes for function pointer - always 64-bit)
 		emitMovToFrameSized(
 			SizedRegister{source_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{lhs_offset, 64, false}  // dest: 64-bit for function pointer
 		);
 
-	// Clear any stale register associations for this stack offset
-	// This ensures subsequent loads will actually load from memory instead of using stale cached values
+			// Clear any stale register associations for this stack offset
+			// This ensures subsequent loads will actually load from memory instead of using stale cached values
 		regAlloc.clearStackVariableAssociations(lhs_offset);
 
 		return;
 	}
 
-	// Special handling for struct assignment
+		// Special handling for struct assignment
 	if (lhs_type == TypeCategory::Struct) {
-	// For struct assignment, we need to copy the entire struct value
-	// LHS is the destination (should be a variable name or TempVar)
-	// RHS is the source (should be a TempVar from function return, or another variable)
+			// For struct assignment, we need to copy the entire struct value
+			// LHS is the destination (should be a variable name or TempVar)
+			// RHS is the source (should be a TempVar from function return, or another variable)
 
-	// Get LHS destination
+			// Get LHS destination
 		int32_t lhs_offset = -1;
 
 		if (std::holds_alternative<StringHandle>(op.lhs.value)) {
@@ -11061,7 +11061,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Get RHS source offset
+			// Get RHS source offset
 		int32_t rhs_offset = -1;
 		if (std::holds_alternative<StringHandle>(op.rhs.value)) {
 			StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
@@ -11080,24 +11080,24 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Get struct size in bytes from TypedValue (round up to handle partial bytes)
+			// Get struct size in bytes from TypedValue (round up to handle partial bytes)
 		int struct_size_bytes = (op.lhs.size_in_bits.value + 7) / 8;
 
-	// Copy struct using 8-byte chunks, then handle remaining bytes
+			// Copy struct using 8-byte chunks, then handle remaining bytes
 		int offset = 0;
 		while (offset + 8 <= struct_size_bytes) {
-	// Load 8 bytes from RHS: MOV RAX, [RBP + rhs_offset + offset]
+				// Load 8 bytes from RHS: MOV RAX, [RBP + rhs_offset + offset]
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},
 				SizedStackSlot{rhs_offset + offset, 64, false});
-	// Store 8 bytes to LHS: MOV [RBP + lhs_offset + offset], RAX
+				// Store 8 bytes to LHS: MOV [RBP + lhs_offset + offset], RAX
 			emitMovToFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},
 				SizedStackSlot{lhs_offset + offset, 64, false});
 			offset += 8;
 		}
 
-	// Handle remaining bytes (4, 2, 1)
+			// Handle remaining bytes (4, 2, 1)
 		if (offset + 4 <= struct_size_bytes) {
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RAX, 64, false},
@@ -11127,8 +11127,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		return;
 	}
 
-	// For non-struct types, we need to copy the value from RHS to LHS
-	// Get LHS destination
+		// For non-struct types, we need to copy the value from RHS to LHS
+		// Get LHS destination
 	int32_t lhs_offset = -1;
 
 	if (std::holds_alternative<StringHandle>(op.lhs.value)) {
@@ -11142,9 +11142,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 	} else if (std::holds_alternative<TempVar>(op.lhs.value)) {
 		TempVar lhs_var = std::get<TempVar>(op.lhs.value);
-	// TempVar(0) is a sentinel value indicating an invalid/uninitialized temp variable
-	// This can happen with template functions that have reference parameters
-	// In this case, the assignment should not have been generated - report error and skip
+			// TempVar(0) is a sentinel value indicating an invalid/uninitialized temp variable
+			// This can happen with template functions that have reference parameters
+			// In this case, the assignment should not have been generated - report error and skip
 		if (lhs_var.var_number == 0) {
 			FLASH_LOG(Codegen, Error, "Invalid assignment to sentinel TempVar(0) - likely a code generation bug with template reference parameters");
 			return;	// Skip this invalid assignment
@@ -11175,10 +11175,10 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		return;
 	}
 
-	// Check if LHS is a reference - if so, we're initializing a reference binding
+		// Check if LHS is a reference - if so, we're initializing a reference binding
 	auto lhs_ref_info = getIndirectStackInfo(lhs_offset);
 
-	// Debug: check what type LHS is
+		// Debug: check what type LHS is
 	if (const auto* string = std::get_if<StringHandle>(&op.lhs.value)) {
 		FLASH_LOG(Codegen, Debug, "LHS is string_view: '", *string, "'");
 	} else if (const auto* temp_var = std::get_if<TempVar>(&op.lhs.value)) {
@@ -11187,12 +11187,12 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		FLASH_LOG(Codegen, Debug, "LHS is other type");
 	}
 
-	// If not found with TempVar offset and LHS is a TempVar, try looking up by name
+		// If not found with TempVar offset and LHS is a TempVar, try looking up by name
 	if (!lhs_ref_info.has_value() && std::holds_alternative<TempVar>(op.lhs.value)) {
 		TempVar lhs_var = std::get<TempVar>(op.lhs.value);
 		std::string_view var_name = lhs_var.name();
 		FLASH_LOG(Codegen, Debug, "LHS is TempVar with name: '", var_name, "'");
-	// Remove the '%' prefix if present
+			// Remove the '%' prefix if present
 		if (!var_name.empty() && var_name[0] == '%') {
 			var_name = var_name.substr(1);
 			FLASH_LOG(Codegen, Debug, "After removing %, name: '", var_name, "'");
@@ -11203,7 +11203,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			FLASH_LOG(Codegen, Debug, "Found in named vars at offset: ", named_offset);
 			lhs_ref_info = getIndirectStackInfo(named_offset);
 			if (lhs_ref_info.has_value()) {
-		// Found it! Update lhs_offset to use the named variable offset
+					// Found it! Update lhs_offset to use the named variable offset
 				lhs_offset = named_offset;
 				FLASH_LOG(Codegen, Debug, "Found reference info at named offset!");
 			}
@@ -11214,59 +11214,59 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 	FLASH_LOG(Codegen, Debug, "Assignment: lhs_offset=", lhs_offset, ", is_reference=", lhs_ref_info.has_value(), ", lhs.is_reference=", op.lhs.is_reference());
 
-	// Check if LHS is a reference - either from indirect stack storage or from the TypedValue metadata
+		// Check if LHS is a reference - either from indirect stack storage or from the TypedValue metadata
 	bool lhs_is_reference = lhs_ref_info.has_value() || op.lhs.is_reference();
 
 	if (lhs_is_reference) {
-	// LHS is a reference variable
-	// In C++, references cannot be rebound after initialization
-	// Any assignment to a reference should modify the object it refers to (dereference semantics)
-	// Example: int x = 10; int& ref = x; ref = 20; // This modifies x, not ref
+			// LHS is a reference variable
+			// In C++, references cannot be rebound after initialization
+			// Any assignment to a reference should modify the object it refers to (dereference semantics)
+			// Example: int x = 10; int& ref = x; ref = 20; // This modifies x, not ref
 
-	// Step 1: Load the address stored in the reference variable (LHS)
+			// Step 1: Load the address stored in the reference variable (LHS)
 		X64Register ref_addr_reg = allocateRegisterWithSpilling();
 		emitMovFromFrame(ref_addr_reg, lhs_offset);
 		FLASH_LOG(Codegen, Debug, "Reference assignment: Loaded address from reference variable at offset ", lhs_offset);
 
-	// Step 2: Load or compute the value to store (RHS)
+			// Step 2: Load or compute the value to store (RHS)
 		X64Register value_reg = allocateRegisterWithSpilling();
 
-	// Get reference value type and size
+			// Get reference value type and size
 		TypeCategory value_type;
 		int value_size_bits;
 		if (lhs_ref_info.has_value()) {
 			value_type = lhs_ref_info->valueType();
 			value_size_bits = lhs_ref_info->value_size_bits.value;
 		} else {
-	// Use TypedValue metadata
+				// Use TypedValue metadata
 			value_type = op.lhs.typeEnum();
 			value_size_bits = op.lhs.size_in_bits.value;
 		}
 		int value_size_bytes = value_size_bits / 8;
 
 		if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
-	// RHS is an immediate value
+				// RHS is an immediate value
 			uint64_t imm_value = *ull_val;
 			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is immediate value: ", imm_value);
 			moveImmediateToRegister(value_reg, imm_value);
 		} else if (std::holds_alternative<StringHandle>(op.rhs.value)) {
-	// RHS is a variable name
+				// RHS is a variable name
 			StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
 			std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
 			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is variable: '", rhs_var_name, "'");
 			auto it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(rhs_var_name));
 			if (it != variable_scopes.back().variables.end()) {
 				int32_t rhs_offset = it->second.offset;
-		// Check if RHS is also a reference (but not address-only)
+					// Check if RHS is also a reference (but not address-only)
 				auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 				if (rhs_ref_info.has_value() && shouldImplicitlyDeref(rhs_ref_info.value())) {
-		// RHS is a reference - dereference it to get the value
+						// RHS is a reference - dereference it to get the value
 					X64Register rhs_addr_reg = allocateRegisterWithSpilling();
 					emitMovFromFrame(rhs_addr_reg, rhs_offset);	// Load pointer from reference
 					emitMovFromMemory(value_reg, rhs_addr_reg, 0, value_size_bytes);	 // Dereference
 					regAlloc.release(rhs_addr_reg);
 				} else {
-		// RHS is a regular variable - load its value
+						// RHS is a regular variable - load its value
 					emitMovFromFrameSized(
 						SizedRegister{value_reg, value_size_bits, isSignedType(value_type)},
 						SizedStackSlot{rhs_offset, value_size_bits, isSignedType(value_type)});
@@ -11278,20 +11278,20 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				return;
 			}
 		} else if (std::holds_alternative<TempVar>(op.rhs.value)) {
-	// RHS is a TempVar
+				// RHS is a TempVar
 			TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 			FLASH_LOG(Codegen, Debug, "Reference assignment: RHS is TempVar: '", rhs_var.name(), "'");
 			int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
-	// Check if RHS is a reference (but not address-only)
+				// Check if RHS is a reference (but not address-only)
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 			if (rhs_ref_info.has_value() && shouldImplicitlyDeref(rhs_ref_info.value())) {
-		// RHS is a reference - dereference it
+					// RHS is a reference - dereference it
 				X64Register rhs_addr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(rhs_addr_reg, rhs_offset);
 				emitMovFromMemory(value_reg, rhs_addr_reg, 0, value_size_bytes);
 				regAlloc.release(rhs_addr_reg);
 			} else {
-		// Load value from TempVar
+					// Load value from TempVar
 				emitMovFromFrameSized(
 					SizedRegister{value_reg, value_size_bits, isSignedType(value_type)},
 					SizedStackSlot{rhs_offset, value_size_bits, isSignedType(value_type)});
@@ -11303,7 +11303,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			return;
 		}
 
-	// Step 3: Store the value to the address pointed to by the reference (dereference and store)
+			// Step 3: Store the value to the address pointed to by the reference (dereference and store)
 		emitStoreToMemory(textSectionData, value_reg, ref_addr_reg, 0, value_size_bytes);
 		FLASH_LOG(Codegen, Debug, "Reference assignment: Stored value to dereferenced address");
 
@@ -11313,12 +11313,12 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		return;	// Done with reference assignment
 	}
 
-	// For non-reference LHS, proceed with normal assignment
-	// Get RHS source
+		// For non-reference LHS, proceed with normal assignment
+		// Get RHS source
 	TypeCategory rhs_type = op.rhs.typeEnum();
 	X64Register source_reg = X64Register::RAX;
 
-	// Load RHS value into a register
+		// Load RHS value into a register
 	if (std::holds_alternative<StringHandle>(op.rhs.value)) {
 		StringHandle rhs_var_name_handle = std::get<StringHandle>(op.rhs.value);
 		std::string_view rhs_var_name = StringTable::getStringView(rhs_var_name_handle);
@@ -11326,14 +11326,14 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		if (it != variable_scopes.back().variables.end()) {
 			int32_t rhs_offset = it->second.offset;
 
-	// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
-	// Skip dereferencing if holds_address_only is true (AddressOf results)
+				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
+				// Skip dereferencing if holds_address_only is true (AddressOf results)
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 			if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
-		// RHS is a reference - load pointer and dereference
+					// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
-		// Dereference to get the value
+					// Dereference to get the value
 				int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 				emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 				source_reg = ptr_reg;
@@ -11342,7 +11342,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 			} else {
-		// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
+					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{source_reg, 64, false},  // dest: 64-bit register
 					SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
@@ -11353,26 +11353,26 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		TempVar rhs_var = std::get<TempVar>(op.rhs.value);
 		int32_t rhs_offset = getStackOffsetFromTempVar(rhs_var);
 
-	// Check if RHS is a reference - if so, dereference it
+			// Check if RHS is a reference - if so, dereference it
 		auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
 
-	// If not found with TempVar offset, try looking up by name
-	// This handles the case where TempVar offset differs from named variable offset
+			// If not found with TempVar offset, try looking up by name
+			// This handles the case where TempVar offset differs from named variable offset
 		if (!rhs_ref_info.has_value()) {
 			std::string_view var_name = rhs_var.name();
-	// Remove the '%' prefix if present
+				// Remove the '%' prefix if present
 			if (!var_name.empty() && var_name[0] == '%') {
 				var_name = var_name.substr(1);
 			}
-	// Only try to match if this looks like it could be a named variable
-	// (not a pure temporary like "temp_10")
+				// Only try to match if this looks like it could be a named variable
+				// (not a pure temporary like "temp_10")
 			if (!var_name.empty() && var_name.find("temp_") != 0) {
 				auto named_var_it = variable_scopes.back().variables.find(StringTable::getOrInternStringHandle(var_name));
 				if (named_var_it != variable_scopes.back().variables.end()) {
 					int32_t named_offset = named_var_it->second.offset;
 					rhs_ref_info = getIndirectStackInfo(named_offset);
 					if (rhs_ref_info.has_value()) {
-		// Found it! Update rhs_offset to use the named variable offset
+							// Found it! Update rhs_offset to use the named variable offset
 						rhs_offset = named_offset;
 					}
 				}
@@ -11380,15 +11380,15 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		}
 
 		if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
-	// RHS is a reference - load pointer and dereference
+				// RHS is a reference - load pointer and dereference
 			X64Register ptr_reg = allocateRegisterWithSpilling();
 			emitMovFromFrame(ptr_reg, rhs_offset);  // Load the pointer
-	// Dereference to get the value
+				// Dereference to get the value
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
 		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
-	// Check if the value is already in a register
+				// Check if the value is already in a register
 			source_reg = rhs_reg.value();
 		} else {
 			if (is_floating_point_type(rhs_type)) {
@@ -11396,7 +11396,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				bool is_float = (rhs_type == TypeCategory::Float);
 				emitFloatMovFromFrame(source_reg, rhs_offset, is_float);
 			} else {
-		// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
+					// Load from RHS stack location: source (sized stack slot) -> dest (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{source_reg, 64, false},  // dest: 64-bit register
 					SizedStackSlot{rhs_offset, op.rhs.size_in_bits.value, isSignedType(rhs_type)}  // source: sized stack slot
@@ -11404,53 +11404,53 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			}
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
-	// RHS is an immediate value
+			// RHS is an immediate value
 		unsigned long long rhs_value = *ull_val;
-	// MOV RAX, imm64
+			// MOV RAX, imm64
 		emitMovImm64(X64Register::RAX, rhs_value);
 	} else if (std::holds_alternative<double>(op.rhs.value)) {
-	// RHS is a floating-point immediate value
+			// RHS is a floating-point immediate value
 		double double_value = std::get<double>(op.rhs.value);
-	// Allocate an XMM register and load the double into it
+			// Allocate an XMM register and load the double into it
 		source_reg = allocateXMMRegisterWithSpilling();
-	// Convert double to uint64_t bit representation
+			// Convert double to uint64_t bit representation
 		uint64_t bits;
 		std::memcpy(&bits, &double_value, sizeof(bits));
-	// Load bits into a general-purpose register first
+			// Load bits into a general-purpose register first
 		emitMovImm64(X64Register::RAX, bits);
-	// Move from RAX to XMM register using movq instruction
+			// Move from RAX to XMM register using movq instruction
 		emitMovqGprToXmm(X64Register::RAX, source_reg);
 	}
 
-	// Store source register to LHS stack location
-	// Check if LHS is a reference parameter that needs dereferencing
+		// Store source register to LHS stack location
+		// Check if LHS is a reference parameter that needs dereferencing
 	auto ref_info = getIndirectStackInfo(lhs_offset);
 	if (ref_info.has_value()) {
-	// LHS is a reference - need to dereference it before storing
-	// First, load the pointer (reference address) into a temporary register
+			// LHS is a reference - need to dereference it before storing
+			// First, load the pointer (reference address) into a temporary register
 		X64Register ptr_reg = allocateRegisterWithSpilling();
 		auto load_ptr = generatePtrMovFromFrame(ptr_reg, lhs_offset);
 		textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(), load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
 
-	// Now store the value to the address pointed to by ptr_reg
+			// Now store the value to the address pointed to by ptr_reg
 		int value_size_bits = ref_info->value_size_bits.value;
 		int size_bytes = value_size_bits / 8;
 
 		if (is_floating_point_type(rhs_type)) {
-	// For floating-point, use SSE store instruction helper
+				// For floating-point, use SSE store instruction helper
 			bool is_float = (rhs_type == TypeCategory::Float);
 			auto store_inst = generateFloatMovToMemory(source_reg, ptr_reg, is_float);
 			textSectionData.insert(textSectionData.end(), store_inst.op_codes.begin(),
 								   store_inst.op_codes.begin() + store_inst.size_in_bytes);
 		} else {
-	// For integer types, use the existing emitStoreToMemory helper
+				// For integer types, use the existing emitStoreToMemory helper
 			emitStoreToMemory(textSectionData, source_reg, ptr_reg, 0, size_bytes);
 		}
 
-	// Release the pointer register
+			// Release the pointer register
 		regAlloc.release(ptr_reg);
 	} else {
-	// Normal (non-reference) assignment - store directly to stack location
+			// Normal (non-reference) assignment - store directly to stack location
 		if (is_floating_point_type(rhs_type)) {
 			bool is_float = (rhs_type == TypeCategory::Float);
 			emitFloatMovToFrame(source_reg, lhs_offset, is_float);
@@ -11459,7 +11459,7 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				SizedRegister{source_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{lhs_offset, op.lhs.size_in_bits.value, isSignedType(lhs_type)}  // dest: sized stack slot
 			);
-	// Clear any stale register associations for this stack offset
+				// Clear any stale register associations for this stack offset
 			regAlloc.clearStackVariableAssociations(lhs_offset);
 		}
 	}
@@ -11467,28 +11467,28 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleLabel(const IrInstruction& instruction) {
-	// Label instruction: mark a position in code for jumps
+		// Label instruction: mark a position in code for jumps
 	assert(instruction.hasTypedPayload() && "Label instruction must use typed payload");
 	const auto& label_op = instruction.getTypedPayload<LabelOp>();
 	std::string_view label_name = StringTable::getStringView(label_op.getLabelName());  // Phase 4: Use helper
 
-	// Store the current code offset for this label
+		// Store the current code offset for this label
 	uint32_t label_offset = static_cast<uint32_t>(textSectionData.size());
 
-	// Track label positions for later resolution
+		// Track label positions for later resolution
 	std::string label_name_str(label_name);
 	if (label_positions_.find(StringTable::getOrInternStringHandle(label_name_str)) == label_positions_.end()) {
 		label_positions_[StringTable::getOrInternStringHandle(label_name_str)] = label_offset;
 	}
 
-	// Flush at the label entry before any bridge code uses scratch registers.
-	// Jumps target the label offset recorded above, so these spills remain part of
-	// the label entry path instead of being skipped by control-flow transfers.
+		// Flush at the label entry before any bridge code uses scratch registers.
+		// Jumps target the label offset recorded above, so these spills remain part of
+		// the label entry path instead of being skipped by control-flow transfers.
 	flushAllDirtyRegisters();
 
-	// Release all register allocations at merge points (labels).
-	// Different execution paths may have left different values in registers,
-	// so we can't trust that a register still holds a particular variable.
+		// Release all register allocations at merge points (labels).
+		// Different execution paths may have left different values in registers,
+		// so we can't trust that a register still holds a particular variable.
 	regAlloc.reset();
 
 	if constexpr (!std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -11536,11 +11536,11 @@ void IrToObjConverter<TWriterClass>::handleLabel(const IrInstruction& instructio
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleBranch(const IrInstruction& instruction) {
-	// Unconditional branch: jmp label
+		// Unconditional branch: jmp label
 	assert(instruction.hasTypedPayload() && "Branch instruction must use typed payload");
 	const auto& branch_op = instruction.getTypedPayload<BranchOp>();
 	StringHandle target_label = branch_op.getTargetLabel();
-	// Flush all dirty registers before branching
+		// Flush all dirty registers before branching
 	flushAllDirtyRegisters();
 
 	emitJmpToLabel(target_label);
@@ -11548,88 +11548,88 @@ void IrToObjConverter<TWriterClass>::handleBranch(const IrInstruction& instructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleLoopBegin(const IrInstruction& instruction) {
-	// LoopBegin marks the start of a loop and provides labels for break/continue
+		// LoopBegin marks the start of a loop and provides labels for break/continue
 	assert(instruction.hasTypedPayload() && "LoopBegin must use typed payload");
 	const auto& op = instruction.getTypedPayload<LoopBeginOp>();
-	//StringHandle loop_start_label = op.loop_start_label;
+		//StringHandle loop_start_label = op.loop_start_label;
 	StringHandle loop_end_label = op.loop_end_label;
 	StringHandle loop_increment_label = op.loop_increment_label;
 
-	// Push loop context onto stack for break/continue handling
+		// Push loop context onto stack for break/continue handling
 	loop_context_stack_.push_back({loop_end_label,
 								   loop_increment_label});
 
-	// Flush all dirty registers at loop boundaries
+		// Flush all dirty registers at loop boundaries
 	flushAllDirtyRegisters();
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleLoopEnd(const IrInstruction& instruction) {
-	// LoopEnd marks the end of a loop
+		// LoopEnd marks the end of a loop
 	assert(instruction.getOperandCount() == 0 && "LoopEnd must have 0 operands");
 
-	// Pop loop context from stack
+		// Pop loop context from stack
 	if (!loop_context_stack_.empty()) {
 		loop_context_stack_.pop_back();
 	}
 
-	// Flush all dirty registers at loop boundaries
+		// Flush all dirty registers at loop boundaries
 	flushAllDirtyRegisters();
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleBreak(const IrInstruction& instruction) {
-	// Break: unconditional jump to loop end label
+		// Break: unconditional jump to loop end label
 	assert(instruction.getOperandCount() == 0 && "Break must have 0 operands");
 	assert(!loop_context_stack_.empty() && "Break must be inside a loop");
 
 	auto& loop_context = loop_context_stack_.back();
 	auto target_label = loop_context.loop_end_label;
 
-	// Flush all dirty registers before branching
+		// Flush all dirty registers before branching
 	flushAllDirtyRegisters();
 
-	// Generate JMP instruction to loop end
+		// Generate JMP instruction to loop end
 	textSectionData.push_back(0xE9); // JMP rel32
 
-	// Store position where we need to patch the offset
+		// Store position where we need to patch the offset
 	uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
 
-	// Add placeholder offset (will be patched later)
+		// Add placeholder offset (will be patched later)
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-	// Record this branch for later patching
+		// Record this branch for later patching
 	pending_branches_.push_back({target_label, patch_position});
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleContinue(const IrInstruction& instruction) {
-	// Continue: unconditional jump to loop increment label
+		// Continue: unconditional jump to loop increment label
 	assert(instruction.getOperandCount() == 0 && "Continue must have 0 operands");
 	assert(!loop_context_stack_.empty() && "Continue must be inside a loop");
 
 	auto& loop_context = loop_context_stack_.back();
 	auto target_label = loop_context.loop_increment_label;
 
-	// Flush all dirty registers before branching
+		// Flush all dirty registers before branching
 	flushAllDirtyRegisters();
 
-	// Generate JMP instruction to loop increment
+		// Generate JMP instruction to loop increment
 	textSectionData.push_back(0xE9); // JMP rel32
 
-	// Store position where we need to patch the offset
+		// Store position where we need to patch the offset
 	uint32_t patch_position = static_cast<uint32_t>(textSectionData.size());
 
-	// Add placeholder offset (will be patched later)
+		// Add placeholder offset (will be patched later)
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-	// Record this branch for later patching
+		// Record this branch for later patching
 	pending_branches_.push_back({target_label, patch_position});
 }
 
@@ -11637,8 +11637,8 @@ template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& instruction) {
 	assert(instruction.hasTypedPayload() && "ArrayAccess without typed payload - should not happen");
 
-	// Flush all registers to memory before array access
-	// This ensures any previously computed values in registers are saved
+		// Flush all registers to memory before array access
+		// This ensures any previously computed values in registers are saved
 	flushAllDirtyRegisters();
 
 	const ArrayAccessOp& op = std::any_cast<const ArrayAccessOp&>(instruction.getTypedPayload());
@@ -11651,10 +11651,10 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 	bool is_float = (element_type == TypeCategory::Float);
 	bool is_struct = is_struct_type(element_type);
 
-	// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
-	// For struct types, always use LEA (original behavior)
-	// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
-	// For now, only optimize struct types to avoid breaking existing code
+		// Phase 5 Optimization: Use value category metadata for LEA vs MOV decision
+		// For struct types, always use LEA (original behavior)
+		// For primitive lvalues, we could use LEA but need to handle dereferencing correctly
+		// For now, only optimize struct types to avoid breaking existing code
 	bool result_is_lvalue = isTempVarLValue(result_var);
 	bool optimize_lea = is_struct;  // Conservative: only struct types for now
 
@@ -11662,11 +11662,11 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 					 "ArrayAccess: is_struct={} is_lvalue={} optimize_lea={}",
 					 is_struct, result_is_lvalue, optimize_lea);
 
-	// For floating-point, we'll use XMM0 for the loaded value
-	// For integers and struct addresses, we allocate a general-purpose register
+		// For floating-point, we'll use XMM0 for the loaded value
+		// For integers and struct addresses, we allocate a general-purpose register
 	X64Register base_reg = allocateRegisterWithSpilling();
 
-	// Get the array base address (from stack or register)
+		// Get the array base address (from stack or register)
 	int64_t array_base_offset = 0;
 	bool is_array_pointer = op.is_pointer_to_array;	// Use flag from codegen
 	StringHandle array_name_handle;
@@ -11681,65 +11681,65 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		is_array_pointer = true;	 // TempVar always means pointer
 	}
 
-	// Check if this is a member array access (object.member format)
+		// Check if this is a member array access (object.member format)
 	bool is_member_array = false;
 	std::string_view object_name;
 	std::string_view member_name;
 	int64_t member_offset = op.member_offset;  // Get from payload
 
-	// Check if the object (not the array) is a pointer (like 'this' or a reference)
+		// Check if the object (not the array) is a pointer (like 'this' or a reference)
 	bool is_object_pointer = false;
 
 	if (!array_name_view.empty()) {
 		is_member_array = array_name_view.find('.') != std::string::npos;
 		if (is_member_array) {
-	// Parse object.member
+				// Parse object.member
 			size_t dot_pos = array_name_view.find('.');
 			object_name = array_name_view.substr(0, dot_pos);
 			member_name = array_name_view.substr(dot_pos + 1);
-	// Update array_base_offset to point to the object
+				// Update array_base_offset to point to the object
 			StringHandle object_name_handle = StringTable::getOrInternStringHandle(object_name);
 			array_base_offset = variable_scopes.back().variables[object_name_handle].offset;
 
-	// Check if object is a pointer (reference parameter or 'this' - both need pointer dereferencing)
-	// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				// Check if object is a pointer (reference parameter or 'this' - both need pointer dereferencing)
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			if (isPointerBaseStorage(array_base_offset)) {
 				is_object_pointer = true;
 			}
 		} else {
-	// Regular array/pointer - get offset directly
+				// Regular array/pointer - get offset directly
 			array_base_offset = variable_scopes.back().variables[array_name_handle].offset;
 		}
 	}
 
-	// Get the result storage location
+		// Get the result storage location
 	int64_t result_offset = getStackOffsetFromTempVar(result_var);
 
-	// Handle index value from TypedValue
+		// Handle index value from TypedValue
 	if (std::holds_alternative<unsigned long long>(op.index.value)) {
-	// Constant index
+			// Constant index
 		uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
 		if (is_array_pointer || is_object_pointer) {
-	// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
-	// Load pointer and compute address
+				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
+				// Load pointer and compute address
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-	// Add member offset + index offset to pointer
-	// For is_object_pointer: total offset = member_offset + (index * element_size)
-	// For is_array_pointer: total offset = index * element_size (member_offset is 0)
+				// Add member offset + index offset to pointer
+				// For is_object_pointer: total offset = member_offset + (index * element_size)
+				// For is_array_pointer: total offset = index * element_size (member_offset is 0)
 			int64_t offset_bytes = member_offset + (index_value * element_size_bytes);
 			if (offset_bytes != 0) {
 				emitAddImmToReg(textSectionData, base_reg, offset_bytes);
 			}
 
-	// Phase 5: Use optimize_lea for LEA vs MOV decision
-	// For struct types or lvalues, keep the address in base_reg
-	// For primitive prvalues, load the value
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
 			if (!optimize_lea) {
-		// Load value from [base_reg] with appropriate instruction
+					// Load value from [base_reg] with appropriate instruction
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
 				} else {
@@ -11747,15 +11747,15 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				}
 			}
 		} else {
-	// Array is a regular variable - use direct stack offset
+				// Array is a regular variable - use direct stack offset
 			int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
-	// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
 			if (optimize_lea) {
-		// For struct types or lvalues, compute the address using LEA
+					// For struct types or lvalues, compute the address using LEA
 				emitLEAFromFrame(textSectionData, base_reg, element_offset);
 			} else {
-		// Load from [RBP + offset] with appropriate instruction
+					// Load from [RBP + offset] with appropriate instruction
 				if (is_floating_point) {
 					emitFloatMovFromFrame(X64Register::XMM0, static_cast<int32_t>(element_offset), is_float);
 				} else {
@@ -11766,27 +11766,27 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 		}
 	} else if (std::holds_alternative<TempVar>(op.index.value)) {
-	// Variable index - need to compute address at runtime
+			// Variable index - need to compute address at runtime
 		TempVar index_var = std::get<TempVar>(op.index.value);
 		int64_t index_var_offset = getStackOffsetFromTempVar(index_var);
 
-	// Allocate a second register for the index, excluding base_reg to avoid conflicts
+			// Allocate a second register for the index, excluding base_reg to avoid conflicts
 		X64Register index_reg = allocateRegisterWithSpilling(base_reg);
 		FLASH_LOG_FORMAT(Codegen, Debug, "ArrayAccess TempVar: base_reg={}, index_reg={}, array_base_offset={}, index_var_offset={}",
 						 static_cast<int>(base_reg), static_cast<int>(index_reg), array_base_offset, index_var_offset);
 
 		if (is_array_pointer || is_object_pointer) {
-	// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
+				// Array is a pointer/temp var, or member array of a pointer object (like this.values[i])
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-	// Add member offset for pointer objects (e.g., this->member)
+				// Add member offset for pointer objects (e.g., this->member)
 			if (is_object_pointer && member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
 
-	// Load index with proper sign extension based on index type
+				// Load index with proper sign extension based on index type
 			bool is_signed = isSignedType(op.index.typeEnum());
 			emitMovFromFrameSized(
 				SizedRegister{index_reg, 64, false},
@@ -11794,9 +11794,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 			emitAddRegs(textSectionData, base_reg, index_reg);
 
-	// Phase 5: Use optimize_lea for LEA vs MOV decision
-	// For struct types or lvalues, keep the address in base_reg
-	// For primitive prvalues, load the value
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
 			if (!optimize_lea) {
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
@@ -11805,8 +11805,8 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 				}
 			}
 		} else {
-	// Array is a regular variable
-	// Load index with proper sign extension based on index type
+				// Array is a regular variable
+				// Load index with proper sign extension based on index type
 			bool is_signed = isSignedType(op.index.typeEnum());
 			emitMovFromFrameSized(
 				SizedRegister{index_reg, 64, false},
@@ -11817,9 +11817,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 			emitAddRegs(textSectionData, base_reg, index_reg);
 
-	// Phase 5: Use optimize_lea for LEA vs MOV decision
-	// For struct types or lvalues, keep the address in base_reg
-	// For primitive prvalues, load the value
+				// Phase 5: Use optimize_lea for LEA vs MOV decision
+				// For struct types or lvalues, keep the address in base_reg
+				// For primitive prvalues, load the value
 			if (!optimize_lea) {
 				if (is_floating_point) {
 					emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
@@ -11829,25 +11829,25 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 		}
 
-	// Release the index register
+			// Release the index register
 		regAlloc.release(index_reg);
 	} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-	// Variable index stored as identifier name
+			// Variable index stored as identifier name
 		StringHandle index_var_name_handle = std::get<StringHandle>(op.index.value);
 		auto index_it = variable_scopes.back().variables.find(index_var_name_handle);
 		assert(index_it != variable_scopes.back().variables.end() && "Index variable not found");
 		int64_t index_var_offset = index_it->second.offset;
 
-	// Allocate a second register for the index
+			// Allocate a second register for the index
 		X64Register index_reg = allocateRegisterWithSpilling();
 
 		if (is_array_pointer || is_object_pointer) {
-	// Array is a pointer/temp var, or member array of a pointer object
+				// Array is a pointer/temp var, or member array of a pointer object
 			auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, array_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-	// Add member offset for pointer objects (e.g., this->member)
+				// Add member offset for pointer objects (e.g., this->member)
 			if (is_object_pointer && member_offset != 0) {
 				emitAddImmToReg(textSectionData, base_reg, member_offset);
 			}
@@ -11856,7 +11856,7 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			emitLEAFromFrame(textSectionData, base_reg, combined_offset);
 		}
 
-	// Load index into index_reg with proper sign extension based on index type
+			// Load index into index_reg with proper sign extension based on index type
 		bool is_signed = isSignedType(op.index.typeEnum());
 		emitMovFromFrameSized(
 			SizedRegister{index_reg, 64, false},
@@ -11865,9 +11865,9 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		emitMultiplyRegByElementSize(textSectionData, index_reg, element_size_bytes);
 		emitAddRegs(textSectionData, base_reg, index_reg);
 
-	// Phase 5: Use optimize_lea for LEA vs MOV decision
-	// For struct types or lvalues, keep the address in base_reg
-	// For primitive prvalues, load the value
+			// Phase 5: Use optimize_lea for LEA vs MOV decision
+			// For struct types or lvalues, keep the address in base_reg
+			// For primitive prvalues, load the value
 		if (!optimize_lea) {
 			if (is_floating_point) {
 				emitFloatLoadFromAddressInReg(textSectionData, X64Register::XMM0, base_reg, is_float);
@@ -11876,11 +11876,11 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 			}
 		}
 
-	// Release the index register
+			// Release the index register
 		regAlloc.release(index_reg);
 	}
 
-	// Store result in temp variable's stack location
+		// Store result in temp variable's stack location
 	if (is_floating_point) {
 		emitFloatMovToFrame(X64Register::XMM0, static_cast<int32_t>(result_offset), is_float);
 	} else {
@@ -11890,22 +11890,22 @@ void IrToObjConverter<TWriterClass>::handleArrayAccess(const IrInstruction& inst
 		);
 	}
 
-	// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
-	// This allows subsequent operations to properly handle the address
+		// Phase 5: Mark the result temp var as holding a pointer/reference when using LEA
+		// This allows subsequent operations to properly handle the address
 	if (optimize_lea) {
 		setReferenceInfo(result_offset, TypeIndex{0, element_type}, element_size_bits, false, result_var);
 	}
 
-	// Release the base register
+		// Release the base register
 	regAlloc.release(base_reg);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstruction& instruction) {
-	// Flush dirty registers to ensure index values are in memory
+		// Flush dirty registers to ensure index values are in memory
 	flushAllDirtyRegisters();
 
-	// Try typed payload first
+		// Try typed payload first
 	if (instruction.hasTypedPayload()) {
 		const ArrayElementAddressOp& op = std::any_cast<const ArrayElementAddressOp&>(instruction.getTypedPayload());
 
@@ -11914,7 +11914,7 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 		int element_size_bytes = element_size_bits / 8;
 		bool is_pointer_to_array = op.is_pointer_to_array;
 
-	// Get the array base address
+			// Get the array base address
 		int64_t array_base_offset = 0;
 		if (const auto* string = std::get_if<StringHandle>(&op.array)) {
 			StringHandle array_name_handle = *string;
@@ -11924,29 +11924,29 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 			array_base_offset = getStackOffsetFromTempVar(array_temp);
 		}
 
-	// Get result storage location
+			// Get result storage location
 		int64_t result_offset = getStackOffsetFromTempVar(result_var);
 
-	// Handle constant or variable index
+			// Handle constant or variable index
 		if (std::holds_alternative<unsigned long long>(op.index.value)) {
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
 			if (is_pointer_to_array) {
-		// Array is a pointer/reference - load it first, then add offset
+					// Array is a pointer/reference - load it first, then add offset
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-		// Add element offset to pointer
+					// Add element offset to pointer
 				int64_t offset_bytes = index_value * element_size_bytes;
 				if (offset_bytes != 0) {
 					emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 				}
 			} else {
-		// Array is a regular variable - use direct stack offset
+					// Array is a regular variable - use direct stack offset
 				int64_t element_offset = array_base_offset + (index_value * element_size_bytes);
 
-		// LEA RAX, [RBP + element_offset]
+					// LEA RAX, [RBP + element_offset]
 				textSectionData.push_back(0x48); // REX.W
 				textSectionData.push_back(0x8D); // LEA r64, m
 
@@ -11966,29 +11966,29 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 			TempVar index_var = std::get<TempVar>(op.index.value);
 			int64_t index_offset = getStackOffsetFromTempVar(index_var);
 
-	// Load index: source (sized stack slot) -> dest (64-bit RCX)
+				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},	// dest: 64-bit register
 				SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 			);
 
-	// Multiply index by element size
+				// Multiply index by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
 			if (is_pointer_to_array) {
-		// Array is a pointer/reference - load the pointer value first
+					// Array is a pointer/reference - load the pointer value first
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			} else {
-	// Load address of array base into RAX
+				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
 			}
 
-	// Add offset to get final address
+				// Add offset to get final address
 			emitAddRAXRCX(textSectionData);
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-	// Handle variable name (StringHandle) as index
+				// Handle variable name (StringHandle) as index
 			StringHandle index_var_name = std::get<StringHandle>(op.index.value);
 			auto it = variable_scopes.back().variables.find(index_var_name);
 			if (it == variable_scopes.back().variables.end()) {
@@ -11997,49 +11997,49 @@ void IrToObjConverter<TWriterClass>::handleArrayElementAddress(const IrInstructi
 			}
 			int64_t index_offset = it->second.offset;
 
-	// Load index: source (sized stack slot) -> dest (64-bit RCX)
+				// Load index: source (sized stack slot) -> dest (64-bit RCX)
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},	// dest: 64-bit register
 				SizedStackSlot{static_cast<int32_t>(index_offset), op.index.size_in_bits.value, isSignedType(op.index.typeEnum())}  // source: index from stack
 			);
 
-	// Multiply index by element size
+				// Multiply index by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
 			if (is_pointer_to_array) {
-		// Array is a pointer/reference - load the pointer value first
+					// Array is a pointer/reference - load the pointer value first
 				auto load_ptr_opcodes = generatePtrMovFromFrame(X64Register::RAX, array_base_offset);
 				textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 									   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 			} else {
-	// Load address of array base into RAX
+				// Load address of array base into RAX
 				emitLeaFromFrame(X64Register::RAX, array_base_offset);
 			}
 
-	// Add offset to get final address
+				// Add offset to get final address
 			emitAddRAXRCX(textSectionData);
 		}
 
-	// Store the computed address to result_var
+			// Store the computed address to result_var
 		auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 		textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 							   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
 		return;
 	}
 
-	// Legacy operand-based format
-	// All array element address now uses typed payload - no legacy code path
+		// Legacy operand-based format
+		// All array element address now uses typed payload - no legacy code path
 	throw InternalError("ArrayElementAddress without typed payload - should not happen");
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instruction) {
-	// Ensure all computed values (especially indices from expressions) are spilled to stack
-	// before we load them. This is necessary because variable indices (TempVars) may still
-	// be in registers and not yet written to their stack locations.
+		// Ensure all computed values (especially indices from expressions) are spilled to stack
+		// before we load them. This is necessary because variable indices (TempVars) may still
+		// be in registers and not yet written to their stack locations.
 	flushAllDirtyRegisters();
 
-	// Try typed payload first
+		// Try typed payload first
 	if (instruction.hasTypedPayload()) {
 		const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(instruction.getTypedPayload());
 
@@ -12047,7 +12047,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		int element_size_bytes = element_size_bits / 8;
 		bool is_pointer_to_array = op.is_pointer_to_array;
 
-	// Get the array base address
+			// Get the array base address
 		StringHandle array_name_handle;
 		std::string_view array_name_view;
 		int64_t array_base_offset = 0;
@@ -12057,37 +12057,37 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			array_name_handle = *string_ptr;
 			array_name_view = StringTable::getStringView(array_name_handle);
 		} else if (const auto* temp_var = std::get_if<TempVar>(&op.array)) {
-	// Array is a TempVar (e.g., from member_access for struct.array_member)
-	// The TempVar holds a pointer to the array base
+				// Array is a TempVar (e.g., from member_access for struct.array_member)
+				// The TempVar holds a pointer to the array base
 			TempVar array_temp = *temp_var;
 			array_base_offset = getStackOffsetFromTempVar(array_temp);
 			array_is_tempvar = true;
 		}
 
-	// Check if this is a member array access (object.member format)
+			// Check if this is a member array access (object.member format)
 		bool is_member_array = array_name_view.find('.') != std::string::npos;
 		std::string_view object_name;
 		std::string_view member_name;
 		int64_t member_offset = op.member_offset;  // Get from payload
 
 		if (is_member_array) {
-	// Parse object.member
+				// Parse object.member
 			size_t dot_pos = array_name_view.find('.');
 			object_name = array_name_view.substr(0, dot_pos);
 			member_name = array_name_view.substr(dot_pos + 1);
 		}
 
-	// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
+			// Get the value to store into RDX or XMM0 (we use RCX for index, RAX for address)
 		bool is_float_store = is_floating_point_type(op.elementType());
 
 		if (std::holds_alternative<unsigned long long>(op.value.value)) {
-	// Constant value
+				// Constant value
 			uint64_t value = std::get<unsigned long long>(op.value.value);
 			if (is_float_store) {
-		// For float constants, we need to load into XMM0
-		// First load the bit pattern into RDX, then move to XMM0
+					// For float constants, we need to load into XMM0
+					// First load the bit pattern into RDX, then move to XMM0
 				emitMovImm64(X64Register::RDX, value);
-		// MOVD XMM0, RDX (0x66 0x48 0x0F 0x6E 0xC2)
+					// MOVD XMM0, RDX (0x66 0x48 0x0F 0x6E 0xC2)
 				textSectionData.push_back(0x66);
 				textSectionData.push_back(0x48);
 				textSectionData.push_back(0x0F);
@@ -12097,40 +12097,40 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitMovImm64(X64Register::RDX, value);
 			}
 		} else if (std::holds_alternative<TempVar>(op.value.value)) {
-	// Value from temp var: check if already in register, otherwise load from stack
+				// Value from temp var: check if already in register, otherwise load from stack
 			TempVar value_var = std::get<TempVar>(op.value.value);
 			int64_t value_offset = getStackOffsetFromTempVar(value_var, op.value.size_in_bits.value);
 
 			if (is_float_store) {
-		// For floats, check if already in XMM register, otherwise load from stack
+					// For floats, check if already in XMM register, otherwise load from stack
 				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-		// Value is already in a register
-		// If it's an XMM register and not XMM0, move it
+						// Value is already in a register
+						// If it's an XMM register and not XMM0, move it
 					if (value_reg.value() != X64Register::XMM0) {
 						bool is_double = (op.value.size_in_bits == SizeInBits{64});
 						emitFloatMovRegToReg(X64Register::XMM0, value_reg.value(), is_double);
 					}
 				} else {
-		// Load float from stack into XMM0
+						// Load float from stack into XMM0
 					bool is_double = (op.value.size_in_bits == SizeInBits{64});
 					emitFloatMovFromFrame(X64Register::XMM0, value_offset, !is_double);
 				}
 			} else {
-		// Integer/pointer value
-		// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
-		// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
+					// Integer/pointer value
+					// For pointer array elements, always use element_size_bits (64) not op.value.size_in_bits
+					// This ensures pointers are loaded as 64-bit values, not sign-extended 32-bit ints
 				int actual_size_bits = element_size_bits;
 
-		// Check if value is already in a register
+					// Check if value is already in a register
 				if (auto value_reg = regAlloc.tryGetStackVariableRegister(value_offset); value_reg.has_value()) {
-		// Value is already in a register - move it to RDX if not already there
+						// Value is already in a register - move it to RDX if not already there
 					if (value_reg.value() != X64Register::RDX) {
 						emitMovRegToReg(value_reg.value(), X64Register::RDX, actual_size_bits);
 					}
-		// If already in RDX, no move needed
+						// If already in RDX, no move needed
 				} else {
-		// Not in register - load from stack
-		// Use element_size_bits to ensure pointers are loaded correctly as 64-bit
+						// Not in register - load from stack
+						// Use element_size_bits to ensure pointers are loaded correctly as 64-bit
 					emitMovFromFrameSized(
 						SizedRegister{X64Register::RDX, 64, false},	// dest: 64-bit register
 						SizedStackSlot{static_cast<int32_t>(value_offset), actual_size_bits, false}	// source: Never sign-extend pointers!
@@ -12138,7 +12138,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				}
 			}
 		} else if (std::holds_alternative<StringHandle>(op.value.value)) {
-	// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
+				// Value from named variable (e.g., array_store arr, 0, %pa where pa is a pointer variable)
 			StringHandle value_name = std::get<StringHandle>(op.value.value);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(value_name);
@@ -12168,11 +12168,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 		}
 
-	// Get array base offset (only needed if array is StringHandle, not TempVar)
+			// Get array base offset (only needed if array is StringHandle, not TempVar)
 		if (!array_is_tempvar) {
 			StringHandle lookup_name_handle = is_member_array ? StringTable::getOrInternStringHandle(object_name) : array_name_handle;
 			array_base_offset = variable_scopes.back().variables[lookup_name_handle].offset;
-	// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
+				// Fallback: if not found (offset == INT_MIN), try matching by string to tolerate handle mismatches
 			if (array_base_offset == INT_MIN) {
 				for (const auto& [handle, info] : variable_scopes.back().variables) {
 					if (StringTable::getStringView(handle) == (is_member_array ? object_name : array_name_view)) {
@@ -12183,8 +12183,8 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 		}
 
-	// Check if the object (not the array) is a pointer (reference parameter or 'this')
-	// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+			// Check if the object (not the array) is a pointer (reference parameter or 'this')
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 		bool is_object_pointer = false;
 		if (is_member_array) {
 			if (isPointerBaseStorage(array_base_offset)) {
@@ -12192,8 +12192,8 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			}
 		}
 
-	// When array is from a TempVar (member_access result), it holds a pointer to the array
-	// We need to treat it like is_pointer_to_array case
+			// When array is from a TempVar (member_access result), it holds a pointer to the array
+			// We need to treat it like is_pointer_to_array case
 		if (array_is_tempvar) {
 			is_pointer_to_array = true;
 		}
@@ -12202,22 +12202,22 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 						 "ArrayStore: is_member_array={}, object_name='{}', is_object_pointer={}, is_pointer_to_array={}, array_is_tempvar={}, array_base_offset={}, member_offset={}",
 						 is_member_array, (is_member_array ? object_name : "N/A"), is_object_pointer, is_pointer_to_array, array_is_tempvar, array_base_offset, member_offset);
 
-	// Handle constant vs variable index
+			// Handle constant vs variable index
 		if (std::holds_alternative<unsigned long long>(op.index.value)) {
-	// Constant index
+				// Constant index
 			uint64_t index_value = std::get<unsigned long long>(op.index.value);
 
 			if (is_pointer_to_array) {
-		// Load the pointer value first
+					// Load the pointer value first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
-		// Add offset to pointer: ADD RAX, (index * element_size)
+					// Add offset to pointer: ADD RAX, (index * element_size)
 				int64_t offset_bytes = index_value * element_size_bytes;
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset_bytes);
 
-		// Store to [RAX] with appropriate size
+					// Store to [RAX] with appropriate size
 				if (is_float_store) {
-		// MOVSS/MOVSD [RAX], XMM0
+						// MOVSS/MOVSD [RAX], XMM0
 					bool is_double = (element_size_bits == 64);
 					if (is_double) {
 						textSectionData.push_back(0xF2);	 // MOVSD prefix
@@ -12231,11 +12231,11 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				}
 			} else if (is_object_pointer) {
-		// Member array of a pointer object (like this.values[i])
-		// Load the object pointer first
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
 
-		// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
+					// Add member offset + index offset: ADD RAX, (member_offset + index * element_size)
 				int64_t total_offset = member_offset + (index_value * element_size_bytes);
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
@@ -12244,9 +12244,9 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 
 				emitAddImmToReg(textSectionData, X64Register::RAX, total_offset);
 
-		// Store to [RAX] with appropriate size
+					// Store to [RAX] with appropriate size
 				if (is_float_store) {
-		// MOVSS/MOVSD [RAX], XMM0
+						// MOVSS/MOVSD [RAX], XMM0
 					bool is_double = (element_size_bits == 64);
 					if (is_double) {
 						textSectionData.push_back(0xF2);	 // MOVSD prefix
@@ -12260,50 +12260,50 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 					emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 				}
 			} else {
-		// Regular array - direct stack access
+					// Regular array - direct stack access
 				int64_t element_offset = array_base_offset + member_offset + (index_value * element_size_bytes);
 
-		// Store RDX to [RBP + offset] with appropriate size
+					// Store RDX to [RBP + offset] with appropriate size
 				emitStoreToFrame(textSectionData, X64Register::RDX, element_offset, element_size_bytes);
 			}
 		} else if (std::holds_alternative<TempVar>(op.index.value)) {
-	// Variable index - compute address at runtime
+				// Variable index - compute address at runtime
 			TempVar index_var = std::get<TempVar>(op.index.value);
 			int64_t index_var_offset = getStackOffsetFromTempVar(index_var, op.index.size_in_bits.value);
 
-	// Load index into RCX (value is already in RDX)
+				// Load index into RCX (value is already in RDX)
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, op.index.size_in_bits.value);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
 			if (is_pointer_to_array) {
-		// Load pointer into RAX
+					// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-		// RAX += RCX (add index offset to pointer)
+					// RAX += RCX (add index offset to pointer)
 				emitAddRAXRCX(textSectionData);
 			} else if (is_object_pointer) {
-		// Member array of a pointer object (like this.values[i])
-		// Load the object pointer first
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-		// Add member offset: ADD RAX, member_offset
+					// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "ArrayStore (var index): object_pointer path, base_offset={}, member_offset={}, elem_size={}",
 									 array_base_offset, member_offset, element_size_bytes);
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-		// RAX += RCX (add index offset)
+					// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
-		// LEA RAX, [RBP + array_base_offset]
+					// LEA RAX, [RBP + array_base_offset]
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, X64Register::RAX, combined_offset);
-		// RAX += RCX
+					// RAX += RCX
 				emitAddRAXRCX(textSectionData);
 			}
 
-	// Store to [RAX]
+				// Store to [RAX]
 			if (is_float_store) {
-		// MOVSS/MOVSD [RAX], XMM0
+					// MOVSS/MOVSD [RAX], XMM0
 				bool is_double = (element_size_bits == 64);
 				if (is_double) {
 					textSectionData.push_back(0xF2);	 // MOVSD prefix
@@ -12317,7 +12317,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 				emitStoreToMemory(textSectionData, X64Register::RDX, X64Register::RAX, 0, element_size_bytes);
 			}
 		} else if (std::holds_alternative<StringHandle>(op.index.value)) {
-	// Index is a named variable - get its stack offset
+				// Index is a named variable - get its stack offset
 			StringHandle index_handle = std::get<StringHandle>(op.index.value);
 			auto it = variable_scopes.back().variables.find(index_handle);
 			if (it == variable_scopes.back().variables.end()) {
@@ -12327,36 +12327,36 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 			int64_t index_var_offset = it->second.offset;
 			int index_size_in_bits = it->second.size_in_bits.value;
 
-	// Load index into RCX (value is already in RDX)
+				// Load index into RCX (value is already in RDX)
 			emitLoadIndexIntoRCX(textSectionData, index_var_offset, index_size_in_bits);
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
 			if (is_pointer_to_array) {
-		// Load pointer into RAX
+					// Load pointer into RAX
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-		// RAX += RCX (add index offset to pointer)
+					// RAX += RCX (add index offset to pointer)
 				emitAddRAXRCX(textSectionData);
 			} else if (is_object_pointer) {
-		// Member array of a pointer object (like this.values[i])
-		// Load the object pointer first
+					// Member array of a pointer object (like this.values[i])
+					// Load the object pointer first
 				emitPtrMovFromFrame(X64Register::RAX, array_base_offset);
-		// Add member offset: ADD RAX, member_offset
+					// Add member offset: ADD RAX, member_offset
 				if (member_offset != 0) {
 					emitAddImmToReg(textSectionData, X64Register::RAX, member_offset);
 				}
-		// RAX += RCX (add index offset)
+					// RAX += RCX (add index offset)
 				emitAddRAXRCX(textSectionData);
 			} else {
-		// LEA RAX, [RBP + array_base_offset]
+					// LEA RAX, [RBP + array_base_offset]
 				int64_t combined_offset = array_base_offset + member_offset;
 				emitLEAFromFrame(textSectionData, X64Register::RAX, combined_offset);
-		// RAX += RCX
+					// RAX += RCX
 				emitAddRAXRCX(textSectionData);
 			}
 
-	// Store to [RAX]
+				// Store to [RAX]
 			if (is_float_store) {
-		// MOVSS/MOVSD [RAX], XMM0
+					// MOVSS/MOVSD [RAX], XMM0
 				bool is_double = (element_size_bits == 64);
 				if (is_double) {
 					textSectionData.push_back(0xF2);	 // MOVSD prefix
@@ -12375,7 +12375,7 @@ void IrToObjConverter<TWriterClass>::handleArrayStore(const IrInstruction& instr
 		return;
 	}
 
-	// All array store now uses typed payload - no legacy code path
+		// All array store now uses typed payload - no legacy code path
 	throw InternalError("ArrayStore without typed payload - should not happen");
 }
 
@@ -12384,39 +12384,39 @@ void IrToObjConverter<TWriterClass>::handleStringLiteral(const IrInstruction& in
 	const StringLiteralOp& op = instruction.getTypedPayload<StringLiteralOp>();
 	TempVar result_var = std::get<TempVar>(op.result);
 
-	// Add string literal to .rdata and get symbol
+		// Add string literal to .rdata and get symbol
 	std::string_view symbol_name = writer.add_string_literal(op.content);
 	int64_t stack_offset = getStackOffsetFromTempVar(result_var);
 	variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = stack_offset;
 
-	// LEA RAX, [RIP + symbol] with relocation
+		// LEA RAX, [RIP + symbol] with relocation
 	uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 	writer.add_relocation(reloc_offset, symbol_name);
 
-	// Store address to stack (64-bit pointer)
+		// Store address to stack (64-bit pointer)
 	emitMovToFrame(X64Register::RAX, stack_offset, 64);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& instruction) {
-	// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
+		// MemberAccess: %result = member_access [MemberType][MemberSize] %object, member_name, offset
 
-	// Extract typed payload - all MemberAccess instructions use typed payloads
+		// Extract typed payload - all MemberAccess instructions use typed payloads
 	const MemberLoadOp& op = std::any_cast<const MemberLoadOp&>(instruction.getTypedPayload());
 
-	// Get the object's base stack offset or pointer
+		// Get the object's base stack offset or pointer
 	int32_t object_base_offset = 0;
 	bool is_pointer_access = false;	// true if object is 'this' or a reference parameter (both are pointers)
 	bool is_global_access = false;   // true if object is a global variable
 	StringHandle global_object_name;	 // name for global variable access
 	const StackVariableScope& current_scope = variable_scopes.back();
 
-	// Get object base offset
+		// Get object base offset
 	if (std::holds_alternative<StringHandle>(op.object)) {
 		StringHandle object_name_handle = std::get<StringHandle>(op.object);
 		auto it = current_scope.variables.find(object_name_handle);
 		if (it == current_scope.variables.end()) {
-	// Not found in local scope - check if it's a global variable
+				// Not found in local scope - check if it's a global variable
 			bool found_global = false;
 			for (const auto& global : global_variables_) {
 				if (global.name == object_name_handle) {
@@ -12434,8 +12434,8 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		} else {
 			object_base_offset = it->second.offset;
 
-	// Check if base is a pointer (reference, 'this', or pointer-to-member)
-	// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				// Check if base is a pointer (reference, 'this', or pointer-to-member)
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			bool in_indirect_storage = isPointerBaseStorage(object_base_offset);
 			FLASH_LOG(Codegen, Debug, "MemberAccess check: object='", StringTable::getStringView(object_name_handle),
 					  "' offset=", object_base_offset,
@@ -12446,41 +12446,41 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			}
 		}
 	} else {
-	// Nested case: object is the result of a previous member access
+			// Nested case: object is the result of a previous member access
 		auto object_temp = std::get<TempVar>(op.object);
 		object_base_offset = getStackOffsetFromTempVar(object_temp);
 
-	// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
+			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
 		if (isPointerBaseStorage(object_base_offset, object_temp) || op.is_pointer_to_member) {
 			is_pointer_access = true;
 		}
 	}
 
-	// Calculate the member's actual stack offset
+		// Calculate the member's actual stack offset
 	int32_t member_stack_offset;
 	if (is_pointer_access) {
 		member_stack_offset = 0;	 // Not used for pointer access
 	} else {
-	// For a struct at [RBP - 8] with member at offset 4: member is at [RBP - 8 + 4] = [RBP - 4]
+			// For a struct at [RBP - 8] with member at offset 4: member is at [RBP - 8 + 4] = [RBP - 4]
 		member_stack_offset = object_base_offset + op.offset;
 	}
 
-	// Calculate member size in bytes
+		// Calculate member size in bytes
 	int member_size_bytes = op.result.size_in_bits.value / 8;
-	// Silently skip access to 0-size struct members (function-only / empty structs).
-	// Two known cases:
-	//  (a) Type::UserDefined with unresolved metadata — a transitional state for typedefs.
-	//  (b) Type::Struct with size 0 — a struct that has only member functions and no data
-	//      members (e.g. struct Adder { int sum(int); }). The address is simply the base
-	//      pointer (offset 0), so no load instruction is needed.
+		// Silently skip access to 0-size struct members (function-only / empty structs).
+		// Two known cases:
+		//  (a) Type::UserDefined with unresolved metadata — a transitional state for typedefs.
+		//  (b) Type::Struct with size 0 — a struct that has only member functions and no data
+		//      members (e.g. struct Adder { int sum(int); }). The address is simply the base
+		//      pointer (offset 0), so no load instruction is needed.
 	bool unresolved_user_defined_member = (member_size_bytes == 0 &&
 										   isIrStructType(op.result.effectiveIrType()) &&
 										   (op.result.category() != TypeCategory::Struct || !op.result.type_index.is_valid()));
 
-	// Flush all dirty registers to ensure values are saved before allocating
+		// Flush all dirty registers to ensure values are saved before allocating
 	flushAllDirtyRegisters();
 
-	// Get the result variable's stack offset (needed for both paths)
+		// Get the result variable's stack offset (needed for both paths)
 	auto result_var = std::get<TempVar>(op.result.value);
 	int32_t result_offset;
 	StringHandle result_var_handle = StringTable::getOrInternStringHandle(result_var.name());
@@ -12488,20 +12488,20 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 	if (it != current_scope.variables.end() && it->second.offset != INT_MIN) {
 		result_offset = it->second.offset;
 	} else {
-	// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
+			// Allocate stack space for the result TempVar (or if offset is sentinel INT_MIN)
 		result_offset = allocateStackSlotForTempVar(result_var.var_number);
-	// Note: allocateStackSlotForTempVar already updates the variables map
+			// Note: allocateStackSlotForTempVar already updates the variables map
 	}
 
-	// For large members (> 8 bytes), we can't load the value into a register
-	// Instead, we compute and store the ADDRESS for later nested member access
+		// For large members (> 8 bytes), we can't load the value into a register
+		// Instead, we compute and store the ADDRESS for later nested member access
 	if (member_size_bytes > 8) {
-	// Allocate a register to compute the address
+			// Allocate a register to compute the address
 		X64Register addr_reg = allocateRegisterWithSpilling();
 
 		if (is_global_access) {
-	// LEA addr_reg, [RIP + global_name]
-	// REX.W + 8D /r for LEA r64, m
+				// LEA addr_reg, [RIP + global_name]
+				// REX.W + 8D /r for LEA r64, m
 			uint8_t rex = 0x48; // REX.W
 			if (static_cast<uint8_t>(addr_reg) >= 8) {
 				rex |= 0x04; // REX.R
@@ -12509,11 +12509,11 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.push_back(rex);
 			textSectionData.push_back(0x8D);	 // LEA opcode
 
-	// ModR/M: mod=00 (RIP-relative), reg=addr_reg, r/m=101 (RIP+disp32)
+				// ModR/M: mod=00 (RIP-relative), reg=addr_reg, r/m=101 (RIP+disp32)
 			uint8_t modrm = 0x05 | ((static_cast<uint8_t>(addr_reg) & 0x7) << 3);
 			textSectionData.push_back(modrm);
 
-	// Placeholder for relocation (disp32)
+				// Placeholder for relocation (disp32)
 			uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
 			textSectionData.push_back(0x00);
 			textSectionData.push_back(0x00);
@@ -12521,12 +12521,12 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.push_back(0x00);
 			pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 
-	// If offset != 0, add it to addr_reg
+				// If offset != 0, add it to addr_reg
 			if (op.offset != 0) {
 				emitAddRegImm32(textSectionData, addr_reg, op.offset);
 			}
 		} else if (is_pointer_access) {
-	// Load pointer into addr_reg, then add offset if needed
+				// Load pointer into addr_reg, then add offset if needed
 			auto load_ptr = generatePtrMovFromFrame(addr_reg, object_base_offset);
 			textSectionData.insert(textSectionData.end(), load_ptr.op_codes.begin(),
 								   load_ptr.op_codes.begin() + load_ptr.size_in_bytes);
@@ -12534,37 +12534,37 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				emitAddRegImm32(textSectionData, addr_reg, op.offset);
 			}
 		} else {
-	// LEA addr_reg, [RBP + member_stack_offset]
+				// LEA addr_reg, [RBP + member_stack_offset]
 			int32_t effective_offset = object_base_offset + op.offset;
 			auto lea_opcodes = generateLeaFromFrame(addr_reg, effective_offset);
 			textSectionData.insert(textSectionData.end(), lea_opcodes.op_codes.begin(),
 								   lea_opcodes.op_codes.begin() + lea_opcodes.size_in_bytes);
 		}
 
-	// Store the address to result_offset
+			// Store the address to result_offset
 		auto store_addr = generatePtrMovToFrame(addr_reg, result_offset);
 		textSectionData.insert(textSectionData.end(), store_addr.op_codes.begin(),
 							   store_addr.op_codes.begin() + store_addr.size_in_bytes);
 		regAlloc.release(addr_reg);
 
-	// Mark this temp var as containing a pointer/address
+			// Mark this temp var as containing a pointer/address
 		setReferenceInfo(result_offset, TypeIndex{0, op.result.typeEnum()}, op.result.size_in_bits.value, false, result_var);
 		return;
 	}
 
-	// Allocate a register for loading the member value
+		// Allocate a register for loading the member value
 	X64Register temp_reg = allocateRegisterWithSpilling();
 
 	if (is_global_access) {
-	// LEA temp_reg, [RIP + global] with relocation
+			// LEA temp_reg, [RIP + global] with relocation
 		uint32_t reloc_offset = emitLeaRipRelative(temp_reg);
 		pending_global_relocations_.push_back({reloc_offset, global_object_name, IMAGE_REL_AMD64_REL32});
 
-	// Load member from [temp_reg + offset]
+			// Load member from [temp_reg + offset]
 		bool is_float_type = isIrFloatingPointType(op.result.effectiveIrType());
 
 		if (is_float_type) {
-	// For floating-point: load into XMM and store to stack
+				// For floating-point: load into XMM and store to stack
 			X64Register xmm_reg = X64Register::XMM0;
 			bool is_float = (op.result.effectiveIrType() == IrType::Float);
 			emitFloatLoadFromAddressWithOffset(textSectionData, xmm_reg, temp_reg, op.offset, is_float);
@@ -12577,7 +12577,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			variable_scopes.back().variables[StringTable::getOrInternStringHandle(result_var.name())].offset = float_result_offset;
 			return;
 		} else {
-	// For integers: use standard integer load
+				// For integers: use standard integer load
 			OpCodeWithSize load_opcodes;
 			if (member_size_bytes == 8) {
 				load_opcodes = generateMovFromMemory(temp_reg, temp_reg, op.offset);
@@ -12588,7 +12588,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			} else if (member_size_bytes == 1) {
 				load_opcodes = generateMovFromMemory8(temp_reg, temp_reg, op.offset);
 			} else {
-		// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
+					// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
 				if (unresolved_user_defined_member) {
 					regAlloc.release(temp_reg);
 					return;
@@ -12603,7 +12603,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 								   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 
-	// Extract bitfield value if this is a bitfield member
+				// Extract bitfield value if this is a bitfield member
 			if (op.bitfield_width.has_value()) {
 				size_t bit_offset = op.bitfield_bit_offset;
 				size_t width = *op.bitfield_width;
@@ -12614,21 +12614,21 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 				emitAndImm64(temp_reg, mask);
 			}
 
-	// Store loaded value to result_offset for later use (e.g., indirect_call)
+				// Store loaded value to result_offset for later use (e.g., indirect_call)
 			emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 			regAlloc.release(temp_reg);
 			variable_scopes.back().variables[result_var_handle].offset = result_offset;
 			return;
 		}
 	} else if (is_pointer_access) {
-	// Load pointer into an allocated register, then load from [ptr_reg + offset]
+			// Load pointer into an allocated register, then load from [ptr_reg + offset]
 		FLASH_LOG_FORMAT(Codegen, Debug,
 						 "MemberAccess pointer path: object_base_offset={}, op.offset={}, member_size_bytes={}",
 						 object_base_offset, op.offset, member_size_bytes);
 		X64Register ptr_reg = allocateRegisterWithSpilling();
 		emitMovFromFrame(ptr_reg, object_base_offset);
 
-	// Load from [ptr_reg + offset] into temp_reg
+			// Load from [ptr_reg + offset] into temp_reg
 		OpCodeWithSize load_opcodes;
 		if (member_size_bytes == 8) {
 			load_opcodes = generateMovFromMemory(temp_reg, ptr_reg, op.offset);
@@ -12639,7 +12639,7 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		} else if (member_size_bytes == 1) {
 			load_opcodes = generateMovFromMemory8(temp_reg, ptr_reg, op.offset);
 		} else {
-	// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
+				// Unsupported member size (0, 3, 5, 6, 7, etc.) - skip quietly
 			if (unresolved_user_defined_member) {
 				regAlloc.release(temp_reg);
 				regAlloc.release(ptr_reg);
@@ -12656,10 +12656,10 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 							   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 
-	// Release pointer register - no longer needed
+			// Release pointer register - no longer needed
 		regAlloc.release(ptr_reg);
 
-	// Extract bitfield value if this is a bitfield member
+			// Extract bitfield value if this is a bitfield member
 		if (op.bitfield_width.has_value()) {
 			size_t bit_offset = op.bitfield_bit_offset;
 			size_t width = *op.bitfield_width;
@@ -12670,25 +12670,25 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			emitAndImm64(temp_reg, mask);
 		}
 
-	// Store loaded value to result_offset for later use (e.g., indirect_call)
+			// Store loaded value to result_offset for later use (e.g., indirect_call)
 		emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 		regAlloc.release(temp_reg);
 		variable_scopes.back().variables[result_var_handle].offset = result_offset;
 		return;
 	} else {
-	// For regular struct variables on the stack, load from computed offset
+			// For regular struct variables on the stack, load from computed offset
 		emitLoadFromFrame(textSectionData, temp_reg, member_stack_offset, member_size_bytes);
 	}
 
-	// Extract bitfield value if this is a bitfield member
+		// Extract bitfield value if this is a bitfield member
 	if (op.bitfield_width.has_value()) {
 		size_t bit_offset = op.bitfield_bit_offset;
 		size_t width = *op.bitfield_width;
 		if (bit_offset > 0) {
-	// SHR temp_reg, bit_offset
+				// SHR temp_reg, bit_offset
 			emitShrImm(temp_reg, static_cast<uint8_t>(bit_offset));
 		}
-	// AND temp_reg, (1 << width) - 1
+			// AND temp_reg, (1 << width) - 1
 		uint64_t mask = bitfieldMask(width);
 		emitAndImm64(temp_reg, mask);
 	}
@@ -12700,8 +12700,8 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		return;
 	}
 
-	// Store the loaded value into the temp slot so subsequent uses read the value,
-	// avoiding aliasing the TempVar to the struct member location.
+		// Store the loaded value into the temp slot so subsequent uses read the value,
+		// avoiding aliasing the TempVar to the struct member location.
 	emitMovToFrame(temp_reg, result_offset, member_size_bytes * 8);
 	regAlloc.release(temp_reg);
 	variable_scopes.back().variables[result_var_handle].offset = result_offset;
@@ -12710,15 +12710,15 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& instruction) {
-	// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
+		// MemberStore: member_store [MemberType][MemberSize] %object, member_name, offset, %value
 
-	// Extract typed payload - all MemberStore instructions use typed payloads
+		// Extract typed payload - all MemberStore instructions use typed payloads
 	const MemberStoreOp& op = std::any_cast<const MemberStoreOp&>(instruction.getTypedPayload());
 
-	// Check if this is a vtable pointer initialization (vptr)
+		// Check if this is a vtable pointer initialization (vptr)
 	if (op.vtable_symbol.isValid()) {
-	// This is a vptr initialization - load vtable address and store to offset 0
-	// Get the object's base stack offset
+			// This is a vptr initialization - load vtable address and store to offset 0
+			// Get the object's base stack offset
 		int32_t object_base_offset = 0;
 		const StackVariableScope& current_scope = variable_scopes.back();
 
@@ -12732,27 +12732,27 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			object_base_offset = it->second.offset;
 		}
 
-	// Load vtable address using LEA with relocation
-	// The vtable symbol (_ZTV...) already points to the function pointer array
-	// (the ElfFileWriter's add_vtable creates the symbol at offset +16 past the RTTI header)
-	// So we just need a standard PC-relative relocation with the default addend
+			// Load vtable address using LEA with relocation
+			// The vtable symbol (_ZTV...) already points to the function pointer array
+			// (the ElfFileWriter's add_vtable creates the symbol at offset +16 past the RTTI header)
+			// So we just need a standard PC-relative relocation with the default addend
 		uint32_t relocation_offset = emitLeaRipRelative(X64Register::RAX);
 
-	// Add a relocation for the vtable symbol
+			// Add a relocation for the vtable symbol
 		writer.add_relocation(relocation_offset, StringTable::getStringView(op.vtable_symbol));
 
-	// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
-	// First load 'this' pointer into RCX
+			// Store vtable pointer to [RCX + 0] (this pointer is in RCX, vptr is at offset 0)
+			// First load 'this' pointer into RCX
 		emitMovFromFrame(X64Register::RCX, object_base_offset);
 
-	// Store RAX (vtable address) to [RCX + 0]
+			// Store RAX (vtable address) to [RCX + 0]
 		emitStoreToMemory(textSectionData, X64Register::RAX, X64Register::RCX, 0, 8);
 
 		return;	// Done with vptr initialization
 	}
 
-	// Now process the MemberStoreOp
-	// Get the value - it could be a TempVar, a literal (unsigned long long, double), or a string_view (variable name)
+		// Now process the MemberStoreOp
+		// Get the value - it could be a TempVar, a literal (unsigned long long, double), or a string_view (variable name)
 	bool is_literal = false;
 	int64_t literal_value = 0;
 	double literal_double_value = 0.0;
@@ -12761,7 +12761,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	StringHandle variable_name;
 
 	if (std::holds_alternative<TempVar>(op.value.value)) {
-	// TempVar - handled below
+			// TempVar - handled below
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value)) {
 		is_literal = true;
 		literal_value = static_cast<int64_t>(*ull_val);
@@ -12777,7 +12777,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		return;
 	}
 
-	// Get the object's base stack offset or pointer
+		// Get the object's base stack offset or pointer
 	int32_t object_base_offset = 0;
 	bool is_pointer_access = false;	// true if object is 'this' (a pointer)
 	const StackVariableScope& current_scope = variable_scopes.back();
@@ -12785,7 +12785,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 	if (std::holds_alternative<StringHandle>(op.object)) {
 		StringHandle object_name_handle = std::get<StringHandle>(op.object);
 
-	// First check if this is a global variable
+			// First check if this is a global variable
 		bool is_global_variable = false;
 		for (const auto& global : global_variables_) {
 			if (global.name == object_name_handle) {
@@ -12795,8 +12795,8 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		}
 
 		if (is_global_variable) {
-	// Handle global struct member assignment using RIP-relative addressing
-	// Load the value into a register first
+				// Handle global struct member assignment using RIP-relative addressing
+				// Load the value into a register first
 			X64Register value_reg = allocateRegisterWithSpilling();
 
 			if (is_literal) {
@@ -12822,75 +12822,75 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 				emitMovFromFrameBySize(value_reg, value_offset, op.value.size_in_bits.value);
 			}
 
-	// Now store to the global struct member using RIP-relative addressing with offset
-	// For doubles: MOVSD [RIP + disp32 + offset], XMM
-	// For integers: MOV [RIP + disp32 + offset], reg
+				// Now store to the global struct member using RIP-relative addressing with offset
+				// For doubles: MOVSD [RIP + disp32 + offset], XMM
+				// For integers: MOV [RIP + disp32 + offset], reg
 			bool is_floating_point = isIrFloatingPointType(op.value.effectiveIrType());
 			bool is_float = (op.value.effectiveIrType() == IrType::Float);
 
 			if (is_floating_point) {
-		// Move to XMM register for floating-point stores
+					// Move to XMM register for floating-point stores
 				X64Register xmm_reg = X64Register::XMM0;
-		// MOVQ XMM0, value_reg (reinterpret bits)
+					// MOVQ XMM0, value_reg (reinterpret bits)
 				emitMovqGprToXmm(value_reg, xmm_reg);
 
-		// MOVSD/MOVSS [RIP + disp32], XMM0
+					// MOVSD/MOVSS [RIP + disp32], XMM0
 				textSectionData.push_back(is_float ? 0xF3 : 0xF2);
 				textSectionData.push_back(0x0F);
 				textSectionData.push_back(0x11);
 				uint8_t xmm_bits = static_cast<uint8_t>(xmm_reg) & 0x07;
 				textSectionData.push_back(0x05 | (xmm_bits << 3));
 
-		// Placeholder for displacement - will be patched by relocation
+					// Placeholder for displacement - will be patched by relocation
 				uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
-		// The actual displacement should account for the member offset
+					// The actual displacement should account for the member offset
 				int32_t disp_with_offset = op.offset;
 				textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
 				textSectionData.push_back((disp_with_offset >> 8) & 0xFF);
 				textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
 				textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 
-		// Add relocation for the global variable (with offset already included in displacement)
+					// Add relocation for the global variable (with offset already included in displacement)
 				pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 			} else {
-		// Integer store
+					// Integer store
 				int member_size_bytes = op.value.size_in_bits.value / 8;
 				FLASH_LOG_FORMAT(Codegen, Debug, "MemberStore global: size_in_bits={}, member_size_bytes={}", op.value.size_in_bits, member_size_bytes);
 				assert(member_size_bytes > 0 && "Global bitfield RMW: op.value.size_in_bits must be storage unit size (>= 8 bits), not bitfield width");
 				if (op.bitfield_width.has_value()) {
-		// Bitfield global write: read-modify-write via register-based addressing
+						// Bitfield global write: read-modify-write via register-based addressing
 					size_t width = *op.bitfield_width;
 					size_t bit_offset = op.bitfield_bit_offset;
 					uint64_t mask = bitfieldMask(width);
 
-		// LEA addr_reg, [RIP + global]
+						// LEA addr_reg, [RIP + global]
 					X64Register addr_reg = allocateRegisterWithSpilling();
 					uint32_t reloc_offset_lea = emitLeaRipRelative(addr_reg);
 					pending_global_relocations_.push_back({reloc_offset_lea, object_name_handle, IMAGE_REL_AMD64_REL32});
 
-		// Load existing storage unit from [addr_reg + op.offset] into temp_reg
+						// Load existing storage unit from [addr_reg + op.offset] into temp_reg
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					emitMovFromMemory(temp_reg, addr_reg, op.offset, member_size_bytes);
 
-		// Clear the bitfield bits in temp_reg
+						// Clear the bitfield bits in temp_reg
 					emitAndImm64(temp_reg, ~(mask << bit_offset));
 
-		// Shift value into position and mask it
+						// Shift value into position and mask it
 					if (bit_offset > 0) {
 						emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
 					}
 					emitAndImm64(value_reg, mask << bit_offset);
 
-		// OR value into storage unit
+						// OR value into storage unit
 					emitOrReg(temp_reg, value_reg);
 
-		// Store back to [addr_reg + op.offset]
+						// Store back to [addr_reg + op.offset]
 					emitStoreToMemory(textSectionData, temp_reg, addr_reg, op.offset, member_size_bytes);
 
 					regAlloc.release(temp_reg);
 					regAlloc.release(addr_reg);
 				} else {
-		// Non-bitfield integer store: MOV [RIP + disp32], reg
+						// Non-bitfield integer store: MOV [RIP + disp32], reg
 					int size_in_bits = op.value.size_in_bits.value;
 					uint8_t src_val = static_cast<uint8_t>(value_reg);
 					uint8_t src_bits = src_val & 0x07;
@@ -12911,7 +12911,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 
 					textSectionData.push_back(0x05 | (src_bits << 3));
 
-		// Placeholder for displacement with member offset
+						// Placeholder for displacement with member offset
 					uint32_t reloc_offset = static_cast<uint32_t>(textSectionData.size());
 					int32_t disp_with_offset = op.offset;
 					textSectionData.push_back((disp_with_offset >> 0) & 0xFF);
@@ -12919,7 +12919,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 					textSectionData.push_back((disp_with_offset >> 16) & 0xFF);
 					textSectionData.push_back((disp_with_offset >> 24) & 0xFF);
 
-		// Add relocation
+						// Add relocation
 					pending_global_relocations_.push_back({reloc_offset, object_name_handle, IMAGE_REL_AMD64_REL32, op.offset - 4});
 				}
 			}
@@ -12928,7 +12928,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			return;	// Done with global member store
 		}
 
-	// Not a global - look in local scope
+			// Not a global - look in local scope
 		auto it = current_scope.variables.find(object_name_handle);
 		if (it == current_scope.variables.end()) {
 			throw InternalError("Struct object not found in scope");
@@ -12936,23 +12936,23 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		}
 		object_base_offset = it->second.offset;
 
-	// Check if base is a pointer (reference, 'this', or pointer-to-member)
-	// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+			// Check if base is a pointer (reference, 'this', or pointer-to-member)
+			// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 		if (isPointerBaseStorage(object_base_offset) || op.is_pointer_to_member) {
 			is_pointer_access = true;
 		}
 	} else {
-	// Nested case: object is the result of a previous member access
+			// Nested case: object is the result of a previous member access
 		auto object_temp = std::get<TempVar>(op.object);
 		object_base_offset = getStackOffsetFromTempVar(object_temp);
 
-	// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
+			// Check if this temp var holds a pointer/address (from large member access) or is pointer-to-member
 		if (isPointerBaseStorage(object_base_offset, object_temp) || op.is_pointer_to_member) {
 			is_pointer_access = true;
 		}
 	}
 
-	// Calculate the member's actual stack offset
+		// Calculate the member's actual stack offset
 	int32_t member_stack_offset;
 	if (is_pointer_access) {
 		member_stack_offset = 0;	 // Not used for pointer access
@@ -12960,7 +12960,7 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		member_stack_offset = object_base_offset + op.offset;
 	}
 
-	// Calculate member size in bytes
+		// Calculate member size in bytes
 	int member_size_bytes = op.value.size_in_bits.value / 8;
 
 	const bool is_float_pointer_store = is_pointer_access && !op.is_reference() && !op.bitfield_width.has_value() && isIrFloatingPointType(op.value.effectiveIrType());
@@ -13027,34 +13027,34 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		return;
 	}
 
-	// Load the value into a register - allocate through register allocator to avoid conflicts
+		// Load the value into a register - allocate through register allocator to avoid conflicts
 	X64Register value_reg = allocateRegisterWithSpilling();
 
 	if (op.is_reference()) {
-	// value_reg already allocated above
+			// value_reg already allocated above
 		bool pointer_loaded = false;
 		if (is_variable) {
-	// Check if this variable is itself a reference (e.g., reference parameter)
+				// Check if this variable is itself a reference (e.g., reference parameter)
 			auto it = current_scope.variables.find(variable_name);
 			if (it != current_scope.variables.end()) {
 				int32_t var_offset = it->second.offset;
-		// Check if this stack variable is a reference
+					// Check if this stack variable is a reference
 				auto ref_info = getIndirectStackInfo(var_offset);
 				if (ref_info.has_value()) {
-		// This variable is a reference - it already holds a pointer
-		// MOV the pointer value, don't take its address
+						// This variable is a reference - it already holds a pointer
+						// MOV the pointer value, don't take its address
 					emitMovFromFrame(value_reg, var_offset);
 				} else {
-		// This variable is not a reference - take its address
+						// This variable is not a reference - take its address
 					emitLeaFromFrame(value_reg, var_offset);
 				}
 				pointer_loaded = true;
 			}
 		} else if (!is_literal) {
-	// TempVar - load its value (which is already a pointer from addressof)
+				// TempVar - load its value (which is already a pointer from addressof)
 			auto value_var = std::get<TempVar>(op.value.value);
 			int32_t value_offset = getStackOffsetFromTempVar(value_var);
-	// The TempVar contains an address, so we MOV (load value) not LEA (load address of)
+				// The TempVar contains an address, so we MOV (load value) not LEA (load address of)
 			emitMovFromFrame(value_reg, value_offset);
 			pointer_loaded = true;
 		}
@@ -13078,17 +13078,17 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			emitMovImm64(value_reg, imm64);
 		}
 	} else if (is_variable) {
-	// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
-	// This will be handled separately below
+			// Check if this is a vtable symbol (check vtable_symbol field in MemberStoreOp)
+			// This will be handled separately below
 		auto it = current_scope.variables.find(variable_name);
 		if (it == current_scope.variables.end()) {
 			throw InternalError("Variable not found in scope");
 			return;
 		}
 		int32_t value_offset = it->second.offset;
-	// If pointer_depth > 0, we need to store the address of the variable (LEA)
-	// not the value at that address (MOV). This is used for initializer_list
-	// backing arrays where we need to store &array[0], not array[0].
+			// If pointer_depth > 0, we need to store the address of the variable (LEA)
+			// not the value at that address (MOV). This is used for initializer_list
+			// backing arrays where we need to store &array[0], not array[0].
 		if (op.value.pointer_depth.is_pointer()) {
 			emitLeaFromFrame(value_reg, value_offset);
 		} else {
@@ -13105,14 +13105,14 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 		}
 	}
 
-	// Store the value to the member's location
+		// Store the value to the member's location
 	if (op.bitfield_width.has_value()) {
-	// Bitfield store: read-modify-write to preserve other bitfields in the storage unit
+			// Bitfield store: read-modify-write to preserve other bitfields in the storage unit
 		size_t width = *op.bitfield_width;
 		size_t bit_offset = op.bitfield_bit_offset;
 		uint64_t mask = bitfieldMask(width);
 
-	// Allocate a temp register for read-modify-write
+			// Allocate a temp register for read-modify-write
 		X64Register temp_reg = allocateRegisterWithSpilling();
 
 		if (is_pointer_access) {
@@ -13121,93 +13121,93 @@ void IrToObjConverter<TWriterClass>::handleMemberStore(const IrInstruction& inst
 			textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 								   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-	// Load existing storage unit from [base_reg + op.offset] into temp_reg
+				// Load existing storage unit from [base_reg + op.offset] into temp_reg
 			emitMovFromMemory(temp_reg, base_reg, op.offset, member_size_bytes);
 
-	// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
+				// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
 			uint64_t clear_mask = ~(mask << bit_offset);
 			emitAndImm64(temp_reg, clear_mask);
 
-	// Shift value into position: SHL value_reg, bit_offset
+				// Shift value into position: SHL value_reg, bit_offset
 			if (bit_offset > 0) {
 				emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
 			}
-	// Mask value to width: AND value_reg, (mask << bit_offset)
+				// Mask value to width: AND value_reg, (mask << bit_offset)
 			emitAndImm64(value_reg, mask << bit_offset);
 
-	// OR value into storage unit: OR temp_reg, value_reg
+				// OR value into storage unit: OR temp_reg, value_reg
 			emitOrReg(temp_reg, value_reg);
 
-	// Store back to [base_reg + op.offset]
+				// Store back to [base_reg + op.offset]
 			emitStoreToMemory(textSectionData, temp_reg, base_reg, op.offset, member_size_bytes);
 
 			regAlloc.release(base_reg);
 		} else {
-	// Load existing storage unit from [RBP + member_stack_offset] into temp_reg
+				// Load existing storage unit from [RBP + member_stack_offset] into temp_reg
 			emitMovFromFrameBySize(temp_reg, member_stack_offset, member_size_bytes * 8);
 
-	// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
+				// Clear the bitfield bits: AND temp_reg, ~(mask << bit_offset)
 			uint64_t clear_mask = ~(mask << bit_offset);
 			emitAndImm64(temp_reg, clear_mask);
 
-	// Shift value into position: SHL value_reg, bit_offset
+				// Shift value into position: SHL value_reg, bit_offset
 			if (bit_offset > 0) {
 				emitShlImm(value_reg, static_cast<uint8_t>(bit_offset));
 			}
-	// Mask value to width: AND value_reg, (mask << bit_offset)
+				// Mask value to width: AND value_reg, (mask << bit_offset)
 			emitAndImm64(value_reg, mask << bit_offset);
 
-	// OR value into storage unit: OR temp_reg, value_reg
+				// OR value into storage unit: OR temp_reg, value_reg
 			emitOrReg(temp_reg, value_reg);
 
-	// Store back to [RBP + member_stack_offset]
+				// Store back to [RBP + member_stack_offset]
 			emitStoreToMemory(textSectionData, temp_reg, X64Register::RBP, member_stack_offset, member_size_bytes);
 		}
 
 		regAlloc.release(temp_reg);
 	} else if (is_pointer_access) {
-	// For 'this' pointer or reference: load pointer into base_reg, then store to [base_reg + offset]
-	// IMPORTANT: Allocate a register for the base pointer to avoid clobbering value_reg
+			// For 'this' pointer or reference: load pointer into base_reg, then store to [base_reg + offset]
+			// IMPORTANT: Allocate a register for the base pointer to avoid clobbering value_reg
 		X64Register base_reg = allocateRegisterWithSpilling();
 		auto load_ptr_opcodes = generatePtrMovFromFrame(base_reg, object_base_offset);
 		textSectionData.insert(textSectionData.end(), load_ptr_opcodes.op_codes.begin(),
 							   load_ptr_opcodes.op_codes.begin() + load_ptr_opcodes.size_in_bytes);
 
-	// Store value_reg to [base_reg + op.offset] using helper function
+			// Store value_reg to [base_reg + op.offset] using helper function
 		emitStoreToMemory(textSectionData, value_reg, base_reg, op.offset, member_size_bytes);
 
-	// Release the base register
+			// Release the base register
 		regAlloc.release(base_reg);
 	} else {
-	// For regular struct variables on the stack: store to [RBP + member_stack_offset]
+			// For regular struct variables on the stack: store to [RBP + member_stack_offset]
 		emitStoreToMemory(textSectionData, value_reg, X64Register::RBP, member_stack_offset, member_size_bytes);
 	}
 
-	// Release value_reg - we allocated it above
+		// Release value_reg - we allocated it above
 	regAlloc.release(value_reg);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instruction) {
-	// Address-of: &x
-	// Check for typed payload
+		// Address-of: &x
+		// Check for typed payload
 	if (instruction.hasTypedPayload()) {
 		const auto& op = instruction.getTypedPayload<AddressOfOp>();
 
 		int32_t var_offset;
 		const StackVariableScope& current_scope = variable_scopes.back();
-	// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
+			// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
 		X64Register target_reg = allocateRegisterWithSpilling();
 		bool is_global = false;
 		StringHandle global_name_handle;
 
-	// Get operand (variable to take address of) from TypedValue
+			// Get operand (variable to take address of) from TypedValue
 		if (const auto* temp_var = std::get_if<TempVar>(&op.operand.value)) {
-	// Taking address of a temporary variable (e.g., for rvalue references)
+				// Taking address of a temporary variable (e.g., for rvalue references)
 			TempVar temp = *temp_var;
 			var_offset = getStackOffsetFromTempVar(temp);
 		} else {
-	// Taking address of a named variable
+				// Taking address of a named variable
 			std::string_view operand_str;
 			if (const auto* string = std::get_if<StringHandle>(&op.operand.value)) {
 				operand_str = StringTable::getStringView(*string);
@@ -13217,18 +13217,18 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 				return;
 			}
 
-	// First, check if this is a global/static local variable
+				// First, check if this is a global/static local variable
 			is_global = isGlobalVariable(global_name_handle);
 
 			if (!is_global) {
 				auto it = current_scope.variables.find(StringTable::getOrInternStringHandle(operand_str));
 				if (it == current_scope.variables.end()) {
-		// Special case: This might be taking address of a class member (e.g., &Point::x)
-		// which is only valid for pointer-to-member types
-		// For now, stub this out - full implementation would need to generate
-		// a pointer-to-member constant value
+						// Special case: This might be taking address of a class member (e.g., &Point::x)
+						// which is only valid for pointer-to-member types
+						// For now, stub this out - full implementation would need to generate
+						// a pointer-to-member constant value
 					FLASH_LOG(Codegen, Debug, "AddressOf operand '", operand_str, "' not found in scope - might be pointer-to-member, stubbing with zero");
-		// Store zero as a placeholder for pointer-to-member
+						// Store zero as a placeholder for pointer-to-member
 					emitMovImm64(target_reg, 0);
 					return;
 				}
@@ -13236,63 +13236,63 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 			}
 		}
 
-	// Calculate the address
+			// Calculate the address
 		if (is_global) {
-	// Global/static local variable - use LEA with RIP-relative addressing
+				// Global/static local variable - use LEA with RIP-relative addressing
 			uint32_t reloc_offset = emitLeaRipRelative(target_reg);
 			pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 		} else {
-	// If the variable is a reference, it already holds an address - use MOV to load it
-	// Otherwise, use LEA to compute the address of the variable
+				// If the variable is a reference, it already holds an address - use MOV to load it
+				// Otherwise, use LEA to compute the address of the variable
 			auto ref_info = getIndirectStackInfo(var_offset);
 			if (ref_info.has_value()) {
-		// Variable is a reference - load the address it contains
+					// Variable is a reference - load the address it contains
 				emitMovFromFrame(target_reg, var_offset);
 			} else {
-		// Regular variable - compute its address
+					// Regular variable - compute its address
 				emitLeaFromFrame(target_reg, var_offset);
 			}
 		}
 
-	// Store the address to result_var (pointer is always 64-bit)
+			// Store the address to result_var (pointer is always 64-bit)
 		int32_t result_offset = getStackOffsetFromTempVar(op.result);
 		emitMovToFrameSized(
 			SizedRegister{target_reg, 64, false},  // source: 64-bit register
 			SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
 		);
 
-	// NOTE: The result of addressof is a POINTER value, not a reference.
-	// However, we mark it in indirect_stack_info_ so that subsequent operations
-	// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
-	// This is needed for proper handling when passing AddressOf results to functions.
+			// NOTE: The result of addressof is a POINTER value, not a reference.
+			// However, we mark it in indirect_stack_info_ so that subsequent operations
+			// know this TempVar holds a pointer and should be loaded with MOV, not LEA.
+			// This is needed for proper handling when passing AddressOf results to functions.
 		setAddressOnlyInfo(result_offset, TypeIndex{0, op.operand.typeEnum()}, op.operand.size_in_bits.value, op.result);
 
-	// Release the register since the address has been stored to memory
+			// Release the register since the address has been stored to memory
 		regAlloc.release(target_reg);
 
 		return;
 	}
 
-	// Legacy format: Operands: [result_var, type, size, operand]
+		// Legacy format: Operands: [result_var, type, size, operand]
 	assert(instruction.getOperandCount() == 4 && "AddressOf must have 4 operands");
 
 	int32_t var_offset = 0;
-	// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
+		// Use register allocator instead of directly using RAX to avoid clobbering dirty registers
 	X64Register target_reg = allocateRegisterWithSpilling();
 	bool is_global = false;
 	StringHandle global_name_handle;
 
-	// Get operand (variable to take address of) - can be string_view, string, or TempVar
+		// Get operand (variable to take address of) - can be string_view, string, or TempVar
 	if (instruction.isOperandType<TempVar>(3)) {
-	// Taking address of a temporary variable (e.g., for rvalue references)
+			// Taking address of a temporary variable (e.g., for rvalue references)
 		TempVar temp = instruction.getOperandAs<TempVar>(3);
 		var_offset = getStackOffsetFromTempVar(temp);
 	} else {
-	// Taking address of a named variable
+			// Taking address of a named variable
 		assert(instruction.isOperandType<StringHandle>(3) && "AddressOf operand must be string_view, string, or TempVar");
 		global_name_handle = instruction.getOperandAs<StringHandle>(3);
 
-	// First, check if this is a global/static local variable
+			// First, check if this is a global/static local variable
 		is_global = isGlobalVariable(global_name_handle);
 
 		if (!is_global) {
@@ -13306,17 +13306,17 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 		}
 	}
 
-	// Calculate the address
+		// Calculate the address
 	if (is_global) {
-	// Global/static local variable - use LEA with RIP-relative addressing
+			// Global/static local variable - use LEA with RIP-relative addressing
 		uint32_t reloc_offset = emitLeaRipRelative(target_reg);
 		pending_global_relocations_.push_back({reloc_offset, global_name_handle, IMAGE_REL_AMD64_REL32});
 	} else {
-	// Regular local variable - LEA RAX, [RBP + offset]
+			// Regular local variable - LEA RAX, [RBP + offset]
 		emitLeaFromFrame(target_reg, var_offset);
 	}
 
-	// Store the address to result_var (pointer is always 64-bit)
+		// Store the address to result_var (pointer is always 64-bit)
 	auto result_var = instruction.getOperandAs<TempVar>(0);
 	int32_t result_offset = getStackOffsetFromTempVar(result_var);
 	emitMovToFrameSized(
@@ -13324,18 +13324,18 @@ void IrToObjConverter<TWriterClass>::handleAddressOf(const IrInstruction& instru
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
 	);
 
-	// Release the register since the address has been stored to memory
+		// Release the register since the address has been stored to memory
 	regAlloc.release(target_reg);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& instruction) {
-	// AddressOfMember: &obj.member
-	// Calculate address of struct member directly: LEA result, [RBP + obj_offset + member_offset]
+		// AddressOfMember: &obj.member
+		// Calculate address of struct member directly: LEA result, [RBP + obj_offset + member_offset]
 
 	const AddressOfMemberOp& op = std::any_cast<const AddressOfMemberOp&>(instruction.getTypedPayload());
 
-	// Look up the base object's stack offset
+		// Look up the base object's stack offset
 	const StackVariableScope& current_scope = variable_scopes.back();
 	auto it = current_scope.variables.find(op.base_object);
 	if (it == current_scope.variables.end()) {
@@ -13345,13 +13345,13 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 
 	int32_t obj_offset = it->second.offset;
 
-	// Calculate the address:
-	// - For regular stack objects, use LEA [RBP + obj_offset + member_offset]
-	// - For references and 'this' (registered in indirect_stack_info_), load the base pointer value
-	//   from the stack slot, then add the member offset
-	// Use register allocator to avoid clobbering dirty registers
+		// Calculate the address:
+		// - For regular stack objects, use LEA [RBP + obj_offset + member_offset]
+		// - For references and 'this' (registered in indirect_stack_info_), load the base pointer value
+		//   from the stack slot, then add the member offset
+		// Use register allocator to avoid clobbering dirty registers
 	X64Register target_reg = allocateRegisterWithSpilling();
-	// Check if base is 'this' by name, OR if base is in indirect_stack_info_
+		// Check if base is 'this' by name, OR if base is in indirect_stack_info_
 	if (isPointerBaseStorage(obj_offset)) {
 		emitMovFromFrame(target_reg, obj_offset);
 		if (op.member_offset != 0) {
@@ -13362,40 +13362,40 @@ void IrToObjConverter<TWriterClass>::handleAddressOfMember(const IrInstruction& 
 		emitLeaFromFrame(target_reg, combined_offset);
 	}
 
-	// Store the address to result_var (pointer is always 64-bit)
+		// Store the address to result_var (pointer is always 64-bit)
 	int32_t result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
 		SizedRegister{target_reg, 64, false},  // source: 64-bit register
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
 	);
 
-	// NOTE: Like AddressOfOp, AddressOfMember produces a plain pointer value.
-	// Record that the stack slot already holds an address so later consumers
-	// (notably by-address constructor-call lowering) load it with MOV instead
-	// of taking the address of the spill slot with LEA.
+		// NOTE: Like AddressOfOp, AddressOfMember produces a plain pointer value.
+		// Record that the stack slot already holds an address so later consumers
+		// (notably by-address constructor-call lowering) load it with MOV instead
+		// of taking the address of the spill slot with LEA.
 	setAddressOnlyInfo(result_offset, TypeIndex{0, op.memberType()}, op.member_size_in_bits, op.result);
 
-	// Release the register since the address has been stored to memory
+		// Release the register since the address has been stored to memory
 	regAlloc.release(target_reg);
 
-	// DO NOT treat as a true C++ reference - this is a plain pointer value.
+		// DO NOT treat as a true C++ reference - this is a plain pointer value.
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& instruction) {
-	// ComputeAddress: One-pass address calculation for complex expressions
-	// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
-	// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
+		// ComputeAddress: One-pass address calculation for complex expressions
+		// Handles: &arr[i].member1.member2, &arr[i][j], &arr[i].inner_arr[j].member
+		// Algorithm: address = base + (index1 * elem_size1) + (index2 * elem_size2) + ... + member_offset
 
 	const ComputeAddressOp& op = std::any_cast<const ComputeAddressOp&>(instruction.getTypedPayload());
 
-	// Step 1: Load base address into RAX
+		// Step 1: Load base address into RAX
 	int64_t base_offset = 0;
 	bool base_is_global = false;
 	StringHandle base_global_name;
 	bool base_is_indirect = false;  // True if base is a pointer/reference (not a regular variable)
 	if (std::holds_alternative<StringHandle>(op.base)) {
-	// Variable name - look up its stack offset
+			// Variable name - look up its stack offset
 		StringHandle base_name = std::get<StringHandle>(op.base);
 		const StackVariableScope& current_scope = variable_scopes.back();
 		auto it = current_scope.variables.find(base_name);
@@ -13410,16 +13410,16 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		} else {
 			base_offset = it->second.offset;
 
-	// Check if base is a pointer (reference or 'this')
-	// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
+				// Check if base is a pointer (reference or 'this')
+				// Note: 'this' is registered in indirect_stack_info_ via setAddressOnlyInfo
 			base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset));
 		}
 	} else {
-	// TempVar - get its stack offset
+			// TempVar - get its stack offset
 		TempVar base_temp = std::get<TempVar>(op.base);
 		base_offset = getStackOffsetFromTempVar(base_temp);
 
-	// Check if TempVar is a reference or address-only
+			// Check if TempVar is a reference or address-only
 		base_is_indirect = isPointerBaseStorage(static_cast<int32_t>(base_offset), base_temp);
 	}
 
@@ -13427,45 +13427,45 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 		uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
 		pending_global_relocations_.push_back({reloc_offset, base_global_name, IMAGE_REL_AMD64_REL32});
 	} else if (base_is_indirect) {
-	// Base is a reference or pointer - load the address it contains (MOV, not LEA)
+			// Base is a reference or pointer - load the address it contains (MOV, not LEA)
 		emitMovFromFrame(X64Register::RAX, base_offset);
 	} else {
-	// Base is a regular variable - compute its address (LEA)
+			// Base is a regular variable - compute its address (LEA)
 		emitLeaFromFrame(X64Register::RAX, base_offset);
 	}
 
-	// Step 2: Process each array index
+		// Step 2: Process each array index
 	for (const auto& arr_idx : op.array_indices) {
 		int element_size_bytes = arr_idx.element_size_bits.value / 8;
 
-	// Load index into RCX
+			// Load index into RCX
 		if (std::holds_alternative<unsigned long long>(arr_idx.index)) {
-	// Constant index
+				// Constant index
 			uint64_t index_value = std::get<unsigned long long>(arr_idx.index);
 			int64_t offset = index_value * element_size_bytes;
 
-	// Add constant offset to RAX
+				// Add constant offset to RAX
 			if (offset != 0) {
 				emitAddImmToReg(textSectionData, X64Register::RAX, offset);
 			}
 		} else if (std::holds_alternative<TempVar>(arr_idx.index)) {
-	// Variable index from temp
+				// Variable index from temp
 			TempVar index_var = std::get<TempVar>(arr_idx.index);
 			int64_t index_offset = getStackOffsetFromTempVar(index_var);
 
-	// Load index into RCX with proper size and sign extension
+				// Load index into RCX with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed});
 
-	// Multiply RCX by element size
+				// Multiply RCX by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-	// Add RCX to RAX
+				// Add RCX to RAX
 			emitAddRAXRCX(textSectionData);
 		} else if (std::holds_alternative<StringHandle>(arr_idx.index)) {
-	// Variable index from variable name
+				// Variable index from variable name
 			StringHandle index_var_name = std::get<StringHandle>(arr_idx.index);
 			const StackVariableScope& current_scope = variable_scopes.back();
 			auto it = current_scope.variables.find(index_var_name);
@@ -13475,26 +13475,26 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 			}
 			int64_t index_offset = it->second.offset;
 
-	// Load index into RCX with proper size and sign extension
+				// Load index into RCX with proper size and sign extension
 			bool is_signed = isSignedType(arr_idx.indexType());
 			emitMovFromFrameSized(
 				SizedRegister{X64Register::RCX, 64, false},
 				SizedStackSlot{static_cast<int32_t>(index_offset), arr_idx.index_size_bits.value, is_signed});
 
-	// Multiply RCX by element size
+				// Multiply RCX by element size
 			emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
 
-	// Add RCX to RAX
+				// Add RCX to RAX
 			emitAddRAXRCX(textSectionData);
 		}
 	}
 
-	// Step 3: Add accumulated member offset (if any)
+		// Step 3: Add accumulated member offset (if any)
 	if (op.total_member_offset > 0) {
 		emitAddImmToReg(textSectionData, X64Register::RAX, op.total_member_offset);
 	}
 
-	// Step 4: Store result
+		// Step 4: Store result
 	int32_t result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
@@ -13504,24 +13504,24 @@ void IrToObjConverter<TWriterClass>::handleComputeAddress(const IrInstruction& i
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& instruction) {
-	// Dereference: *ptr
-	// Check for typed payload
+		// Dereference: *ptr
+		// Check for typed payload
 	if (instruction.hasTypedPayload()) {
 		const auto& op = instruction.getTypedPayload<DereferenceOp>();
 
-	// THE FIX: Use pointer_depth to determine the correct dereference size
-	// If pointer_depth > 1, we're dereferencing a multi-level pointer (e.g., int*** -> int**)
-	// and the result is still a pointer (64 bits).
-	// If pointer_depth == 1, we're dereferencing to the final value (use pointer.size_in_bits).
+			// THE FIX: Use pointer_depth to determine the correct dereference size
+			// If pointer_depth > 1, we're dereferencing a multi-level pointer (e.g., int*** -> int**)
+			// and the result is still a pointer (64 bits).
+			// If pointer_depth == 1, we're dereferencing to the final value (use pointer.size_in_bits).
 		int value_size;
 		if (op.pointer.pointer_depth.value > 1) {
 			value_size = 64;	 // Result is still a pointer
 		} else {
-	// Final dereference - use the pointee size (stored in size_in_bits of the pointer's type)
+				// Final dereference - use the pointee size (stored in size_in_bits of the pointer's type)
 			value_size = op.pointer.size_in_bits.value;
 		}
 
-	// Load the pointer into a register
+			// Load the pointer into a register
 		X64Register ptr_reg;
 		const StackVariableScope& current_scope = variable_scopes.back();
 
@@ -13529,11 +13529,11 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 			TempVar temp = std::get<TempVar>(op.pointer.value);
 			int32_t temp_offset = getStackOffsetFromTempVar(temp);
 
-	// Check if the TempVar is already in a register (e.g., from a previous operation)
+				// Check if the TempVar is already in a register (e.g., from a previous operation)
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(temp_offset); reg_opt.has_value()) {
 				ptr_reg = reg_opt.value();
 			} else {
-		// Not in a register, load from stack
+					// Not in a register, load from stack
 				ptr_reg = allocateRegisterWithSpilling();
 				emitMovFromFrame(ptr_reg, temp_offset);
 			}
@@ -13545,7 +13545,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 				return;
 			}
 
-	// Check if the variable is already in a register
+				// Check if the variable is already in a register
 			if (auto reg_opt = regAlloc.tryGetStackVariableRegister(it->second.offset); reg_opt.has_value()) {
 				ptr_reg = reg_opt.value();
 			} else {
@@ -13554,33 +13554,33 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 			}
 		}
 
-	// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
+			// Check if we're dereferencing a float/double type - use XMM register and MOVSD/MOVSS
 		bool is_float_type = isIrFloatingPointType(op.pointer.effectiveIrType());
 
 		if (is_float_type && op.pointer.pointer_depth.value <= 1) {
-	// Only use float instructions for final dereference
-	// Use XMM0 as the destination register for float loads
+				// Only use float instructions for final dereference
+				// Use XMM0 as the destination register for float loads
 			X64Register xmm_reg = X64Register::XMM0;
 			bool is_float = (op.pointer.effectiveIrType() == IrType::Float);
 
-	// Load float/double from memory into XMM register
+				// Load float/double from memory into XMM register
 			emitFloatMovFromMemory(xmm_reg, ptr_reg, 0, is_float);
 
-	// Store the XMM value to the result location
+				// Store the XMM value to the result location
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
 			emitFloatMovToFrame(xmm_reg, result_offset, is_float);
 			return;
 		}
 
-	// Handle struct types (values > 64 bits) by doing a multi-step memory copy
+			// Handle struct types (values > 64 bits) by doing a multi-step memory copy
 		if (value_size > 64 && op.pointer.pointer_depth.value <= 1) {
 			int32_t result_offset = getStackOffsetFromTempVar(op.result);
 			int struct_size_bytes = (value_size + 7) / 8;
 
-	// Copy from [ptr_reg] to [rbp + result_offset] in 8-byte chunks
+				// Copy from [ptr_reg] to [rbp + result_offset] in 8-byte chunks
 			for (int offset = 0; offset < struct_size_bytes;) {
 				if (offset + 8 <= struct_size_bytes) {
-		// Copy 8 bytes
+						// Copy 8 bytes
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					emitMovFromMemory(temp_reg, ptr_reg, offset, 8);
 					emitMovToFrameSized(
@@ -13589,7 +13589,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 					regAlloc.release(temp_reg);
 					offset += 8;
 				} else if (offset + 4 <= struct_size_bytes) {
-		// Copy 4 bytes
+						// Copy 4 bytes
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					emitMovFromMemory(temp_reg, ptr_reg, offset, 4);
 					emitMovToFrameSized(
@@ -13598,7 +13598,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 					regAlloc.release(temp_reg);
 					offset += 4;
 				} else if (offset + 2 <= struct_size_bytes) {
-		// Copy 2 bytes
+						// Copy 2 bytes
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					emitMovFromMemory(temp_reg, ptr_reg, offset, 2);
 					emitMovToFrameSized(
@@ -13607,7 +13607,7 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 					regAlloc.release(temp_reg);
 					offset += 2;
 				} else {
-		// Copy 1 byte
+						// Copy 1 byte
 					X64Register temp_reg = allocateRegisterWithSpilling();
 					emitMovFromMemory(temp_reg, ptr_reg, offset, 1);
 					emitMovToFrameSized(
@@ -13620,30 +13620,30 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 			return;
 		}
 
-	// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
+			// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 		X64Register value_reg = ptr_reg;
 
-	// Use emit helper function to generate dereference instruction
-	// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
+			// Use emit helper function to generate dereference instruction
+			// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
 		if (value_size == 8) {
-	// For 8-bit, MOVZX always uses RAX as destination
+				// For 8-bit, MOVZX always uses RAX as destination
 			value_reg = X64Register::RAX;
 		}
 
 		emitMovRegFromMemRegSized(value_reg, ptr_reg, value_size);
 
-	// Store the dereferenced value to result_var
+			// Store the dereferenced value to result_var
 		int32_t result_offset = getStackOffsetFromTempVar(op.result);
 		auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 		textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 							   result_store.op_codes.begin() + result_store.size_in_bytes);
 
-	// CRITICAL FIX: Clear the register association with the old pointer offset
-	// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
-	// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
-	// an old association with a different offset, we must clear that to prevent corruption.
-	// But we don't want to release the register completely, as it might be needed.
-	// So we only clear the stack variable offset if it doesn't match the result offset.
+			// CRITICAL FIX: Clear the register association with the old pointer offset
+			// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
+			// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
+			// an old association with a different offset, we must clear that to prevent corruption.
+			// But we don't want to release the register completely, as it might be needed.
+			// So we only clear the stack variable offset if it doesn't match the result offset.
 		for (auto& reg_info : regAlloc.registers) {
 			if (reg_info.reg == value_reg && reg_info.stackVariableOffset != result_offset) {
 				reg_info.stackVariableOffset = INT_MIN;
@@ -13653,40 +13653,40 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 		return;
 	}
 
-	// Legacy format: Operands: [result_var, type, size, operand]
+		// Legacy format: Operands: [result_var, type, size, operand]
 	assert(instruction.getOperandCount() == 4 && "Dereference must have 4 operands");
 
 	[[maybe_unused]] TypeCategory value_type = instruction.getOperandAs<TypeCategory>(1);
 	int value_size = instruction.getOperandAs<int>(2);
 
-	// Load the pointer operand into a register
+		// Load the pointer operand into a register
 	X64Register ptr_reg = loadOperandIntoRegister(instruction, 3);
 
-	// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
+		// Track which register holds the dereferenced value (may differ from ptr_reg for MOVZX)
 	X64Register value_reg = ptr_reg;
 
-	// Use emit helper function to generate dereference instruction
-	// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
+		// Use emit helper function to generate dereference instruction
+		// This handles all sizes (8, 16, 32, 64-bit) and special cases (RBP/R13, RSP/R12)
 	if (value_size == 8) {
-	// For 8-bit, MOVZX always uses RAX as destination
+			// For 8-bit, MOVZX always uses RAX as destination
 		value_reg = X64Register::RAX;
 	}
 
 	emitMovRegFromMemRegSized(value_reg, ptr_reg, value_size);
 
-	// Store the dereferenced value to result_var
+		// Store the dereferenced value to result_var
 	auto result_var = instruction.getOperandAs<TempVar>(0);
 	int32_t result_offset = getStackOffsetFromTempVar(result_var);
 	auto result_store = generateMovToFrameBySize(value_reg, result_offset, value_size);
 	textSectionData.insert(textSectionData.end(), result_store.op_codes.begin(),
 						   result_store.op_codes.begin() + result_store.size_in_bytes);
 
-	// CRITICAL FIX: Clear the register association with the old pointer offset
-	// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
-	// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
-	// an old association with a different offset, we must clear that to prevent corruption.
-	// But we don't want to release the register completely, as it might be needed.
-	// So we only clear the stack variable offset if it doesn't match the result offset.
+		// CRITICAL FIX: Clear the register association with the old pointer offset
+		// After dereferencing, value_reg no longer holds the pointer - it holds the dereferenced value
+		// However, we need to be careful: if value_reg was reused from ptr_reg and ptr_reg had
+		// an old association with a different offset, we must clear that to prevent corruption.
+		// But we don't want to release the register completely, as it might be needed.
+		// So we only clear the stack variable offset if it doesn't match the result offset.
 	for (auto& reg_info : regAlloc.registers) {
 		if (reg_info.reg == value_reg && reg_info.stackVariableOffset != result_offset) {
 			reg_info.stackVariableOffset = INT_MIN;
@@ -13697,20 +13697,20 @@ void IrToObjConverter<TWriterClass>::handleDereference(const IrInstruction& inst
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction& instruction) {
-	// DereferenceStore: *ptr = value
-	// Store a value through a pointer
+		// DereferenceStore: *ptr = value
+		// Store a value through a pointer
 	assert(instruction.hasTypedPayload() && "DereferenceStore instruction must use typed payload");
 	const auto& op = instruction.getTypedPayload<DereferenceStoreOp>();
 
-	// Flush all dirty registers before loading values from stack
-	// This ensures that any values computed in previous instructions (like ADD)
-	// are written to their stack locations before we try to load them
+		// Flush all dirty registers before loading values from stack
+		// This ensures that any values computed in previous instructions (like ADD)
+		// are written to their stack locations before we try to load them
 	flushAllDirtyRegisters();
 
 	int value_size = op.value.size_in_bits.value;
 	int value_size_bytes = value_size / 8;
 
-	// Allocate registers through the register allocator to avoid conflicts
+		// Allocate registers through the register allocator to avoid conflicts
 	X64Register ptr_reg = allocateRegisterWithSpilling();
 	const StackVariableScope& current_scope = variable_scopes.back();
 
@@ -13728,7 +13728,7 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 		emitMovFromFrame(ptr_reg, it->second.offset);
 	}
 
-	// Allocate a second register for the value - must be different from ptr_reg
+		// Allocate a second register for the value - must be different from ptr_reg
 	X64Register value_reg = allocateRegisterWithSpilling();
 
 	if (const auto* ull_val = std::get_if<unsigned long long>(&op.value.value)) {
@@ -13755,46 +13755,46 @@ void IrToObjConverter<TWriterClass>::handleDereferenceStore(const IrInstruction&
 		}
 	}
 
-	// Store value_reg to [ptr_reg] with appropriate size
+		// Store value_reg to [ptr_reg] with appropriate size
 	emitStoreToMemory(textSectionData, value_reg, ptr_reg, 0, value_size_bytes);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction& instruction) {
-	// Conditional branch: test condition, jump if false to else_label, fall through to then_label
+		// Conditional branch: test condition, jump if false to else_label, fall through to then_label
 	assert(instruction.hasTypedPayload() && "ConditionalBranch instruction must use typed payload");
 	const auto& cond_branch_op = instruction.getTypedPayload<CondBranchOp>();
 	IrValue condition_value = cond_branch_op.condition.value;
 	auto then_label = cond_branch_op.getLabelTrue();
 	auto else_label = cond_branch_op.getLabelFalse();
-	// Flush all dirty registers before branching
+		// Flush all dirty registers before branching
 	flushAllDirtyRegisters();
 
-	// Load condition value into a register
+		// Load condition value into a register
 	X64Register condition_reg = X64Register::RAX;
 
 	if (std::holds_alternative<TempVar>(condition_value)) {
 		auto temp_var = std::get<TempVar>(condition_value);
 		int var_offset = getStackOffsetFromTempVar(temp_var);
 
-	// Look up the actual size of this temp var (default to 32 if not found)
+			// Look up the actual size of this temp var (default to 32 if not found)
 		int load_size = 32;
 		auto size_it = temp_var_sizes_.find(StringTable::getOrInternStringHandle(temp_var.name()));
 		if (size_it != temp_var_sizes_.end()) {
 			load_size = size_it->second;
 		}
 
-	// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
-	// to canonicalize upper bits before TEST.
+			// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
+			// to canonicalize upper bits before TEST.
 		if (load_size < 64) {
 			emitMovFromFrameBySize(X64Register::RAX, var_offset, load_size);
 			condition_reg = X64Register::RAX;
 		} else {
-	// Check if temp var is already in a register
+				// Check if temp var is already in a register
 			if (auto reg = regAlloc.tryGetStackVariableRegister(var_offset); reg.has_value()) {
 				condition_reg = reg.value();
 			} else {
-		// Load from memory with correct size
+					// Load from memory with correct size
 				emitMovFromFrameBySize(X64Register::RAX, var_offset, load_size);
 				condition_reg = X64Register::RAX;
 			}
@@ -13802,21 +13802,21 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 	} else if (std::holds_alternative<StringHandle>(condition_value)) {
 		StringHandle var_name = std::get<StringHandle>(condition_value);
 
-	// Search from innermost to outermost scope so branch conditions can reference
-	// parameters/locals declared in parent scopes.
+			// Search from innermost to outermost scope so branch conditions can reference
+			// parameters/locals declared in parent scopes.
 		const VariableInfo* var_info = findVariableInfo(var_name);
 
 		if (var_info) {
-	// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
+				// Use the size stored in the variable info, default to 32 if 0 (shouldn't happen)
 			int load_size = var_info->size_in_bits.is_set() ? var_info->size_in_bits.value : 32;
 
-	// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
-	// to canonicalize upper bits before TEST.
+				// For narrow conditions (bool8/16/32), always reload into RAX using size-aware MOV
+				// to canonicalize upper bits before TEST.
 			if (load_size < 64) {
 				emitMovFromFrameBySize(X64Register::RAX, var_info->offset, load_size);
 				condition_reg = X64Register::RAX;
 			} else {
-		// Check if variable is already in a register
+					// Check if variable is already in a register
 				if (auto reg = regAlloc.tryGetStackVariableRegister(var_info->offset); reg.has_value()) {
 					condition_reg = reg.value();
 				} else {
@@ -13826,24 +13826,24 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 			}
 		}
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&condition_value)) {
-	// Immediate value
+			// Immediate value
 		unsigned long long value = *ull_val;
 
-	// MOV RAX, imm64
+			// MOV RAX, imm64
 		emitMovImm64(X64Register::RAX, value);
 		condition_reg = X64Register::RAX;
 	}
 
-	// Test if condition is non-zero: TEST reg, reg
+		// Test if condition is non-zero: TEST reg, reg
 	emitTestRegReg(condition_reg);
 
-	// Check if then_label is a backward reference (already defined)
-	// This happens in do-while loops where we jump back to the start when true
+		// Check if then_label is a backward reference (already defined)
+		// This happens in do-while loops where we jump back to the start when true
 	bool then_is_backward = label_positions_.find(then_label) != label_positions_.end();
 
 	if (then_is_backward) {
-	// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
-	// Use JNZ (jump if not zero) to then_label, fall through to else_label
+			// For do-while: then_label is backward (jump to loop start), else_label is forward (fall through to end)
+			// Use JNZ (jump if not zero) to then_label, fall through to else_label
 		textSectionData.push_back(0x0F); // Two-byte opcode prefix
 		textSectionData.push_back(0x85); // JNZ/JNE rel32
 
@@ -13854,10 +13854,10 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 		textSectionData.push_back(0x00);
 
 		pending_branches_.push_back({then_label, then_patch_position});
-	// Fall through to else block (loop end)
+			// Fall through to else block (loop end)
 	} else {
-	// For while/if: then_label is forward (fall through to body), else_label is forward (jump to end)
-	// Use JZ (jump if zero) to else_label, fall through to then_label
+			// For while/if: then_label is forward (fall through to body), else_label is forward (jump to end)
+			// Use JZ (jump if zero) to else_label, fall through to then_label
 		textSectionData.push_back(0x0F); // Two-byte opcode prefix
 		textSectionData.push_back(0x84); // JZ/JE rel32
 
@@ -13868,43 +13868,43 @@ void IrToObjConverter<TWriterClass>::handleConditionalBranch(const IrInstruction
 		textSectionData.push_back(0x00);
 
 		pending_branches_.push_back({else_label, else_patch_position});
-	// Fall through to then block
+			// Fall through to then block
 	}
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleFunctionAddress(const IrInstruction& instruction) {
-	// Extract typed payload - all FunctionAddress instructions use typed payloads
+		// Extract typed payload - all FunctionAddress instructions use typed payloads
 	const FunctionAddressOp& op = std::any_cast<const FunctionAddressOp&>(instruction.getTypedPayload());
 
 	flushAllDirtyRegisters();
 
 	auto result_var = std::get<TempVar>(op.result.value);
 
-	// Get result offset
+		// Get result offset
 	int result_offset = getStackOffsetFromTempVar(result_var);
 
-	// Load the address of the function into RAX using RIP-relative addressing
-	// LEA RAX, [RIP + function_name]  (position-independent code, uses REL32 relocation)
+		// Load the address of the function into RAX using RIP-relative addressing
+		// LEA RAX, [RIP + function_name]  (position-independent code, uses REL32 relocation)
 	textSectionData.push_back(0x48); // REX.W
 	textSectionData.push_back(0x8D); // LEA
 	textSectionData.push_back(0x05); // ModR/M: RAX, [RIP + disp32]
 
-	// Add placeholder for the displacement (will be filled by relocation)
+		// Add placeholder for the displacement (will be filled by relocation)
 	uint32_t reloc_position = static_cast<uint32_t>(textSectionData.size());
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-	// Add REL32 relocation for the function address (RIP-relative)
-	// All FunctionAddress instructions should now have the mangled name pre-computed
-	// Phase 4: Use helper
+		// Add REL32 relocation for the function address (RIP-relative)
+		// All FunctionAddress instructions should now have the mangled name pre-computed
+		// Phase 4: Use helper
 	std::string_view mangled = StringTable::getStringView(op.getMangledName());
 	assert(!mangled.empty() && "FunctionAddress instruction missing mangled_name");
 	writer.add_relocation(reloc_position, mangled, IMAGE_REL_AMD64_REL32);
 
-	// Store RAX to result variable
+		// Store RAX to result variable
 	auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 	textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 						   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
@@ -13914,16 +13914,16 @@ void IrToObjConverter<TWriterClass>::handleFunctionAddress(const IrInstruction& 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& instruction) {
-	// IndirectCall: Call through function pointer
+		// IndirectCall: Call through function pointer
 	auto& op = instruction.getTypedPayload<IndirectCallOp>();
 
 	flushAllDirtyRegisters();
 
-	// Get result offset
+		// Get result offset
 	int result_offset = getStackOffsetFromTempVar(op.result);
 	variable_scopes.back().variables[StringTable::getOrInternStringHandle(op.result.name())].offset = result_offset;
 
-	// Load function pointer into RAX
+		// Load function pointer into RAX
 	X64Register func_ptr_reg;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.function_pointer)) {
 		TempVar func_ptr_temp = *temp_var_ptr;
@@ -13931,7 +13931,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		func_ptr_reg = X64Register::RAX;
 		emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 	} else {
-	// Function pointer is a variable name — check if it's a global variable
+			// Function pointer is a variable name — check if it's a global variable
 		StringHandle var_name_handle = std::get<StringHandle>(op.function_pointer);
 		func_ptr_reg = X64Register::RAX;
 		bool is_global = false;
@@ -13942,7 +13942,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			}
 		}
 		if (is_global) {
-	// Global function pointer: load via RIP-relative MOV + relocation
+				// Global function pointer: load via RIP-relative MOV + relocation
 			uint32_t reloc_offset = emitMovRipRelative(X64Register::RAX, 64);
 			pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
 		} else {
@@ -13950,18 +13950,18 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
 	}
-	// Process arguments (if any)
+		// Process arguments (if any)
 	for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
 		const auto& arg = op.arguments[i];
 		TypeCategory argType = arg.typeEnum();
 
-	// Determine if this is a floating-point argument
+			// Determine if this is a floating-point argument
 		bool is_float_arg = is_floating_point_type(argType);
 
-	// Determine the target register for the argument
+			// Determine the target register for the argument
 		X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
 
-	// Load argument into target register
+			// Load argument into target register
 		if (std::holds_alternative<TempVar>(arg.value)) {
 			const TempVar temp_var = std::get<TempVar>(arg.value);
 			int arg_offset = getStackOffsetFromTempVar(temp_var);
@@ -13969,7 +13969,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				bool is_float = (argType == TypeCategory::Float);
 				emitFloatMovFromFrame(target_reg, arg_offset, is_float);
 			} else {
-		// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
+					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},  // dest: 64-bit register
 					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
@@ -13984,25 +13984,25 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
 									   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
 			} else {
-		// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
+					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
 				emitMovFromFrameSized(
 					SizedRegister{target_reg, 64, false},  // dest: 64-bit register
 					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
 				);
 			}
 		} else if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
-	// Immediate value
+				// Immediate value
 			unsigned long long value = *ull_val;
 			emitMovImm64(target_reg, value);
 		}
 	}
 
-	// Call through function pointer in RAX
-	// CALL RAX
+		// Call through function pointer in RAX
+		// CALL RAX
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-	// Store return value from RAX to result variable
+		// Store return value from RAX to result variable
 	auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
 	textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
 						   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
@@ -14012,13 +14012,13 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleTryBegin([[maybe_unused]] const IrInstruction& instruction) {
-	// Skip exception handling if disabled
+		// Skip exception handling if disabled
 	if (!g_enable_exceptions) {
 		return;
 	}
 
-	// TryBegin marks the start of a try block
-	// Record the current code offset as the start of the try block
+		// TryBegin marks the start of a try block
+		// Record the current code offset as the start of the try block
 
 	TryBlock try_block;
 	try_block.try_start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -14029,19 +14029,19 @@ void IrToObjConverter<TWriterClass>::handleTryBegin([[maybe_unused]] const IrIns
 	try_block_nesting_stack_.push_back(new_index);
 	current_try_block_ = &current_function_try_blocks_[new_index];
 
-	// Note: The instruction has a BranchOp typed payload with the handler label,
-	// but we don't need it for code generation - we track offsets directly.
+		// Note: The instruction has a BranchOp typed payload with the handler label,
+		// but we don't need it for code generation - we track offsets directly.
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleTryEnd([[maybe_unused]] const IrInstruction& instruction) {
-	// Skip exception handling if disabled
+		// Skip exception handling if disabled
 	if (!g_enable_exceptions) {
 		return;
 	}
 
-	// TryEnd marks the end of a try block
-	// Record the current code offset as the end of the try block
+		// TryEnd marks the end of a try block
+		// Record the current code offset as the end of the try block
 
 	if (!try_block_nesting_stack_.empty()) {
 		size_t try_index = try_block_nesting_stack_.back();
@@ -14049,7 +14049,7 @@ void IrToObjConverter<TWriterClass>::handleTryEnd([[maybe_unused]] const IrInstr
 		current_function_try_blocks_[try_index].try_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		pending_catch_try_index_ = try_index;
 
-	// Restore current_try_block_ to outer try block (if any)
+			// Restore current_try_block_ to outer try block (if any)
 		if (!try_block_nesting_stack_.empty()) {
 			current_try_block_ = &current_function_try_blocks_[try_block_nesting_stack_.back()];
 		} else {
@@ -14191,20 +14191,20 @@ void IrToObjConverter<TWriterClass>::emitRestorePendingCatchParentReturnValue(in
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instruction) {
-	// Skip exception handling if disabled
+		// Skip exception handling if disabled
 	if (!g_enable_exceptions) {
 		return;
 	}
 
-	// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
-	// Runtime register contents here do not correspond to whatever compile-time path
-	// happened to be emitted immediately before the handler in the linear text stream.
-	// Drop all register-to-stack assumptions so the catch body reloads values from
-	// memory instead of reusing stale mappings from earlier code.
+		// A catch handler is a fresh control-flow entry (landing pad / funclet entry).
+		// Runtime register contents here do not correspond to whatever compile-time path
+		// happened to be emitted immediately before the handler in the linear text stream.
+		// Drop all register-to-stack assumptions so the catch body reloads values from
+		// memory instead of reusing stale mappings from earlier code.
 	regAlloc.reset();
 
-	// CatchBegin marks the start of a catch handler.
-	// Record this catch handler in the most recent try block.
+		// CatchBegin marks the start of a catch handler.
+		// Record this catch handler in the most recent try block.
 	catch_codegen_context_stack_.push_back(CatchCodegenContext{
 		.handler_ref = current_catch_handler_ref_,
 		.inside_catch_handler = inside_catch_handler_,
@@ -14214,7 +14214,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 	});
 
 	if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
-	// Get the try block that just ended (tracked by pending_catch_try_index_)
+			// Get the try block that just ended (tracked by pending_catch_try_index_)
 		TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 
 		CatchHandler handler;
@@ -14223,7 +14223,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		handler.funclet_entry_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		handler.funclet_end_offset = 0;
 
-	// Extract data from typed payload
+			// Extract data from typed payload
 		const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 		if (try_block.cleanup_vars.empty()) {
 			try_block.cleanup_vars = catch_op.cleanup_vars;
@@ -14233,11 +14233,11 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		handler.ref_qualifier = catch_op.ref_qualifier;
 		handler.is_catch_all = catch_op.is_catch_all;  // Use the flag from IR, not derive from type_index
 
-	// Pre-compute stack offset for exception object during IR processing.
-	// This is necessary because variable_scopes may be cleared by the time
-	// we call convertExceptionInfoToWriterFormat() during finalization.
-	// var_number == 0 indicates catch(...) which has no exception variable,
-	// or an unnamed catch parameter like catch(int) without a variable name.
+			// Pre-compute stack offset for exception object during IR processing.
+			// This is necessary because variable_scopes may be cleared by the time
+			// we call convertExceptionInfoToWriterFormat() during finalization.
+			// var_number == 0 indicates catch(...) which has no exception variable,
+			// or an unnamed catch parameter like catch(int) without a variable name.
 		if (!handler.is_catch_all && catch_op.exception_temp.var_number != 0) {
 			int catch_storage_bits = 64;
 			if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
@@ -14266,72 +14266,72 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		current_catch_handler_ref_ = ActiveCatchHandlerRef{};
 	}
 
-	// Platform-specific landing pad code generation
+		// Platform-specific landing pad code generation
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		inside_catch_handler_ = true;
 
-	// ========== Linux/ELF (Itanium C++ ABI) ==========
-	// For ELF, handler_offset is the LSDA landing pad address.
-	// funclet_entry_offset was assigned the current code position above;
-	// set handler_offset to the same value so the LSDA points here.
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// For ELF, handler_offset is the LSDA landing pad address.
+			// funclet_entry_offset was assigned the current code position above;
+			// set handler_offset to the same value so the LSDA points here.
 		if (current_catch_handler_) {
 			current_catch_handler_->handler_offset = current_catch_handler_->funclet_entry_offset;
 		}
 
-	// Landing pad: call __cxa_begin_catch to get the exception object
-	//
-	// For try blocks with MULTIPLE catch handlers, the personality routine
-	// enters the landing pad with:
-	//   RAX = exception object pointer
-	//   EDX = selector (type_filter of matched action)
-	// We must save these, dispatch to the correct handler based on selector,
-	// then call __cxa_begin_catch in the matched handler.
+			// Landing pad: call __cxa_begin_catch to get the exception object
+			//
+			// For try blocks with MULTIPLE catch handlers, the personality routine
+			// enters the landing pad with:
+			//   RAX = exception object pointer
+			//   EDX = selector (type_filter of matched action)
+			// We must save these, dispatch to the correct handler based on selector,
+			// then call __cxa_begin_catch in the matched handler.
 		const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 
-	// Determine handler index within this try block
+			// Determine handler index within this try block
 		size_t handler_index = 0;
 		bool is_multi_handler = false;
 		if (pending_catch_try_index_ != SIZE_MAX && pending_catch_try_index_ < current_function_try_blocks_.size()) {
 			const TryBlock& try_block = current_function_try_blocks_[pending_catch_try_index_];
 			handler_index = try_block.catch_handlers.size() - 1;	 // Just added
-	// We don't know total count yet, but if handler_index > 0, we're multi
+				// We don't know total count yet, but if handler_index > 0, we're multi
 			is_multi_handler = (handler_index > 0);
 		}
 
 		if (handler_index == 0) {
-	// First handler: save RAX (exception ptr) and EDX (selector) to stack.
-	// These will be used by subsequent handlers for dispatch.
-	// We allocate two 8-byte slots for these.
+				// First handler: save RAX (exception ptr) and EDX (selector) to stack.
+				// These will be used by subsequent handlers for dispatch.
+				// We allocate two 8-byte slots for these.
 			elf_exc_ptr_offset_ = allocateElfTempStackSlot(8);
 			elf_selector_offset_ = allocateElfTempStackSlot(4);
 
-	// mov [rbp+exc_ptr_offset], rax
+				// mov [rbp+exc_ptr_offset], rax
 			emitMovToFrame(X64Register::RAX, elf_exc_ptr_offset_, 64);
-	// mov [rbp+selector_offset], edx (32-bit)
+				// mov [rbp+selector_offset], edx (32-bit)
 			emitMovToFrameBySize(X64Register::RDX, elf_selector_offset_, 32);
 
-	// Phase 1: call destructors for variables declared in the try block scope.
-	// These must be destroyed before dispatching to the catch handler.
+				// Phase 1: call destructors for variables declared in the try block scope.
+				// These must be destroyed before dispatching to the catch handler.
 			for (const auto& cv : catch_op.cleanup_vars) {
 				emitInlineDestructorCall(cv);
 			}
 		}
 
-	// For non-last handlers, emit selector comparison + skip jump.
-	// We always emit it (even for potentially-last handlers) because we don't
-	// know if more handlers follow. If this IS the last handler, the personality
-	// routine guarantees the selector matches, so the JNE never fires.
+			// For non-last handlers, emit selector comparison + skip jump.
+			// We always emit it (even for potentially-last handlers) because we don't
+			// know if more handlers follow. If this IS the last handler, the personality
+			// routine guarantees the selector matches, so the JNE never fires.
 		if (!catch_op.is_catch_all) {
-	// Load selector from stack and compare with this handler's filter.
-	// The actual filter value will be patched at function finalization.
-	// CMP dword [rbp+offset], imm32
+				// Load selector from stack and compare with this handler's filter.
+				// The actual filter value will be patched at function finalization.
+				// CMP dword [rbp+offset], imm32
 			emitCmpFrameImm32(elf_selector_offset_, 0);	// placeholder 0
 
-	// Record patch position: the IMM32 is at the last 4 bytes we just wrote
+				// Record patch position: the IMM32 is at the last 4 bytes we just wrote
 			uint32_t filter_patch_pos = static_cast<uint32_t>(textSectionData.size()) - 4;
 			elf_catch_filter_patches_.push_back({filter_patch_pos, pending_catch_try_index_, handler_index});
 
-	// JNE catch_end_label (skip this handler if selector doesn't match)
+				// JNE catch_end_label (skip this handler if selector doesn't match)
 			StringHandle catch_end_handle = StringTable::getOrInternStringHandle(catch_op.catch_end_label);
 			textSectionData.push_back(0x0F);	 // Two-byte opcode prefix
 			textSectionData.push_back(0x85);	 // JNE rel32
@@ -14343,29 +14343,29 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			pending_branches_.push_back({catch_end_handle, jne_patch});
 		}
 
-	// Load exception pointer from saved slot and call __cxa_begin_catch
+			// Load exception pointer from saved slot and call __cxa_begin_catch
 		if (is_multi_handler || !catch_op.is_catch_all) {
-	// Multi-handler or typed: use saved exception pointer
+				// Multi-handler or typed: use saved exception pointer
 			emitMovFromFrameBySize(X64Register::RDI, elf_exc_ptr_offset_, 64);
 		} else {
-	// Single catch-all handler: RAX still has the exception pointer
+				// Single catch-all handler: RAX still has the exception pointer
 			emitMovRegReg(X64Register::RDI, X64Register::RAX);
 		}
 		emitCall("__cxa_begin_catch");
 
-	// Result in RAX is pointer to the actual exception object.
-	// Materialize it explicitly so catch variable handling stays uniform.
+			// Result in RAX is pointer to the actual exception object.
+			// Materialize it explicitly so catch variable handling stays uniform.
 		materializeCatchObjectFromRax(catch_op);
 	} else {
-	// ========== Windows/COFF (MSVC ABI) ==========
-	// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
-	// Emit a funclet prologue so the runtime can unwind it as an independent
-	// range and all frame-relative accesses resolve against the parent frame.
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Catch handler is a real FH3 funclet entered with establisher-frame in RDX.
+			// Emit a funclet prologue so the runtime can unwind it as an independent
+			// range and all frame-relative accesses resolve against the parent frame.
 		const auto& catch_op = instruction.getTypedPayload<CatchBeginOp>();
 
-	// Save establisher frame (RDX) to caller's shadow space before push.
-	// Clang emits this and the CRT may rely on it during unwinding.
-	// mov [rsp+10h], rdx  (48 89 54 24 10)
+			// Save establisher frame (RDX) to caller's shadow space before push.
+			// Clang emits this and the CRT may rely on it during unwinding.
+			// mov [rsp+10h], rdx  (48 89 54 24 10)
 		textSectionData.push_back(0x48);
 		textSectionData.push_back(0x89);
 		textSectionData.push_back(0x54);
@@ -14374,18 +14374,18 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 		emitPushReg(X64Register::RBP);
 		emitSubRSP(32);
 
-	// For frame-pointer based parent functions, rebuild the same frame pointer from
-	// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
-	// local/catch-object offsets.
+			// For frame-pointer based parent functions, rebuild the same frame pointer from
+			// the establisher frame (RDX) so the catch body can keep using normal RBP-relative
+			// local/catch-object offsets.
 		emitFuncletLeaRbpFromRdx(catch_funclet_lea_rbp_patches_);
 		in_catch_funclet_ = true;
 		catch_has_pending_parent_return_ = false;
 		current_catch_continuation_label_ = StringTable::getOrInternStringHandle(catch_op.continuation_label);
 
-	// Windows FH3 materializes the catch object into the dispCatchObj slot.
-	// For reference catches, that slot holds a pointer to the exception object,
-	// so later VariableDecl handling must load/dereference it instead of taking
-	// the address of the slot itself.
+			// Windows FH3 materializes the catch object into the dispCatchObj slot.
+			// For reference catches, that slot holds a pointer to the exception object,
+			// so later VariableDecl handling must load/dereference it instead of taking
+			// the address of the slot itself.
 		if (!catch_op.is_catch_all && catch_op.exception_temp.var_number != 0 && catch_op.is_reference()) {
 			int32_t stack_offset = getStackOffsetFromTempVar(catch_op.exception_temp);
 			setReferenceInfo(stack_offset, TypeIndex{0, catch_op.exceptionType()}, 64, false, catch_op.exception_temp);
@@ -14399,31 +14399,31 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruction) {
-	// Skip exception handling if disabled
+		// Skip exception handling if disabled
 	if (!g_enable_exceptions) {
 		return;
 	}
 
-	// CatchEnd marks the end of a catch handler
+		// CatchEnd marks the end of a catch handler
 	if (current_catch_handler_) {
 		current_catch_handler_->handler_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 	}
 
-	// Platform-specific cleanup
+		// Platform-specific cleanup
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// ========== Linux/ELF (Itanium C++ ABI) ==========
-	// Call __cxa_end_catch to complete exception handling
-	// This cleans up the exception object if needed
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Call __cxa_end_catch to complete exception handling
+			// This cleans up the exception object if needed
 
 		emitCall("__cxa_end_catch");
 		inside_catch_handler_ = false;
 
 	} else {
-	// ========== Windows/COFF (MSVC ABI) ==========
-	// Return continuation address in RAX, then emit the funclet epilogue.
-	// After the funclet ret, emit a shared fixup stub for the parent-function
-	// continuation path so both fallthrough and `return` from inside the catch
-	// resume through the same stack/frame restoration sequence.
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Return continuation address in RAX, then emit the funclet epilogue.
+			// After the funclet ret, emit a shared fixup stub for the parent-function
+			// continuation path so both fallthrough and `return` from inside the catch
+			// resume through the same stack/frame restoration sequence.
 		flushAllDirtyRegisters();
 
 		StringHandle continuation_handle;
@@ -14439,21 +14439,21 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 			if (use_fixup) {
 				fixup_handle = fixup_it->second;
 
-		// Multiple catch handlers can share a continuation fixup stub. Reserve both
-		// spill slots before emitting the first stub so a later handler that returns
-		// can reuse the same fixup path safely.
+					// Multiple catch handlers can share a continuation fixup stub. Reserve both
+					// spill slots before emitting the first stub so a later handler that returns
+					// can reuse the same fixup path safely.
 				ensureCatchFuncletReturnSlot();
 				ensureCatchFuncletReturnFlagSlot();
 
-		// Normal catch fallthrough must not inherit a stale catch-return flag.
-		// The flag is only meaningful when a return statement inside the catch body
-		// explicitly sets it and terminates the funclet early. If we reach CatchEnd,
-		// we know the catch is continuing normally, so clear the flag now before
-		// returning the shared fixup entry address to the CRT.
+					// Normal catch fallthrough must not inherit a stale catch-return flag.
+					// The flag is only meaningful when a return statement inside the catch body
+					// explicitly sets it and terminates the funclet early. If we reach CatchEnd,
+					// we know the catch is continuing normally, so clear the flag now before
+					// returning the shared fixup entry address to the CRT.
 				emitXorRegReg(X64Register::RCX);
 				emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
 
-		// LEA RAX, [fixup_label] — return fixup entry address to the CRT
+					// LEA RAX, [fixup_label] — return fixup entry address to the CRT
 				emitLeaLabelAddress(X64Register::RAX, fixup_handle);
 			} else {
 				if (catch_funclet_return_flag_slot_offset_ != 0) {
@@ -14461,7 +14461,7 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 					emitMovToFrame(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
 				}
 
-		// LEA RAX, [continuation_label] — direct fallthrough continuation
+					// LEA RAX, [continuation_label] — direct fallthrough continuation
 				emitLeaLabelAddress(X64Register::RAX, continuation_handle);
 			}
 		} else {
@@ -14472,26 +14472,26 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 			emitXorRegReg(X64Register::RAX);
 		}
 
-	// Funclet epilogue
+			// Funclet epilogue
 		emitAddRSP(32);
 		emitPopReg(X64Register::RBP);
 		emitRet();
 
-	// Record funclet end at the actual funclet return point.
+			// Record funclet end at the actual funclet return point.
 		if (current_catch_handler_) {
 			current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		}
 
-	// Emit catch continuation entry point in parent-function code space.
+				// Emit catch continuation entry point in parent-function code space.
 		if (use_fixup && label_positions_.find(fixup_handle) == label_positions_.end()) {
 			label_positions_[fixup_handle] = static_cast<uint32_t>(textSectionData.size());
 
-		// Restoring extra post-frame stack is patched later. Depending on the final
-		// frame layout this becomes either SUB RSP, imm32 or a NOP sequence.
+					// Restoring extra post-frame stack is patched later. Depending on the final
+					// frame layout this becomes either SUB RSP, imm32 or a NOP sequence.
 			catch_continuation_sub_rsp_patches_.push_back(emitSubRSPImm32Placeholder());
 
-		// LEA RBP, [RSP + total_stack] — restore the parent's frame pointer after
-		// any post-frame allocation has been reinstated.
+					// LEA RBP, [RSP + total_stack] — restore the parent's frame pointer after
+					// any post-frame allocation has been reinstated.
 			catch_continuation_lea_rbp_patches_.push_back(emitLeaFromRSPDisp32Placeholder(X64Register::RBP));
 
 			emitMovFromFrameBySize(X64Register::RCX, catch_funclet_return_flag_slot_offset_, 64);
@@ -14519,8 +14519,8 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 	}
 
 	if (current_catch_handler_) {
-	// For ELF, record funclet_end_offset here. For Windows/COFF, it was already
-	// recorded inside the platform-specific block at the actual funclet end.
+			// For ELF, record funclet_end_offset here. For Windows/COFF, it was already
+			// recorded inside the platform-specific block at the actual funclet end.
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			current_catch_handler_->funclet_end_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		}
@@ -14550,46 +14550,46 @@ void IrToObjConverter<TWriterClass>::handleCatchEnd(const IrInstruction& instruc
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instruction) {
-	// Skip exception handling if disabled - generate abort() instead
+		// Skip exception handling if disabled - generate abort() instead
 	if (!g_enable_exceptions) {
-	// Call abort() to terminate when exceptions are disabled
+			// Call abort() to terminate when exceptions are disabled
 		emitCall("abort");
 		return;
 	}
 
-	// Extract data from typed payload
+		// Extract data from typed payload
 	const auto& throw_op = instruction.getTypedPayload<ThrowOp>();
 
 	size_t exception_size = throw_op.size_in_bytes;
 	if (exception_size == 0)
 		exception_size = 8; // Minimum size
 
-	// Round exception size up to 8-byte alignment
+		// Round exception size up to 8-byte alignment
 	size_t aligned_exception_size = (exception_size + 7) & ~7;
 
 	const StructTypeInfo* thrown_exception_struct_info = nullptr;
 	if (const TypeInfo* ti = tryGetTypeInfo(throw_op.type_index))
 		thrown_exception_struct_info = ti->getStructInfo();
 
-	// Platform-specific exception handling
+			// Platform-specific exception handling
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// ========== Linux/ELF (Itanium C++ ABI) ==========
-	// Two-step process:
-	// 1. Call __cxa_allocate_exception(size_t thrown_size) -> returns void*
-	// 2. Copy exception object to allocated memory
-	// 3. Call __cxa_throw(void* thrown_object, type_info* tinfo, void (*dest)(void*))
-	//
-	// System V AMD64 calling convention: RDI, RSI, RDX, RCX, R8, R9
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Two-step process:
+			// 1. Call __cxa_allocate_exception(size_t thrown_size) -> returns void*
+			// 2. Copy exception object to allocated memory
+			// 3. Call __cxa_throw(void* thrown_object, type_info* tinfo, void (*dest)(void*))
+			//
+			// System V AMD64 calling convention: RDI, RSI, RDX, RCX, R8, R9
 
-	// Step 1: Call __cxa_allocate_exception(exception_size)
-	// Argument: RDI = exception_size
+			// Step 1: Call __cxa_allocate_exception(exception_size)
+			// Argument: RDI = exception_size
 		emitMovImm64(X64Register::RDI, aligned_exception_size);
 		emitSubRSP(8); // Align stack to 16 bytes before call
 		emitCall("__cxa_allocate_exception");
 		emitAddRSP(8); // Clean up alignment
 
-	// Result is in RAX (pointer to allocated exception object)
-	// Save it to R15 (callee-saved register)
+			// Result is in RAX (pointer to allocated exception object)
+			// Save it to R15 (callee-saved register)
 		emitMovRegReg(X64Register::R15, X64Register::RAX);
 
 		bool exception_constructed = false;
@@ -14601,12 +14601,12 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, exception_ptr_slot, true, source_value, throw_op.is_rvalue);
 		}
 
-	// Step 2: Copy/construct exception object in allocated memory
+				// Step 2: Copy/construct exception object in allocated memory
 		if (!exception_constructed && exception_size <= 8) {
-	// Small object: load value into RCX and store to [R15]
-	// Use IrValue variant to handle TempVar, integer literal, or float literal
+				// Small object: load value into RCX and store to [R15]
+				// Use IrValue variant to handle TempVar, integer literal, or float literal
 			if (std::holds_alternative<double>(throw_op.exception_value)) {
-		// Float immediate - convert to bit representation
+					// Float immediate - convert to bit representation
 				double float_val = std::get<double>(throw_op.exception_value);
 				uint64_t bits;
 				if (exception_size == 4) {
@@ -14618,10 +14618,10 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 				}
 				emitMovImm64(X64Register::RCX, bits);
 			} else if (const auto* ull_val = std::get_if<unsigned long long>(&throw_op.exception_value)) {
-		// Integer immediate - load directly
+					// Integer immediate - load directly
 				emitMovImm64(X64Register::RCX, *ull_val);
 			} else if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
-		// TempVar - load from stack
+					// TempVar - load from stack
 				TempVar temp = std::get<TempVar>(throw_op.exception_value);
 				if (temp.var_number != 0) {
 					int32_t stack_offset = getStackOffsetFromTempVar(temp);
@@ -14638,15 +14638,15 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					emitMovImm64(X64Register::RCX, 0);
 				}
 			} else {
-		// StringHandle is not a valid exception value type - IrValue includes it for
-		// other contexts (like variable names), but throw expressions only use TempVar
-		// or immediate values. Default to zero as a safety fallback.
+					// StringHandle is not a valid exception value type - IrValue includes it for
+					// other contexts (like variable names), but throw expressions only use TempVar
+					// or immediate values. Default to zero as a safety fallback.
 				emitMovImm64(X64Register::RCX, 0);
 			}
-	// Store exception value to allocated memory [R15 + 0]
+				// Store exception value to allocated memory [R15 + 0]
 			emitStoreToMemory(textSectionData, X64Register::RCX, X64Register::R15, 0, static_cast<int>(exception_size));
 		} else if (!exception_constructed) {
-	// Large object: memory-to-memory copy (must be TempVar)
+				// Large object: memory-to-memory copy (must be TempVar)
 			if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 				TempVar temp = std::get<TempVar>(throw_op.exception_value);
 				if (temp.var_number != 0) {
@@ -14664,45 +14664,45 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 					emitXorRegReg(X64Register::RSI);
 				}
 			} else {
-		// Large objects can only be TempVars - immediates and StringHandles are not valid here
+					// Large objects can only be TempVars - immediates and StringHandles are not valid here
 				emitXorRegReg(X64Register::RSI);
 			}
-	// RDI = destination (allocated memory in R15)
+				// RDI = destination (allocated memory in R15)
 			emitMovRegReg(X64Register::RDI, X64Register::R15);
-	// RCX = count
+				// RCX = count
 			emitMovImm64(X64Register::RCX, exception_size);
-	// Copy: rep movsb
+				// Copy: rep movsb
 			emitRepMovsb();
 		}
 
-	// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
-	// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
+			// Step 3: Call __cxa_throw(thrown_object, tinfo, destructor)
+			// RDI = thrown_object (from __cxa_allocate_exception, now in R15)
 		emitMovRegReg(X64Register::RDI, X64Register::R15);
 
-	// RSI = type_info* - generate type_info for the thrown type
+			// RSI = type_info* - generate type_info for the thrown type
 		std::string typeinfo_symbol;
 		TypeCategory exception_type = throw_op.exceptionType();
 
-	// Check if it's a built-in type or user-defined type
+				// Check if it's a built-in type or user-defined type
 		if (thrown_exception_struct_info) {
-		// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
+					// Use hierarchy-aware overload so derived exceptions get __si/__vmi typeinfo
 			typeinfo_symbol = writer.get_or_create_class_typeinfo(thrown_exception_struct_info);
 		} else if (exception_type != TypeCategory::Void) {
-	// Built-in type (int, float, etc.) - use the Type enum directly
+				// Built-in type (int, float, etc.) - use the Type enum directly
 			typeinfo_symbol = writer.get_or_create_builtin_typeinfo(exception_type);
 		}
 
 		if (!typeinfo_symbol.empty()) {
-	// Load address of type_info into RSI using RIP-relative LEA
+				// Load address of type_info into RSI using RIP-relative LEA
 			emitLeaRipRelativeWithRelocation(X64Register::RSI, typeinfo_symbol);
 		} else {
-	// Unknown type, use NULL
+				// Unknown type, use NULL
 			emitXorRegReg(X64Register::RSI);
 		}
 
-	// RDX = destructor function pointer (NULL for POD types; for class types,
-	// pass the complete-object destructor so __cxa_end_catch can call it when
-	// the exception object's refcount reaches zero).
+			// RDX = destructor function pointer (NULL for POD types; for class types,
+			// pass the complete-object destructor so __cxa_end_catch can call it when
+			// the exception object's refcount reaches zero).
 		std::string destructor_symbol;
 		if (thrown_exception_struct_info) {
 			destructor_symbol = buildDestructorMangledName(*thrown_exception_struct_info);
@@ -14714,23 +14714,23 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 		}
 
 		emitCall("__cxa_throw");
-	// Note: __cxa_throw never returns
+			// Note: __cxa_throw never returns
 
 	} else {
-	// ========== Windows/COFF (MSVC ABI) ==========
-	// Single-step process:
-	// Call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
-	//
-	// Windows x64 calling convention: RCX, RDX, R8, R9
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Single-step process:
+			// Call _CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo)
+			//
+			// Windows x64 calling convention: RCX, RDX, R8, R9
 
-	// Allocate a frame-relative slot for the exception object.
-	// Using [RSP+32] is unsafe because it can overlap with the saved RBP
-	// when the stack frame is small (e.g., a function that only throws).
-	// Instead, allocate a proper slot via the temp var mechanism.
+			// Allocate a frame-relative slot for the exception object.
+			// Using [RSP+32] is unsafe because it can overlap with the saved RBP
+			// when the stack frame is small (e.g., a function that only throws).
+			// Instead, allocate a proper slot via the temp var mechanism.
 		int32_t throw_temp_size = static_cast<int32_t>((aligned_exception_size + 7) & ~7);
 		next_temp_var_offset_ += throw_temp_size;
 		int32_t throw_slot_offset = -(static_cast<int32_t>(current_function_named_vars_size_) + next_temp_var_offset_);
-	// Extend scope_stack_space to account for this allocation
+			// Extend scope_stack_space to account for this allocation
 		if (!variable_scopes.empty()) {
 			auto& scope = variable_scopes.back();
 			int32_t required = -(throw_slot_offset);
@@ -14745,9 +14745,9 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			exception_constructed = emitSameTypeCopyOrMoveConstructorCall(throw_op.type_index, throw_slot_offset, false, source_value, throw_op.is_rvalue);
 		}
 
-	// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
+				// Copy/construct exception object to frame slot at [RBP+throw_slot_offset]
 		if (!exception_constructed && exception_size <= 8) {
-	// Small object: load into RAX and store
+				// Small object: load into RAX and store
 			if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 				TempVar temp = std::get<TempVar>(throw_op.exception_value);
 				if (temp.var_number != 0) {
@@ -14782,7 +14782,7 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			}
 			emitMovToFrame(X64Register::RAX, throw_slot_offset, static_cast<int>(exception_size * 8));
 		} else if (!exception_constructed) {
-	// Large object: use memory-to-memory copy (must be TempVar)
+				// Large object: use memory-to-memory copy (must be TempVar)
 			if (std::holds_alternative<TempVar>(throw_op.exception_value)) {
 				TempVar temp = std::get<TempVar>(throw_op.exception_value);
 				if (temp.var_number != 0) {
@@ -14807,10 +14807,10 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 			emitRepMovsb();
 		}
 
-	// Set up arguments for _CxxThrowException
-	// RCX (first argument) = pointer to exception object on the frame
+				// Set up arguments for _CxxThrowException
+				// RCX (first argument) = pointer to exception object on the frame
 		emitLeaFromFrame(X64Register::RCX, throw_slot_offset);
-	// RDX (second argument) = pointer to _ThrowInfo metadata
+				// RDX (second argument) = pointer to _ThrowInfo metadata
 		std::string throw_type_name;
 		std::string throw_destructor_symbol;
 		const StructTypeInfo* thrown_struct_info = thrown_exception_struct_info;
@@ -14835,56 +14835,56 @@ void IrToObjConverter<TWriterClass>::handleThrow(const IrInstruction& instructio
 		}
 
 		emitCall("_CxxThrowException");
-	// _CxxThrowException is [[noreturn]], but the call pushes a return address on the stack.
-	// That return address must fall WITHIN this function's PDATA range [begin, end).
-	// Without the int3, return_addr == PDATA_end (exclusive boundary) → the unwinder
-	// cannot find this function's PDATA and skips main's try/catch.
-	// Emitting int 3 extends the function code by 1 byte so return_addr < PDATA_end.
+			// _CxxThrowException is [[noreturn]], but the call pushes a return address on the stack.
+			// That return address must fall WITHIN this function's PDATA range [begin, end).
+			// Without the int3, return_addr == PDATA_end (exclusive boundary) → the unwinder
+			// cannot find this function's PDATA and skips main's try/catch.
+			// Emitting int 3 extends the function code by 1 byte so return_addr < PDATA_end.
 		textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 	}
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleRethrow([[maybe_unused]] const IrInstruction& instruction) {
-	// Skip exception handling if disabled - generate abort() instead
+		// Skip exception handling if disabled - generate abort() instead
 	if (!g_enable_exceptions) {
-	// Call abort() to terminate when exceptions are disabled
+			// Call abort() to terminate when exceptions are disabled
 		emitCall("abort");
 		return;
 	}
 
-	// Platform-specific rethrow implementation
+		// Platform-specific rethrow implementation
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// ========== Linux/ELF (Itanium C++ ABI) ==========
-	// Call __cxa_rethrow() with no arguments.
-	// throw; is always executed inside a catch handler (landing pad).
-	// The unwinder restores RSP = CFA before jumping to the landing pad,
-	// which leaves RSP 16-byte aligned (CFA = RBP + 16, RBP even-aligned).
-	// Do NOT emit sub rsp,8 here — that would misalign RSP and crash
-	// movaps instructions inside _Unwind_RaiseException.
+			// ========== Linux/ELF (Itanium C++ ABI) ==========
+			// Call __cxa_rethrow() with no arguments.
+			// throw; is always executed inside a catch handler (landing pad).
+			// The unwinder restores RSP = CFA before jumping to the landing pad,
+			// which leaves RSP 16-byte aligned (CFA = RBP + 16, RBP even-aligned).
+			// Do NOT emit sub rsp,8 here — that would misalign RSP and crash
+			// movaps instructions inside _Unwind_RaiseException.
 		emitCall("__cxa_rethrow");
-	// Note: __cxa_rethrow never returns
+			// Note: __cxa_rethrow never returns
 
 	} else {
-	// ========== Windows/COFF (MSVC ABI) ==========
-	// Call _CxxThrowException(NULL, NULL) to rethrow current exception
-	// Windows x64 calling convention: RCX, RDX
+			// ========== Windows/COFF (MSVC ABI) ==========
+			// Call _CxxThrowException(NULL, NULL) to rethrow current exception
+			// Windows x64 calling convention: RCX, RDX
 
-	// Set up arguments for _CxxThrowException to rethrow current exception
-	// RCX (first argument) = NULL (rethrow current exception object)
+			// Set up arguments for _CxxThrowException to rethrow current exception
+			// RCX (first argument) = NULL (rethrow current exception object)
 		emitXorRegReg(X64Register::RCX);
-	// RDX (second argument) = NULL (rethrow uses current throw info)
+			// RDX (second argument) = NULL (rethrow uses current throw info)
 		emitXorRegReg(X64Register::RDX);
 
 		emitCall("_CxxThrowException");
-	// Same PDATA range fix: emit int 3 so the return address is within the function range.
+			// Same PDATA range fix: emit int 3 so the return address is within the function range.
 		textSectionData.push_back(static_cast<char>(0xCC)); // int 3 (unreachable)
 	}
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emitFuncletLeaRbpFromRdx(std::vector<uint32_t>& patch_list) {
-	// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
+		// Encoding: 48 8D AA XX XX XX XX (REX.W LEA RBP, [RDX+disp32])
 	patch_list.push_back(static_cast<uint32_t>(textSectionData.size()));
 	textSectionData.push_back(0x48); // REX.W
 	textSectionData.push_back(0x8D); // LEA
@@ -14908,7 +14908,7 @@ void IrToObjConverter<TWriterClass>::emitInlineDestructorCall(const std::pair<St
 	X64Register this_reg = getIntParamReg<TWriterClass>(0);
 	emitLeaFromFrame(this_reg, var_info->offset);
 
-	// Build mangled destructor name using the shared helper
+		// Build mangled destructor name using the shared helper
 	auto mangled_name = buildDestructorMangledNameFromString(StringTable::getStringView(struct_name_h));
 	emitCall(mangled_name);
 	regAlloc.invalidateCallerSavedRegisters();
@@ -14940,9 +14940,9 @@ void IrToObjConverter<TWriterClass>::emitWindowsCleanupFuncletsAndPopulateUnwind
 
 			emitPushReg(X64Register::RBP);
 			emitSubRSP(32);
-		// Cleanup funclets receive the parent establisher frame in RDX.
-		// Reconstruct the parent RBP so frame-relative local offsets match the
-		// parent function's normal codegen.
+					// Cleanup funclets receive the parent establisher frame in RDX.
+					// Reconstruct the parent RBP so frame-relative local offsets match the
+					// parent function's normal codegen.
 			emitFuncletLeaRbpFromRdx(cleanup_funclet_lea_rbp_patches_);
 
 			for (const auto& cv : cleanup_vars) {
@@ -15160,15 +15160,15 @@ void IrToObjConverter<TWriterClass>::handleElfCatchNoMatch([[maybe_unused]] cons
 	if (elf_exc_ptr_offset_ == 0)
 		return;	// No active landing pad context
 
-	// Generate a unique label for this function's cleanup LP entry point
+			// Generate a unique label for this function's cleanup LP entry point
 	std::string lp_label = "__elf_no_match_lp_" + std::to_string(current_function_offset_);
 	elf_no_match_lp_label_ = StringTable::getOrInternStringHandle(lp_label);
 
-	// Load the saved _Unwind_Exception* from the landing-pad-entry save slot into RAX.
-	// handleFunctionCleanupLP() (or the stub below) expects RAX = exception pointer.
+			// Load the saved _Unwind_Exception* from the landing-pad-entry save slot into RAX.
+			// handleFunctionCleanupLP() (or the stub below) expects RAX = exception pointer.
 	emitMovFromFrameBySize(X64Register::RAX, elf_exc_ptr_offset_, 64);
 
-	// JMP __elf_no_match_lp_<n>  (forward reference, resolved at function end)
+			// JMP __elf_no_match_lp_<n>  (forward reference, resolved at function end)
 	emitJmpToLabel(elf_no_match_lp_label_);
 }
 
@@ -15186,8 +15186,8 @@ void IrToObjConverter<TWriterClass>::handleFunctionCleanupLP(const IrInstruction
 		return;
 	}
 
-	// If handleElfCatchNoMatch() set a forward-reference label, define it here
-	// so the "no catch matched" JMP enters the cleanup LP at the right place.
+			// If handleElfCatchNoMatch() set a forward-reference label, define it here
+			// so the "no catch matched" JMP enters the cleanup LP at the right place.
 	if (elf_no_match_lp_label_.isValid()) {
 		label_positions_[elf_no_match_lp_label_] = static_cast<uint32_t>(textSectionData.size());
 		elf_no_match_lp_label_ = StringHandle();
@@ -15198,39 +15198,39 @@ void IrToObjConverter<TWriterClass>::handleFunctionCleanupLP(const IrInstruction
 			current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 		}
 
-	// No local dtors — tail directly to the appropriate exception-escape helper.
-	// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
+				// No local dtors — tail directly to the appropriate exception-escape helper.
+				// MOV RDI, RAX  (RAX = _Unwind_Exception* set by either path above)
 		emitMovRegReg(X64Register::RDI, X64Register::RAX);
 		emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 		return;
 	}
 
-	// Record the offset of this cleanup landing pad within the function
+			// Record the offset of this cleanup landing pad within the function
 	current_function_cleanup_lp_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-	// Flush any dirty virtual registers before the LP code
+			// Flush any dirty virtual registers before the LP code
 	flushAllDirtyRegisters();
 
-	// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
+			// Allocate a frame slot to save the _Unwind_Exception* arriving in RAX
 	int32_t exc_save_offset = allocateElfTempStackSlot(8);
 
-	// Save _Unwind_Exception* (RAX) to frame slot
+			// Save _Unwind_Exception* (RAX) to frame slot
 	emitMovToFrame(X64Register::RAX, exc_save_offset, 64);
 
-	// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
+			// Call each destructor in LIFO order (already in LIFO order in cleanup_vars)
 	for (const auto& cv : op.cleanup_vars) {
 		emitInlineDestructorCall(cv);
 	}
 
-	// Load saved exception ptr into RDI (first arg on Linux) and continue exception escape.
+			// Load saved exception ptr into RDI (first arg on Linux) and continue exception escape.
 	emitMovFromFrameBySize(X64Register::RDI, exc_save_offset, 64);
 	emitCall(current_function_is_noexcept_ ? "__cxa_call_terminate" : "_Unwind_Resume");
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehTryBegin([[maybe_unused]] const IrInstruction& instruction) {
-	// SehTryBegin marks the start of a __try block
-	// Create a new SEH try block and record the current code offset
+		// SehTryBegin marks the start of a __try block
+		// Create a new SEH try block and record the current code offset
 
 	SehTryBlock seh_try_block;
 	seh_try_block.try_start_offset = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
@@ -15244,8 +15244,8 @@ void IrToObjConverter<TWriterClass>::handleSehTryBegin([[maybe_unused]] const Ir
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehTryEnd([[maybe_unused]] const IrInstruction& instruction) {
-	// SehTryEnd marks the end of a __try block
-	// Record the current code offset as the end of the SEH try block
+		// SehTryEnd marks the end of a __try block
+		// Record the current code offset as the end of the SEH try block
 
 	if (!seh_try_block_stack_.empty()) {
 		auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
@@ -15253,14 +15253,14 @@ void IrToObjConverter<TWriterClass>::handleSehTryEnd([[maybe_unused]] const IrIn
 
 		FLASH_LOG(Codegen, Debug, "SEH __try block end at offset ", block.try_end_offset);
 
-	// Don't pop from stack yet - we need the block for the handler
+			// Don't pop from stack yet - we need the block for the handler
 	}
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehExceptBegin(const IrInstruction& instruction) {
-	// SehExceptBegin marks the start of a __except handler
-	// Record this handler in the most recent SEH try block
+		// SehExceptBegin marks the start of a __except handler
+		// Record this handler in the most recent SEH try block
 
 	const auto& except_op = instruction.getTypedPayload<SehExceptBeginOp>();
 
@@ -15272,7 +15272,7 @@ void IrToObjConverter<TWriterClass>::handleSehExceptBegin(const IrInstruction& i
 		handler.is_constant_filter = except_op.is_constant_filter;
 		handler.constant_filter_value = except_op.constant_filter_value;
 
-	// For non-constant filters, use the most recently recorded filter funclet offset
+			// For non-constant filters, use the most recently recorded filter funclet offset
 		if (!except_op.is_constant_filter) {
 			handler.filter_funclet_offset = current_seh_filter_funclet_offset_;
 		}
@@ -15289,8 +15289,8 @@ void IrToObjConverter<TWriterClass>::handleSehExceptBegin(const IrInstruction& i
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehExceptEnd([[maybe_unused]] const IrInstruction& instruction) {
-	// SehExceptEnd marks the end of a __except handler
-	// Pop this try block from the stack
+		// SehExceptEnd marks the end of a __except handler
+		// Pop this try block from the stack
 
 	FLASH_LOG(Codegen, Debug, "SEH __except handler end at offset ",
 			  static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
@@ -15302,27 +15302,27 @@ void IrToObjConverter<TWriterClass>::handleSehExceptEnd([[maybe_unused]] const I
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehFinallyCall(const IrInstruction& instruction) {
-	// SehFinallyCall: normal-flow call to the __finally funclet
-	// Emits: xor ecx,ecx; mov rdx,rbp; call funclet_label; jmp end_label
-	// ECX=0 means "normal termination" (AbnormalTermination() returns false)
-	// RDX=frame pointer (establisher frame for the funclet)
+		// SehFinallyCall: normal-flow call to the __finally funclet
+		// Emits: xor ecx,ecx; mov rdx,rbp; call funclet_label; jmp end_label
+		// ECX=0 means "normal termination" (AbnormalTermination() returns false)
+		// RDX=frame pointer (establisher frame for the funclet)
 
 	const auto& op = instruction.getTypedPayload<SehFinallyCallOp>();
 
 	FLASH_LOG(Codegen, Debug, "SEH __finally call: funclet=", op.funclet_label, " end=", op.end_label);
 
-	// Flush all dirty registers before the call
+		// Flush all dirty registers before the call
 	flushAllDirtyRegisters();
 
-	// xor ecx, ecx (AbnormalTermination = false)
-	// Use 32-bit XOR (no REX.W) since we only need ECX zeroed
+		// xor ecx, ecx (AbnormalTermination = false)
+		// Use 32-bit XOR (no REX.W) since we only need ECX zeroed
 	textSectionData.push_back(0x31); // XOR r/m32, r32
 	textSectionData.push_back(0xC9); // ModR/M: ECX, ECX
 
-	// mov rdx, rbp (establisher frame)
+		// mov rdx, rbp (establisher frame)
 	emitMovRegReg(X64Register::RDX, X64Register::RBP);
 
-	// call funclet_label (CALL rel32 - patched later)
+		// call funclet_label (CALL rel32 - patched later)
 	textSectionData.push_back(0xE8);
 	uint32_t call_patch = static_cast<uint32_t>(textSectionData.size());
 	textSectionData.push_back(0x00);
@@ -15331,7 +15331,7 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyCall(const IrInstruction& i
 	textSectionData.push_back(0x00);
 	pending_branches_.push_back({StringTable::getOrInternStringHandle(op.funclet_label), call_patch});
 
-	// jmp end_label (JMP rel32 - patched later)
+		// jmp end_label (JMP rel32 - patched later)
 	textSectionData.push_back(0xE9);
 	uint32_t jmp_patch = static_cast<uint32_t>(textSectionData.size());
 	textSectionData.push_back(0x00);
@@ -15343,12 +15343,12 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyCall(const IrInstruction& i
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehFinallyBegin([[maybe_unused]] const IrInstruction& instruction) {
-	// SehFinallyBegin marks the start of a __finally funclet
-	// This is both the normal-flow entry and the unwind-phase entry.
-	// __C_specific_handler calls it with: ECX=AbnormalTermination, RDX=EstablisherFrame
-	// Normal flow calls it with: ECX=0, RDX=RBP
+		// SehFinallyBegin marks the start of a __finally funclet
+		// This is both the normal-flow entry and the unwind-phase entry.
+		// __C_specific_handler calls it with: ECX=AbnormalTermination, RDX=EstablisherFrame
+		// Normal flow calls it with: ECX=0, RDX=RBP
 
-	// Record handler offset in the current SEH try block
+		// Record handler offset in the current SEH try block
 	if (!seh_try_block_stack_.empty()) {
 		auto& block = current_function_seh_try_blocks_[seh_try_block_stack_.back()];
 		SehFinallyHandler handler;
@@ -15359,18 +15359,18 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyBegin([[maybe_unused]] cons
 		FLASH_LOG(Codegen, Debug, "SEH __finally funclet begin at offset ", handler.handler_offset);
 	}
 
-	// Emit funclet prologue:
-	//   push rbp
-	//   sub rsp, 32     (shadow space for any calls within __finally)
-	//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
-	//   mov [rsp+8], ecx  (save AbnormalTermination flag for _abnormal_termination() intrinsic)
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space for any calls within __finally)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		//   mov [rsp+8], ecx  (save AbnormalTermination flag for _abnormal_termination() intrinsic)
 	emitPushReg(X64Register::RBP);
 	emitSubRSP(32);
 	emitMovRegReg(X64Register::RBP, X64Register::RDX);
 
-	// Save AbnormalTermination (ECX) to shadow space slot 2 ([rsp+0x08])
-	// _abnormal_termination() will load it from there.
-	// mov dword ptr [rsp+8], ecx  (89 4C 24 08)
+		// Save AbnormalTermination (ECX) to shadow space slot 2 ([rsp+0x08])
+		// _abnormal_termination() will load it from there.
+		// mov dword ptr [rsp+8], ecx  (89 4C 24 08)
 	textSectionData.push_back(static_cast<char>(0x89));
 	textSectionData.push_back(static_cast<char>(0x4C));
 	textSectionData.push_back(0x24);
@@ -15379,24 +15379,24 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyBegin([[maybe_unused]] cons
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehFinallyEnd([[maybe_unused]] const IrInstruction& instruction) {
-	// SehFinallyEnd marks the end of a __finally funclet
-	// Emit funclet epilogue + ret
+		// SehFinallyEnd marks the end of a __finally funclet
+		// Emit funclet epilogue + ret
 
 	FLASH_LOG(Codegen, Debug, "SEH __finally funclet end at offset ",
 			  static_cast<uint32_t>(textSectionData.size()) - current_function_offset_);
 
-	// Flush all dirty registers before returning
+		// Flush all dirty registers before returning
 	flushAllDirtyRegisters();
 
-	// Emit funclet epilogue:
-	//   add rsp, 32
-	//   pop rbp
-	//   ret
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
 	emitAddRSP(32);
 	emitPopReg(X64Register::RBP);
 	textSectionData.push_back(0xC3); // RET
 
-	// Pop this try block from the stack
+		// Pop this try block from the stack
 	if (!seh_try_block_stack_.empty()) {
 		seh_try_block_stack_.pop_back();
 	}
@@ -15404,26 +15404,26 @@ void IrToObjConverter<TWriterClass>::handleSehFinallyEnd([[maybe_unused]] const 
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehFilterBegin([[maybe_unused]] const IrInstruction& instruction) {
-	// SehFilterBegin marks the start of a filter funclet
-	// __C_specific_handler calls it with: RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame
-	// The filter must return the filter result in EAX
+		// SehFilterBegin marks the start of a filter funclet
+		// __C_specific_handler calls it with: RCX=EXCEPTION_POINTERS*, RDX=EstablisherFrame
+		// The filter must return the filter result in EAX
 
-	// Record filter funclet offset
+		// Record filter funclet offset
 	current_seh_filter_funclet_offset_ = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
 	FLASH_LOG(Codegen, Debug, "SEH filter funclet begin at offset ", current_seh_filter_funclet_offset_);
 
-	// Emit funclet prologue:
-	//   push rbp
-	//   sub rsp, 32     (shadow space)
-	//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
+		// Emit funclet prologue:
+		//   push rbp
+		//   sub rsp, 32     (shadow space)
+		//   mov rbp, rdx    (set RBP to establisher frame so local vars are accessible)
 	emitPushReg(X64Register::RBP);
 	emitSubRSP(32);
 	emitMovRegReg(X64Register::RBP, X64Register::RDX);
 
-	// Save EXCEPTION_POINTERS* (RCX) to shadow space slot 2 ([rsp+0x08])
-	// so GetExceptionCode() / GetExceptionInformation() can load it after RCX may be clobbered.
-	// mov qword ptr [rsp+8], rcx  (48 89 4C 24 08)
+		// Save EXCEPTION_POINTERS* (RCX) to shadow space slot 2 ([rsp+0x08])
+		// so GetExceptionCode() / GetExceptionInformation() can load it after RCX may be clobbered.
+		// mov qword ptr [rsp+8], rcx  (48 89 4C 24 08)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x89));
 	textSectionData.push_back(static_cast<char>(0x4C));
@@ -15433,27 +15433,27 @@ void IrToObjConverter<TWriterClass>::handleSehFilterBegin([[maybe_unused]] const
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehGetExceptionCode(const IrInstruction& instruction) {
-	// SehGetExceptionCode: GetExceptionCode() intrinsic in filter funclet
-	// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin
-	// EXCEPTION_POINTERS->ExceptionRecord = [RCX+0] (pointer to EXCEPTION_RECORD)
-	// EXCEPTION_RECORD->ExceptionCode     = [ExceptionRecord+0] (DWORD at offset 0)
+		// SehGetExceptionCode: GetExceptionCode() intrinsic in filter funclet
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin
+		// EXCEPTION_POINTERS->ExceptionRecord = [RCX+0] (pointer to EXCEPTION_RECORD)
+		// EXCEPTION_RECORD->ExceptionCode     = [ExceptionRecord+0] (DWORD at offset 0)
 	const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
 
-	// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x44);
 	textSectionData.push_back(0x24);
 	textSectionData.push_back(0x08);
-	// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x00);
-	// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x00);
 
-	// Store 32-bit result to the result temp var (accessible via parent's RBP)
+		// Store 32-bit result to the result temp var (accessible via parent's RBP)
 	int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
 	emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
 
@@ -15462,18 +15462,18 @@ void IrToObjConverter<TWriterClass>::handleSehGetExceptionCode(const IrInstructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehGetExceptionInfo(const IrInstruction& instruction) {
-	// SehGetExceptionInfo: GetExceptionInformation() intrinsic in filter funclet
-	// Returns the EXCEPTION_POINTERS* that was saved to [rsp+0x08] in handleSehFilterBegin
+		// SehGetExceptionInfo: GetExceptionInformation() intrinsic in filter funclet
+		// Returns the EXCEPTION_POINTERS* that was saved to [rsp+0x08] in handleSehFilterBegin
 	const auto& op = instruction.getTypedPayload<SehExceptionIntrinsicOp>();
 
-	// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x44);
 	textSectionData.push_back(0x24);
 	textSectionData.push_back(0x08);
 
-	// Store 64-bit pointer to the result temp var (accessible via parent's RBP)
+		// Store 64-bit pointer to the result temp var (accessible via parent's RBP)
 	int32_t result_offset = getStackOffsetFromTempVar(op.result, 64);
 	emitMovToFrameBySize(X64Register::RAX, result_offset, 64);
 
@@ -15482,32 +15482,32 @@ void IrToObjConverter<TWriterClass>::handleSehGetExceptionInfo(const IrInstructi
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehFilterEnd(const IrInstruction& instruction) {
-	// SehFilterEnd marks the end of a filter funclet
-	// Move filter result to EAX and return
+		// SehFilterEnd marks the end of a filter funclet
+		// Move filter result to EAX and return
 
 	const auto& op = instruction.getTypedPayload<SehFilterEndOp>();
 
 	FLASH_LOG(Codegen, Debug, "SEH filter funclet end, result temp=", op.filter_result.var_number,
 			  " is_constant=", op.is_constant_result);
 
-	// Flush all dirty registers to ensure filter result is on the stack
+		// Flush all dirty registers to ensure filter result is on the stack
 	flushAllDirtyRegisters();
 
-	// Load the filter result into EAX
+		// Load the filter result into EAX
 	if (op.is_constant_result) {
-	// Constant filter result (e.g. from a comma expression ending in a literal)
-	// mov eax, imm32
+			// Constant filter result (e.g. from a comma expression ending in a literal)
+			// mov eax, imm32
 		emitMovImm32(X64Register::RAX, static_cast<uint32_t>(op.constant_result));
 	} else {
-	// Load the filter result from its stack slot via RBP-relative addressing
+			// Load the filter result from its stack slot via RBP-relative addressing
 		int32_t filter_offset = getStackOffsetFromTempVar(op.filter_result, 32);
 		emitMovFromFrameBySize(X64Register::RAX, filter_offset, 32);
 	}
 
-	// Emit funclet epilogue:
-	//   add rsp, 32
-	//   pop rbp
-	//   ret
+		// Emit funclet epilogue:
+		//   add rsp, 32
+		//   pop rbp
+		//   ret
 	emitAddRSP(32);
 	emitPopReg(X64Register::RBP);
 	textSectionData.push_back(0xC3); // RET
@@ -15515,27 +15515,27 @@ void IrToObjConverter<TWriterClass>::handleSehFilterEnd(const IrInstruction& ins
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehSaveExceptionCode(const IrInstruction& instruction) {
-	// SehSaveExceptionCode: called at start of filter funclet.
-	// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin.
-	// This handler reads ExceptionCode and writes it to a parent-frame slot so
-	// GetExceptionCode() works in the __except body (not just the filter expression).
+		// SehSaveExceptionCode: called at start of filter funclet.
+		// EXCEPTION_POINTERS* was saved to [rsp+0x08] in handleSehFilterBegin.
+		// This handler reads ExceptionCode and writes it to a parent-frame slot so
+		// GetExceptionCode() works in the __except body (not just the filter expression).
 	const auto& op = instruction.getTypedPayload<SehSaveExceptionCodeOp>();
 
-	// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
+		// mov rax, [rsp+0x08]   ; EXCEPTION_POINTERS* (48 8B 44 24 08)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x44);
 	textSectionData.push_back(0x24);
 	textSectionData.push_back(0x08);
-	// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
+		// mov rax, [rax]        ; ExceptionRecord* (48 8B 00)
 	textSectionData.push_back(0x48);
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x00);
-	// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
+		// mov eax, [rax]        ; ExceptionCode (DWORD) (8B 00)
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x00);
 
-	// Store 32-bit ExceptionCode to the parent-frame slot (accessible via RBP)
+		// Store 32-bit ExceptionCode to the parent-frame slot (accessible via RBP)
 	int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
 	emitMovToFrameBySize(X64Register::RAX, saved_offset, 32);
 
@@ -15544,15 +15544,15 @@ void IrToObjConverter<TWriterClass>::handleSehSaveExceptionCode(const IrInstruct
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehGetExceptionCodeBody(const IrInstruction& instruction) {
-	// SehGetExceptionCodeBody: load ExceptionCode from parent-frame slot
-	// (the slot was written by handleSehSaveExceptionCode in the filter funclet)
+		// SehGetExceptionCodeBody: load ExceptionCode from parent-frame slot
+		// (the slot was written by handleSehSaveExceptionCode in the filter funclet)
 	const auto& op = instruction.getTypedPayload<SehGetExceptionCodeBodyOp>();
 
-	// Load saved ExceptionCode from parent-frame slot
+		// Load saved ExceptionCode from parent-frame slot
 	int32_t saved_offset = getStackOffsetFromTempVar(op.saved_var, 32);
 	emitMovFromFrameBySize(X64Register::RAX, saved_offset, 32);
 
-	// Store to result slot
+		// Store to result slot
 	int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
 	emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
 
@@ -15561,20 +15561,20 @@ void IrToObjConverter<TWriterClass>::handleSehGetExceptionCodeBody(const IrInstr
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehAbnormalTermination(const IrInstruction& instruction) {
-	// SehAbnormalTermination: _abnormal_termination() / AbnormalTermination() intrinsic
-	// Only valid inside a __finally funclet.
-	// ECX was saved to [rsp+0x08] in handleSehFinallyBegin.
-	// Returns: 0 if __finally running due to normal control flow,
-	//          non-zero if __finally running during exception unwind.
+		// SehAbnormalTermination: _abnormal_termination() / AbnormalTermination() intrinsic
+		// Only valid inside a __finally funclet.
+		// ECX was saved to [rsp+0x08] in handleSehFinallyBegin.
+		// Returns: 0 if __finally running due to normal control flow,
+		//          non-zero if __finally running during exception unwind.
 	const auto& op = instruction.getTypedPayload<SehAbnormalTerminationOp>();
 
-	// mov eax, [rsp+0x08]   ; AbnormalTermination flag (8B 44 24 08)
+		// mov eax, [rsp+0x08]   ; AbnormalTermination flag (8B 44 24 08)
 	textSectionData.push_back(static_cast<char>(0x8B));
 	textSectionData.push_back(0x44);
 	textSectionData.push_back(0x24);
 	textSectionData.push_back(0x08);
 
-	// Store 32-bit result to result slot
+		// Store 32-bit result to result slot
 	int32_t result_offset = getStackOffsetFromTempVar(op.result, 32);
 	emitMovToFrameBySize(X64Register::RAX, result_offset, 32);
 
@@ -15583,8 +15583,8 @@ void IrToObjConverter<TWriterClass>::handleSehAbnormalTermination(const IrInstru
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleSehLeave(const IrInstruction& instruction) {
-	// SehLeave implements the __leave statement
-	// This should jump to the end of the current __try block (or __finally if present)
+		// SehLeave implements the __leave statement
+		// This should jump to the end of the current __try block (or __finally if present)
 
 	const auto& leave_op = instruction.getTypedPayload<SehLeaveOp>();
 	std::string_view target_label = leave_op.target_label;
@@ -15593,24 +15593,24 @@ void IrToObjConverter<TWriterClass>::handleSehLeave(const IrInstruction& instruc
 			  static_cast<uint32_t>(textSectionData.size()) - current_function_offset_,
 			  " target=", target_label);
 
-	// Flush all dirty registers before jumping
+		// Flush all dirty registers before jumping
 	flushAllDirtyRegisters();
 
-	// Generate JMP instruction (E9 + 32-bit relative offset)
-	// We'll use a placeholder offset and fix it up later
+			// Generate JMP instruction (E9 + 32-bit relative offset)
+			// We'll use a placeholder offset and fix it up later
 	emitJmpToLabel(StringTable::getOrInternStringHandle(target_label));
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::finalizeSections() {
-	// Emit global variables to .data/.rodata/.bss sections FIRST
-	// This creates the symbols that relocations will reference
+		// Emit global variables to .data/.rodata/.bss sections FIRST
+		// This creates the symbols that relocations will reference
 	for (const auto& global : global_variables_) {
 		writer.add_global_variable_data(StringTable::getStringView(global.name), global.size_in_bytes,
 										global.is_initialized, global.init_data, global.is_rodata);
 	}
 
-	// Emit data section relocations for pointer/reference globals initialized with &symbol
+		// Emit data section relocations for pointer/reference globals initialized with &symbol
 	for (const auto& global : global_variables_) {
 		if (global.reloc_target.isValid()) {
 			writer.add_data_relocation(StringTable::getStringView(global.name),
@@ -15618,9 +15618,9 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		}
 	}
 
-	// Emit vtables to .rdata section
+		// Emit vtables to .rdata section
 	for (const auto& vtable : vtables_) {
-	// Convert vector<string> to vector<string_view> for passing as span
+			// Convert vector<string> to vector<string_view> for passing as span
 		std::vector<std::string_view> func_symbols_sv;
 		func_symbols_sv.reserve(vtable.function_symbols.size());
 		for (const auto& sym : vtable.function_symbols) {
@@ -15637,21 +15637,21 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 						  base_class_names_sv, vtable.base_class_info, vtable.rtti_info);
 	}
 
-	// Now add pending global variable relocations (after symbols are created)
-	// First, remove stale relocations from any error-skipped last function
+		// Now add pending global variable relocations (after symbols are created)
+		// First, remove stale relocations from any error-skipped last function
 	if (skip_previous_function_finalization_) {
 		std::erase_if(pending_global_relocations_, [this](const PendingGlobalRelocation& r) {
 			return r.offset >= current_function_offset_;
 		});
-	// Truncate textSectionData back to the start of the failed function
+			// Truncate textSectionData back to the start of the failed function
 		textSectionData.resize(current_function_offset_);
 	}
 	for (const auto& reloc : pending_global_relocations_) {
 		writer.add_text_relocation(reloc.offset, std::string(StringTable::getStringView(reloc.symbol_name)), reloc.type, reloc.addend);
 	}
 
-	// Patch all pending branches before finalizing
-	// Skip patching if the last function was error-skipped (branches may reference unresolved labels)
+		// Patch all pending branches before finalizing
+		// Skip patching if the last function was error-skipped (branches may reference unresolved labels)
 	if (!skip_previous_function_finalization_) {
 		finalizeFunctionBranches();
 	} else {
@@ -15659,13 +15659,13 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		label_positions_.clear();
 	}
 
-	// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
+		// Finalize the last function (if any) since there's no subsequent handleFunctionDecl to trigger it
 	if (current_function_name_.isValid() && !skip_previous_function_finalization_) {
-	// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
-	// scope_stack_space is negative (offset from RBP), so negate to get positive size
+			// Calculate actual stack space needed from scope_stack_space (which includes varargs area if present)
+			// scope_stack_space is negative (offset from RBP), so negate to get positive size
 		size_t total_stack = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 
-	// Ensure stack frame also covers any catch object slot used by FH3 materialization.
+			// Ensure stack frame also covers any catch object slot used by FH3 materialization.
 		for (const auto& try_block : current_function_try_blocks_) {
 			for (const auto& handler : try_block.catch_handlers) {
 				if (handler.catch_obj_stack_offset < 0) {
@@ -15677,8 +15677,8 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 
-	// For C++ EH functions with the establisher-frame model (FrameOffset>0),
-	// ensure 32 bytes of shadow/home space at the bottom of the frame.
+			// For C++ EH functions with the establisher-frame model (FrameOffset>0),
+			// ensure 32 bytes of shadow/home space at the bottom of the frame.
 		if (current_function_has_cpp_eh_) {
 			size_t vars_used = static_cast<size_t>(-variable_scopes.back().scope_stack_space);
 			if (total_stack < vars_used + 32) {
@@ -15686,20 +15686,20 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 
-	// Stack alignment: After PUSH RBP, RSP is 16-aligned.
-	// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
-	// Both Linux and Windows: Align total_stack to 16n (multiple of 16)
+			// Stack alignment: After PUSH RBP, RSP is 16-aligned.
+			// SUB RSP, N must keep it 16-aligned for subsequent CALLs.
+			// Both Linux and Windows: Align total_stack to 16n (multiple of 16)
 		if (total_stack % 16 != 0) {
 			total_stack = (total_stack + 15) & ~15;	// Round up to next 16n
 		}
 
 		emitWindowsCleanupFuncletsAndPopulateUnwindMap();
 
-	// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
-	// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
-	// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
-	// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
-	// accommodates any frame size in the single SUB RSP, so always use total_stack.
+				// Windows EH (MSVC ABI): the establisher-frame size is capped at 15*16=240 bytes
+				// (maximum SET_FPREG offset encodable in unwind codes).  Anything above that goes
+				// into a second SUB RSP patched via eh_prologue_extra_sub_rsp_offset_.
+				// ELF (SysV ABI): no such cap — the traditional push/mov-rbp/sub-rsp prologue
+				// accommodates any frame size in the single SUB RSP, so always use total_stack.
 		uint32_t eh_effective_frame_size;
 		uint32_t eh_extra_stack_size;
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
@@ -15714,7 +15714,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 									  : 0;
 		}
 
-	// Patch the main prologue SUB RSP immediate.
+				// Patch the main prologue SUB RSP immediate.
 		if (current_function_prologue_offset_ > 0) {
 			uint32_t patch_offset = current_function_prologue_offset_ + 3;
 			uint32_t prologue_stack = current_function_has_cpp_eh_ ? eh_effective_frame_size : static_cast<uint32_t>(total_stack);
@@ -15724,7 +15724,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			}
 		}
 
-	// Patch the optional post-frame SUB RSP in the EH prologue.
+				// Patch the optional post-frame SUB RSP in the EH prologue.
 		if (eh_prologue_extra_sub_rsp_offset_ > 0) {
 			if (eh_extra_stack_size > 0) {
 				uint32_t patch_offset = eh_prologue_extra_sub_rsp_offset_ + 3;
@@ -15742,9 +15742,9 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 
 		for (auto fixup_patch_offset : catch_continuation_sub_rsp_patches_) {
 			uint32_t insn_offset = fixup_patch_offset - 3;
-		// _JumpToContinuation resumes with RSP already restored to the function's
-		// fully allocated stack depth. Re-applying eh_extra_stack_size here would
-		// double-adjust RSP before re-entering the parent frame continuation.
+					// _JumpToContinuation resumes with RSP already restored to the function's
+					// fully allocated stack depth. Re-applying eh_extra_stack_size here would
+					// double-adjust RSP before re-entering the parent frame continuation.
 			static constexpr std::array<uint8_t, 7> kSevenByteNop = {0x0F, 0x1F, 0x80, 0x00, 0x00, 0x00, 0x00};
 			for (size_t i = 0; i < kSevenByteNop.size(); ++i) {
 				textSectionData[insn_offset + i] = kSevenByteNop[i];
@@ -15790,23 +15790,23 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 		auto [try_blocks, unwind_map] = convertExceptionInfoToWriterFormat();
 		auto seh_try_blocks = convertSehInfoToWriterFormat();
 
-	// noexcept enforcement: inject terminate LP if needed (ELF only)
+			// noexcept enforcement: inject terminate LP if needed (ELF only)
 		injectNoexceptTerminateLPIfNeeded();
 
 		uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - current_function_offset_;
 
-	// Update function length
+			// Update function length
 		writer.update_function_length(std::string(StringTable::getStringView(current_function_name_)), function_length);
 
-	// Set debug range to match reference exactly
+			// Set debug range to match reference exactly
 		if (function_length > 13) {
-	//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
+				//writer.set_function_debug_range(current_function_name_, 8, 5); // prologue=8, epilogue=3
 		}
 
-	// Add exception handling information (required for x64) - uses mangled name
+			// Add exception handling information (required for x64) - uses mangled name
 		if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			patchElfCatchFilterValues(try_blocks);
-	// Build cleanup block info for Phase 2 function-level cleanup LPs
+				// Build cleanup block info for Phase 2 function-level cleanup LPs
 			std::vector<ElfFileWriter::CleanupBlockInfo> cleanup_blocks;
 			if (current_function_cleanup_lp_offset_ > 0) {
 				cleanup_blocks.push_back({0, current_function_cleanup_lp_offset_, current_function_cleanup_lp_offset_});
@@ -15817,7 +15817,7 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 			writer.add_function_exception_info(StringTable::getStringView(current_function_mangled_name_), current_function_offset_, function_length, try_blocks, unwind_map, seh_try_blocks, static_cast<uint32_t>(total_stack));
 		}
 
-	// Clear the current function state
+			// Clear the current function state
 		current_function_name_ = StringHandle();
 		current_function_offset_ = 0;
 		current_catch_handler_ = nullptr;
@@ -15834,36 +15834,36 @@ void IrToObjConverter<TWriterClass>::finalizeSections() {
 
 	writer.add_data(textSectionData, SectionType::TEXT);
 
-	// Finalize debug information
+		// Finalize debug information
 	writer.finalize_debug_info();
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emit_dynamic_cast_runtime_helpers() {
-	// Emit both __dynamic_cast_check and __dynamic_cast_throw_bad_cast functions
-	// These are auto-generated as native x64 machine code
+		// Emit both __dynamic_cast_check and __dynamic_cast_throw_bad_cast functions
+		// These are auto-generated as native x64 machine code
 	emit_dynamic_cast_check_function();
 	emit_dynamic_cast_throw_function();
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
-	// Record function start
+		// Record function start
 	uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
 
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-	// ========== Linux/ELF: Itanium C++ ABI type_info implementation ==========
-	// Parameters: RDI = source type_info, RSI = target type_info
-	// Returns: AL = 1 if cast valid, 0 otherwise
+			// ========== Linux/ELF: Itanium C++ ABI type_info implementation ==========
+			// Parameters: RDI = source type_info, RSI = target type_info
+			// Returns: AL = 1 if cast valid, 0 otherwise
 
-	// Simple implementation for Itanium ABI:
-	// - Check if source == target (pointer equality)
-	// - For SI/VMI classes, check base class (at offset 16 for SIClassTypeInfo)
+			// Simple implementation for Itanium ABI:
+			// - Check if source == target (pointer equality)
+			// - For SI/VMI classes, check base class (at offset 16 for SIClassTypeInfo)
 
-	// Function prologue - save non-volatile registers (RBX for base pointer check)
+			// Function prologue - save non-volatile registers (RBX for base pointer check)
 		emitPushReg(X64Register::RBX);
 
-	// Null check: if (!source || !target) return false
+			// Null check: if (!source || !target) return false
 		emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
 		size_t null_source_jmp = textSectionData.size();
 		textSectionData.push_back(0x74);	 // JZ rel8
@@ -15874,41 +15874,41 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 		textSectionData.push_back(0x74);	 // JZ rel8
 		textSectionData.push_back(0x00);	 // Placeholder
 
-	// Pointer equality: if (source == target) return true
+			// Pointer equality: if (source == target) return true
 		emitCmpRegReg(X64Register::RDI, X64Register::RSI);  // CMP RDI, RSI
 		size_t eq_check_jmp = textSectionData.size();
 		textSectionData.push_back(0x74);	 // JE rel8
 		textSectionData.push_back(0x00);	 // Placeholder
 
-	// Check if source has base class (ItaniumSIClassTypeInfo has base at offset 16)
-	// Load potential base class pointer from source+16 into RBX
+			// Check if source has base class (ItaniumSIClassTypeInfo has base at offset 16)
+			// Load potential base class pointer from source+16 into RBX
 		emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::RDI, 16);  // MOV RBX, [RDI+16]
 
-	// Check if base pointer is null
+			// Check if base pointer is null
 		emitTestRegReg(X64Register::RBX);  // TEST RBX, RBX
 		size_t no_base_jmp = textSectionData.size();
 		textSectionData.push_back(0x74);	 // JZ rel8
 		textSectionData.push_back(0x00);	 // Placeholder
 
-	// Compare base with target: if (base == target) return true
+			// Compare base with target: if (base == target) return true
 		emitCmpRegReg(X64Register::RBX, X64Register::RSI);  // CMP RBX, RSI
 		size_t base_eq_jmp = textSectionData.size();
 		textSectionData.push_back(0x74);	 // JE rel8
 		textSectionData.push_back(0x00);	 // Placeholder
 
-	// return_false:
+			// return_false:
 		size_t return_false = textSectionData.size();
 		emitXorRegReg(X64Register::RAX);	 // XOR RAX, RAX (AL = 0)
 		emitPopReg(X64Register::RBX);
 		emitRet();
 
-	// return_true:
+			// return_true:
 		size_t return_true = textSectionData.size();
 		emitMovRegImm8(X64Register::RAX, 1);	 // MOV AL, 1
 		emitPopReg(X64Register::RBX);
 		emitRet();
 
-	// Patch jump offsets
+			// Patch jump offsets
 		textSectionData[null_source_jmp + 1] = static_cast<uint8_t>(return_false - null_source_jmp - 2);
 		textSectionData[null_target_jmp + 1] = static_cast<uint8_t>(return_false - null_target_jmp - 2);
 		textSectionData[eq_check_jmp + 1] = static_cast<uint8_t>(return_true - eq_check_jmp - 2);
@@ -15916,17 +15916,17 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 		textSectionData[base_eq_jmp + 1] = static_cast<uint8_t>(return_true - base_eq_jmp - 2);
 
 	} else {
-	// ========== Windows/COFF: MSVC RTTI Complete Object Locator implementation ==========
-	// Parameters: RCX = source_col, RDX = target_col
-	// Returns: AL = 1 if cast valid, 0 otherwise
+			// ========== Windows/COFF: MSVC RTTI Complete Object Locator implementation ==========
+			// Parameters: RCX = source_col, RDX = target_col
+			// Returns: AL = 1 if cast valid, 0 otherwise
 
-	// Function prologue - save non-volatile registers
+			// Function prologue - save non-volatile registers
 		emitPushReg(X64Register::RBX);  // Save RBX
 		emitPushReg(X64Register::RSI);  // Save RSI (will use for loop counter)
 		emitPushReg(X64Register::RDI);  // Save RDI (will use for base pointer)
 		emitSubRSP(32);	// Shadow space for recursive calls
 
-	// Null check: if (!source_col || !target_col) return false
+		// Null check: if (!source_col || !target_col) return false
 		emitTestRegReg(X64Register::RCX);  // TEST RCX, RCX
 		emitJumpIfZero(5);  // JZ to next null check
 
@@ -15934,99 +15934,99 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 		size_t null_check_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 
-	// COL pointer equality check: if (source_col == target_col) return true
+		// COL pointer equality check: if (source_col == target_col) return true
 		emitCmpRegReg(X64Register::RCX, X64Register::RDX);  // CMP RCX, RDX
 		size_t ptr_eq_to_true = textSectionData.size();
 		emitJumpIfEqual(0);	// JE -> return_true (will patch offset)
 
-	// Get type descriptors from COLs
-	// source_type_desc = source_col->type_descriptor (at offset 12)
-	// target_type_desc = target_col->type_descriptor (at offset 12)
+		// Get type descriptors from COLs
+		// source_type_desc = source_col->type_descriptor (at offset 12)
+		// target_type_desc = target_col->type_descriptor (at offset 12)
 		emitMovRegFromMemRegDisp8(X64Register::R8, X64Register::RCX, 12);	  // MOV R8, [RCX+12] (source type_desc)
 		emitMovRegFromMemRegDisp8(X64Register::R9, X64Register::RDX, 12);	  // MOV R9, [RDX+12] (target type_desc)
 
-	// Type descriptor pointer equality: if (source_type_desc == target_type_desc) return true
+		// Type descriptor pointer equality: if (source_type_desc == target_type_desc) return true
 		emitCmpRegReg(X64Register::R8, X64Register::R9);	 // CMP R8, R9
 		size_t type_desc_eq_to_true = textSectionData.size();
 		emitJumpIfEqual(0);	// JE -> return_true (will patch offset)
 
-	// Get class hierarchy from source COL
-	// source_hierarchy = source_col->hierarchy (at offset 20)
+		// Get class hierarchy from source COL
+		// source_hierarchy = source_col->hierarchy (at offset 20)
 		emitMovRegFromMemRegDisp8(X64Register::R10, X64Register::RCX, 20);  // MOV R10, [RCX+20] (source hierarchy)
 
-	// Null check on hierarchy
+		// Null check on hierarchy
 		emitTestRegReg(X64Register::R10);  // TEST R10, R10
 		size_t null_hierarchy_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 
-	// Get num_base_classes from hierarchy (at offset 8)
+		// Get num_base_classes from hierarchy (at offset 8)
 		emitMovRegFromMemRegDisp8(X64Register::RBX, X64Register::R10, 8);  // MOV RBX, [R10+8] (num_base_classes)
 
-	// Validate num_bases <= 64 (buffer overflow protection)
+		// Validate num_bases <= 64 (buffer overflow protection)
 		emitCmpRegImm32(X64Register::RBX, 64);  // CMP RBX, 64
 		size_t overflow_to_false = textSectionData.size();
 		emitJumpIfAbove(0);	// JA -> return_false (will patch offset)
 
-	// Check if num_bases == 0 (no base classes, should not happen but check anyway)
+		// Check if num_bases == 0 (no base classes, should not happen but check anyway)
 		emitTestRegReg(X64Register::RBX);  // TEST RBX, RBX
 		size_t no_bases_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 
-	// Get base class array from hierarchy (at offset 12)
+		// Get base class array from hierarchy (at offset 12)
 		emitMovRegFromMemRegDisp8(X64Register::R11, X64Register::R10, 12);  // MOV R11, [R10+12] (base_class_array)
 
-	// Null check on base class array
+		// Null check on base class array
 		emitTestRegReg(X64Register::R11);  // TEST R11, R11
 		size_t null_bca_to_false = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> return_false (will patch offset)
 
-	// Initialize loop counter: RSI = 0
+		// Initialize loop counter: RSI = 0
 		emitXorRegReg(X64Register::RSI);	 // XOR RSI, RSI (RSI = 0)
 
-	// loop_start: iterate through base class descriptors
+		// loop_start: iterate through base class descriptors
 		size_t loop_start = textSectionData.size();
 
-	// Get base_class_descriptor pointer: [R11 + RSI*8]
+		// Get base_class_descriptor pointer: [R11 + RSI*8]
 		emitLeaRegScaledIndex(X64Register::RDI, X64Register::R11, X64Register::RSI, 8, 0);
 		emitMovRegFromMemRegSized(X64Register::RDI, X64Register::RDI, 64);  // MOV RDI, [RDI] (load BCD pointer)
 
-	// Null check on BCD
+		// Null check on BCD
 		emitTestRegReg(X64Register::RDI);  // TEST RDI, RDI
 		size_t null_bcd_skip = textSectionData.size();
 		emitJumpIfZero(0);  // JZ -> loop_continue (will patch offset to skip this iteration)
 
-	// Get type descriptor from BCD (at offset 0)
+		// Get type descriptor from BCD (at offset 0)
 		emitMovRegFromMemRegSized(X64Register::RAX, X64Register::RDI, 64);  // MOV RAX, [RDI] (base type_desc)
 
-	// Compare with target type descriptor: if (base_type_desc == target_type_desc) return true
+		// Compare with target type descriptor: if (base_type_desc == target_type_desc) return true
 		emitCmpRegReg(X64Register::RAX, X64Register::R9);  // CMP RAX, R9 (target type_desc)
 		size_t base_match_to_true = textSectionData.size();
 		emitJumpIfEqual(0);	// JE -> return_true (will patch offset)
 
-	// loop_continue:
+		// loop_continue:
 		size_t loop_continue = textSectionData.size();
 
-	// Patch null BCD skip jump
+		// Patch null BCD skip jump
 		int8_t skip_offset = static_cast<int8_t>(loop_continue - null_bcd_skip - 2);
 		textSectionData[null_bcd_skip + 1] = static_cast<uint8_t>(skip_offset);
 
-	// Increment loop counter and check
+		// Increment loop counter and check
 		emitIncReg(X64Register::RSI);  // INC RSI
 		emitCmpRegReg(X64Register::RSI, X64Register::RBX);  // CMP RSI, RBX (counter vs num_bases)
 
-	// JB loop_start (jump if below)
+		// JB loop_start (jump if below)
 		int32_t loop_offset = static_cast<int32_t>(loop_start) - static_cast<int32_t>(textSectionData.size()) - 2;
 		if (loop_offset < -128 || loop_offset > 127) {
-	// Offset too large for int8, use two-step jump
-	// 126 is the max safe value that fits in int8 range and allows for a subsequent longer jump
-	// This fallback should not occur in practice with normal RTTI structures
+			// Offset too large for int8, use two-step jump
+			// 126 is the max safe value that fits in int8 range and allows for a subsequent longer jump
+			// This fallback should not occur in practice with normal RTTI structures
 			constexpr int8_t MAX_SHORT_JUMP = 126;
 			emitJumpIfBelow(MAX_SHORT_JUMP);
 		} else {
 			emitJumpIfBelow(static_cast<int8_t>(loop_offset));
 		}
 
-	// return_false:
+		// return_false:
 		size_t return_false = textSectionData.size();
 		emitXorRegReg(X64Register::RAX);	 // XOR RAX, RAX (AL = 0)
 		emitAddRSP(32);	// Remove shadow space
@@ -16035,7 +16035,7 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 		emitPopReg(X64Register::RBX);
 		emitRet();
 
-	// return_true:
+		// return_true:
 		size_t return_true = textSectionData.size();
 		emitMovRegImm8(X64Register::RAX, 1);	 // MOV AL, 1
 		emitAddRSP(32);	// Remove shadow space
@@ -16044,7 +16044,7 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 		emitPopReg(X64Register::RBX);
 		emitRet();
 
-	// Patch jump offsets
+		// Patch jump offsets
 		int8_t offset_to_false = static_cast<int8_t>(return_false - null_check_to_false - 2);
 		textSectionData[null_check_to_false + 1] = static_cast<uint8_t>(offset_to_false);
 
@@ -16071,66 +16071,66 @@ void IrToObjConverter<TWriterClass>::emit_dynamic_cast_check_function() {
 
 	}  // end Windows/COFF implementation
 
-	// Calculate function length
+		// Calculate function length
 	uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
 
-	// Add function symbol (extern "C" linkage - no name mangling)
+		// Add function symbol (extern "C" linkage - no name mangling)
 	writer.add_function_symbol("__dynamic_cast_check", function_offset, 0, Linkage::C);
 	writer.update_function_length("__dynamic_cast_check", function_length);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::emit_dynamic_cast_throw_function() {
-	// Record function start
+		// Record function start
 	uint32_t function_offset = static_cast<uint32_t>(textSectionData.size());
 
-	// Proper C++ exception throwing via MSVC runtime
-	// Call _CxxThrowException with bad_cast exception object
+		// Proper C++ exception throwing via MSVC runtime
+		// Call _CxxThrowException with bad_cast exception object
 
-	// For a complete implementation with C++ exception support:
-	// 1. We would allocate a std::bad_cast object
-	// 2. Call _CxxThrowException(exception_object, throw_info)
-	// 3. Link with C++ runtime libraries
+		// For a complete implementation with C++ exception support:
+		// 1. We would allocate a std::bad_cast object
+		// 2. Call _CxxThrowException(exception_object, throw_info)
+		// 3. Link with C++ runtime libraries
 
-	// Current implementation: Call a stub that triggers std::terminate
-	// This ensures the program doesn't continue with invalid state
+		// Current implementation: Call a stub that triggers std::terminate
+		// This ensures the program doesn't continue with invalid state
 
-	// For MSVC compatibility, we'd do:
-	// SUB RSP, 40  (shadow space + alignment)
+		// For MSVC compatibility, we'd do:
+		// SUB RSP, 40  (shadow space + alignment)
 	emitSubRSP(40);
 
-	// XOR ECX, ECX  (nullptr for exception object - will call terminate)
+		// XOR ECX, ECX  (nullptr for exception object - will call terminate)
 	emitXorRegReg(X64Register::RCX);
 
-	// XOR EDX, EDX  (nullptr for throw info - will call terminate)
+		// XOR EDX, EDX  (nullptr for throw info - will call terminate)
 	emitXorRegReg(X64Register::RDX);
 
-	// CALL _CxxThrowException (or std::terminate if not linked)
-	// For header-only implementation, we'll use an infinite loop
-	// which satisfies [[noreturn]] and prevents undefined behavior
+		// CALL _CxxThrowException (or std::terminate if not linked)
+		// For header-only implementation, we'll use an infinite loop
+		// which satisfies [[noreturn]] and prevents undefined behavior
 
-	// ADD RSP, 40  (cleanup - though we never return)
+		// ADD RSP, 40  (cleanup - though we never return)
 	emitAddRSP(40);
 
-	// Infinite loop (satisfies [[noreturn]])
-	// loop: JMP loop
+		// Infinite loop (satisfies [[noreturn]])
+		// loop: JMP loop
 	emitJumpUnconditional(-2);  // JMP $-2 (jump to self)
 
-	// Calculate function length
+		// Calculate function length
 	uint32_t function_length = static_cast<uint32_t>(textSectionData.size()) - function_offset;
 
-	// Add function symbol (extern "C" linkage - no name mangling)
+		// Add function symbol (extern "C" linkage - no name mangling)
 	writer.add_function_symbol("__dynamic_cast_throw_bad_cast", function_offset, 0, Linkage::C);
 	writer.update_function_length("__dynamic_cast_throw_bad_cast", function_length);
 }
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::patchBranches() {
-	// Patch all pending branch instructions with correct offsets
+		// Patch all pending branch instructions with correct offsets
 	for (const auto& branch : pending_branches_) {
 		auto label_it = label_positions_.find(branch.target_label);
 		if (label_it == label_positions_.end()) {
-	// Phase 5: Convert StringHandle to string_view for logging
+				// Phase 5: Convert StringHandle to string_view for logging
 			FLASH_LOG(Codegen, Error, "Label not found: ", StringTable::getStringView(branch.target_label));
 			continue;
 		}
@@ -16138,10 +16138,10 @@ void IrToObjConverter<TWriterClass>::patchBranches() {
 		uint32_t label_offset = label_it->second;
 		uint32_t branch_end = branch.patch_position + 4; // Position after the 4-byte offset
 
-	// Calculate relative offset (target - current position)
+			// Calculate relative offset (target - current position)
 		int32_t relative_offset = static_cast<int32_t>(label_offset) - static_cast<int32_t>(branch_end);
 
-	// Patch the offset in little-endian format
+			// Patch the offset in little-endian format
 		textSectionData[branch.patch_position + 0] = static_cast<uint8_t>(relative_offset & 0xFF);
 		textSectionData[branch.patch_position + 1] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
 		textSectionData[branch.patch_position + 2] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
@@ -16161,20 +16161,20 @@ void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(const std::vector
 	if (elf_catch_filter_patches_.empty())
 		return;
 
-	// Build the type table in the SAME order as ElfFileWriter_EH.cpp will build it.
-	// ElfFileWriter uses an event-sweep that adds a try block's handler type the first
-	// time that block is innermost in a code region. For nested try blocks, the innermost
-	// (narrowest range) block is encountered first when they share the same start offset.
-	//
-	// We replicate this ordering by sorting try_blocks:
-	//   Primary key:   try_start_offset ascending  (earlier-starting blocks first)
-	//   Secondary key: range size ascending         (smaller range = inner block first,
-	//                                                 used when two blocks start at the
-	//                                                 same offset)
-	//
-	// This ensures that for immediately-nested tries (same start offset), the inner
-	// try's handler type is added to the table before the outer try's handler type,
-	// exactly matching the event-sweep order in ElfFileWriter_EH.cpp.
+		// Build the type table in the SAME order as ElfFileWriter_EH.cpp will build it.
+		// ElfFileWriter uses an event-sweep that adds a try block's handler type the first
+		// time that block is innermost in a code region. For nested try blocks, the innermost
+		// (narrowest range) block is encountered first when they share the same start offset.
+		//
+		// We replicate this ordering by sorting try_blocks:
+		//   Primary key:   try_start_offset ascending  (earlier-starting blocks first)
+		//   Secondary key: range size ascending         (smaller range = inner block first,
+		//                                                 used when two blocks start at the
+		//                                                 same offset)
+		//
+		// This ensures that for immediately-nested tries (same start offset), the inner
+		// try's handler type is added to the table before the outer try's handler type,
+		// exactly matching the event-sweep order in ElfFileWriter_EH.cpp.
 	std::vector<size_t> sorted_indices(try_blocks.size());
 	std::iota(sorted_indices.begin(), sorted_indices.end(), 0);
 	std::sort(sorted_indices.begin(), sorted_indices.end(),
@@ -16201,7 +16201,7 @@ void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(const std::vector
 		}
 	}
 
-	// Add NULL entry for catch-all (same as LSDAGenerator's generate() does)
+		// Add NULL entry for catch-all (same as LSDAGenerator's generate() does)
 	bool has_catch_all = false;
 	for (const auto& try_block : try_blocks) {
 		for (const auto& handler : try_block.catch_handlers) {
@@ -16221,9 +16221,9 @@ void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(const std::vector
 
 	int table_size = static_cast<int>(type_table.size());
 
-	// Now compute filters and patch each CMP instruction
+		// Now compute filters and patch each CMP instruction
 	for (const auto& patch : elf_catch_filter_patches_) {
-	// Find this handler's type in the correct try block
+			// Find this handler's type in the correct try block
 		int filter = 0;
 		if (patch.try_block_index < try_blocks.size() &&
 			patch.handler_index < try_blocks[patch.try_block_index].catch_handlers.size()) {
@@ -16241,7 +16241,7 @@ void IrToObjConverter<TWriterClass>::patchElfCatchFilterValues(const std::vector
 				}
 			}
 		}
-	// Patch the IMM32 in textSectionData
+			// Patch the IMM32 in textSectionData
 		auto bytes = std::bit_cast<std::array<uint8_t, 4>>(static_cast<int32_t>(filter));
 		for (int i = 0; i < 4; i++) {
 			textSectionData[patch.patch_offset + i] = bytes[i];

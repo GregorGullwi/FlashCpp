@@ -326,11 +326,11 @@ private:
 // Throw statement node: throw expression; or throw;
 class ThrowStatementNode {
 public:
- // throw expression;
+	// throw expression;
 	explicit ThrowStatementNode(ASTNode expression, Token throw_token)
 		: expression_(expression), throw_token_(throw_token), is_rethrow_(false) {}
 
- // throw; (rethrow)
+	// throw; (rethrow)
 	explicit ThrowStatementNode(Token throw_token)
 		: expression_(), throw_token_(throw_token), is_rethrow_(true) {}
 
@@ -347,7 +347,7 @@ private:
 // Catch clause node: catch (type identifier) { block }
 class CatchClauseNode {
 public:
- // catch (type identifier) { block } or catch (type) { block }
+	// catch (type identifier) { block } or catch (type) { block }
 	explicit CatchClauseNode(
 		std::optional<ASTNode> exception_declaration,  // nullopt for catch(...)
 		ASTNode body,
@@ -357,7 +357,7 @@ public:
 		  catch_token_(catch_token),
 		  is_catch_all_(false) {}
 
- // catch(...) { block }
+	// catch(...) { block }
 	explicit CatchClauseNode(
 		ASTNode body,
 		Token catch_token,
@@ -394,8 +394,8 @@ public:
 	const std::vector<ASTNode>& catch_clauses() const { return catch_clauses_; }
 	const Token& try_token() const { return try_token_; }
 
- // C++20 [except.handle]/15: in a constructor/destructor function-try-block,
- // control reaching the end of a catch handler implicitly rethrows.
+	// C++20 [except.handle]/15: in a constructor/destructor function-try-block,
+	// control reaching the end of a catch handler implicitly rethrows.
 	void set_is_ctor_dtor_function_try() { is_ctor_dtor_function_try_ = true; }
 	bool is_ctor_dtor_function_try() const { return is_ctor_dtor_function_try_; }
 

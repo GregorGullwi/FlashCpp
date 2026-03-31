@@ -58,7 +58,7 @@ struct DefineDirective {
 	std::vector<std::string> args;
 	bool is_function_like = false;  // True if this is a function-like macro (even if it has no named args, like ...)
 
- // Constructor that allows specifying is_function_like
+	// Constructor that allows specifying is_function_like
 	DefineDirective(std::string body_val = "", std::vector<std::string> args_val = {}, bool function_like = false)
 		: body(std::move(body_val)), args(std::move(args_val)), is_function_like(function_like) {}
 };
@@ -105,7 +105,7 @@ struct Directive {
 						  directive_);
 	}
 
- // Template function to get the specific type from content
+	// Template function to get the specific type from content
 	template <typename T>
 	T* get_if() {
 		return std::get_if<T>(&directive_);
@@ -140,13 +140,13 @@ enum class Operator {
 	Not,
 	OpenParen,
 	CloseParen,
- // Arithmetic operators
+	// Arithmetic operators
 	Add,
 	Subtract,
 	Multiply,
 	Divide,
 	Modulo,
- // Bitwise operators
+	// Bitwise operators
 	LeftShift,
 	RightShift,
 	BitwiseAnd,
@@ -201,7 +201,7 @@ inline Operator string_to_operator(std::string_view op) {
 		return Operator::OpenParen;
 	if (op == ")")
 		return Operator::CloseParen;
- // Arithmetic operators
+	// Arithmetic operators
 	if (op == "+")
 		return Operator::Add;
 	if (op == "-")
@@ -212,7 +212,7 @@ inline Operator string_to_operator(std::string_view op) {
 		return Operator::Divide;
 	if (op == "%")
 		return Operator::Modulo;
- // Bitwise operators
+	// Bitwise operators
 	if (op == "<<")
 		return Operator::LeftShift;
 	if (op == ">>")
@@ -243,7 +243,7 @@ static std::unordered_map<char, CharInfo> char_info_table = {
 	{'>', {Operator::Greater, true}},
 	{'<', {Operator::Less, true}},
 	{'=', {Operator::Equals, true}},
- // Arithmetic operators
+	// Arithmetic operators
 	{'+', {Operator::Add, false}},
 	{'-', {Operator::Subtract, false}},
 	{'*', {Operator::Multiply, false}},
@@ -275,19 +275,19 @@ inline bool hasIncompleteMacroInvocation(std::string_view line) {
 	for (size_t i = 0; i < line.size(); ++i) {
 		char c = line[i];
 
-	// Handle escape sequences
+		// Handle escape sequences
 		if ((in_string || in_char) && c == '\\' && i + 1 < line.size()) {
 			i++;
 			continue;
 		}
 
-	// Handle string literals
+		// Handle string literals
 		if (!in_char && c == '"') {
 			in_string = !in_string;
 			continue;
 		}
 
-	// Handle char literals
+		// Handle char literals
 		if (!in_string && c == '\'') {
 			in_char = !in_char;
 			continue;
@@ -314,13 +314,13 @@ inline size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 	while (pos < sv.size() && nesting > 0) {
 		char c = sv[pos];
 
-	// Handle escape sequences
+		// Handle escape sequences
 		if ((in_string || in_char) && c == '\\' && pos + 1 < sv.size()) {
 			pos += 2; // Skip the backslash and the next character
 			continue;
 		}
 
-	// Handle string literals
+		// Handle string literals
 		if (!in_char && c == '"') {
 			if (!in_string) {
 				in_string = true;
@@ -333,7 +333,7 @@ inline size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 			continue;
 		}
 
-	// Handle character literals
+		// Handle character literals
 		if (!in_string && c == '\'') {
 			if (!in_char) {
 				in_char = true;
@@ -344,7 +344,7 @@ inline size_t findMatchingClosingParen(std::string_view sv, size_t opening_pos) 
 			continue;
 		}
 
-	// Only count parentheses outside of string/char literals
+		// Only count parentheses outside of string/char literals
 		if (!in_string && !in_char) {
 			if (c == '(') {
 				nesting++;
@@ -467,23 +467,23 @@ inline std::vector<std::string_view> splitArgs(std::string_view argsStr) {
 }
 
 inline void replaceAll(std::string& str, const std::string_view from, const std::string_view to) {
- // Helper to check if a character is a separator (not part of an identifier)
+	// Helper to check if a character is a separator (not part of an identifier)
 	auto is_separator = [](char c) {
 		return !std::isalnum(static_cast<unsigned char>(c)) && c != '_';
 	};
 
 	size_t pos = 0;
 	while ((pos = str.find(from, pos)) != std::string::npos) {
-	// Check if this is a complete identifier match (not part of a larger word)
+		// Check if this is a complete identifier match (not part of a larger word)
 		bool start_ok = (pos == 0) || is_separator(str[pos - 1]);
 		bool end_ok = (pos + from.length() >= str.length()) || is_separator(str[pos + from.length()]);
 
 		if (start_ok && end_ok) {
-	// This is a complete identifier, replace it
+			// This is a complete identifier, replace it
 			str.replace(pos, from.length(), to);
 			pos += to.length();
 		} else {
-	// This is part of a larger identifier, skip it
+			// This is part of a larger identifier, skip it
 			pos++;
 		}
 	}
@@ -517,8 +517,8 @@ public:
 	size_t get_or_add_file_path(std::string_view file_path);
 
 private:
- // Separator bitset - 32 bytes (4 × uint64_t), one bit per character
- // Generated at compile-time by looping over separator_chars array
+	// Separator bitset - 32 bytes (4 × uint64_t), one bit per character
+	// Generated at compile-time by looping over separator_chars array
 	static constexpr std::array<uint64_t, 4> separator_bitset = {
 		build_separator_bitset_chunk(0),	 // Chars 0-63
 		build_separator_bitset_chunk(1),	 // Chars 64-127
@@ -558,7 +558,7 @@ private:
 	size_t current_parent_line_ = 0;	 // Track the preprocessed line where current file was #included (0 for main)
 	unsigned long long counter_value_ = 0;
 
- // State for tracking multiline raw string literals
+	// State for tracking multiline raw string literals
 	bool inside_multiline_raw_string_ = false;
 	std::string multiline_raw_delimiter_;
 };

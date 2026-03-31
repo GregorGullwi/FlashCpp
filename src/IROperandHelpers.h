@@ -60,7 +60,7 @@ inline bool isCompoundAssignmentOp(std::string_view op) {
 // IrValue   = std::variant<unsigned long long, double, TempVar, StringHandle>
 // Index mapping: IrOperand[1] -> IrValue[0], IrOperand[2] -> IrValue[1], IrOperand[6] -> IrValue[2], IrOperand[7] -> IrValue[3]
 inline IrValue toIrValue(const IrOperand& operand) {
- // Map IrOperand variant indices to IrValue variant indices
+	// Map IrOperand variant indices to IrValue variant indices
 	switch (operand.index()) {
 	case 1:	// IrOperand[1] = unsigned long long -> IrValue[0] = unsigned long long
 		assert(std::holds_alternative<unsigned long long>(operand) && "Expected unsigned long long");
@@ -88,20 +88,20 @@ struct ExprResult {
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 	ValueStorage storage = ValueStorage::ContainsData;  // must be set explicitly at every construction site
 
- // Returns the effective runtime representation type.
- // Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
- // and TypedValue are independent structs during the transition period.
- // Both will be unified when ExprResult's type field is replaced by IrType
- // (Phase 5).
+	// Returns the effective runtime representation type.
+	// Mirrors TypedValue::effectiveIrType() — duplicated here because ExprResult
+	// and TypedValue are independent structs during the transition period.
+	// Both will be unified when ExprResult's type field is replaced by IrType
+	// (Phase 5).
 	IrType effectiveIrType() const {
 		if (ir_type != IrType::Void || category() == TypeCategory::Void)
 			return ir_type;
 		return toIrType(category());
 	}
 
- // The expression's TypeCategory is embedded in type_index.category() so that
- // the gTypeInfo slot (index) and the expression-level category (e.g. Pointer
- // vs the pointed-to Struct) are stored together without a separate field.
+	// The expression's TypeCategory is embedded in type_index.category() so that
+	// the gTypeInfo slot (index) and the expression-level category (e.g. Pointer
+	// vs the pointed-to Struct) are stored together without a separate field.
 	TypeCategory category() const { return type_index.category(); }
 	TypeCategory typeEnum() const { return type_index.category(); }
 };
@@ -183,7 +183,7 @@ inline TypedValue toTypedValue(std::span<const IrOperand> operands) {
 	result.value = toIrValue(operands[2]);
 	result.type_index = nativeTypeIndex(cat);
 	result.pointer_depth = PointerDepth{};
- // Optional 4th element: storage discriminator (ValueStorage cast to int)
+	// Optional 4th element: storage discriminator (ValueStorage cast to int)
 	if (operands.size() >= 4) {
 		result.storage = static_cast<ValueStorage>(std::get<int>(operands[3]));
 	}

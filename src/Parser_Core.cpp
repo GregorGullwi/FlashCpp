@@ -48,7 +48,7 @@ const std::unordered_set<std::string_view> type_keywords = {
 MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& type_spec) {
 	MemberSizeAndAlignment result;
 
- // For pointers, references, and function pointers, size and alignment are always sizeof(void*)
+	// For pointers, references, and function pointers, size and alignment are always sizeof(void*)
 	if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_function_pointer()) {
 		result.size = sizeof(void*);
 		result.alignment = sizeof(void*);
@@ -104,11 +104,11 @@ MemberSizeAndAlignment calculateResolvedMemberSizeAndAlignment(const TypeSpecifi
 
 // Helper function to safely get type size from TemplateTypeArg
 int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
- // Check if this is a builtin type that get_type_size_bits can handle
+	// Check if this is a builtin type that get_type_size_bits can handle
 	if (is_builtin_type(arg.category())) {
 		return static_cast<size_t>(get_type_size_bits(arg.category()));
 	}
- // For UserDefined and other types, use type_index for direct O(1) lookup
+	// For UserDefined and other types, use type_index for direct O(1) lookup
 	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 		if (type_info->type_size_ > 0) {
 			return type_info->type_size_;
@@ -143,7 +143,7 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 // Uses TypeInfo metadata first (O(1)), falls back to string parsing for backward compatibility
 // Returns: {is_dependent, base_template_name}
 std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_view type_name) {
- // First try TypeInfo-based detection (O(1), preferred)
+	// First try TypeInfo-based detection (O(1), preferred)
 	auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
 	if (type_it != getTypesByNameMap().end()) {
 		const TypeInfo* type_info = type_it->second;
@@ -152,7 +152,7 @@ std::pair<bool, std::string_view> isDependentTemplatePlaceholder(std::string_vie
 		}
 	}
 
- // Fallback: check via extractBaseTemplateName (TypeInfo metadata)
+	// Fallback: check via extractBaseTemplateName (TypeInfo metadata)
 	std::string_view base_name = extractBaseTemplateName(type_name);
 	if (!base_name.empty()) {
 		return {true, base_name};
@@ -221,7 +221,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 	if (node.is<IdentifierNode>()) {
 		identifiers.insert(node.as<IdentifierNode>().nameHandle());
 	} else if (node.is<ExpressionNode>()) {
-	// ExpressionNode is a variant, so we need to check each alternative
+		// ExpressionNode is a variant, so we need to check each alternative
 		const auto& expr = node.as<ExpressionNode>();
 		std::visit([&](const auto& inner_node) {
 			using T = std::decay_t<decltype(inner_node)>;
@@ -255,7 +255,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 								 std::is_same_v<T, DynamicCastNode>) {
 				findReferencedIdentifiers(inner_node.expr(), identifiers);
 			}
-	// Add more types as needed
+			// Add more types as needed
 		},
 				   expr);
 	} else if (node.is<BinaryOperatorNode>()) {
@@ -267,7 +267,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 		findReferencedIdentifiers(unop.get_operand(), identifiers);
 	} else if (node.is<FunctionCallNode>()) {
 		const auto& call = node.as<FunctionCallNode>();
-	// Don't add the function name itself, just the arguments
+		// Don't add the function name itself, just the arguments
 		const auto& args = call.arguments();
 		for (size_t i = 0; i < args.size(); ++i) {
 			findReferencedIdentifiers(args[i], identifiers);
@@ -313,7 +313,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 	} else if (node.is<MemberAccessNode>()) {
 		const auto& member = node.as<MemberAccessNode>();
 		findReferencedIdentifiers(member.object(), identifiers);
-	// Don't add the member name itself
+		// Don't add the member name itself
 	} else if (node.is<PointerToMemberAccessNode>()) {
 		const auto& ptr_member = node.as<PointerToMemberAccessNode>();
 		findReferencedIdentifiers(ptr_member.object(), identifiers);
@@ -335,7 +335,7 @@ static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<St
 			findReferencedIdentifiers(*var_decl.initializer(), identifiers);
 		}
 	}
- // Add more node types as needed
+	// Add more node types as needed
 }
 
 // Helper function to find capture candidates and detect implicit [this] usage in lambdas
@@ -822,7 +822,7 @@ void Parser::skip_balanced_delimiters(TokenKind open, TokenKind close) {
 }
 
 void Parser::skip_template_arguments() {
- // Expect the current token to be '<'
+	// Expect the current token to be '<'
 	if (peek() != "<"_tok) {
 		return;
 	}
@@ -836,7 +836,7 @@ void Parser::skip_template_arguments() {
 		advance();
 
 		if (angle_depth == 0) {
-	// We've consumed the closing '>' or '>>'
+			// We've consumed the closing '>' or '>>'
 			break;
 		}
 
@@ -845,10 +845,10 @@ void Parser::skip_template_arguments() {
 }
 
 void Parser::skip_qualified_name_parts() {
- // Consume namespace-qualified name parts (::identifier pairs).
- // For callers that need the full qualified name, use consume_qualified_name_suffix() instead.
- // Lookahead before consuming '::' to avoid leaving the parser in an inconsistent state
- // if '::' is not followed by a valid identifier (e.g., "std::{").
+	// Consume namespace-qualified name parts (::identifier pairs).
+	// For callers that need the full qualified name, use consume_qualified_name_suffix() instead.
+	// Lookahead before consuming '::' to avoid leaving the parser in an inconsistent state
+	// if '::' is not followed by a valid identifier (e.g., "std::{").
 	while (peek() == "::"_tok && (peek(1).is_identifier() || peek(1).is_keyword())) {
 		advance(); // consume '::'
 		advance(); // consume the qualified name part
@@ -856,12 +856,12 @@ void Parser::skip_qualified_name_parts() {
 }
 
 std::string_view Parser::consume_qualified_name_suffix(std::string_view base_name) {
- // Consume ::identifier pairs and build the full qualified name.
- // Given "std" already consumed, if peek() is "::", consumes "::optional"
- // and returns "std::optional" (interned via StringBuilder).
- // If no "::" follows, returns base_name unchanged (no allocation).
- // Lookahead before consuming '::' to avoid producing invalid names like "std::"
- // when '::' is not followed by a valid identifier (e.g., "std::{").
+	// Consume ::identifier pairs and build the full qualified name.
+	// Given "std" already consumed, if peek() is "::", consumes "::optional"
+	// and returns "std::optional" (interned via StringBuilder).
+	// If no "::" follows, returns base_name unchanged (no allocation).
+	// Lookahead before consuming '::' to avoid producing invalid names like "std::"
+	// when '::' is not followed by a valid identifier (e.g., "std::{").
 	if (peek() != "::"_tok || !(peek(1).is_identifier() || peek(1).is_keyword()))
 		return base_name;
 
@@ -877,8 +877,8 @@ std::string_view Parser::consume_qualified_name_suffix(std::string_view base_nam
 }
 
 void Parser::skip_member_declaration_to_semicolon() {
- // Skip tokens until we reach ';' at top level, or an unmatched '}'
- // Handles nested parentheses, angle brackets, and braces
+	// Skip tokens until we reach ';' at top level, or an unmatched '}'
+	// Handles nested parentheses, angle brackets, and braces
 	int paren_depth = 0;
 	int angle_depth = 0;
 	int brace_depth = 0;
@@ -916,27 +916,27 @@ void Parser::skip_member_declaration_to_semicolon() {
 // Helper function to parse the contents of pack(...) after the opening '('
 // Returns success and consumes the closing ')' on success
 ParseResult Parser::parse_pragma_pack_inner() {
- // Check if it's empty: pack()
+	// Check if it's empty: pack()
 	if (consume(")"_tok)) {
 		context_.setPackAlignment(0); // Reset to default
 		return ParseResult::success();
 	}
 
- // Check for push/pop/show: pack(push) or pack(pop) or pack(show)
- // Full syntax:
- //   pack(push [, identifier] [, n])
- //   pack(pop [, {identifier | n}])
- //   pack(show)
+	// Check for push/pop/show: pack(push) or pack(pop) or pack(show)
+	// Full syntax:
+	//   pack(push [, identifier] [, n])
+	//   pack(pop [, {identifier | n}])
+	//   pack(show)
 	if (peek().is_identifier()) {
 		std::string_view pack_action = peek_info().value();
 
-	// Handle pack(show)
+		// Handle pack(show)
 		if (pack_action == "show") {
 			advance(); // consume 'show'
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after pragma pack show", current_token_);
 			}
-	// Emit a warning showing the current pack alignment
+			// Emit a warning showing the current pack alignment
 			size_t current_align = context_.getCurrentPackAlignment();
 			if (current_align == 0) {
 				FLASH_LOG(Parser, Warning, "current pack alignment is default (natural alignment)");
@@ -949,18 +949,18 @@ ParseResult Parser::parse_pragma_pack_inner() {
 		if (pack_action == "push" || pack_action == "pop") {
 			advance(); // consume 'push' or 'pop'
 
-	// Check for optional parameters
+			// Check for optional parameters
 			if (peek() == ","_tok) {
 				advance(); // consume ','
 
-	// First parameter could be identifier or number
+				// First parameter could be identifier or number
 				if (!peek().is_eof()) {
-		// Check if it's an identifier (label name)
+					// Check if it's an identifier (label name)
 					if (peek().is_identifier()) {
 						std::string_view identifier = peek_info().value();
 						advance(); // consume the identifier
 
-		// Check for second comma and alignment value
+						// Check for second comma and alignment value
 						if (peek() == ","_tok) {
 							advance(); // consume second ','
 
@@ -983,7 +983,7 @@ ParseResult Parser::parse_pragma_pack_inner() {
 										}
 									}
 								} else if (peek().is_identifier()) {
-			// Another identifier (macro) - treat as no alignment specified
+									// Another identifier (macro) - treat as no alignment specified
 									advance();
 									if (pack_action == "push") {
 										context_.pushPackAlignment(identifier);
@@ -993,7 +993,7 @@ ParseResult Parser::parse_pragma_pack_inner() {
 								}
 							}
 						} else {
-		// Just identifier, no alignment
+							// Just identifier, no alignment
 							if (pack_action == "push") {
 								context_.pushPackAlignment(identifier);
 							} else {
@@ -1001,7 +1001,7 @@ ParseResult Parser::parse_pragma_pack_inner() {
 							}
 						}
 					}
-		// Check if it's a number directly (no identifier)
+					// Check if it's a number directly (no identifier)
 					else if (peek().is_literal()) {
 						std::string_view value_str = peek_info().value();
 						size_t alignment = 0;
@@ -1022,7 +1022,7 @@ ParseResult Parser::parse_pragma_pack_inner() {
 					}
 				}
 			} else {
-	// No parameters - simple push/pop
+				// No parameters - simple push/pop
 				if (pack_action == "push") {
 					context_.pushPackAlignment();
 				} else {
@@ -1037,7 +1037,7 @@ ParseResult Parser::parse_pragma_pack_inner() {
 		}
 	}
 
- // Try to parse a number: pack(N)
+	// Try to parse a number: pack(N)
 	if (peek().is_literal()) {
 		std::string_view value_str = peek_info().value();
 		size_t alignment = 0;
@@ -1054,138 +1054,138 @@ ParseResult Parser::parse_pragma_pack_inner() {
 		}
 	}
 
- // If we get here, it's an unsupported pragma pack format
+	// If we get here, it's an unsupported pragma pack format
 	return ParseResult::error("Unsupported pragma pack format", current_token_);
 }
 
 void Parser::register_builtin_functions() {
- // Register compiler builtin functions so they can be recognized as function calls
- // These will be handled as intrinsics in CodeGen
+	// Register compiler builtin functions so they can be recognized as function calls
+	// These will be handled as intrinsics in CodeGen
 
- // Create dummy tokens for builtin functions
+	// Create dummy tokens for builtin functions
 	Token dummy_token(Token::Type::Identifier, ""sv, 0, 0, 0);
 
- // Helper lambda to register a builtin function with one parameter
+	// Helper lambda to register a builtin function with one parameter
 	auto register_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param_type) {
-	// Create return type node
+		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 
-	// Create function name token
+		// Create function name token
 		Token func_token = dummy_token;
 		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
 
-	// Create declaration node for the function
+		// Create declaration node for the function
 		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
 
-	// Create function declaration node
+		// Create function declaration node
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 
-	// Create parameter
+		// Create parameter
 		Token param_token = dummy_token;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(param_type, TypeQualifier::None, 64, param_token, CVQualifier::None);
 		auto param_decl = emplace_node<DeclarationNode>(param_type_node, param_token);
 		func_decl_ref.add_parameter_node(param_decl);
 
-	// Set extern "C" linkage
+		// Set extern "C" linkage
 		func_decl_ref.set_linkage(Linkage::C);
 
-	// Register in global symbol table
+		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
 	};
 
- // Helper lambda to register a builtin function with two parameters
+	// Helper lambda to register a builtin function with two parameters
 	auto register_two_param_builtin = [&](std::string_view name, TypeCategory return_type, TypeCategory param1_type, TypeCategory param2_type) {
-	// Create return type node
+		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 
-	// Create function name token
+		// Create function name token
 		Token func_token = dummy_token;
 		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
 
-	// Create declaration node for the function
+		// Create declaration node for the function
 		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
 
-	// Create function declaration node
+		// Create function declaration node
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 
-	// Create first parameter
+		// Create first parameter
 		Token param1_token = dummy_token;
 		auto param1_type_node = emplace_node<TypeSpecifierNode>(param1_type, TypeQualifier::None, 64, param1_token, CVQualifier::None);
 		auto param1_decl = emplace_node<DeclarationNode>(param1_type_node, param1_token);
 		func_decl_ref.add_parameter_node(param1_decl);
 
-	// Create second parameter
+		// Create second parameter
 		Token param2_token = dummy_token;
 		auto param2_type_node = emplace_node<TypeSpecifierNode>(param2_type, TypeQualifier::None, 64, param2_token, CVQualifier::None);
 		auto param2_decl = emplace_node<DeclarationNode>(param2_type_node, param2_token);
 		func_decl_ref.add_parameter_node(param2_decl);
 
-	// Set extern "C" linkage
+		// Set extern "C" linkage
 		func_decl_ref.set_linkage(Linkage::C);
 
-	// Register in global symbol table
+		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
 	};
 
- // Helper lambda to register a builtin function with no parameters
+	// Helper lambda to register a builtin function with no parameters
 	auto register_no_param_builtin = [&](std::string_view name, TypeCategory return_type) {
-	// Create return type node
+		// Create return type node
 		Token type_token = dummy_token;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(return_type, TypeQualifier::None, 64, type_token, CVQualifier::None);
 
-	// Create function name token
+		// Create function name token
 		Token func_token = dummy_token;
 		func_token = Token(Token::Type::Identifier, name, 0, 0, 0);
 
-	// Create declaration node for the function
+		// Create declaration node for the function
 		auto decl_node = emplace_node<DeclarationNode>(return_type_node, func_token);
 
-	// Create function declaration node
+		// Create function declaration node
 		auto [func_decl_node, func_decl_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_node.as<DeclarationNode>());
 
-	// Register in global symbol table
+		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
 	};
 
- // Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
- // __builtin_va_start(va_list*, last_param) - Clang-style
- // __va_start(va_list*, last_param) - MSVC-style (legacy)
- // Both return void
+	// Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
+	// __builtin_va_start(va_list*, last_param) - Clang-style
+	// __va_start(va_list*, last_param) - MSVC-style (legacy)
+	// Both return void
 	register_two_param_builtin("__builtin_va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
 	register_two_param_builtin("__va_start", TypeCategory::Void, TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
 
- // __builtin_va_arg(va_list, type) - returns the specified type
- // For registration purposes, we use int as the return type (will be overridden in codegen)
- // The second parameter is the type identifier, but we just register it as int for parsing
+	// __builtin_va_arg(va_list, type) - returns the specified type
+	// For registration purposes, we use int as the return type (will be overridden in codegen)
+	// The second parameter is the type identifier, but we just register it as int for parsing
 	register_two_param_builtin("__builtin_va_arg", TypeCategory::Int, TypeCategory::UnsignedLongLong, TypeCategory::Int);
 
- // Register integer abs builtins
+	// Register integer abs builtins
 	register_builtin("__builtin_labs", TypeCategory::Long, TypeCategory::Long);
 	register_builtin("__builtin_llabs", TypeCategory::LongLong, TypeCategory::LongLong);
 
- // Register floating point abs builtins
+	// Register floating point abs builtins
 	register_builtin("__builtin_fabs", TypeCategory::Double, TypeCategory::Double);
 	register_builtin("__builtin_fabsf", TypeCategory::Float, TypeCategory::Float);
 	register_builtin("__builtin_fabsl", TypeCategory::LongDouble, TypeCategory::LongDouble);
 
- // Register optimization hint intrinsics
- // __builtin_unreachable() - marks unreachable code paths
+	// Register optimization hint intrinsics
+	// __builtin_unreachable() - marks unreachable code paths
 	register_no_param_builtin("__builtin_unreachable", TypeCategory::Void);
 
- // __builtin_assume(condition) - assumes condition is true for optimization
+	// __builtin_assume(condition) - assumes condition is true for optimization
 	register_builtin("__builtin_assume", TypeCategory::Void, TypeCategory::Bool);
 
- // __builtin_expect(expr, expected) - branch prediction hint, returns expr
- // Using LongLong to match typical usage pattern
+	// __builtin_expect(expr, expected) - branch prediction hint, returns expr
+	// Using LongLong to match typical usage pattern
 	register_two_param_builtin("__builtin_expect", TypeCategory::LongLong, TypeCategory::LongLong, TypeCategory::LongLong);
 
- // __builtin_launder(ptr) - optimization barrier for pointers
- // Using UnsignedLongLong (pointer-sized) for the parameter and return type
+	// __builtin_launder(ptr) - optimization barrier for pointers
+	// Using UnsignedLongLong (pointer-sized) for the parameter and return type
 	register_builtin("__builtin_launder", TypeCategory::UnsignedLongLong, TypeCategory::UnsignedLongLong);
 
- // Helper to register an extern "C" function builtin with an arbitrary signature.
+	// Helper to register an extern "C" function builtin with an arbitrary signature.
 	auto register_extern_c_builtin = [&](std::string_view name, const ASTNode& return_type, std::initializer_list<ASTNode> params) {
 		auto decl = emplace_node<DeclarationNode>(return_type, Token(Token::Type::Identifier, name, 0, 0, 0));
 		auto [fn, fn_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
@@ -1204,20 +1204,20 @@ void Parser::register_builtin_functions() {
 		return t;
 	};
 
- // size_t is 64-bit on all supported platforms, but the underlying type differs:
- // LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
- // LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
+	// size_t is 64-bit on all supported platforms, but the underlying type differs:
+	// LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
+	// LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
 	const TypeCategory size_t_base = context_.isLLP64() ? TypeCategory::UnsignedLongLong : TypeCategory::UnsignedLong;
 
- // __builtin_strlen(const char*) - returns length of string
+	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
 		"__builtin_strlen",
 		make_builtin_type(size_t_base, CVQualifier::None, 0),
 		{make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1)});
 
- // Wide-character memory/string functions needed by char_traits<wchar_t>.
- // These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
- // before those headers are explicitly included.
+	// Wide-character memory/string functions needed by char_traits<wchar_t>.
+	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
+	// before those headers are explicitly included.
 	const ASTNode wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::None, 1);
 	const ASTNode const_wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::Const, 1);
 	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
@@ -1247,8 +1247,8 @@ void Parser::register_builtin_functions() {
 		size_t_type,
 		{const_wchar_t_ptr});
 
- // Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
- // Note: Forward declarations inside functions don't capture namespace context,
- // so we register it globally without explicit mangling
+	// Register std::terminate - no pre-computed mangled name, will be mangled with namespace context
+	// Note: Forward declarations inside functions don't capture namespace context,
+	// so we register it globally without explicit mangling
 	register_no_param_builtin("terminate", TypeCategory::Void);
 }

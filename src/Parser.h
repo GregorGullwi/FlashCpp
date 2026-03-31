@@ -50,16 +50,16 @@ public:
 			cleanup_();
 	}
 
- // Prevent copying
+	// Prevent copying
 	ScopeGuard(const ScopeGuard&) = delete;
 	ScopeGuard& operator=(const ScopeGuard&) = delete;
 
- // Allow moving
+	// Allow moving
 	ScopeGuard(ScopeGuard&& other) noexcept : cleanup_(std::move(other.cleanup_)), active_(other.active_) {
 		other.active_ = false;
 	}
 
- // Dismiss the guard (don't run cleanup)
+	// Dismiss the guard (don't run cleanup)
 	void dismiss() { active_ = false; }
 
 private:
@@ -269,7 +269,7 @@ struct BaseClassPostTemplateInfo {
 };
 
 class Parser {
- // Friend classes that need access to private members
+	// Friend classes that need access to private members
 	friend class ExpressionSubstitutor;
 	friend class ConstExpr::Evaluator;  // Allow constexpr evaluator to instantiate templates
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
@@ -448,9 +448,9 @@ private:
 		// Map from template function to its body info
 	std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
 
-	// Track if we're currently parsing a template class (to skip delayed body parsing)
+		// Track if we're currently parsing a template class (to skip delayed body parsing)
 	bool parsing_template_class_ = false;
-	// Track when an inline namespace declaration was prefixed with 'inline'
+		// Track when an inline namespace declaration was prefixed with 'inline'
 	bool pending_inline_namespace_ = false;
 	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
 
@@ -845,9 +845,9 @@ private:
 		InlineVector<TemplateParamSubstitution, 4>& subs,
 		const std::vector<ASTNode>& template_params,
 		const std::vector<TemplateTypeArg>& template_args);
-	// Build outer-template binding data from the AST template parameter list so
-	// parameter names and args stay index-aligned even if the parameter list
-	// ever stops being a pure TemplateParameterNode sequence.
+		// Build outer-template binding data from the AST template parameter list so
+		// parameter names and args stay index-aligned even if the parameter list
+		// ever stops being a pure TemplateParameterNode sequence.
 	template <typename ArgContainer, typename OutArgContainer>
 	void collectOuterTemplateBindings(
 		const InlineVector<ASTNode, 4>& template_params,
@@ -938,7 +938,7 @@ private:
 									  TypeSpecifierNode& type_specifier);
 
 public:	// Public methods for template instantiation
- // Parse a template function body with concrete type bindings (for template instantiation)
+	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
 		const InlineVector<std::string_view, 4>& template_param_names,
@@ -947,19 +947,19 @@ public:	// Public methods for template instantiation
 		TypeIndex struct_type_index = TypeIndex{}	  // Optional: for member functions
 	);
 
- // Substitute template parameters in an AST node with concrete types/values
+	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		const InlineVector<ASTNode, 4>& template_params,
 		const InlineVector<TemplateTypeArg, 4>& template_args);
 
-	// Helper to extract type from an expression for overload resolution.
-	// Public so codegen/constexpr consumers can reuse the parser's type deduction.
+		// Helper to extract type from an expression for overload resolution.
+		// Public so codegen/constexpr consumers can reuse the parser's type deduction.
 	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
 private:	 // Resume private methods
-	// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
-	// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
+		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
+		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
 	void substituteFunctionCallExtras(
 		FunctionCallNode& new_call,
 		const FunctionCallNode& old_call,
@@ -1626,5 +1626,5 @@ inline FlashCpp::FunctionParsingScopeGuard::~FunctionParsingScopeGuard() {
 		parser_.member_function_context_stack_.pop_back();
 	}
 	parser_.current_function_ = saved_function_;
- // scope_ auto-exits the symbol table scope in its own destructor
+	// scope_ auto-exits the symbol table scope in its own destructor
 }

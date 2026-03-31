@@ -10,31 +10,31 @@ class OperandStorage {
 public:
 	OperandStorage() = default;
 
- // Constructor from vector (move semantics) - for backward compatibility
+	// Constructor from vector (move semantics) - for backward compatibility
 	explicit OperandStorage(std::vector<IrOperand>&& operands)
 		: operands_(std::move(operands)) {}
 
- // Add operand directly (for builder pattern)
+	// Add operand directly (for builder pattern)
 	void addOperand(IrOperand&& operand) {
 		operands_.push_back(std::move(operand));
 	}
 
- // Reserve space for operands (optimization)
+	// Reserve space for operands (optimization)
 	void reserve(size_t capacity) {
 		operands_.reserve(capacity);
 	}
 
- // Get operand count
+	// Get operand count
 	size_t size() const {
 		return operands_.size();
 	}
 
- // Access operand by index
+	// Access operand by index
 	const IrOperand& operator[](size_t index) const {
 		return operands_[index];
 	}
 
- // Safe access with optional
+	// Safe access with optional
 	std::optional<IrOperand> getSafe(size_t index) const {
 		return index < operands_.size()
 				   ? std::optional<IrOperand>{operands_[index]}
@@ -58,13 +58,13 @@ public:
 		return storage;
 	}
 
- // Reserve space for expected number of operands (optimization)
+	// Reserve space for expected number of operands (optimization)
 	void reserve(size_t capacity) {
 		operands_.reserve(capacity);
 		reserved_capacity_ = capacity;
 	}
 
- // Add operands from vector and return the start index (for backward compatibility)
+	// Add operands from vector and return the start index (for backward compatibility)
 	size_t addOperands(std::vector<IrOperand>&& operands) {
 		size_t start_index = operands_.size();
 		for (auto&& op : operands) {
@@ -73,40 +73,40 @@ public:
 		return start_index;
 	}
 
- // Add single operand and return its index (for builder pattern)
+	// Add single operand and return its index (for builder pattern)
 	size_t addOperand(IrOperand&& operand) {
 		size_t index = operands_.size();
 		operands_.push_back(std::move(operand));
 		return index;
 	}
 
- // Get operand by global index
+	// Get operand by global index
 	const IrOperand& getOperand(size_t index) const {
 		return operands_[index];
 	}
 
- // Get total number of operands stored
+	// Get total number of operands stored
 	size_t totalOperands() const {
 		return operands_.size();
 	}
 
- // Get reserved capacity
+	// Get reserved capacity
 	size_t reservedCapacity() const {
 		return reserved_capacity_;
 	}
 
- // Get actual capacity
+	// Get actual capacity
 	size_t actualCapacity() const {
 		return operands_.capacity();
 	}
 
- // Clear all operands (useful for testing)
+	// Clear all operands (useful for testing)
 	void clear() {
 		operands_.clear();
 		reserved_capacity_ = 0;
 	}
 
- // Print statistics about operand storage
+	// Print statistics about operand storage
 	void printStats() const {
 		printf("\n=== GlobalOperandStorage Statistics ===\n");
 		printf("Reserved capacity: %zu operands\n", reserved_capacity_);
@@ -126,7 +126,7 @@ public:
 private:
 	GlobalOperandStorage() = default;
 
- // Using vector for better performance with reserve()
+	// Using vector for better performance with reserve()
 	std::vector<IrOperand> operands_;
 	size_t reserved_capacity_ = 0;
 };
@@ -144,45 +144,45 @@ public:
 		return storage;
 	}
 
- // Set metadata for a TempVar
+	// Set metadata for a TempVar
 	void setMetadata(const TempVar& temp, TempVarMetadata metadata) {
 		metadata_[temp.var_number] = std::move(metadata);
 	}
 
- // Get metadata for a TempVar (returns default if not found)
+	// Get metadata for a TempVar (returns default if not found)
 	TempVarMetadata getMetadata(const TempVar& temp) const {
 		auto it = metadata_.find(temp.var_number);
 		if (it != metadata_.end()) {
 			return it->second;
 		}
-	// Default: prvalue with no lvalue info
+		// Default: prvalue with no lvalue info
 		return TempVarMetadata::makePRValue();
 	}
 
- // Check if a TempVar has metadata
+	// Check if a TempVar has metadata
 	bool hasMetadata(const TempVar& temp) const {
 		return metadata_.find(temp.var_number) != metadata_.end();
 	}
 
- // Check if a TempVar is an lvalue
+	// Check if a TempVar is an lvalue
 	bool isLValue(const TempVar& temp) const {
 		auto it = metadata_.find(temp.var_number);
 		return it != metadata_.end() && it->second.category == ValueCategory::LValue;
 	}
 
- // Check if a TempVar is an xvalue
+	// Check if a TempVar is an xvalue
 	bool isXValue(const TempVar& temp) const {
 		auto it = metadata_.find(temp.var_number);
 		return it != metadata_.end() && it->second.category == ValueCategory::XValue;
 	}
 
- // Check if a TempVar is a prvalue
+	// Check if a TempVar is a prvalue
 	bool isPRValue(const TempVar& temp) const {
 		auto it = metadata_.find(temp.var_number);
 		return it == metadata_.end() || it->second.category == ValueCategory::PRValue;
 	}
 
- // Get lvalue info if available
+	// Get lvalue info if available
 	std::optional<LValueInfo> getLValueInfo(const TempVar& temp) const {
 		auto it = metadata_.find(temp.var_number);
 		if (it != metadata_.end()) {
@@ -191,22 +191,22 @@ public:
 		return std::nullopt;
 	}
 
- // Clear all metadata (useful for testing and between compilation units)
+	// Clear all metadata (useful for testing and between compilation units)
 	void clear() {
 		metadata_.clear();
 	}
 
- // Clear metadata for a single TempVar (reset to default PRValue state)
+	// Clear metadata for a single TempVar (reset to default PRValue state)
 	void clearEntry(size_t var_number) {
 		metadata_.erase(var_number);
 	}
 
- // Get statistics
+	// Get statistics
 	size_t size() const {
 		return metadata_.size();
 	}
 
- // Print statistics
+	// Print statistics
 	void printStats() const {
 		FLASH_LOG_FORMAT(General, Debug,
 						 "TempVar metadata entries: {}", metadata_.size());
@@ -237,8 +237,8 @@ public:
 private:
 	GlobalTempVarMetadataStorage() = default;
 
- // Map from TempVar number to metadata
- // Using unordered_map for O(1) lookup and sparse storage
+	// Map from TempVar number to metadata
+	// Using unordered_map for O(1) lookup and sparse storage
 	std::unordered_map<size_t, TempVarMetadata> metadata_;
 };
 
@@ -348,7 +348,7 @@ class OperandStorage {
 public:
 	OperandStorage() : start_index_(0), count_(0) {}
 
- // Constructor from vector (move semantics) - for backward compatibility
+	// Constructor from vector (move semantics) - for backward compatibility
 	explicit OperandStorage(std::vector<IrOperand>&& operands)
 		: count_(operands.size()) {
 		if (count_ > 0) {
@@ -358,34 +358,34 @@ public:
 		}
 	}
 
- // Add operand directly (for builder pattern)
+	// Add operand directly (for builder pattern)
 	void addOperand(IrOperand&& operand) {
 		if (count_ == 0) {
-	// First operand - record the start index
+			// First operand - record the start index
 			start_index_ = GlobalOperandStorage::instance().addOperand(std::move(operand));
 		} else {
-	// Subsequent operands - they should be contiguous
+			// Subsequent operands - they should be contiguous
 			GlobalOperandStorage::instance().addOperand(std::move(operand));
 		}
 		++count_;
 	}
 
- // Reserve space (no-op for chunked storage, but kept for API compatibility)
+	// Reserve space (no-op for chunked storage, but kept for API compatibility)
 	void reserve([[maybe_unused]] size_t capacity) {
-	// No-op: deque doesn't need reservation
+		// No-op: deque doesn't need reservation
 	}
 
- // Get operand count
+	// Get operand count
 	size_t size() const {
 		return count_;
 	}
 
- // Access operand by index
+	// Access operand by index
 	const IrOperand& operator[](size_t index) const {
 		return GlobalOperandStorage::instance().getOperand(start_index_ + index);
 	}
 
- // Safe access with optional
+	// Safe access with optional
 	std::optional<IrOperand> getSafe(size_t index) const {
 		return index < count_
 				   ? std::optional<IrOperand>{(*this)[index]}
@@ -422,7 +422,7 @@ struct TypedValue {
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifier for references (const, volatile, etc.)
 	IrType ir_type = IrType::Void;  // Runtime representation type (authoritative for IR/codegen)
 
- // Helper methods for reference checks
+	// Helper methods for reference checks
 	bool is_reference() const { return ref_qualifier != ReferenceQualifier::None; }
 	bool is_rvalue_reference() const { return ref_qualifier == ReferenceQualifier::RValueReference; }
 	bool is_lvalue_reference() const { return ref_qualifier == ReferenceQualifier::LValueReference; }
@@ -431,26 +431,26 @@ struct TypedValue {
 	}
 	TypeCategory typeEnum() const { return category(); }
 
- // Atomically update the semantic type, always stamping the new TypeCategory into
- // type_index (overrides any pre-existing category so callers like setType(ULL) on
- // an enum-typed value don't leave TypeCategory::Enum behind).  Also keeps ir_type
- // and is_signed in sync so effectiveIrType()/is_signed are authoritative.
- // Preserves type_index.index_ (struct/enum gTypeInfo identity).
+	// Atomically update the semantic type, always stamping the new TypeCategory into
+	// type_index (overrides any pre-existing category so callers like setType(ULL) on
+	// an enum-typed value don't leave TypeCategory::Enum behind).  Also keeps ir_type
+	// and is_signed in sync so effectiveIrType()/is_signed are authoritative.
+	// Preserves type_index.index_ (struct/enum gTypeInfo identity).
 	void setType(TypeCategory cat) noexcept {
 		type_index = type_index.withCategory(cat);
 		ir_type = toIrType(cat);
 		is_signed = isSignedType(cat);
 	}
 
- // Returns the effective runtime representation type.
+	// Returns the effective runtime representation type.
 	IrType effectiveIrType() const {
 		if (ir_type != IrType::Void || category() == TypeCategory::Void)
 			return ir_type;
 		return toIrType(category());
 	}
 
- // Storage discriminator: records whether `value` holds a data value or a
- // 64-bit address.
+	// Storage discriminator: records whether `value` holds a data value or a
+	// 64-bit address.
 	ValueStorage storage = ValueStorage::ContainsData;
 };
 
@@ -482,7 +482,7 @@ struct CondBranchOp {
 	StringHandle label_false;	  // Pure StringHandle
 	TypedValue condition;			  // 40 bytes (value + type)
 
- // Helper methods
+	// Helper methods
 	StringHandle getLabelTrue() const {
 		return label_true;
 	}
@@ -509,13 +509,13 @@ struct CallOp {
 	bool returns_rvalue_reference = false; // 1 byte - True if function returns T&&
 	std::optional<TempVar> return_slot;	// Optional temp var representing the return slot location
 
- // Helper to get function_name as StringHandle
+	// Helper to get function_name as StringHandle
 	StringHandle getFunctionName() const {
 		return function_name;
 	}
 
- // Helper to check if using hidden return parameter for RVO
- // Returns true if return_slot is set (instead of duplicating this as a separate bool)
+	// Helper to check if using hidden return parameter for RVO
+	// Returns true if return_slot is set (instead of duplicating this as a separate bool)
 	bool usesReturnSlot() const {
 		return return_slot.has_value();
 	}
@@ -560,7 +560,7 @@ struct MemberStoreOp {
 struct LabelOp {
 	StringHandle label_name;	 // Pure StringHandle
 
- // Helper to get label_name as StringHandle
+	// Helper to get label_name as StringHandle
 	StringHandle getLabelName() const {
 		return label_name;
 	}
@@ -570,7 +570,7 @@ struct LabelOp {
 struct BranchOp {
 	StringHandle target_label;  // Pure StringHandle
 
- // Helper to get target_label as StringHandle
+	// Helper to get target_label as StringHandle
 	StringHandle getTargetLabel() const {
 		return target_label;
 	}
@@ -640,10 +640,10 @@ struct AddressOfMemberOp {
 struct ComputeAddressOp {
 	TempVar result;								  // Result temporary variable
 
- // Base address (one of these)
+	// Base address (one of these)
 	std::variant<StringHandle, TempVar> base;		  // Variable name or temp
 
- // Array indexing (optional, can have multiple for nested arrays)
+	// Array indexing (optional, can have multiple for nested arrays)
 	struct ArrayIndex {
 		std::variant<unsigned long long, TempVar, StringHandle> index;
 		SizeInBits element_size_bits;				  // Size of array element
@@ -653,7 +653,7 @@ struct ComputeAddressOp {
 	};
 	std::vector<ArrayIndex> array_indices;
 
- // Member offset accumulation (for chained member access)
+	// Member offset accumulation (for chained member access)
 	int total_member_offset = 0;					 // Sum of all member offsets
 
 	TypeIndex result_type_index{};				   // Type of final address (TypeCategory embedded)
@@ -754,7 +754,7 @@ struct FunctionParam {
 	TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 	TypeCategory paramType() const { return type_index.category(); }
 
- // Helper to get name as StringHandle
+	// Helper to get name as StringHandle
 	StringHandle getName() const {
 		return name;
 	}
@@ -785,7 +785,7 @@ struct FunctionDeclOp {
 	std::vector<FunctionParam> parameters;
 	int temp_var_stack_bytes = 0;  // Total stack space needed for TempVars (set after function body is processed)
 
- // Helper methods
+	// Helper methods
 	StringHandle getFunctionName() const {
 		return function_name;
 	}
@@ -809,16 +809,16 @@ struct UnaryOp {
 inline std::string formatUnaryOp(const char* op_name, const UnaryOp& op) {
 	std::ostringstream oss;
 
- // Result variable
+	// Result variable
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 
- // Type and size
+	// Type and size
 	if (const TypeInfo* type_info = findNativeType(op.value.category())) {
 		oss << type_info->name();
 	}
 	oss << op.value.size_in_bits << " ";
 
- // Operand value
+	// Operand value
 	if (const auto* temp_var = std::get_if<TempVar>(&op.value.value)) {
 		oss << '%' << temp_var->var_number;
 	} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.value.value)) {
@@ -845,7 +845,7 @@ struct GlobalLoadOp {
 	StringHandle global_name;  // Pure StringHandle
 	bool is_array = false;	   // If true, load address (LEA) instead of value (MOV)
 
- // Helper to get global_name as StringHandle
+	// Helper to get global_name as StringHandle
 	StringHandle getGlobalName() const {
 		return global_name;
 	}
@@ -857,7 +857,7 @@ struct FunctionAddressOp {
 	StringHandle function_name;	// Pure StringHandle
 	StringHandle mangled_name;   // Pure StringHandle (optional, for lambdas)
 
- // Helper methods
+	// Helper methods
 	StringHandle getFunctionName() const {
 		return function_name;
 	}
@@ -876,14 +876,14 @@ struct VariableDeclOp {
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
 	bool is_array = false;
 	bool use_copy_constructor = false;
- // Array info (if is_array)
+	// Array info (if is_array)
 	std::optional<TypeIndex> array_element_type_index;
 	std::optional<int> array_element_size;
 	std::optional<size_t> array_count;
- // Initializer (if present)
+	// Initializer (if present)
 	std::optional<TypedValue> initializer;
 
- // Helper to get var_name as string_view
+	// Helper to get var_name as string_view
 	std::string_view getVarName() const {
 		return StringTable::getStringView(var_name);
 	}
@@ -905,7 +905,7 @@ struct GlobalVariableDeclOp {
 	StringHandle reloc_target;	   // If valid, init_data holds zeros and a data relocation (R_X86_64_64) is emitted for this symbol
 	bool is_rodata = false;			// If true, init_data is emitted to .rodata (read-only) instead of .data
 
- // Helper to get var_name as StringHandle
+	// Helper to get var_name as StringHandle
 	StringHandle getVarName() const {
 		return var_name;
 	}
@@ -994,7 +994,7 @@ struct CatchBeginOp {
 	bool is_const;				   // True if caught by const
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None; // Catch binding reference qualifier
 	bool is_catch_all;			   // True for catch(...) - catches all exceptions
- // Cleanup variables from the try block scope (ELF Phase 1: called in landing pad before dispatch)
+	// Cleanup variables from the try block scope (ELF Phase 1: called in landing pad before dispatch)
 	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;	 // {struct_name, var_name} LIFO order
 
 	bool is_reference() const { return ref_qualifier != CVReferenceQualifier::None; }
@@ -1009,8 +1009,8 @@ struct CatchEndOp {
 
 // Function-level cleanup landing pad (ELF/Linux only)
 // Emitted after the function return; called by the unwinder during phase-2 exception propagation.
- // Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
- // __cxa_call_terminate depending on whether the enclosing function is noexcept.
+	// Calls each listed destructor (LIFO order), then either calls _Unwind_Resume or
+	// __cxa_call_terminate depending on whether the enclosing function is noexcept.
 struct FunctionCleanupLPOp {
 	std::vector<std::pair<StringHandle, StringHandle>> cleanup_vars;	 // {struct_name, var_name} LIFO order
 };
@@ -1086,16 +1086,16 @@ struct SehAbnormalTerminationOp {
 inline std::string formatConversionOp(const char* op_name, const ConversionOp& op) {
 	std::ostringstream oss;
 
- // Result variable
+	// Result variable
 	oss << '%' << op.result.var_number << " = " << op_name << " ";
 
- // From type and size
+	// From type and size
 	if (const TypeInfo* from_type_info = findNativeType(op.from.category())) {
 		oss << from_type_info->name();
 	}
 	oss << op.from.size_in_bits << " ";
 
- // Source value
+	// Source value
 	if (const auto* temp_var = std::get_if<TempVar>(&op.from.value)) {
 		oss << '%' << temp_var->var_number;
 	} else if (const auto* ull_val = std::get_if<unsigned long long>(&op.from.value)) {
@@ -1106,7 +1106,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 
 	oss << " to ";
 
- // To type and size
+	// To type and size
 	if (const TypeInfo* to_type_info = findNativeType(op.to_type_index.category())) {
 		oss << to_type_info->name();
 	}
@@ -1119,7 +1119,7 @@ inline std::string formatConversionOp(const char* op_name, const ConversionOp& o
 inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	std::ostringstream oss;
 
- // Result variable (now an IrValue that could be TempVar or string_view)
+	// Result variable (now an IrValue that could be TempVar or string_view)
 	oss << '%';
 	if (const auto* temp_var = std::get_if<TempVar>(&op.result)) {
 		oss << temp_var->var_number;
@@ -1128,13 +1128,13 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 	}
 	oss << " = " << op_name << " ";
 
- // Type and size (from LHS, but both sides should be same after type promotion)
+	// Type and size (from LHS, but both sides should be same after type promotion)
 	if (const TypeInfo* type_info = findNativeType(op.lhs.category())) {
 		oss << type_info->name();
 	}
 	oss << op.lhs.size_in_bits << " ";
 
- // LHS value
+	// LHS value
 	if (const auto* ull_val_ptr = std::get_if<unsigned long long>(&op.lhs.value)) {
 		oss << *ull_val_ptr;
 	} else if (const auto* d_val = std::get_if<double>(&op.lhs.value)) {
@@ -1147,7 +1147,7 @@ inline std::string formatBinaryOp(const char* op_name, const BinaryOp& op) {
 
 	oss << ", ";
 
- // RHS value
+	// RHS value
 	if (const auto* ull_val = std::get_if<unsigned long long>(&op.rhs.value)) {
 		oss << *ull_val;
 	} else if (const auto* d_val = std::get_if<double>(&op.rhs.value)) {

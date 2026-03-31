@@ -159,19 +159,19 @@ struct StorageSpecifiers {
 // Used by both parse_declaration_or_function_definition() and parse_variable_declaration()
 // Combines attributes, storage class, and constexpr/constinit/consteval specifiers
 struct DeclarationSpecifiers {
- // Storage class specifier (static, extern, register, mutable)
+	// Storage class specifier (static, extern, register, mutable)
 	StorageClass storage_class = StorageClass::None;
 
- // Constexpr/consteval/constinit specifiers (mutually exclusive)
+	// Constexpr/consteval/constinit specifiers (mutually exclusive)
 	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
 
- // Inline specifier
+	// Inline specifier
 	bool is_inline = false;
 
- // Linkage info (from __declspec or extern "C")
+	// Linkage info (from __declspec or extern "C")
 	Linkage linkage = Linkage::None;
 
- // Calling convention (from __cdecl, __stdcall, etc.)
+	// Calling convention (from __cdecl, __stdcall, etc.)
 	CallingConvention calling_convention = CallingConvention::Default;
 
 	bool is_constexpr() const { return constexpr_spec == ConstexprSpecifier::Constexpr; }

@@ -5,8 +5,8 @@
 #include "TypeTraitEvaluator.h"
 
 ParseResult Parser::parse_top_level_node() {
- // Save the current token's position to restore later in case of a parsing
- // error
+	// Save the current token's position to restore later in case of a parsing
+	// error
 	ScopedTokenPosition saved_position(*this);
 
 #if WITH_DEBUG_INFO
@@ -15,21 +15,21 @@ ParseResult Parser::parse_top_level_node() {
 	}
 #endif
 
- // Skip empty declarations (lone semicolons) - valid in C++ (empty-declaration)
+	// Skip empty declarations (lone semicolons) - valid in C++ (empty-declaration)
 	if (peek() == ";"_tok) {
 		advance();
 		return saved_position.success();
 	}
 
- // Check for __pragma() - Microsoft's inline pragma syntax
- // e.g., __pragma(pack(push, 8))
+	// Check for __pragma() - Microsoft's inline pragma syntax
+	// e.g., __pragma(pack(push, 8))
 	if (peek_info().type() == Token::Type::Identifier && peek_info().value() == "__pragma") {
 		advance(); // consume '__pragma'
 		if (!consume("("_tok)) {
 			return ParseResult::error("Expected '(' after '__pragma'", current_token_);
 		}
 
-	// Now parse what's inside - it could be pack(...) or something else
+		// Now parse what's inside - it could be pack(...) or something else
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
 			peek_info().value() == "pack") {
 			advance(); // consume 'pack'
@@ -37,19 +37,19 @@ ParseResult Parser::parse_top_level_node() {
 				return ParseResult::error("Expected '(' after '__pragma(pack'", current_token_);
 			}
 
-	// Reuse the pack parsing logic by calling parse_pragma_pack_inner
+			// Reuse the pack parsing logic by calling parse_pragma_pack_inner
 			auto pack_result = parse_pragma_pack_inner();
 			if (pack_result.is_error()) {
 				return pack_result;
 			}
 
-	// Consume the outer closing ')'
+			// Consume the outer closing ')'
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after '__pragma(...)'", current_token_);
 			}
 			return saved_position.success();
 		} else {
-	// Unknown __pragma content - skip until balanced parens
+			// Unknown __pragma content - skip until balanced parens
 			int paren_depth = 1;
 			while (!peek().is_eof() && paren_depth > 0) {
 				if (peek() == "("_tok) {
@@ -63,7 +63,7 @@ ParseResult Parser::parse_top_level_node() {
 		}
 	}
 
- // Check for #pragma directives
+	// Check for #pragma directives
 	if (peek() == "#"_tok) {
 		advance(); // consume '#'
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
@@ -77,15 +77,15 @@ ParseResult Parser::parse_top_level_node() {
 					return ParseResult::error("Expected '(' after '#pragma pack'", current_token_);
 				}
 
-	// Use the shared helper function to parse the pack contents
+				// Use the shared helper function to parse the pack contents
 				auto pack_result = parse_pragma_pack_inner();
 				if (pack_result.is_error()) {
 					return saved_position.propagate(std::move(pack_result));
 				}
 				return saved_position.success();
 			} else {
-	// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
-	// Pragmas can span multiple lines with parentheses, so we need to be careful
+				// Unknown pragma - skip until end of line or until we hit a token that looks like the start of a new construct
+				// Pragmas can span multiple lines with parentheses, so we need to be careful
 				FLASH_LOG(Parser, Warning, "Skipping unknown pragma: ", (!peek().is_eof() ? std::string(peek_info().value()) : "EOF"));
 				int paren_depth = 0;
 				while (!peek().is_eof()) {
@@ -97,14 +97,14 @@ ParseResult Parser::parse_top_level_node() {
 						paren_depth--;
 						advance();
 						if (paren_depth == 0) {
-		// End of pragma
+							// End of pragma
 							break;
 						}
 					} else if (paren_depth == 0 && peek() == "#"_tok) {
-		// Start of a new preprocessor directive
+						// Start of a new preprocessor directive
 						break;
 					} else if (paren_depth == 0 && peek().is_keyword()) {
-		// Start of a new declaration (namespace, class, extern, etc.)
+						// Start of a new declaration (namespace, class, extern, etc.)
 						break;
 					} else {
 						advance();
@@ -115,7 +115,7 @@ ParseResult Parser::parse_top_level_node() {
 		}
 	}
 
- // Helper: parse, push resulting node to AST, return success/propagate.
+	// Helper: parse, push resulting node to AST, return success/propagate.
 	auto try_parse_and_push = [&](ParseResult result) -> ParseResult {
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
@@ -126,21 +126,21 @@ ParseResult Parser::parse_top_level_node() {
 		return saved_position.propagate(std::move(result));
 	};
 
- // Check if it's a using directive, using declaration, or namespace alias
+	// Check if it's a using directive, using declaration, or namespace alias
 	if (peek() == "using"_tok)
 		return try_parse_and_push(parse_using_directive_or_declaration());
 
- // Check if it's a static_assert declaration
+	// Check if it's a static_assert declaration
 	if (peek() == "static_assert"_tok) {
 		auto result = parse_static_assert();
 		if (!result.is_error()) {
-	// static_assert doesn't produce an AST node (compile-time only)
+			// static_assert doesn't produce an AST node (compile-time only)
 			return saved_position.success();
 		}
 		return saved_position.propagate(std::move(result));
 	}
 
- // Check for inline namespace declaration (inline namespace foo { ... })
+	// Check for inline namespace declaration (inline namespace foo { ... })
 	if (peek() == "inline"_tok) {
 		auto next = peek_info(1);
 		if (next.kind() == "namespace"_tok) {
@@ -150,34 +150,34 @@ ParseResult Parser::parse_top_level_node() {
 		}
 	}
 
- // Check if it's a namespace declaration
+	// Check if it's a namespace declaration
 	if (peek() == "namespace"_tok)
 		return try_parse_and_push(parse_namespace());
 
- // Check if it's a template declaration (must come before struct/class check)
+	// Check if it's a template declaration (must come before struct/class check)
 	if (peek() == "template"_tok)
 		return try_parse_and_push(parse_template_declaration());
 
- // Check if it's a concept declaration (C++20)
+	// Check if it's a concept declaration (C++20)
 	if (peek() == "concept"_tok)
 		return try_parse_and_push(parse_concept_declaration());
 
- // Check if it's a class or struct declaration
- // Note: alignas can appear before struct, but we handle that in parse_struct_declaration
- // If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
+	// Check if it's a class or struct declaration
+	// Note: alignas can appear before struct, but we handle that in parse_struct_declaration
+	// If alignas appears before a variable declaration, it will be handled by parse_declaration_or_function_definition
 	if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
 		auto result = parse_struct_declaration();
 		if (!result.is_error()) {
 			if (auto node = result.node()) {
 				ast_nodes_.push_back(*node);
 			}
-	// Add any pending variable declarations from the struct definition
+			// Add any pending variable declarations from the struct definition
 			for (auto& var_node : pending_struct_variables_) {
 				ast_nodes_.push_back(var_node);
 			}
 			pending_struct_variables_.clear();
-	// Add hidden friend function definitions after the struct node so the
-	// IR converter sees the struct type before compiling the friend bodies.
+			// Add hidden friend function definitions after the struct node so the
+			// IR converter sees the struct type before compiling the friend bodies.
 			for (auto& fn : pending_hidden_friend_defs_) {
 				ast_nodes_.push_back(fn);
 			}
@@ -187,25 +187,25 @@ ParseResult Parser::parse_top_level_node() {
 		return saved_position.propagate(std::move(result));
 	}
 
- // Check if it's an enum declaration
+	// Check if it's an enum declaration
 	if (peek() == "enum"_tok)
 		return try_parse_and_push(parse_enum_declaration());
 
- // Check if it's a typedef declaration
+	// Check if it's a typedef declaration
 	if (peek() == "typedef"_tok)
 		return try_parse_and_push(parse_typedef_declaration());
 
- // Check for extern "C" linkage specification
+	// Check for extern "C" linkage specification
 	if (peek() == "extern"_tok) {
-	// Save position in case this is just a regular extern declaration
+		// Save position in case this is just a regular extern declaration
 		SaveHandle extern_saved_pos = save_token_position();
 		advance(); // consume 'extern'
 
-	// Check if this is extern "C" or extern "C++"
+		// Check if this is extern "C" or extern "C++"
 		if (peek().is_string_literal()) {
 			std::string_view linkage_str = peek_info().value();
 
-	// Remove quotes from string literal
+			// Remove quotes from string literal
 			if (linkage_str.size() >= 2 && linkage_str.front() == '"' && linkage_str.back() == '"') {
 				linkage_str = linkage_str.substr(1, linkage_str.size() - 2);
 			}
@@ -221,15 +221,15 @@ ParseResult Parser::parse_top_level_node() {
 
 			advance(); // consume linkage string
 
-	// Discard the extern_saved_pos since we're handling extern "C"
+			// Discard the extern_saved_pos since we're handling extern "C"
 			discard_saved_token(extern_saved_pos);
 
-	// Check for block form: extern "C" { ... }
+			// Check for block form: extern "C" { ... }
 			if (peek() == "{"_tok) {
 				auto result = parse_extern_block(linkage);
 				if (!result.is_error()) {
 					if (auto node = result.node()) {
-		// The block contains multiple declarations, add them all
+						// The block contains multiple declarations, add them all
 						if (node->is<BlockNode>()) {
 							const BlockNode& block = node->as<BlockNode>();
 							block.get_statements().visit([&](const ASTNode& stmt) {
@@ -242,30 +242,30 @@ ParseResult Parser::parse_top_level_node() {
 				return saved_position.propagate(std::move(result));
 			}
 
-	// Single declaration form: extern "C" int func();
-	// Set the current linkage and parse the declaration/function
+			// Single declaration form: extern "C" int func();
+			// Set the current linkage and parse the declaration/function
 			Linkage saved_linkage = current_linkage_;
 			current_linkage_ = linkage;
 
 			ParseResult decl_result = parse_declaration_or_function_definition();
 
-	// Restore the previous linkage
+			// Restore the previous linkage
 			current_linkage_ = saved_linkage;
 
 			if (decl_result.is_error()) {
 				return decl_result;
 			}
 
-	// Add the node to the AST if it exists
+			// Add the node to the AST if it exists
 			if (auto decl_node = decl_result.node()) {
 				ast_nodes_.push_back(*decl_node);
 			}
 
 			return saved_position.success();
 		} else if (peek() == "template"_tok) {
-	// extern template class allocator<char>; — explicit instantiation declaration
-	// Don't restore, we've already consumed 'extern', and parse_template_declaration
-	// will consume 'template'. Discard the saved position.
+			// extern template class allocator<char>; — explicit instantiation declaration
+			// Don't restore, we've already consumed 'extern', and parse_template_declaration
+			// will consume 'template'. Discard the saved position.
 			discard_saved_token(extern_saved_pos);
 			auto template_result = parse_template_declaration();
 			if (!template_result.is_error()) {
@@ -273,12 +273,12 @@ ParseResult Parser::parse_top_level_node() {
 			}
 			return saved_position.propagate(std::move(template_result));
 		} else {
-	// Regular extern without linkage specification, restore and continue
+			// Regular extern without linkage specification, restore and continue
 			restore_token_position(extern_saved_pos);
 		}
 	}
 
- // Attempt to parse a function definition, variable declaration, or typedef
+	// Attempt to parse a function definition, variable declaration, or typedef
 	FLASH_LOG(Parser, Debug, "parse_top_level_node: About to call parse_declaration_or_function_definition, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	auto result = parse_declaration_or_function_definition();
 	if (!result.is_error()) {
@@ -288,45 +288,45 @@ ParseResult Parser::parse_top_level_node() {
 		return saved_position.success();
 	}
 
- // If we failed to parse any top-level construct, restore the token position
- // and report an error
+	// If we failed to parse any top-level construct, restore the token position
+	// and report an error
 	FLASH_LOG(Parser, Debug, "parse_top_level_node: parse_declaration_or_function_definition failed, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A", ", error: ", result.error_message());
 
- // Preserve the original error token instead of creating a new error with the saved token
- // This ensures error messages point to the actual error location, not the start of the construct
+	// Preserve the original error token instead of creating a new error with the saved token
+	// This ensures error messages point to the actual error location, not the start of the construct
 	return saved_position.propagate(std::move(result));
 }
 
 ParseResult Parser::parse_static_assert() {
 	ScopedTokenPosition saved_position(*this);
 
- // Consume 'static_assert' keyword
+	// Consume 'static_assert' keyword
 	auto static_assert_keyword = advance();
 	if (static_assert_keyword.kind() != "static_assert"_tok) {
 		return ParseResult::error("Expected 'static_assert' keyword", static_assert_keyword);
 	}
 
- // Expect opening parenthesis
+	// Expect opening parenthesis
 	if (!consume("("_tok)) {
 		return ParseResult::error("Expected '(' after 'static_assert'", current_token_);
 	}
 
- // Parse the condition expression
+	// Parse the condition expression
 	ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 	if (condition_result.is_error()) {
 		return condition_result;
 	}
 
- // Check for optional comma and message
+	// Check for optional comma and message
 	std::string message;
 	if (consume(","_tok)) {
-	// Parse the message string literal(s) - C++ allows adjacent string literals to be concatenated
+		// Parse the message string literal(s) - C++ allows adjacent string literals to be concatenated
 		while (peek().is_string_literal()) {
 			auto message_token = advance();
 			if (message_token.value().size() >= 2 &&
 				message_token.value().front() == '"' &&
 				message_token.value().back() == '"') {
-	// Extract the message content (remove quotes) and append
+				// Extract the message content (remove quotes) and append
 				message += std::string(message_token.value().substr(1, message_token.value().size() - 2));
 			}
 		}
@@ -335,32 +335,32 @@ ParseResult Parser::parse_static_assert() {
 		}
 	}
 
- // Expect closing parenthesis
+	// Expect closing parenthesis
 	if (!consume(")"_tok)) {
 		return ParseResult::error("Expected ')' after static_assert", current_token_);
 	}
 
- // Expect semicolon
+	// Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after static_assert", current_token_);
 	}
 
- // If we're inside a template body during template DEFINITION (not instantiation),
- // defer static_assert evaluation until instantiation.
- // However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
- // The expression may depend on template parameters that are not yet known
+	// If we're inside a template body during template DEFINITION (not instantiation),
+	// defer static_assert evaluation until instantiation.
+	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
+	// The expression may depend on template parameters that are not yet known
 	bool is_in_template_definition = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
 
- // Also consider struct parsing context - if we're inside a template struct body,
- // member function bodies may be parsed later but still contain template-dependent expressions
+	// Also consider struct parsing context - if we're inside a template struct body,
+	// member function bodies may be parsed later but still contain template-dependent expressions
 	bool is_in_template_struct = !struct_parsing_context_stack_.empty() &&
 								 (parsing_template_depth_ > 0 || !current_template_param_names_.empty());
 
- // Try to evaluate the constant expression using ConstExprEvaluator
+	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
 
- // Pass struct context for static member lookup in static_assert within struct body
+	// Pass struct context for static member lookup in static_assert within struct body
 	if (!struct_parsing_context_stack_.empty()) {
 		const auto& struct_ctx = struct_parsing_context_stack_.back();
 		ctx.struct_node = struct_ctx.struct_node;
@@ -369,13 +369,13 @@ ParseResult Parser::parse_static_assert() {
 
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
 
- // If evaluation failed with a template-dependent expression error, defer only in template context.
- // In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
+	// If evaluation failed with a template-dependent expression error, defer only in template context.
+	// In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
 	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
 		if (is_in_template_definition || is_in_template_struct) {
 			FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
 
-	// Store the deferred static_assert in the current struct/class for later evaluation
+			// Store the deferred static_assert in the current struct/class for later evaluation
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {
@@ -388,15 +388,15 @@ ParseResult Parser::parse_static_assert() {
 
 			return saved_position.success();
 		}
-	// Not in template context - fall through to error handling below
+		// Not in template context - fall through to error handling below
 	}
 
- // If we're in a template definition and evaluation failed for other reasons,
- // that's okay - skip it and it will be checked during instantiation
+	// If we're in a template definition and evaluation failed for other reasons,
+	// that's okay - skip it and it will be checked during instantiation
 	if ((is_in_template_definition || is_in_template_struct) && !eval_result.success()) {
 		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
 
-	// Store the deferred static_assert in the current struct/class for later evaluation
+		// Store the deferred static_assert in the current struct/class for later evaluation
 		if (!struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			if (struct_ctx.struct_node) {
@@ -409,8 +409,8 @@ ParseResult Parser::parse_static_assert() {
 	}
 
 	if (!eval_result.success()) {
-	// If we're inside a struct body, defer - our constexpr evaluator is incomplete
-	// and many standard library static_asserts use complex constexpr functions
+		// If we're inside a struct body, defer - our constexpr evaluator is incomplete
+		// and many standard library static_asserts use complex constexpr functions
 		if (!struct_parsing_context_stack_.empty()) {
 			FLASH_LOG(Parser, Debug, "Deferring static_assert with unevaluable condition in struct body: ", eval_result.error_message);
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
@@ -425,11 +425,11 @@ ParseResult Parser::parse_static_assert() {
 			static_assert_keyword);
 	}
 
- // Check if the assertion failed
+	// Check if the assertion failed
 	if (!eval_result.as_bool()) {
-	// In template contexts, static_assert may evaluate to false because
-	// type traits like is_constructible<_Tp, _Args...> return false_type
-	// for unknown/dependent types. Defer instead of failing.
+		// In template contexts, static_assert may evaluate to false because
+		// type traits like is_constructible<_Tp, _Args...> return false_type
+		// for unknown/dependent types. Defer instead of failing.
 		if (is_in_template_definition || is_in_template_struct) {
 			FLASH_LOG(Templates, Debug, "Deferring static_assert that evaluated to false in template context");
 			if (!struct_parsing_context_stack_.empty()) {
@@ -448,7 +448,7 @@ ParseResult Parser::parse_static_assert() {
 		return ParseResult::error(error_msg, static_assert_keyword);
 	}
 
- // static_assert passed - just skip it
+	// static_assert passed - just skip it
 	return saved_position.success();
 }
 
@@ -459,51 +459,51 @@ ParseResult Parser::parse_static_assert() {
 ParseResult Parser::parse_namespace() {
 	ScopedTokenPosition saved_position(*this);
 
- // Detect if this namespace was prefixed with 'inline'
+	// Detect if this namespace was prefixed with 'inline'
 	bool is_inline_namespace = pending_inline_namespace_;
 	pending_inline_namespace_ = false;
 
- // Consume 'namespace' keyword
+	// Consume 'namespace' keyword
 	if (!consume("namespace"_tok)) {
 		return ParseResult::error("Expected 'namespace' keyword", peek_info());
 	}
 
- // Check if this is an anonymous namespace (namespace { ... })
+	// Check if this is an anonymous namespace (namespace { ... })
 	std::string_view namespace_name = "";
 	bool is_anonymous = false;
 
- // C++17 nested namespace declarations: namespace A::B::C { }
- // This vector holds all namespace names for nested declarations
+	// C++17 nested namespace declarations: namespace A::B::C { }
+	// This vector holds all namespace names for nested declarations
 	std::vector<std::string_view> nested_names;
- // Track which nested namespaces are inline (parallel to nested_names)
+	// Track which nested namespaces are inline (parallel to nested_names)
 	std::vector<bool> nested_inline_flags;
 
 	if (peek() == "{"_tok) {
-	// Anonymous namespace
+		// Anonymous namespace
 		is_anonymous = true;
-	// For anonymous namespaces, we'll use an empty name
-	// The symbol table will handle them specially
+		// For anonymous namespaces, we'll use an empty name
+		// The symbol table will handle them specially
 		namespace_name = "";
 	} else {
-	// Named namespace - parse namespace name
+		// Named namespace - parse namespace name
 		auto name_token = advance();
 		if (!name_token.kind().is_identifier()) {
 			return ParseResult::error("Expected namespace name or '{'", name_token);
 		}
 		namespace_name = name_token.value();
 
-	// Collect all namespace names (including the first one for nested namespaces)
-	// The first namespace gets the is_inline_namespace flag from 'inline namespace' prefix
+		// Collect all namespace names (including the first one for nested namespaces)
+		// The first namespace gets the is_inline_namespace flag from 'inline namespace' prefix
 		nested_names.push_back(namespace_name);
 		nested_inline_flags.push_back(is_inline_namespace);
 
-	// C++17 nested namespace declarations: namespace A::B::C { }
-	// Also supports C++20: namespace A::inline B::C { }
-	// Continue collecting nested namespace names if present
+		// C++17 nested namespace declarations: namespace A::B::C { }
+		// Also supports C++20: namespace A::inline B::C { }
+		// Continue collecting nested namespace names if present
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
 
-	// Check for inline keyword in nested namespace: namespace A::inline B { }
+			// Check for inline keyword in nested namespace: namespace A::inline B { }
 			bool nested_is_inline = false;
 			if (peek() == "inline"_tok) {
 				advance(); // consume 'inline'
@@ -518,17 +518,17 @@ ParseResult Parser::parse_namespace() {
 			nested_inline_flags.push_back(nested_is_inline);
 		}
 
-	// Skip any attributes after the namespace name (e.g., __attribute__((__abi_tag__ ("cxx11"))))
+		// Skip any attributes after the namespace name (e.g., __attribute__((__abi_tag__ ("cxx11"))))
 		skip_gcc_attributes();
 
-	// Check if this is a namespace alias: namespace alias = target;
+		// Check if this is a namespace alias: namespace alias = target;
 		if (peek() == "="_tok) {
-	// This is a namespace alias, not a namespace declaration
-	// Restore position and parse as namespace alias
+			// This is a namespace alias, not a namespace declaration
+			// Restore position and parse as namespace alias
 			Token alias_token = name_token;
 			advance(); // consume '='
 
-	// Parse target namespace path
+			// Parse target namespace path
 			std::vector<StringType<>> target_namespace;
 			while (true) {
 				auto ns_token = advance();
@@ -537,7 +537,7 @@ ParseResult Parser::parse_namespace() {
 				}
 				target_namespace.emplace_back(StringType<>(ns_token.value()));
 
-	// Check for ::
+				// Check for ::
 				if (peek() == "::"_tok) {
 					advance(); // consume ::
 				} else {
@@ -545,12 +545,12 @@ ParseResult Parser::parse_namespace() {
 				}
 			}
 
-	// Expect semicolon
+			// Expect semicolon
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after namespace alias", current_token_);
 			}
 
-	// Convert namespace path to handle and add the alias to the symbol table
+			// Convert namespace path to handle and add the alias to the symbol table
 			NamespaceHandle target_handle = gSymbolTable.resolve_namespace_handle(target_namespace);
 			gSymbolTable.add_namespace_alias(alias_token.value(), target_handle);
 
@@ -559,28 +559,28 @@ ParseResult Parser::parse_namespace() {
 		}
 	}
 
- // Inline namespaces inject their members into the enclosing namespace scope
- // For nested declarations like namespace A::inline B, B is inline within A
- // We now handle this per-namespace in the enter loop below, not just for the first namespace
+	// Inline namespaces inject their members into the enclosing namespace scope
+	// For nested declarations like namespace A::inline B, B is inline within A
+	// We now handle this per-namespace in the enter loop below, not just for the first namespace
 
- // Expect opening brace
+	// Expect opening brace
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' after namespace name", peek_info());
 	}
 
- // Create namespace declaration node - string_view points directly into source text
- // For anonymous namespaces, use empty string_view
- // For nested namespaces (A::B::C), we use the innermost name for the AST node
- // but enter all scopes in the symbol table
+	// Create namespace declaration node - string_view points directly into source text
+	// For anonymous namespaces, use empty string_view
+	// For nested namespaces (A::B::C), we use the innermost name for the AST node
+	// but enter all scopes in the symbol table
 	std::string_view innermost_name = nested_names.empty() ? namespace_name : nested_names.back();
 	auto [namespace_node, namespace_ref] = emplace_node_ref<NamespaceDeclarationNode>(is_anonymous ? "" : innermost_name);
 
- // Enter namespace scope(s) and handle inline namespaces
- // For anonymous namespaces, we DON'T enter a new scope in the symbol table
- // Instead, symbols are added to the current scope but tracked separately for mangling
- // This allows them to be accessed without qualification (per C++ standard)
- // while still getting unique linkage names
- // For nested namespaces (A::B::C), enter each scope in order
+	// Enter namespace scope(s) and handle inline namespaces
+	// For anonymous namespaces, we DON'T enter a new scope in the symbol table
+	// Instead, symbols are added to the current scope but tracked separately for mangling
+	// This allows them to be accessed without qualification (per C++ standard)
+	// while still getting unique linkage names
+	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 
@@ -590,8 +590,8 @@ ParseResult Parser::parse_namespace() {
 			StringHandle name_handle = StringTable::getOrInternStringHandle(ns_name);
 			NamespaceHandle next_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
 
-	// If this namespace is inline, add a using directive BEFORE entering
-	// This makes members visible in the current (parent) scope
+			// If this namespace is inline, add a using directive BEFORE entering
+			// This makes members visible in the current (parent) scope
 			if (this_ns_is_inline && next_handle.isValid()) {
 				gSymbolTable.add_using_directive(next_handle);
 			}
@@ -606,33 +606,33 @@ ParseResult Parser::parse_namespace() {
 		}
 	}
 
- // Track inline namespace nesting (one entry per nested level for proper cleanup)
+	// Track inline namespace nesting (one entry per nested level for proper cleanup)
 	for (size_t i = 0; i < (nested_names.empty() ? 1 : nested_names.size()); ++i) {
 		bool this_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
 		inline_namespace_stack_.push_back(this_is_inline);
 	}
- // For anonymous namespaces, track the namespace in the AST but not in symbol lookup
- // Symbols will be added to current scope during declaration parsing
+	// For anonymous namespaces, track the namespace in the AST but not in symbol lookup
+	// Symbols will be added to current scope during declaration parsing
 
- // Parse declarations within the namespace
+	// Parse declarations within the namespace
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		ParseResult decl_result;
 
-	// Skip empty declarations (lone semicolons) - valid in C++ (e.g., namespace foo { }; )
+		// Skip empty declarations (lone semicolons) - valid in C++ (e.g., namespace foo { }; )
 		if (peek() == ";"_tok) {
 			advance();
 			continue;
 		}
 
-	// Check if it's a using directive, using declaration, or namespace alias
+		// Check if it's a using directive, using declaration, or namespace alias
 		if (peek() == "using"_tok) {
 			decl_result = parse_using_directive_or_declaration();
 		}
-	// Check if it's a nested namespace (or inline namespace)
+		// Check if it's a nested namespace (or inline namespace)
 		else if (peek() == "namespace"_tok) {
 			decl_result = parse_namespace();
 		}
-	// Check if it's an inline namespace (inline namespace __cxx11 { ... })
+		// Check if it's an inline namespace (inline namespace __cxx11 { ... })
 		else if (peek() == "inline"_tok) {
 			auto next = peek_info(1);
 			if (next.kind() == "namespace"_tok) {
@@ -640,37 +640,37 @@ ParseResult Parser::parse_namespace() {
 				pending_inline_namespace_ = true;
 				decl_result = parse_namespace(); // parse_namespace handles the rest
 			} else {
-	// Just a regular inline declaration
+				// Just a regular inline declaration
 				decl_result = parse_declaration_or_function_definition();
 			}
 		}
-	// Check if it's a struct/class/union declaration
+		// Check if it's a struct/class/union declaration
 		else if ((peek() == "class"_tok || peek() == "struct"_tok || peek() == "union"_tok)) {
 			decl_result = parse_struct_declaration();
 		}
-	// Check if it's an enum declaration
+		// Check if it's an enum declaration
 		else if (peek() == "enum"_tok) {
 			decl_result = parse_enum_declaration();
 		}
-	// Check if it's a typedef declaration
+		// Check if it's a typedef declaration
 		else if (peek() == "typedef"_tok) {
 			decl_result = parse_typedef_declaration();
 		}
-	// Check if it's a template declaration
+		// Check if it's a template declaration
 		else if (peek() == "template"_tok) {
 			decl_result = parse_template_declaration();
 		}
-	// Check if it's an extern declaration (extern "C" or extern "C++")
+		// Check if it's an extern declaration (extern "C" or extern "C++")
 		else if (peek() == "extern"_tok) {
-	// Save position in case this is just a regular extern declaration
+			// Save position in case this is just a regular extern declaration
 			SaveHandle extern_saved_pos = save_token_position();
 			advance(); // consume 'extern'
 
-	// Check if this is extern "C" or extern "C++"
+			// Check if this is extern "C" or extern "C++"
 			if (peek().is_string_literal()) {
 				std::string_view linkage_str = peek_info().value();
 
-	// Remove quotes from string literal
+				// Remove quotes from string literal
 				if (linkage_str.size() >= 2 && linkage_str.front() == '"' && linkage_str.back() == '"') {
 					linkage_str = linkage_str.substr(1, linkage_str.size() - 2);
 				}
@@ -690,33 +690,33 @@ ParseResult Parser::parse_namespace() {
 				advance(); // consume linkage string
 				discard_saved_token(extern_saved_pos);
 
-	// Check for block form: extern "C" { ... }
+				// Check for block form: extern "C" { ... }
 				if (peek() == "{"_tok) {
 					decl_result = parse_extern_block(linkage);
 				} else {
-		// Single declaration form: extern "C++" int func();
+					// Single declaration form: extern "C++" int func();
 					Linkage saved_linkage = current_linkage_;
 					current_linkage_ = linkage;
 					decl_result = parse_declaration_or_function_definition();
 					current_linkage_ = saved_linkage;
 				}
 			} else if (peek() == "template"_tok) {
-	// extern template class allocator<char>; — explicit instantiation declaration
+				// extern template class allocator<char>; — explicit instantiation declaration
 				discard_saved_token(extern_saved_pos);
 				decl_result = parse_template_declaration();
 			} else {
-	// Regular extern declaration (not extern "C")
+				// Regular extern declaration (not extern "C")
 				restore_token_position(extern_saved_pos);
 				decl_result = parse_declaration_or_function_definition();
 			}
 		}
-	// Otherwise, parse as function or variable declaration
+		// Otherwise, parse as function or variable declaration
 		else {
 			decl_result = parse_declaration_or_function_definition();
 		}
 
 		if (decl_result.is_error()) {
-	// Exit all nested namespace scopes on error
+			// Exit all nested namespace scopes on error
 			if (!is_anonymous) {
 				size_t nesting_depth = nested_names.empty() ? 1 : nested_names.size();
 				for (size_t i = 0; i < nesting_depth; ++i) {
@@ -729,18 +729,18 @@ ParseResult Parser::parse_namespace() {
 		if (auto node = decl_result.node()) {
 			namespace_ref.add_declaration(*node);
 		}
-	// Add any hidden friend function definitions queued during struct parsing.
-	// These need to be in the enclosing namespace's declaration list so the
-	// IR converter generates code for them.
+		// Add any hidden friend function definitions queued during struct parsing.
+		// These need to be in the enclosing namespace's declaration list so the
+		// IR converter generates code for them.
 		for (auto& fn : pending_hidden_friend_defs_) {
 			namespace_ref.add_declaration(fn);
 		}
 		pending_hidden_friend_defs_.clear();
 	}
 
- // Expect closing brace
+	// Expect closing brace
 	if (!consume("}"_tok)) {
-	// Exit all nested namespace scopes on error
+		// Exit all nested namespace scopes on error
 		if (!is_anonymous) {
 			size_t nesting_depth = nested_names.empty() ? 1 : nested_names.size();
 			for (size_t i = 0; i < nesting_depth; ++i) {
@@ -753,8 +753,8 @@ ParseResult Parser::parse_namespace() {
 		return ParseResult::error("Expected '}' after namespace body", peek_info());
 	}
 
- // Exit namespace scope(s) (only for named namespaces, not anonymous)
- // For nested namespaces (A::B::C), exit each scope in reverse order
+	// Exit namespace scope(s) (only for named namespaces, not anonymous)
+	// For nested namespaces (A::B::C), exit each scope in reverse order
 	if (!is_anonymous) {
 		size_t nesting_depth = nested_names.empty() ? 1 : nested_names.size();
 		for (size_t i = 0; i < nesting_depth; ++i) {
@@ -765,9 +765,9 @@ ParseResult Parser::parse_namespace() {
 		inline_namespace_stack_.pop_back();
 	}
 
- // Merge inline namespace symbols into parent namespace for qualified lookup
- // We need to do this for each inline namespace in the chain
- // Capture the path AFTER exiting scopes (we're back to original scope)
+	// Merge inline namespace symbols into parent namespace for qualified lookup
+	// We need to do this for each inline namespace in the chain
+	// Capture the path AFTER exiting scopes (we're back to original scope)
 	if (!is_anonymous && !nested_inline_flags.empty()) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
 		for (size_t i = 0; i < nested_names.size(); ++i) {
@@ -787,7 +787,7 @@ ParseResult Parser::parse_namespace() {
 ParseResult Parser::parse_using_directive_or_declaration() {
 	ScopedTokenPosition saved_position(*this);
 
- // Consume 'using' keyword
+	// Consume 'using' keyword
 	auto using_token_opt = peek_info();
 	if (using_token_opt.kind() != "using"_tok) {
 		return ParseResult::error("Expected 'using' keyword", using_token_opt);
@@ -795,48 +795,48 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	Token using_token = using_token_opt;
 	advance(); // consume 'using'
 
- // Check if this is a type alias or namespace alias: using identifier = ...;
- // We need to look ahead to see if there's an '=' after the first identifier
- // (possibly with [[attributes]] in between)
+	// Check if this is a type alias or namespace alias: using identifier = ...;
+	// We need to look ahead to see if there's an '=' after the first identifier
+	// (possibly with [[attributes]] in between)
 	SaveHandle lookahead_pos = save_token_position();
 	auto first_token = peek_info();
 	if (first_token.kind().is_identifier()) {
 		advance(); // consume identifier
-	// Skip attributes in lookahead: using name [[deprecated]] = type;
+		// Skip attributes in lookahead: using name [[deprecated]] = type;
 		skip_cpp_attributes();
 		auto next_token = peek_info();
 		if (next_token.kind() == "="_tok) {
-	// This is either a type alias or namespace alias: using alias = type/namespace;
+			// This is either a type alias or namespace alias: using alias = type/namespace;
 			restore_token_position(lookahead_pos);
 
-	// Parse alias name
+			// Parse alias name
 			auto alias_token = advance();
 			if (!alias_token.kind().is_identifier()) {
 				return ParseResult::error("Expected alias name after 'using'", current_token_);
 			}
 
-	// Skip C++ attributes like [[__deprecated__]] between name and '='
+			// Skip C++ attributes like [[__deprecated__]] between name and '='
 			skip_cpp_attributes();
 
-	// Consume '='
+			// Consume '='
 			if (peek().is_eof() || peek_info().type() != Token::Type::Operator || peek() != "="_tok) {
 				return ParseResult::error("Expected '=' after alias name", current_token_);
 			}
 			advance(); // consume '='
 
-	// Try to parse as a type specifier (for type aliases like: using value_type = T;)
+			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
 			ParseResult type_result = parse_type_specifier();
 			if (!type_result.is_error()) {
-	// Parse any pointer/reference modifiers after the type
-	// For example: using RvalueRef = typename T::type&&;
+				// Parse any pointer/reference modifiers after the type
+				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
 					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
 
-		// Check for pointer-to-member type syntax: Type Class::*
-		// This is used in <type_traits> for result_of patterns
-		// Pattern: using _MemPtr = _Res _Class::*;
+					// Check for pointer-to-member type syntax: Type Class::*
+					// This is used in <type_traits> for result_of patterns
+					// Pattern: using _MemPtr = _Res _Class::*;
 					if (peek().is_identifier()) {
-		// Look ahead to see if this is Class::* pattern
+						// Look ahead to see if this is Class::* pattern
 						auto saved_pos = save_token_position();
 						Token class_token = peek_info();
 						advance(); // consume potential class name
@@ -845,42 +845,42 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							advance(); // consume '::'
 							if (peek() == "*"_tok) {
 								advance(); // consume '*'
-		// This is a pointer-to-member type: Type Class::*
-		// Mark the type as a pointer-to-member
+								// This is a pointer-to-member type: Type Class::*
+								// Mark the type as a pointer-to-member
 								type_spec.add_pointer_level(CVQualifier::None);	// Add pointer level
 								type_spec.set_member_class_name(class_token.handle());
 								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 								discard_saved_token(saved_pos);
 							} else {
-		// Not a pointer-to-member, restore position
+								// Not a pointer-to-member, restore position
 								restore_token_position(saved_pos);
 							}
 						} else {
-		// Not a pointer-to-member, restore position
+							// Not a pointer-to-member, restore position
 							restore_token_position(saved_pos);
 						}
 					}
 
-		// Parse pointer declarators: * [const] [volatile] *...
+					// Parse pointer declarators: * [const] [volatile] *...
 					while (peek() == "*"_tok) {
 						advance(); // consume '*'
 
-		// Check for CV-qualifiers after the *
+						// Check for CV-qualifiers after the *
 						CVQualifier ptr_cv = parse_cv_qualifiers();
 
 						type_spec.add_pointer_level(ptr_cv);
 					}
 
-		// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...)
-		// Pattern: Type (&)() = lvalue reference to function returning Type
-		// Pattern: Type (&&)() = rvalue reference to function returning Type
-		// Pattern: Type (*)() = pointer to function returning Type
-		// This handles types like: int (&)(), _Xp (&)(), etc.
+					// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...)
+					// Pattern: Type (&)() = lvalue reference to function returning Type
+					// Pattern: Type (&&)() = rvalue reference to function returning Type
+					// Pattern: Type (*)() = pointer to function returning Type
+					// This handles types like: int (&)(), _Xp (&)(), etc.
 					if (peek() == "("_tok) {
 						auto func_type_saved_pos = save_token_position();
 						advance(); // consume '('
 
-		// Check what's inside the parentheses: &, &&, or *
+						// Check what's inside the parentheses: &, &&, or *
 						bool is_function_ref = false;
 						bool is_rvalue_function_ref = false;
 						bool is_function_ptr = false;
@@ -898,26 +898,26 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							}
 						}
 
-		// After &, &&, or *, expect ')'
+						// After &, &&, or *, expect ')'
 						if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
 							peek() == ")"_tok) {
 							advance(); // consume ')'
 
-		// Now expect '(' for the parameter list
+							// Now expect '(' for the parameter list
 							if (peek() == "("_tok) {
 								advance(); // consume '('
 
-		// Parse parameter list (can be empty or have parameters)
+								// Parse parameter list (can be empty or have parameters)
 								std::vector<TypeIndex> param_types;
 								while (!peek().is_eof() && peek() != ")"_tok) {
-			// Skip parameter - can be complex types
+									// Skip parameter - can be complex types
 									auto param_type_result = parse_type_specifier();
 									if (!param_type_result.is_error() && param_type_result.node().has_value()) {
 										const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
 										param_types.push_back(param_type.type_index());
 									}
 
-			// Check for comma
+									// Check for comma
 									if (peek() == ","_tok) {
 										advance(); // consume ','
 									} else {
@@ -928,7 +928,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								if (peek() == ")"_tok) {
 									advance(); // consume ')'
 
-			// Successfully parsed function reference/pointer type!
+									// Successfully parsed function reference/pointer type!
 									FunctionSignature func_sig;
 									func_sig.return_type_index = type_spec.type_index();
 									func_sig.parameter_type_indices = std::move(param_types);
@@ -948,29 +948,29 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 											  is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
 											  " to function");
 
-			// Discard saved position - we successfully parsed
+									// Discard saved position - we successfully parsed
 									discard_saved_token(func_type_saved_pos);
 								} else {
-			// Parsing failed - restore position
+									// Parsing failed - restore position
 									restore_token_position(func_type_saved_pos);
 								}
 							} else {
-		// No parameter list follows - restore position
+								// No parameter list follows - restore position
 								restore_token_position(func_type_saved_pos);
 							}
 						} else {
-		// Not a function type syntax - restore position
+							// Not a function type syntax - restore position
 							restore_token_position(func_type_saved_pos);
 						}
 					}
 
-		// Parse reference declarators: & or &&
+					// Parse reference declarators: & or &&
 					ReferenceQualifier ref_qual = parse_reference_qualifier();
 					if (ref_qual != ReferenceQualifier::None) {
 						type_spec.set_reference_qualifier(ref_qual);
 					}
 
-		// Parse array dimensions: using _Type = _Tp[_Nm];
+					// Parse array dimensions: using _Type = _Tp[_Nm];
 					while (peek() == "["_tok) {
 						advance(); // consume '['
 						if (peek() == "]"_tok) {
@@ -990,16 +990,16 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						}
 					}
 
-		// This is a type alias
+					// This is a type alias
 					if (!consume(";"_tok)) {
 						return ParseResult::error("Expected ';' after type alias", current_token_);
 					}
 
-		// Register the type alias in getTypesByNameMap()
-		// Create a TypeInfo for the alias that points to the underlying type
+					// Register the type alias in getTypesByNameMap()
+					// Create a TypeInfo for the alias that points to the underlying type
 					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
 
-		// Also register with namespace-qualified name for type aliases defined in namespaces
+					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
 					if (!namespace_handle.isGlobal()) {
 						StringHandle alias_handle = alias_token.handle();
@@ -1011,34 +1011,34 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						}
 					}
 
-		// Return success (no AST node needed for type aliases)
+					// Return success (no AST node needed for type aliases)
 					return saved_position.success();
 				}
 
-	// If we didn't get a node from parse_type_specifier, just check for semicolon
+				// If we didn't get a node from parse_type_specifier, just check for semicolon
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after type alias", current_token_);
 				}
 				return saved_position.success();
 			} else if (parsing_template_depth_ > 0 || gSymbolTable.get_current_scope_type() == ScopeType::Function) {
-	// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
-	// or a complex type expression during template instantiation.
-	// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
-	// For function-local type aliases (like in template instantiations), they're often not needed
-	// for code generation as the actual type is already known from the return type.
+				// If we're in a template body OR function body and type parsing failed, it's likely a template-dependent type
+				// or a complex type expression during template instantiation.
+				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
+				// For function-local type aliases (like in template instantiations), they're often not needed
+				// for code generation as the actual type is already known from the return type.
 				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ",
 						  parsing_template_depth_ > 0 ? "template body" : "function body");
 				while (!peek().is_eof() && peek() != ";"_tok) {
 					advance();
 				}
 				if (consume(";"_tok)) {
-		// Successfully skipped the template-dependent using declaration
+					// Successfully skipped the template-dependent using declaration
 					return saved_position.success();
 				}
 				return ParseResult::error("Expected ';' after using declaration", current_token_);
 			}
 
-	// Not a type alias, try parsing as namespace path for namespace alias
+			// Not a type alias, try parsing as namespace path for namespace alias
 			std::vector<StringType<>> target_namespace;
 			while (true) {
 				auto ns_token = advance();
@@ -1047,7 +1047,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				}
 				target_namespace.emplace_back(StringType<>(ns_token.value()));
 
-	// Check for ::
+				// Check for ::
 				if (peek() == "::"_tok) {
 					advance(); // consume ::
 				} else {
@@ -1055,12 +1055,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				}
 			}
 
-	// Expect semicolon
+			// Expect semicolon
 			if (!consume(";"_tok)) {
 				return ParseResult::error("Expected ';' after namespace alias", current_token_);
 			}
 
-	// Convert namespace path to handle and add the alias to the symbol table
+			// Convert namespace path to handle and add the alias to the symbol table
 			NamespaceHandle target_handle = gSymbolTable.resolve_namespace_handle(target_namespace);
 			gSymbolTable.add_namespace_alias(alias_token.value(), target_handle);
 
@@ -1068,14 +1068,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			return saved_position.success(alias_node);
 		}
 	}
- // Not a namespace alias, restore position
+	// Not a namespace alias, restore position
 	restore_token_position(lookahead_pos);
 
- // Check if this is "using namespace" directive
+	// Check if this is "using namespace" directive
 	if (peek() == "namespace"_tok) {
 		advance(); // consume 'namespace'
 
-	// Parse namespace path (e.g., std::filesystem)
+		// Parse namespace path (e.g., std::filesystem)
 		std::vector<StringType<>> namespace_path;
 		while (true) {
 			auto ns_token = advance();
@@ -1084,7 +1084,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			}
 			namespace_path.emplace_back(StringType<>(ns_token.value()));
 
-	// Check for ::
+			// Check for ::
 			if (peek() == "::"_tok) {
 				advance(); // consume ::
 			} else {
@@ -1092,12 +1092,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			}
 		}
 
-	// Expect semicolon
+		// Expect semicolon
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after using directive", current_token_);
 		}
 
-	// Convert namespace path to handle and add the using directive to the symbol table
+		// Convert namespace path to handle and add the using directive to the symbol table
 		NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
 		gSymbolTable.add_using_directive(namespace_handle);
 
@@ -1105,11 +1105,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return saved_position.success(directive_node);
 	}
 
- // Check if this is C++20 "using enum" declaration
+	// Check if this is C++20 "using enum" declaration
 	if (peek() == "enum"_tok) {
 		advance(); // consume 'enum'
 
-	// Parse enum type name (can be qualified: namespace::EnumType or just EnumType)
+		// Parse enum type name (can be qualified: namespace::EnumType or just EnumType)
 		std::vector<StringType<>> namespace_path;
 		Token enum_type_token;
 
@@ -1119,46 +1119,46 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				return ParseResult::error("Expected enum type name after 'using enum'", token);
 			}
 
-	// Check if followed by ::
+			// Check if followed by ::
 			if (peek() == "::"_tok) {
-	// This is a namespace part
+				// This is a namespace part
 				namespace_path.emplace_back(StringType<>(token.value()));
 				advance(); // consume ::
 			} else {
-	// This is the final enum type name
+				// This is the final enum type name
 				enum_type_token = token;
 				break;
 			}
 		}
 
-	// Expect semicolon
+		// Expect semicolon
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after 'using enum' declaration", current_token_);
 		}
 
-	// Create the using enum node - CodeGen will also handle this for its local scope
+		// Create the using enum node - CodeGen will also handle this for its local scope
 		StringHandle enum_name_handle = enum_type_token.handle();
 		auto using_enum_node = emplace_node<UsingEnumNode>(enum_name_handle, using_token);
 
-	// Add enumerators to gSymbolTable NOW so they're available during parsing
-	// This is needed because the parser needs to resolve identifiers like 'Red' when
-	// parsing subsequent expressions (e.g., static_cast<int>(Red))
+		// Add enumerators to gSymbolTable NOW so they're available during parsing
+		// This is needed because the parser needs to resolve identifiers like 'Red' when
+		// parsing subsequent expressions (e.g., static_cast<int>(Red))
 		auto type_it = getTypesByNameMap().find(enum_name_handle);
 		if (type_it != getTypesByNameMap().end() && type_it->second->getEnumInfo()) {
 			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
 
 			for (const auto& enumerator : enum_info->enumerators) {
-	// Create a type node for the enum type
+				// Create a type node for the enum type
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
 					type_it->second->type_index_.withCategory(TypeCategory::Enum), enum_info->underlying_size, enum_type_token,
 					CVQualifier::None, ReferenceQualifier::None);
 
-	// Create a declaration node for the enumerator
+				// Create a declaration node for the enumerator
 				Token enumerator_token(Token::Type::Identifier,
 									   StringTable::getStringView(enumerator.getName()), 0, 0, 0);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
 
-	// Insert into gSymbolTable so it's available during parsing
+				// Insert into gSymbolTable so it's available during parsing
 				gSymbolTable.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
 			}
 
@@ -1172,85 +1172,85 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		return saved_position.success(using_enum_node);
 	}
 
- // Otherwise, this is a using declaration: using std::vector; or using ::name;
+	// Otherwise, this is a using declaration: using std::vector; or using ::name;
 	std::vector<StringType<>> namespace_path;
 	Token identifier_token;
 
- // Check if this starts with :: (global namespace scope)
+	// Check if this starts with :: (global namespace scope)
 	if (peek() == "::"_tok) {
 		advance(); // consume leading ::
-	// After the leading ::, we need to parse the qualified name
-	// This could be ::name or ::namespace::name
+		// After the leading ::, we need to parse the qualified name
+		// This could be ::name or ::namespace::name
 		while (true) {
 			auto token = advance();
 			if (!token.kind().is_identifier()) {
 				return ParseResult::error("Expected identifier after :: in using declaration", token);
 			}
 
-	// Check if followed by ::
+			// Check if followed by ::
 			if (peek() == "::"_tok) {
-	// This is a namespace part
+				// This is a namespace part
 				namespace_path.emplace_back(StringType<>(token.value()));
 				advance(); // consume ::
 			} else {
-	// This is the final identifier
+				// This is the final identifier
 				identifier_token = token;
 				break;
 			}
 		}
 	} else {
-	// Parse qualified name (namespace::...::identifier)
+		// Parse qualified name (namespace::...::identifier)
 		while (true) {
 			auto token = advance();
 			if (!token.kind().is_identifier()) {
 				return ParseResult::error("Expected identifier in using declaration", token);
 			}
 
-	// Check if followed by ::
+			// Check if followed by ::
 			if (peek() == "::"_tok) {
-	// This is a namespace part
+				// This is a namespace part
 				namespace_path.emplace_back(StringType<>(token.value()));
 				advance(); // consume ::
 			} else {
-	// This is the final identifier
+				// This is the final identifier
 				identifier_token = token;
 				break;
 			}
 		}
 	}
 
- // Expect semicolon
+	// Expect semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after using declaration", current_token_);
 	}
 
- // Convert namespace path to handle and add the using declaration to the symbol table
+	// Convert namespace path to handle and add the using declaration to the symbol table
 	NamespaceHandle namespace_handle = gSymbolTable.resolve_namespace_handle(namespace_path);
 	gSymbolTable.add_using_declaration(
 		std::string_view(identifier_token.value()),
 		namespace_handle,
 		std::string_view(identifier_token.value()));
 
- // Check if the identifier refers to an existing type in the source namespace
- // Build the source type name (either global or qualified with namespace_path)
+	// Check if the identifier refers to an existing type in the source namespace
+	// Build the source type name (either global or qualified with namespace_path)
 	StringHandle source_type_name;
 	if (namespace_path.empty()) {
-	// using ::identifier; - refers to global namespace
+		// using ::identifier; - refers to global namespace
 		source_type_name = identifier_token.handle();
 	} else {
-	// using ns1::ns2::identifier; - build qualified name
+		// using ns1::ns2::identifier; - build qualified name
 		StringHandle identifier_handle = identifier_token.handle();
 		source_type_name = namespace_handle.isValid()
 							   ? gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle)
 							   : identifier_handle;
 	}
 
- // Look up the type in getTypesByNameMap()
+	// Look up the type in getTypesByNameMap()
 	auto existing_type_it = getTypesByNameMap().find(source_type_name);
 
- // If not found with qualified name, try the unqualified name
- // This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
- // might itself be an alias to ::lldiv_t
+	// If not found with qualified name, try the unqualified name
+	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
+	// might itself be an alias to ::lldiv_t
 	if (existing_type_it == getTypesByNameMap().end() && !namespace_path.empty()) {
 		StringHandle qualified_source = source_type_name;  // Save the qualified name for logging
 		StringHandle unqualified_source = identifier_token.handle();
@@ -1263,31 +1263,31 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		}
 	}
 
- // If we're inside a namespace, we need to register the type with a qualified name
- // so that "std::lldiv_t" can be recognized as a type
+	// If we're inside a namespace, we need to register the type with a qualified name
+	// so that "std::lldiv_t" can be recognized as a type
 	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
 	if (!current_namespace_handle.isGlobal()) {
-	// Build qualified name for the target: std::identifier
+		// Build qualified name for the target: std::identifier
 		StringHandle identifier_handle = identifier_token.handle();
 		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, identifier_handle);
 
-	// Check if target name is already registered (avoid duplicates)
+		// Check if target name is already registered (avoid duplicates)
 		if (getTypesByNameMap().find(target_type_name) == getTypesByNameMap().end()) {
 			if (existing_type_it != getTypesByNameMap().end()) {
-	// Found existing type - create alias pointing to it
+				// Found existing type - create alias pointing to it
 				const TypeInfo* source_type = existing_type_it->second;
 				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
 
-	// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
-	// This is the same pattern used for typedef resolution
+				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
+				// This is the same pattern used for typedef resolution
 
 				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}",
 								 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
 
-	// Also register with the unqualified name within the current namespace scope
-	// This allows code inside the namespace to use the type without qualification
-	// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
+				// Also register with the unqualified name within the current namespace scope
+				// This allows code inside the namespace to use the type without qualification
+				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
 				StringHandle unqualified_name = identifier_token.handle();
 				if (getTypesByNameMap().find(unqualified_name) == getTypesByNameMap().end()) {
 					getTypesByNameMap().emplace(unqualified_name, &alias_type_info);

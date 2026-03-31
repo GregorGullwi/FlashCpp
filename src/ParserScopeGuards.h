@@ -38,7 +38,7 @@ public:
 	TemplateParameterScope() = default;
 
 	~TemplateParameterScope() {
-	// Remove all registered template parameter types from the global type map
+		// Remove all registered template parameter types from the global type map
 		for (const auto* type_info : registered_types_) {
 			if (type_info) {
 				getTypesByNameMap().erase(type_info->name());
@@ -46,18 +46,18 @@ public:
 		}
 	}
 
- // Prevent copying (scope is unique)
+	// Prevent copying (scope is unique)
 	TemplateParameterScope(const TemplateParameterScope&) = delete;
 	TemplateParameterScope& operator=(const TemplateParameterScope&) = delete;
 
- // Allow moving
+	// Allow moving
 	TemplateParameterScope(TemplateParameterScope&& other) noexcept
 		: registered_types_(std::move(other.registered_types_)) {
 		other.registered_types_.clear();
 	}
 	TemplateParameterScope& operator=(TemplateParameterScope&& other) noexcept {
 		if (this != &other) {
-	// Clean up current registrations first
+			// Clean up current registrations first
 			for (const auto* type_info : registered_types_) {
 				if (type_info) {
 					getTypesByNameMap().erase(type_info->name());
@@ -69,22 +69,22 @@ public:
 		return *this;
 	}
 
- // Register a template parameter type for automatic cleanup
+	// Register a template parameter type for automatic cleanup
 	void addParameter(TypeInfo* type_info) {
 		if (type_info) {
 			registered_types_.push_back(type_info);
 		}
 	}
 
- // Get the list of registered types (for iteration if needed)
+	// Get the list of registered types (for iteration if needed)
 	const std::vector<TypeInfo*>& registeredTypes() const {
 		return registered_types_;
 	}
 
- // Check if any parameters are registered
+	// Check if any parameters are registered
 	bool empty() const { return registered_types_.empty(); }
 
- // Dismiss the guard (don't clean up - caller takes responsibility)
+	// Dismiss the guard (don't clean up - caller takes responsibility)
 	void dismiss() { registered_types_.clear(); }
 
 private:
@@ -114,11 +114,11 @@ public:
 		}
 	}
 
- // Prevent copying
+	// Prevent copying
 	SymbolTableScope(const SymbolTableScope&) = delete;
 	SymbolTableScope& operator=(const SymbolTableScope&) = delete;
 
- // Allow moving
+	// Allow moving
 	SymbolTableScope(SymbolTableScope&& other) noexcept : active_(other.active_) {
 		other.active_ = false;
 	}
@@ -133,10 +133,10 @@ public:
 		return *this;
 	}
 
- // Dismiss the guard (don't exit scope - caller takes responsibility)
+	// Dismiss the guard (don't exit scope - caller takes responsibility)
 	void dismiss() { active_ = false; }
 
- // Check if guard is still active
+	// Check if guard is still active
 	bool isActive() const { return active_; }
 
 private:
@@ -179,7 +179,7 @@ public:
 		const FunctionDeclarationNode* current_function);
 	~FunctionParsingScopeGuard();
 
- // Non-copyable, non-movable
+	// Non-copyable, non-movable
 	FunctionParsingScopeGuard(const FunctionParsingScopeGuard&) = delete;
 	FunctionParsingScopeGuard& operator=(const FunctionParsingScopeGuard&) = delete;
 
@@ -212,14 +212,14 @@ private:
 template <typename T>
 class ScopedState {
 public:
- // Unconditional save/restore (the common case).
+	// Unconditional save/restore (the common case).
 	explicit ScopedState(T& field)
 		: field_ref_(field), saved_state_(std::move(field)) {}
 
- // Conditional save/restore: when active==false the field is left untouched
- // and the destructor is a no-op.  No default T{} is constructed when inactive.
- //   ScopedState guard(field, !vec.empty());
- //   if (!vec.empty()) field = new_value;
+	// Conditional save/restore: when active==false the field is left untouched
+	// and the destructor is a no-op.  No default T{} is constructed when inactive.
+	//   ScopedState guard(field, !vec.empty());
+	//   if (!vec.empty()) field = new_value;
 	explicit ScopedState(T& field, bool active)
 		: field_ref_(field), saved_state_(active ? std::optional<T>{std::move(field)} : std::nullopt) {}
 

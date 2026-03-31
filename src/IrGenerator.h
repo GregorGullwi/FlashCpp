@@ -77,7 +77,7 @@ struct RTTIInfo {
 	uint64_t class_name_hash;
 	uint64_t num_bases;
 	RTTIInfo* base_ptrs[0];	// Flexible array member - base class RTTI pointers follow
- // Access via: auto** bases = reinterpret_cast<RTTIInfo**>((char*)this + 16);
+	// Access via: auto** bases = reinterpret_cast<RTTIInfo**>((char*)this + 16);
 };
 
 // Note: Runtime helpers __dynamic_cast_check() and __dynamic_cast_throw_bad_cast()
@@ -106,18 +106,18 @@ struct LambdaInfo {
 	TypeIndex enclosing_struct_type_index{};	 // Type index of enclosing struct for [this] capture
 	bool is_mutable = false;			 // Whether the lambda is mutable (allows modifying captures)
 
- // Generic lambda support (lambdas with auto parameters)
+	// Generic lambda support (lambdas with auto parameters)
 	bool is_generic = false;					 // True if lambda has any auto parameters
 	std::vector<size_t> auto_param_indices;		// Indices of parameters with auto type
 	InlineVector<StringHandle, 4> outer_template_param_names;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args;
- // Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
+	// Deduced types from call site - store full TypeSpecifierNode to preserve struct type_index and reference flags
 	mutable std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_auto_types;
 	std::vector<ASTNode> resolved_param_nodes;
 	mutable uint32_t deduced_auto_types_generation = 0;
 	mutable uint32_t normalized_deduced_auto_types_generation = 0;
 
- // Get deduced type for a parameter at given index, returns nullopt if not deduced
+	// Get deduced type for a parameter at given index, returns nullopt if not deduced
 	std::optional<TypeSpecifierNode> getDeducedType(size_t param_index) const {
 		for (const auto& [idx, type_node] : deduced_auto_types) {
 			if (idx == param_index) {
@@ -127,9 +127,9 @@ struct LambdaInfo {
 		return std::nullopt;
 	}
 
- // Set deduced type for a parameter at given index
+	// Set deduced type for a parameter at given index
 	void setDeducedType(size_t param_index, const TypeSpecifierNode& type_node) const {
-	// Check if already set
+		// Check if already set
 		for (auto& [idx, stored_type] : deduced_auto_types) {
 			if (idx == param_index) {
 				if (stored_type.matches_signature(type_node) &&

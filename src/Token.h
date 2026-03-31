@@ -26,7 +26,7 @@ public:
 		  file_index_(file_index), kind_(compute_kind(type, value)),
 		  handle_(intern_value(type, value)) {}
 
- // Deleted std::string overload so we don't accidentally pass temporary strings so we get dangling views
+	// Deleted std::string overload so we don't accidentally pass temporary strings so we get dangling views
 	Token(Type type, std::string value, size_t line, size_t column,
 		  size_t file_index) = delete;
 
@@ -47,7 +47,7 @@ private:
 	TokenKind kind_;
 	StringHandle handle_;
 
- // Compute TokenKind from Token::Type and spelling
+	// Compute TokenKind from Token::Type and spelling
 	static TokenKind compute_kind(Type type, std::string_view value) {
 		switch (type) {
 		case Type::Identifier:
@@ -68,7 +68,7 @@ private:
 			TokenKind k = spell_to_kind(value);
 			if (!k.is_eof())
 				return k;
-	// Fallback for tokens not in the table
+			// Fallback for tokens not in the table
 			if (type == Type::Keyword)
 				return TokenKind(TokenKind::Category::Keyword, 0xFFFF);
 			if (type == Type::Operator)
@@ -79,9 +79,9 @@ private:
 		return TokenKind::eof();
 	}
 
- // Intern the token value into a StringHandle for fast lookups.
- // Only identifiers and literals benefit — keywords/operators/punctuators
- // are compared via TokenKind and don't need handle-based lookups.
+	// Intern the token value into a StringHandle for fast lookups.
+	// Only identifiers and literals benefit — keywords/operators/punctuators
+	// are compared via TokenKind and don't need handle-based lookups.
 	static StringHandle intern_value(Type type, std::string_view value) {
 		switch (type) {
 		case Type::Identifier:
@@ -89,7 +89,7 @@ private:
 		case Type::StringLiteral:
 		case Type::CharacterLiteral:
 		case Type::Keyword:
-	// Intern these since they're frequently looked up in symbol tables
+			// Intern these since they're frequently looked up in symbol tables
 			if (!value.empty())
 				return StringTable::getOrInternStringHandle(value);
 			return StringHandle{};

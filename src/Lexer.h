@@ -39,7 +39,7 @@ public:
 
 	void setMsvcSehKeywords(bool enable) { msvc_seh_keywords_ = enable; }
 
- // Get the text of a specific line from the preprocessed source
+	// Get the text of a specific line from the preprocessed source
 	std::string get_line_text(size_t line_num) const {
 		if (line_num == 0)
 			return "";
@@ -47,7 +47,7 @@ public:
 		size_t current_line = 1;
 		size_t line_start = 0;
 
-	// Find the start of the requested line
+		// Find the start of the requested line
 		for (size_t i = 0; i < source_size_; ++i) {
 			if (current_line == line_num) {
 				line_start = i;
@@ -61,7 +61,7 @@ public:
 		if (current_line != line_num)
 			return "";
 
-	// Find the end of the line
+		// Find the end of the line
 		size_t line_end = line_start;
 		while (line_end < source_size_ && source_[line_end] != '\n') {
 			line_end++;
@@ -78,7 +78,7 @@ public:
 			if (std::isspace(c)) {
 				consume_whitespace();
 			} else if (c == '#' && cursor_ + 1 < source_size_ && std::isdigit(source_[cursor_ + 1])) {
-	// Only consume as file info if # is followed by a digit (line directive)
+				// Only consume as file info if # is followed by a digit (line directive)
 				consume_file_info();
 			} else if (c == '/' && num_characters_left >= 2) {
 				if (source_[cursor_ + 1] == '/') {
@@ -88,11 +88,11 @@ public:
 					consume_multi_line_comment();
 					continue;
 				} else {
-		// Handle division operator
+					// Handle division operator
 					return consume_operator();
 				}
 			} else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
-	// Wide string/character literals (L"..." or L'...')
+				// Wide string/character literals (L"..." or L'...')
 				size_t start = cursor_;
 				++cursor_;
 				++column_;
@@ -139,12 +139,12 @@ public:
 
 	std::string_view get_source() const { return source_; }
 
- // Get current position for later restoration
+	// Get current position for later restoration
 	TokenPosition getCurrentPosition() const {
 		return TokenPosition{cursor_, line_, column_, current_file_index_};
 	}
 
- // Restore lexer to a previously saved position
+	// Restore lexer to a previously saved position
 	void restorePosition(const TokenPosition& pos) {
 		cursor_ = pos.cursor_;
 		line_ = pos.line_;
@@ -163,25 +163,25 @@ private:
 	mutable std::deque<std::string> file_paths_;	 // Mutable to allow adding "<unknown>" in constructor; deque for stable references
 	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
 
- // Update current_file_index_ based on current line_
+	// Update current_file_index_ based on current line_
 	void update_file_index_from_line() {
 		if (line_map_.empty() || file_paths_.empty()) {
 			current_file_index_ = 0;
 			return;
 		}
 
-	// Vector index IS the line number (0-based, so line_ - 1)
+		// Vector index IS the line number (0-based, so line_ - 1)
 		if (line_ > 0 && line_ <= line_map_.size()) {
 			current_file_index_ = line_map_[line_ - 1].source_file_index;
 		}
 	}
 
 	void consume_single_line_comment() {
-	// Skip the '//'
+		// Skip the '//'
 		cursor_ += 2;
 		column_ += 2;
 
-	// Consume until end of line or end of file
+		// Consume until end of line or end of file
 		while (cursor_ < source_size_ && source_[cursor_] != '\n') {
 			++cursor_;
 			++column_;
@@ -189,11 +189,11 @@ private:
 	}
 
 	void consume_multi_line_comment() {
-	// Skip the '/*'
+		// Skip the '/*'
 		cursor_ += 2;
 		column_ += 2;
 
-	// Consume until '*/' or end of file
+		// Consume until '*/' or end of file
 		while (cursor_ < source_size_) {
 			if (source_[cursor_] == '\n') {
 				++line_;
@@ -269,9 +269,9 @@ private:
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 
-	// Check for alternative operator tokens (C++ ISO 646 digraphs)
-	// These must be emitted as Operator tokens with standard operator spellings
-	// so the parser and code generator handle them correctly.
+		// Check for alternative operator tokens (C++ ISO 646 digraphs)
+		// These must be emitted as Operator tokens with standard operator spellings
+		// so the parser and code generator handle them correctly.
 		std::string_view alt_op = get_alternative_operator(value);
 		if (!alt_op.empty()) {
 			return Token(Token::Type::Operator, alt_op, line_, column_,
@@ -293,18 +293,18 @@ private:
 		++cursor_;
 		++column_;
 
-	// Check if this is a floating-point literal starting with decimal point (e.g., .5f)
+		// Check if this is a floating-point literal starting with decimal point (e.g., .5f)
 		if (first_char == '.') {
-	// Consume fractional part
+			// Consume fractional part
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
 			}
-	// Skip to exponent/suffix handling below
+			// Skip to exponent/suffix handling below
 		}
-	// Check for prefix (hex, binary, octal)
+		// Check for prefix (hex, binary, octal)
 		else if (source_[cursor_] == 'x' || source_[cursor_] == 'X') {
-	// Hexadecimal literal (0x / 0X)
+			// Hexadecimal literal (0x / 0X)
 			++cursor_;
 			++column_;
 
@@ -313,7 +313,7 @@ private:
 				++column_;
 			}
 		} else if (source_[cursor_] == 'b' || source_[cursor_] == 'B') {
-	// Binary literal (0b / 0B)
+			// Binary literal (0b / 0B)
 			++cursor_;
 			++column_;
 
@@ -322,63 +322,63 @@ private:
 				++column_;
 			}
 		} else if (first_char == '0') {
-	// Octal literal (starts with 0 followed by digits)
+			// Octal literal (starts with 0 followed by digits)
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
 			}
 		} else {
-	// Decimal literal
+			// Decimal literal
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
 			}
 		}
 
-	// Check for decimal point (floating-point literal) - only if we didn't start with one
+		// Check for decimal point (floating-point literal) - only if we didn't start with one
 		if (first_char != '.' && cursor_ < source_size_ && source_[cursor_] == '.') {
 			++cursor_;
 			++column_;
 
-	// Consume fractional part
+			// Consume fractional part
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
 			}
 		}
 
-	// Check for exponent (e.g., 1.5e10, 3e-5)
+		// Check for exponent (e.g., 1.5e10, 3e-5)
 		if (cursor_ < source_size_ && (source_[cursor_] == 'e' || source_[cursor_] == 'E')) {
 			++cursor_;
 			++column_;
 
-	// Optional sign
+			// Optional sign
 			if (cursor_ < source_size_ && (source_[cursor_] == '+' || source_[cursor_] == '-')) {
 				++cursor_;
 				++column_;
 			}
 
-	// Exponent digits
+			// Exponent digits
 			while (cursor_ < source_size_ && std::isdigit(source_[cursor_])) {
 				++cursor_;
 				++column_;
 			}
 		}
 
-	// Handle suffixes: ul for integers, f/F for float, l/L for long/long double
+		// Handle suffixes: ul for integers, f/F for float, l/L for long/long double
 		static constexpr std::string_view suffixCharacters = "ulfULF";
 		while (cursor_ < source_size_ && suffixCharacters.find(source_[cursor_]) != std::string::npos) {
 			++cursor_;
 			++column_;
 		}
 
-	// Handle user-defined literal suffixes (C++11): 128ms, 64us, 3.14s, 100ns, 24h, etc.
-	// Per C++ pp-number grammar, any sequence of digits followed by identifier characters
-	// forms a single preprocessing token. This handles both:
-	// - Standard library reserved suffixes: ms, us, ns, s, h, min (from <chrono>)
-	// - User-defined suffixes starting with _: _km, _deg, _ms (user-defined)
-	// The parser/semantic analysis determines if the suffix is valid; the lexer is
-	// intentionally permissive to match C++ maximal munch tokenization rules.
+		// Handle user-defined literal suffixes (C++11): 128ms, 64us, 3.14s, 100ns, 24h, etc.
+		// Per C++ pp-number grammar, any sequence of digits followed by identifier characters
+		// forms a single preprocessing token. This handles both:
+		// - Standard library reserved suffixes: ms, us, ns, s, h, min (from <chrono>)
+		// - User-defined suffixes starting with _: _km, _deg, _ms (user-defined)
+		// The parser/semantic analysis determines if the suffix is valid; the lexer is
+		// intentionally permissive to match C++ maximal munch tokenization rules.
 		if (cursor_ < source_size_ && (source_[cursor_] == '_' || std::isalpha(static_cast<unsigned char>(source_[cursor_])))) {
 			while (cursor_ < source_size_ && (std::isalnum(static_cast<unsigned char>(source_[cursor_])) || source_[cursor_] == '_')) {
 				++cursor_;
@@ -397,7 +397,7 @@ private:
 
 		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
 			if (source_[cursor_] == '\\') {
-	// Skip the backslash and the next character (escape sequence)
+				// Skip the backslash and the next character (escape sequence)
 				++cursor_;
 				++column_;
 				if (cursor_ < source_size_) {
@@ -414,8 +414,8 @@ private:
 			++cursor_;
 			++column_;
 		} else {
-	// Handle unterminated string literal error
-	// ...
+			// Handle unterminated string literal error
+			// ...
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
@@ -428,12 +428,12 @@ private:
 		++cursor_;  // Skip opening '
 		++column_;
 
-	// Character literals can contain:
-	// - A single character: 'a'
-	// - An escape sequence: '\n', '\t', '\0', '\\', '\''
+		// Character literals can contain:
+		// - A single character: 'a'
+		// - An escape sequence: '\n', '\t', '\0', '\\', '\''
 		while (cursor_ < source_size_ && source_[cursor_] != '\'') {
 			if (source_[cursor_] == '\\') {
-	// Skip the backslash and the next character (escape sequence)
+				// Skip the backslash and the next character (escape sequence)
 				++cursor_;
 				++column_;
 				if (cursor_ < source_size_) {
@@ -450,8 +450,8 @@ private:
 			++cursor_;  // Skip closing '
 			++column_;
 		} else {
-	// Handle unterminated character literal error
-	// ...
+			// Handle unterminated character literal error
+			// ...
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
@@ -460,13 +460,13 @@ private:
 	}
 
 	Token consume_prefixed_string_literal(size_t start) {
-	// Assumes current cursor_ is at opening quote after prefix
+		// Assumes current cursor_ is at opening quote after prefix
 		++cursor_;
 		++column_;
 
 		while (cursor_ < source_size_ && source_[cursor_] != '\"') {
 			if (source_[cursor_] == '\\') {
-	// skip escape sequence
+				// skip escape sequence
 				++cursor_;
 				++column_;
 				if (cursor_ < source_size_) {
@@ -490,7 +490,7 @@ private:
 	}
 
 	Token consume_prefixed_character_literal(size_t start) {
-	// Assumes current cursor_ is at opening quote after prefix
+		// Assumes current cursor_ is at opening quote after prefix
 		++cursor_;  // skip opening '
 		++column_;
 
@@ -630,26 +630,26 @@ private:
 			"while",
 			"xor",
 			"xor_eq",
-	// Microsoft-specific type keywords
+			// Microsoft-specific type keywords
 			"__int8",
 			"__int16",
 			"__int32",
 			"__int64",
-	// Microsoft-specific type modifiers/qualifiers
+			// Microsoft-specific type modifiers/qualifiers
 			"__ptr32",
 			"__ptr64",
 			"__w64",
 			"__unaligned",
 			"__uptr",
 			"__sptr",
-	// Microsoft-specific function specifiers
+			// Microsoft-specific function specifiers
 			"__inline",
 			"__forceinline",
-	// Microsoft-specific attributes
+			// Microsoft-specific attributes
 			"__declspec",
 		};
 
-	// Microsoft-specific SEH keywords - only in MSVC mode
+		// Microsoft-specific SEH keywords - only in MSVC mode
 		static const std::unordered_set<std::string_view> seh_keywords = {
 			"__try", "__except", "__finally", "__leave"};
 
@@ -660,8 +660,8 @@ private:
 		return false;
 	}
 
- // Map C++ alternative operator tokens to their standard operator spellings.
- // Returns empty string_view if the token is not an alternative operator.
+	// Map C++ alternative operator tokens to their standard operator spellings.
+	// Returns empty string_view if the token is not an alternative operator.
 	static std::string_view get_alternative_operator(std::string_view value) {
 		using namespace std::string_view_literals;
 		static const std::unordered_map<std::string_view, std::string_view> alt_ops = {
@@ -684,7 +684,7 @@ private:
 		++cursor_;
 		++column_;
 
-	// Handle multi-character operators using branchless switch optimization
+		// Handle multi-character operators using branchless switch optimization
 		if (cursor_ < source_size_) {
 			char second_char = source_[cursor_];
 
@@ -705,7 +705,7 @@ private:
 				int advance = (second_char == '<') | (second_char == '=');
 				cursor_ += advance;
 				column_ += advance;
-		// Branchless check for three-character operators <<= and <=>
+					// Branchless check for three-character operators <<= and <=>
 				int has_third = (cursor_ < source_size_);
 				char third_char = has_third ? source_[cursor_] : '\0';
 				int is_shift = (second_char == '<');
@@ -719,7 +719,7 @@ private:
 				int advance = (second_char == '>') | (second_char == '=');
 				cursor_ += advance;
 				column_ += advance;
-		// Branchless check for three-character operator >>=
+					// Branchless check for three-character operator >>=
 				int is_shift = (second_char == '>');
 				int has_third = (cursor_ < source_size_);
 				char third_char = has_third ? source_[cursor_] : '\0';
@@ -777,7 +777,7 @@ private:
 				break;
 			}
 			default:
-		// Single-character operator, no action needed
+					// Single-character operator, no action needed
 				break;
 			}
 		}
@@ -808,7 +808,7 @@ private:
 		size_t start = cursor_;
 		char first_char = source_[cursor_];
 
-	// Check for :: (scope resolution operator)
+		// Check for :: (scope resolution operator)
 		if (first_char == ':' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == ':') {
 			cursor_ += 2;
 			column_ += 2;
@@ -817,7 +817,7 @@ private:
 						 current_file_index_);
 		}
 
-	// Check for ... (variadic parameter)
+		// Check for ... (variadic parameter)
 		if (first_char == '.' && cursor_ + 2 < source_size_ &&
 			source_[cursor_ + 1] == '.' && source_[cursor_ + 2] == '.') {
 			cursor_ += 3;

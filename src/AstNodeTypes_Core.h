@@ -33,8 +33,8 @@ public:
 
 	template <typename T>
 	ASTNode(T* node) : node_(node) {}
- // Accepts const T* by stripping const; safe because ASTNode stores pointers into globally-owned
- // non-const storage (gChunkedAnyStorage / gTypeInfo). Used when visiting const variant alternatives.
+	// Accepts const T* by stripping const; safe because ASTNode stores pointers into globally-owned
+	// non-const storage (gChunkedAnyStorage / gTypeInfo). Used when visiting const variant alternatives.
 	template <typename T>
 	ASTNode(const T* node) : node_(const_cast<T*>(node)) {}
 
@@ -69,7 +69,7 @@ public:
 		return node_.has_value();
 	}
 
- // Direct access to underlying std::any (for debugging/workarounds)
+	// Direct access to underlying std::any (for debugging/workarounds)
 	const std::any& get_any() const {
 		return node_;
 	}

@@ -64,27 +64,27 @@ inline ManglingStyle g_mangling_style =
 // StringBuilder::commit() which stores strings in the global ChunkedStringAllocator.
 class MangledName {
 public:
- // Default: empty name
+	// Default: empty name
 	MangledName() : storage_{} {}
 
- // Construct from committed string_view (preferred - zero allocation)
- // Note: The caller must ensure the string_view's storage outlives this MangledName
+	// Construct from committed string_view (preferred - zero allocation)
+	// Note: The caller must ensure the string_view's storage outlives this MangledName
 	explicit MangledName(std::string_view committed_sv)
 		: storage_(StringTable::getOrInternStringHandle(committed_sv)) {}
 	explicit MangledName(StringHandle committed_sv)
 		: storage_(committed_sv) {}
 
- // Always returns a string_view (zero-copy)
+	// Always returns a string_view (zero-copy)
 	std::string_view view() const { return StringTable::getStringView(storage_); }
 
- // Implicit conversion to string_view for convenience
+	// Implicit conversion to string_view for convenience
 	operator std::string_view() const { return StringTable::getStringView(storage_); }
 	operator StringHandle() const { return storage_; }
 
- // Check if empty
+	// Check if empty
 	bool empty() const { return !storage_.isValid(); }
 
- // Comparison operators
+	// Comparison operators
 	bool operator==(const MangledName& other) const { return storage_ == other.storage_; }
 	bool operator==(std::string_view other) const { return storage_ == other; }
 	bool operator<(const MangledName& other) const { return storage_ < other.storage_; }
@@ -127,8 +127,8 @@ inline TypeIndex resolveTypeAliasIndex(TypeIndex idx) {
 // Works with both std::string and StringBuilder
 template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
- // Handle references - MSVC uses different prefixes for lvalue vs rvalue references
- // Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
+	// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
+	// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
 	if (type_node.is_lvalue_reference()) {
 		output += "AE";
 		appendCVQualifier(output, type_node.cv_qualifier());
@@ -137,16 +137,16 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		appendCVQualifier(output, type_node.cv_qualifier());
 	}
 
- // Add pointer prefix for each level of indirection with CV-qualifiers
- // MSVC format: [P|Q|R|S][E][A|B|C|D] where:
- //   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
- //   E = 64-bit (always E for x64)
- //   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
+	// Add pointer prefix for each level of indirection with CV-qualifiers
+	// MSVC format: [P|Q|R|S][E][A|B|C|D] where:
+	//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
+	//   E = 64-bit (always E for x64)
+	//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
 	const auto& ptr_levels = type_node.pointer_levels();
 	for (size_t i = 0; i < ptr_levels.size(); ++i) {
 		const auto& ptr_level = ptr_levels[i];
 
-	// Pointer CV-qualifiers (on the pointer itself)
+		// Pointer CV-qualifiers (on the pointer itself)
 		if (ptr_level.cv_qualifier == CVQualifier::None) {
 			output += "PE";
 		} else if (ptr_level.cv_qualifier == CVQualifier::Const) {
@@ -157,9 +157,9 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			output += "SE";
 		}
 
-	// Pointee CV-qualifiers (on what the pointer points to)
-	// For the last pointer level, use the base type's CV-qualifier
-	// For intermediate levels, get CV from the next pointer level
+		// Pointee CV-qualifiers (on what the pointer points to)
+		// For the last pointer level, use the base type's CV-qualifier
+		// For intermediate levels, get CV from the next pointer level
 		CVQualifier pointee_cv = (i == ptr_levels.size() - 1)
 									 ? type_node.cv_qualifier()
 									 : ptr_levels[i + 1].cv_qualifier;
@@ -167,7 +167,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		appendCVQualifier(output, pointee_cv);
 	}
 
- // Add base type code
+	// Add base type code
 	switch (type_node.category()) {
 	case TypeCategory::Void:
 		output += 'X';
@@ -230,10 +230,10 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	case TypeCategory::UserDefined:
 	case TypeCategory::TypeAlias:
 	case TypeCategory::Enum: {
-	// Struct/class types use format: V<name>@@ (V for class/struct)
-	// Enum types use format: W4<name>@@
-	// TypeAlias mangles the same as UserDefined (resolved struct/class reference)
-	// Get the type name from the global type registry
+			// Struct/class types use format: V<name>@@ (V for class/struct)
+			// Enum types use format: W4<name>@@
+			// TypeAlias mangles the same as UserDefined (resolved struct/class reference)
+			// Get the type name from the global type registry
 		if (type_node.type_index().index() >= getTypeInfoCount()) {
 			throw CompileError("MSVC name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
@@ -248,13 +248,13 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		break;
 	}
 	case TypeCategory::FunctionPointer: {
-	// MSVC function pointer: P6A<return><params>@Z
+			// MSVC function pointer: P6A<return><params>@Z
 		output += "P6A";
 		if (type_node.has_function_signature()) {
 			const auto& sig = type_node.function_signature();
-	// Use explicit constructor (not default + set_type) to prevent uninitialized
-	// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-	// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
+				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
 			TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 			appendTypeCode(output, ret_spec);
 			if (sig.parameter_type_indices.empty()) {
@@ -272,7 +272,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		break;
 	}
 	case TypeCategory::Nullptr:
-	// nullptr_t — encode as void pointer best-effort
+			// nullptr_t — encode as void pointer best-effort
 		output += "$$T";
 		break;
 	case TypeCategory::Auto:
@@ -291,15 +291,15 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter = false) {
- // Handle pointers first (they modify what comes after)
+	// Handle pointers first (they modify what comes after)
 	for (size_t i = 0; i < type_node.pointer_levels().size(); ++i) {
 		output += 'P';
 		const auto& ptr_level = type_node.pointer_levels()[i];
-	// CV-qualifiers on the pointer itself
-	// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
-	// per C++ standard [dcl.fct]p5. Examples:
-	//   int* const p → int* p (top-level const ignored)
-	//   const int* const p → const int* p (top-level const ignored, inner const preserved)
+		// CV-qualifiers on the pointer itself
+		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
+		// per C++ standard [dcl.fct]p5. Examples:
+		//   int* const p → int* p (top-level const ignored)
+		//   const int* const p → const int* p (top-level const ignored, inner const preserved)
 		bool skip_pointer_cv = is_function_parameter && (i == 0);
 		if (!skip_pointer_cv) {
 			if (ptr_level.cv_qualifier == CVQualifier::Const) {
@@ -313,17 +313,17 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		}
 	}
 
- // Handle references (also modify what comes after)
+	// Handle references (also modify what comes after)
 	if (type_node.is_lvalue_reference()) {
 		output += 'R';
 	} else if (type_node.is_rvalue_reference()) {
 		output += 'O';  // rvalue reference
 	}
 
- // CV-qualifiers on the base type (come after pointer/reference)
- // According to Itanium ABI: K = const, V = volatile
- // NOTE: For function parameters passed by value (not pointer/reference),
- // top-level const is ignored per C++ standard [dcl.fct]p5
+	// CV-qualifiers on the base type (come after pointer/reference)
+	// According to Itanium ABI: K = const, V = volatile
+	// NOTE: For function parameters passed by value (not pointer/reference),
+	// top-level const is ignored per C++ standard [dcl.fct]p5
 	bool is_by_value = type_node.pointer_levels().empty() &&
 					   !type_node.is_lvalue_reference() &&
 					   !type_node.is_rvalue_reference();
@@ -340,7 +340,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		}
 	}
 
- // Basic type codes (Itanium ABI section 5.1.5)
+	// Basic type codes (Itanium ABI section 5.1.5)
 	switch (type_node.category()) {
 	case TypeCategory::Void:
 		output += 'v';
@@ -349,7 +349,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		output += 'b';
 		break;
 	case TypeCategory::Char:
-	// Char can be signed or unsigned depending on qualifier
+			// Char can be signed or unsigned depending on qualifier
 		if (type_node.qualifier() == TypeQualifier::Unsigned) {
 			output += 'h';  // unsigned char
 		} else if (type_node.qualifier() == TypeQualifier::Signed) {
@@ -410,18 +410,18 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	case TypeCategory::UserDefined:
 	case TypeCategory::TypeAlias:
 	case TypeCategory::Enum: {
-	// For structs/classes/enums, use the type name
-	// For nested types, we need to split the name into components
-	// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
+			// For structs/classes/enums, use the type name
+			// For nested types, we need to split the name into components
+			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
 		if (type_node.type_index().index() >= getTypeInfoCount()) {
 			throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
 		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 		auto struct_name = StringTable::getStringView(type_info.name());
 
-	// Check if this is a nested class (contains "::")
+			// Check if this is a nested class (contains "::")
 		if (struct_name.find("::") != std::string_view::npos) {
-	// Split and encode each component separately
+				// Split and encode each component separately
 			size_t start = 0;
 			while (start < struct_name.size()) {
 				size_t end = struct_name.find("::", start);
@@ -431,7 +431,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-		// Use "St" substitution for std namespace per Itanium C++ ABI
+						// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
 						output += "St";
 					} else {
@@ -443,8 +443,8 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 				start = (end == struct_name.size()) ? end : end + 2;	 // Skip "::"
 			}
 		} else {
-	// Simple class name, encode as-is
-	// Check for "std" substitution
+				// Simple class name, encode as-is
+				// Check for "std" substitution
 			if (struct_name == "std") {
 				output += "St";
 			} else {
@@ -455,16 +455,16 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		break;
 	}
 	case TypeCategory::FunctionPointer: {
-	// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
+			// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
 		output += "PF";
 		if (type_node.has_function_signature()) {
 			const auto& sig = type_node.function_signature();
-	// Use explicit constructor (not default + set_type) to prevent uninitialized
-	// cv_qualifier_ and other fields from emitting garbage into the mangled name.
-	// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
+				// Use explicit constructor (not default + set_type) to prevent uninitialized
+				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
+				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
 			TypeSpecifierNode ret_spec(resolveTypeAliasIndex(sig.return_type_index), TypeQualifier::None, 0, Token{}, CVQualifier::None);
 			appendItaniumTypeCode(output, ret_spec);
-	// Encode parameter types
+				// Encode parameter types
 			if (sig.parameter_type_indices.empty()) {
 				output += 'v';  // void parameter list
 			} else {
@@ -480,7 +480,7 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		break;
 	}
 	case TypeCategory::Nullptr:
-	// nullptr_t is encoded as 'Dn' in Itanium ABI
+			// nullptr_t is encoded as 'Dn' in Itanium ABI
 		output += "Dn";
 		break;
 	case TypeCategory::Auto:
@@ -505,29 +505,29 @@ inline void generateItaniumMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
- // Start with _Z prefix
+	// Start with _Z prefix
 	output += "_Z";
 
- // Check if we have namespaces or struct (needs nested-name encoding)
+	// Check if we have namespaces or struct (needs nested-name encoding)
 	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
 
- // Special case: std namespace alone uses "St" directly without nested-name encoding
+	// Special case: std namespace alone uses "St" directly without nested-name encoding
 	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
 
 	if (has_nested_name && !is_std_only) {
-	// Use nested-name encoding: _ZN...E
+		// Use nested-name encoding: _ZN...E
 		output += 'N';
-	// Const member function: emit 'K' CV-qualifier right after 'N' (Itanium ABI §5.1.8)
+		// Const member function: emit 'K' CV-qualifier right after 'N' (Itanium ABI §5.1.8)
 		if (is_const_method)
 			output += 'K';
 
-	// Add namespace parts first (in order)
+		// Add namespace parts first (in order)
 		for (const auto& ns : namespace_path) {
-	// Anonymous namespaces are encoded as "_GLOBAL__N_1" per Itanium C++ ABI
+			// Anonymous namespaces are encoded as "_GLOBAL__N_1" per Itanium C++ ABI
 			if (ns.empty()) {
 				output += "12_GLOBAL__N_1";
 			} else if (ns == "std") {
-	// Special handling: std namespace uses "St" in Itanium C++ ABI
+				// Special handling: std namespace uses "St" in Itanium C++ ABI
 				output += "St";
 			} else {
 				output += std::to_string(ns.size());
@@ -535,11 +535,11 @@ inline void generateItaniumMangledName(
 			}
 		}
 
-	// Add struct/class name if present
+		// Add struct/class name if present
 		if (!struct_name.empty()) {
-	// For nested classes, struct_name may contain "::" separators
-	// We need to encode each component separately
-	// e.g., "Outer::Inner" -> "5Outer5Inner", "std::simple" -> "St6simple"
+			// For nested classes, struct_name may contain "::" separators
+			// We need to encode each component separately
+			// e.g., "Outer::Inner" -> "5Outer5Inner", "std::simple" -> "St6simple"
 			size_t start = 0;
 			while (start < struct_name.size()) {
 				size_t end = struct_name.find("::", start);
@@ -549,7 +549,7 @@ inline void generateItaniumMangledName(
 
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-		// Use "St" substitution for std namespace per Itanium C++ ABI
+					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
 						output += "St";
 					} else {
@@ -562,60 +562,60 @@ inline void generateItaniumMangledName(
 			}
 		}
 
-	// Add function name
-	// Check for special constructors and destructors
+		// Add function name
+		// Check for special constructors and destructors
 		if (func_name.size() > 0 && func_name[0] == '~') {
-	// Destructor: use D1 for complete destructor per Itanium C++ ABI
-	// D0 = deleting, D1 = complete, D2 = base
+			// Destructor: use D1 for complete destructor per Itanium C++ ABI
+			// D0 = deleting, D1 = complete, D2 = base
 			output += "D1";
 		} else if (!struct_name.empty()) {
-	// For nested classes, struct_name might be "Outer::Inner"
-	// Extract the last component to compare with func_name
+			// For nested classes, struct_name might be "Outer::Inner"
+			// Extract the last component to compare with func_name
 			std::string_view class_name = struct_name;
 			auto last_colon = struct_name.rfind("::");
 			if (last_colon != std::string_view::npos) {
 				class_name = struct_name.substr(last_colon + 2);
 			}
 
-	// Check if this is a constructor (function name matches class name)
+			// Check if this is a constructor (function name matches class name)
 			if (func_name == class_name) {
-	// Constructor: use C1 for complete constructor per Itanium C++ ABI
-	// C1 = complete, C2 = base, C3 = allocating
+				// Constructor: use C1 for complete constructor per Itanium C++ ABI
+				// C1 = complete, C2 = base, C3 = allocating
 				output += "C1";
 			} else {
-	// Regular function: <length><name>
+				// Regular function: <length><name>
 				output += std::to_string(func_name.size());
 				output += func_name;
 			}
 		} else {
-	// Regular function: <length><name>
+			// Regular function: <length><name>
 			output += std::to_string(func_name.size());
 			output += func_name;
 		}
 
-	// End nested-name
+		// End nested-name
 		output += 'E';
 	} else if (is_std_only) {
-	// Special case: std namespace uses "St" prefix without nested-name encoding
+		// Special case: std namespace uses "St" prefix without nested-name encoding
 		output += "St";
 		output += std::to_string(func_name.size());
 		output += func_name;
 	} else {
-	// Simple function name: <length><name>
+		// Simple function name: <length><name>
 		output += std::to_string(func_name.size());
 		output += func_name;
 	}
 
- // Add parameter types
+	// Add parameter types
 	if (param_types.empty() && !is_variadic) {
-	// No parameters - use 'v' for void parameter list
+		// No parameters - use 'v' for void parameter list
 		output += 'v';
 	} else {
 		for (const auto& param : param_types) {
 			appendItaniumTypeCode(output, param, true);	// true = is function parameter
 		}
 
-	// Handle variadic parameters
+		// Handle variadic parameters
 		if (is_variadic) {
 			output += 'z';  // ellipsis
 		}
@@ -634,8 +634,8 @@ inline void appendItaniumTemplateArgs(
 
 	output += 'I';  // Start template args
 	for (int64_t arg : non_type_args) {
-	// Encode as literal: L<type><value>E
-	// Using 'm' for unsigned long (common for size_t indices)
+		// Encode as literal: L<type><value>E
+		// Using 'm' for unsigned long (common for size_t indices)
 		output += 'L';
 		output += 'm';  // unsigned long
 		output += std::to_string(static_cast<unsigned long>(arg));
@@ -657,9 +657,9 @@ inline void appendItaniumTypeTemplateArgs(
 	output += 'I';  // Start template args
 	for (const auto& arg : type_args) {
 		if (arg.is_value) {
-	// Non-type template argument (value)
+			// Non-type template argument (value)
 			output += 'L';
-	// Use type code based on arg.category()
+			// Use type code based on arg.category()
 			switch (arg.category()) {
 			case TypeCategory::Int:
 				output += 'i';
@@ -692,8 +692,8 @@ inline void appendItaniumTypeTemplateArgs(
 			output += std::to_string(arg.value);
 			output += 'E';
 		} else {
-	// Type template argument - encode the type
-	// Handle CV-qualifiers
+			// Type template argument - encode the type
+			// Handle CV-qualifiers
 			if (arg.cv_qualifier == CVQualifier::Const) {
 				output += 'K';
 			} else if (arg.cv_qualifier == CVQualifier::Volatile) {
@@ -703,19 +703,19 @@ inline void appendItaniumTypeTemplateArgs(
 				output += 'V';
 			}
 
-	// Handle pointers
+			// Handle pointers
 			for (size_t i = 0; i < arg.pointer_depth; ++i) {
 				output += 'P';
 			}
 
-	// Handle references
+			// Handle references
 			if (arg.is_rvalue_reference()) {
 				output += 'O';  // rvalue reference
 			} else if (arg.is_reference()) {
 				output += 'R';  // lvalue reference
 			}
 
-	// Basic type code
+			// Basic type code
 			switch (arg.category()) {
 			case TypeCategory::Void:
 				output += 'v';
@@ -766,7 +766,7 @@ inline void appendItaniumTypeTemplateArgs(
 			case TypeCategory::UserDefined:
 			case TypeCategory::TypeAlias:
 			case TypeCategory::Enum: {
-		// For structs/classes/enums, use the type name from gTypeInfo
+					// For structs/classes/enums, use the type name from gTypeInfo
 				if (arg.type_index.index() >= getTypeInfoCount()) {
 					throw CompileError("Itanium name mangling: unknown struct/enum type index in template args — cannot generate valid symbol");
 				}
@@ -777,7 +777,7 @@ inline void appendItaniumTypeTemplateArgs(
 				break;
 			}
 			case TypeCategory::FunctionPointer: {
-		// Itanium ABI: function pointer is PF<return-type><param-types>E
+					// Itanium ABI: function pointer is PF<return-type><param-types>E
 				output += "PF";
 				if (arg.function_signature.has_value()) {
 					const auto& sig = *arg.function_signature;
@@ -798,9 +798,9 @@ inline void appendItaniumTypeTemplateArgs(
 				break;
 			}
 			case TypeCategory::MemberFunctionPointer: {
-		// Itanium ABI: member function pointer is M<class>F<return><params>E
-		// Simplified: encode as PF (same as function pointer) since class info
-		// is not always available in TemplateTypeArg
+					// Itanium ABI: member function pointer is M<class>F<return><params>E
+					// Simplified: encode as PF (same as function pointer) since class info
+					// is not always available in TemplateTypeArg
 				output += "PF";
 				if (arg.function_signature.has_value()) {
 					const auto& sig = *arg.function_signature;
@@ -841,20 +841,20 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
- // Start with _Z prefix
+	// Start with _Z prefix
 	output += "_Z";
 
- // Check if we have namespaces or struct (needs nested-name encoding)
+	// Check if we have namespaces or struct (needs nested-name encoding)
 	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
 	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
 
 	if (has_nested_name && !is_std_only) {
-	// Use nested-name encoding: _ZN...E
+		// Use nested-name encoding: _ZN...E
 		output += 'N';
 		if (is_const_method)
 			output += 'K';
 
-	// Add namespace parts
+		// Add namespace parts
 		for (const auto& ns : namespace_path) {
 			if (ns.empty()) {
 				output += "12_GLOBAL__N_1";
@@ -866,7 +866,7 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 			}
 		}
 
-	// Add struct name if present
+		// Add struct name if present
 		if (!struct_name.empty()) {
 			size_t start = 0;
 			while (start < struct_name.size()) {
@@ -875,7 +875,7 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 					end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-		// Use "St" substitution for std namespace per Itanium C++ ABI
+					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
 						output += "St";
 					} else {
@@ -887,14 +887,14 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 			}
 		}
 
-	// Add function name with type template args
+		// Add function name with type template args
 		output += std::to_string(func_name.size());
 		output += func_name;
 
-	// Add type template arguments after function name
+		// Add type template arguments after function name
 		appendItaniumTypeTemplateArgs(output, type_template_args);
 
-	// End nested-name
+		// End nested-name
 		output += 'E';
 	} else if (is_std_only) {
 		output += "St";
@@ -902,13 +902,13 @@ inline void generateItaniumMangledNameWithTypeTemplateArgs(
 		output += func_name;
 		appendItaniumTypeTemplateArgs(output, type_template_args);
 	} else {
-	// Simple function name with type template args
+		// Simple function name with type template args
 		output += std::to_string(func_name.size());
 		output += func_name;
 		appendItaniumTypeTemplateArgs(output, type_template_args);
 	}
 
- // Add parameter types
+	// Add parameter types
 	if (param_types.empty() && !is_variadic) {
 		output += 'v';
 	} else {
@@ -934,20 +934,20 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
- // Start with _Z prefix
+	// Start with _Z prefix
 	output += "_Z";
 
- // Check if we have namespaces or struct (needs nested-name encoding)
+	// Check if we have namespaces or struct (needs nested-name encoding)
 	bool has_nested_name = !struct_name.empty() || !namespace_path.empty();
 	bool is_std_only = namespace_path.size() == 1 && namespace_path[0] == "std" && struct_name.empty();
 
 	if (has_nested_name && !is_std_only) {
-	// Use nested-name encoding: _ZN...E
+		// Use nested-name encoding: _ZN...E
 		output += 'N';
 		if (is_const_method)
 			output += 'K';
 
-	// Add namespace parts
+		// Add namespace parts
 		for (const auto& ns : namespace_path) {
 			if (ns.empty()) {
 				output += "12_GLOBAL__N_1";
@@ -959,7 +959,7 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 			}
 		}
 
-	// Add struct name if present
+		// Add struct name if present
 		if (!struct_name.empty()) {
 			size_t start = 0;
 			while (start < struct_name.size()) {
@@ -968,7 +968,7 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 					end = struct_name.size();
 				std::string_view component = struct_name.substr(start, end - start);
 				if (!component.empty()) {
-		// Use "St" substitution for std namespace per Itanium C++ ABI
+					// Use "St" substitution for std namespace per Itanium C++ ABI
 					if (component == "std") {
 						output += "St";
 					} else {
@@ -980,14 +980,14 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 			}
 		}
 
-	// Add function name with template args
+		// Add function name with template args
 		output += std::to_string(func_name.size());
 		output += func_name;
 
-	// Add template arguments after function name
+		// Add template arguments after function name
 		appendItaniumTemplateArgs(output, non_type_template_args);
 
-	// End nested-name
+		// End nested-name
 		output += 'E';
 	} else if (is_std_only) {
 		output += "St";
@@ -995,13 +995,13 @@ inline void generateItaniumMangledNameWithTemplateArgs(
 		output += func_name;
 		appendItaniumTemplateArgs(output, non_type_template_args);
 	} else {
-	// Simple function name with template args
+		// Simple function name with template args
 		output += std::to_string(func_name.size());
 		output += func_name;
 		appendItaniumTemplateArgs(output, non_type_template_args);
 	}
 
- // Add parameter types
+	// Add parameter types
 	if (param_types.empty() && !is_variadic) {
 		output += 'v';
 	} else {
@@ -1025,7 +1025,7 @@ inline void generateItaniumMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	bool is_const_method) {
- // Extract parameter types from param_nodes
+	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;
 	param_types.reserve(param_nodes.size());
 	for (const auto& param : param_nodes) {
@@ -1033,7 +1033,7 @@ inline void generateItaniumMangledName(
 		param_types.push_back(param_decl.type_node().as<TypeSpecifierNode>());
 	}
 
- // Use the main implementation
+	// Use the main implementation
 	generateItaniumMangledName(output, func_name, return_type, param_types,
 							   is_variadic, struct_name, namespace_path, is_const_method);
 }
@@ -1059,33 +1059,33 @@ inline MangledName generateMangledName(
 	bool is_const_method) {
 	StringBuilder builder;
 
- // Special case: main function is never mangled
+	// Special case: main function is never mangled
 	if (func_name == "main") {
 		builder.append("main");
 		return MangledName(builder.commit());
 	}
 
- // extern "C" linkage: no mangling, use the function name as-is
+	// extern "C" linkage: no mangling, use the function name as-is
 	if (linkage == Linkage::C) {
 		builder.append(func_name);
 		return MangledName(builder.commit());
 	}
 
- // Check mangling style and use appropriate mangler
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-	// Use Itanium C++ ABI name mangling
+		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_types,
 								   is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
- // MSVC-style mangling
+	// MSVC-style mangling
 	builder.append('?');
 
- // Handle member functions vs free functions
+	// Handle member functions vs free functions
 	if (!struct_name.empty()) {
-	// Member function: ?name@ClassName@@QA...
-	// Extract just the function name (after ::)
+		// Member function: ?name@ClassName@@QA...
+		// Extract just the function name (after ::)
 		std::string_view func_only_name = func_name;
 		size_t pos = func_name.rfind("::");
 		if (pos != std::string_view::npos) {
@@ -1094,8 +1094,8 @@ inline MangledName generateMangledName(
 		builder.append(func_only_name);
 		builder.append('@');
 
-	// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
-	// Use rfind to iterate backwards without any allocation
+		// For nested classes, reverse the order: "Outer::Inner" -> "Inner@Outer"
+		// Use rfind to iterate backwards without any allocation
 		std::string_view remaining = struct_name;
 		size_t sep_pos;
 		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
@@ -1105,14 +1105,14 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);  // Append the first (outermost) part
 
-	// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
+		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
 		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
 	} else if (!namespace_path.empty()) {
-	// Namespace-scoped free function: ?name@Namespace@@YA...
+		// Namespace-scoped free function: ?name@Namespace@@YA...
 		builder.append(func_name);
 		builder.append('@');
 
-	// Append namespace parts in reverse order with @ separators
+		// Append namespace parts in reverse order with @ separators
 		for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 			builder.append(*it);
 			if (std::next(it) != namespace_path.rend()) {
@@ -1122,16 +1122,16 @@ inline MangledName generateMangledName(
 
 		builder.append("@@YA");	// @@ + calling convention (__cdecl)
 	} else {
-	// Free function in global namespace: ?name@@YA...
+		// Free function in global namespace: ?name@@YA...
 		builder.append(func_name);
 		builder.append("@@YA");	// @@ + calling convention (__cdecl)
 	}
 
- // Add return type code
+	// Add return type code
 	appendTypeCode(builder, return_type);
 
- // Add parameter type codes
- // For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	// Add parameter type codes
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
 	if (param_types.empty()) {
 		builder.append('X');
 	} else {
@@ -1140,7 +1140,7 @@ inline MangledName generateMangledName(
 		}
 	}
 
- // End marker - different for variadic vs non-variadic
+	// End marker - different for variadic vs non-variadic
 	if (is_variadic) {
 		builder.append("ZZ");  // Variadic functions end with 'ZZ' in MSVC mangling
 	} else {
@@ -1162,30 +1162,30 @@ inline MangledName generateMangledName(
 	bool is_const_method) {
 	StringBuilder builder;
 
- // Special case: main function is never mangled
+	// Special case: main function is never mangled
 	if (func_name == "main") {
 		builder.append("main");
 		return MangledName(builder.commit());
 	}
 
- // extern "C" linkage: no mangling, use the function name as-is
+	// extern "C" linkage: no mangling, use the function name as-is
 	if (linkage == Linkage::C) {
 		builder.append(func_name);
 		return MangledName(builder.commit());
 	}
 
- // Check mangling style and use appropriate mangler
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-	// Use Itanium C++ ABI name mangling
+		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_nodes,
 								   is_variadic, struct_name, namespace_path, is_const_method);
 		return MangledName(builder.commit());
 	}
 
- // MSVC-style mangling
+	// MSVC-style mangling
 	builder.append('?');
 
- // Handle member functions vs free functions
+	// Handle member functions vs free functions
 	if (!struct_name.empty()) {
 		std::string_view func_only_name = func_name;
 		size_t pos = func_name.rfind("::");
@@ -1195,7 +1195,7 @@ inline MangledName generateMangledName(
 		builder.append(func_only_name);
 		builder.append('@');
 
-	// For nested classes, reverse the order using rfind
+		// For nested classes, reverse the order using rfind
 		std::string_view remaining = struct_name;
 		size_t sep_pos;
 		while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
@@ -1205,7 +1205,7 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);
 
-	// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
+		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
 		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
 	} else if (!namespace_path.empty()) {
 		builder.append(func_name);
@@ -1222,11 +1222,11 @@ inline MangledName generateMangledName(
 		builder.append("@@YA");
 	}
 
- // Add return type code
+	// Add return type code
 	appendTypeCode(builder, return_type);
 
- // Add parameter type codes directly from param nodes
- // For MSVC, if there are no parameters, use 'X' to indicate void parameter list
+	// Add parameter type codes directly from param nodes
+	// For MSVC, if there are no parameters, use 'X' to indicate void parameter list
 	if (param_nodes.empty()) {
 		builder.append('X');
 	} else {
@@ -1236,7 +1236,7 @@ inline MangledName generateMangledName(
 		}
 	}
 
- // End marker
+	// End marker
 	if (is_variadic) {
 		builder.append("ZZ");
 	} else {
@@ -1263,7 +1263,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		return MangledName(builder.commit());
 	}
 
- // Use Itanium ABI for template specializations (most portable)
+	// Use Itanium ABI for template specializations (most portable)
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTemplateArgs(builder, func_name, return_type, param_types,
@@ -1271,8 +1271,8 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		return MangledName(builder.commit());
 	}
 
- // MSVC: Append template args to function name (simplified)
- // Format: ?func_name<0>@...
+	// MSVC: Append template args to function name (simplified)
+	// Format: ?func_name<0>@...
 	StringBuilder name_with_args;
 	name_with_args.append(func_name);
 	if (!non_type_template_args.empty()) {
@@ -1285,7 +1285,7 @@ inline MangledName generateMangledNameWithTemplateArgs(
 		name_with_args.append(">");
 	}
 
- // Fall back to regular mangling with modified name
+	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
 							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
@@ -1326,7 +1326,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 		return MangledName(builder.commit());
 	}
 
- // Use Itanium ABI for template specializations (most portable)
+	// Use Itanium ABI for template specializations (most portable)
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		StringBuilder builder;
 		generateItaniumMangledNameWithTypeTemplateArgs(builder, func_name, return_type, param_types,
@@ -1334,22 +1334,22 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 		return MangledName(builder.commit());
 	}
 
- // MSVC: Append template args to function name (simplified)
- // Format: ?func_name<type1,type2>@...
+	// MSVC: Append template args to function name (simplified)
+	// Format: ?func_name<type1,type2>@...
 	StringBuilder name_with_args;
 	name_with_args.append(func_name);
 	if (!type_template_args.empty()) {
-	// Phase 8: Use hash-based naming for template arguments to avoid collisions
-	// Format: func_name$hash where hash is computed from all template arguments
+		// Phase 8: Use hash-based naming for template arguments to avoid collisions
+		// Format: func_name$hash where hash is computed from all template arguments
 		name_with_args.append("$");
-	// Compute combined hash of all template arguments
+		// Compute combined hash of all template arguments
 		size_t combined_hash = 0;
 		for (const auto& arg : type_template_args) {
 			size_t arg_hash;
 			if (arg.is_value) {
 				arg_hash = std::hash<int64_t>{}(arg.value);
 			} else {
-	// Use the same hash as TemplateTypeArgHash
+				// Use the same hash as TemplateTypeArgHash
 				arg_hash = TemplateTypeArgHash{}(arg);
 			}
 			combined_hash ^= arg_hash + 0x9e3779b9 + (combined_hash << 6) + (combined_hash >> 2);
@@ -1359,7 +1359,7 @@ inline MangledName generateMangledNameWithTypeTemplateArgs(
 		name_with_args.append(hash_buf);
 	}
 
- // Fall back to regular mangling with modified name
+	// Fall back to regular mangling with modified name
 	return generateMangledName(name_with_args.commit(), return_type, param_types,
 							   is_variadic, struct_name, namespace_path, Linkage::CPlusPlus, is_const_method);
 }
@@ -1409,11 +1409,11 @@ inline MangledName generateMangledNameFromNode(
 	const TypeSpecifierNode& return_type = decl_node.type_node().as<TypeSpecifierNode>();
 	std::string_view func_name = decl_node.identifier_token().value();
 
- // Get struct name for member functions
+	// Get struct name for member functions
 	std::string_view struct_name = func_node.is_member_function() ? func_node.parent_struct_name() : "";
 
- // Use the overload that accepts parameter nodes directly
- // Pass linkage from the function node
+	// Use the overload that accepts parameter nodes directly
+	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(),
 							   func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
 							   func_node.is_const_member_function());
@@ -1423,7 +1423,7 @@ inline MangledName generateMangledNameFromNode(
 inline MangledName generateMangledNameFromNode(
 	const FunctionDeclarationNode& func_node,
 	const std::vector<std::string>& namespace_path) {
- // Convert to string_view vector and delegate
+	// Convert to string_view vector and delegate
 	std::vector<std::string_view> ns_views;
 	ns_views.reserve(namespace_path.size());
 	for (const auto& ns : namespace_path) {
@@ -1450,7 +1450,7 @@ inline MangledName generateMangledNameForConstructor(
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
 
- // Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
 	std::string_view remaining = struct_name;
 	size_t sep_pos;
 	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
@@ -1460,7 +1460,7 @@ inline MangledName generateMangledNameForConstructor(
 	}
 	builder.append(remaining);  // Append the first (outermost) part
 
- // Add namespace path if present
+	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 		builder.append('@');
 		builder.append(*it);
@@ -1468,7 +1468,7 @@ inline MangledName generateMangledNameForConstructor(
 
 	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
 
- // Add parameter type codes
+	// Add parameter type codes
 	for (const auto& param_type : param_types) {
 		appendTypeCode(builder, param_type);
 	}
@@ -1487,7 +1487,7 @@ inline MangledName generateMangledNameForConstructor(
 
 	builder.append("??0");  // Constructor marker in MSVC mangling
 
- // Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
 	std::string_view remaining = struct_name;
 	size_t sep_pos;
 	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
@@ -1497,7 +1497,7 @@ inline MangledName generateMangledNameForConstructor(
 	}
 	builder.append(remaining);  // Append the first (outermost) part
 
- // Add namespace path if present
+	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 		builder.append('@');
 		builder.append(*it);
@@ -1505,7 +1505,7 @@ inline MangledName generateMangledNameForConstructor(
 
 	builder.append("@@QEAA");  // @@ + __cdecl x64 calling convention (non-const)
 
- // Add parameter type codes directly from param nodes
+	// Add parameter type codes directly from param nodes
 	for (const auto& param : param_nodes) {
 		const DeclarationNode& param_decl = param.as<DeclarationNode>();
 		appendTypeCode(builder, param_decl.type_node().as<TypeSpecifierNode>());
@@ -1527,8 +1527,8 @@ inline MangledName generateMangledNameForDestructor(
 
 	builder.append("??1");  // Destructor marker in MSVC mangling
 
- // Handle nested classes: "Outer::Inner" -> "Inner@Outer"
- // struct_name is a StringHandle, convert to view
+	// Handle nested classes: "Outer::Inner" -> "Inner@Outer"
+	// struct_name is a StringHandle, convert to view
 	std::string_view remaining = StringTable::getStringView(struct_name);
 	size_t sep_pos;
 	while ((sep_pos = remaining.rfind("::")) != std::string_view::npos) {
@@ -1538,14 +1538,14 @@ inline MangledName generateMangledNameForDestructor(
 	}
 	builder.append(remaining);  // Append the first (outermost) part
 
- // Add namespace path if present
+	// Add namespace path if present
 	for (auto it = namespace_path.rbegin(); it != namespace_path.rend(); ++it) {
 		builder.append('@');
 		builder.append(*it);
 	}
 
- // @@ = scope terminator, QEAA = __cdecl x64 calling convention (non-const),
- // @X = void parameters (no params), Z = end marker
+	// @@ = scope terminator, QEAA = __cdecl x64 calling convention (non-const),
+	// @X = void parameters (no params), Z = end marker
 	builder.append("@@QEAA@XZ");
 
 	return MangledName(builder.commit());
@@ -1555,28 +1555,28 @@ inline MangledName generateMangledNameForDestructor(
 inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
 	const std::vector<std::string_view>& namespace_path = {}) {
- // Check mangling style and use appropriate mangler
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-	// For Itanium mangling, constructors are regular functions with C1/C2 markers
-	// We need to call the regular mangling function
-	// The constructor name is the same as the class name
+		// For Itanium mangling, constructors are regular functions with C1/C2 markers
+		// We need to call the regular mangling function
+		// The constructor name is the same as the class name
 		std::string_view struct_name_sv = StringTable::getStringView(ctor_node.struct_name());
 
-	// Extract the class name (last component after ::)
+		// Extract the class name (last component after ::)
 		std::string_view class_name = struct_name_sv;
 		auto last_colon = struct_name_sv.rfind("::");
 		if (last_colon != std::string_view::npos) {
 			class_name = struct_name_sv.substr(last_colon + 2);
 		}
 
-	// Create a dummy TypeSpecifierNode for the return type (constructors return void)
+		// Create a dummy TypeSpecifierNode for the return type (constructors return void)
 		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 
-	// Call the regular mangling function with the class name as the function name
+		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
 								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
-	// Use MSVC-style constructor mangling
+		// Use MSVC-style constructor mangling
 		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);
 	}
 }
@@ -1585,31 +1585,31 @@ inline MangledName generateMangledNameFromNode(
 inline MangledName generateMangledNameFromNode(
 	const DestructorDeclarationNode& dtor_node,
 	const std::vector<std::string_view>& namespace_path = {}) {
- // Check mangling style and use appropriate mangler
+	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
-	// For Itanium mangling, destructors are regular functions with D1/D2 markers
-	// The destructor name is "~ClassName"
+		// For Itanium mangling, destructors are regular functions with D1/D2 markers
+		// The destructor name is "~ClassName"
 		std::string_view struct_name_sv = StringTable::getStringView(dtor_node.struct_name());
 
-	// Extract the class name (last component after ::)
+		// Extract the class name (last component after ::)
 		std::string_view class_name = struct_name_sv;
 		auto last_colon = struct_name_sv.rfind("::");
 		if (last_colon != std::string_view::npos) {
 			class_name = struct_name_sv.substr(last_colon + 2);
 		}
 
-	// Build destructor name: "~ClassName"
+		// Build destructor name: "~ClassName"
 		std::string dtor_name = "~";
 		dtor_name += class_name;
 
-	// Create a dummy TypeSpecifierNode for the return type (destructors return void)
+		// Create a dummy TypeSpecifierNode for the return type (destructors return void)
 		TypeSpecifierNode return_type(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 
-	// Call the regular mangling function with "~ClassName" as the function name
+		// Call the regular mangling function with "~ClassName" as the function name
 		return generateMangledName(dtor_name, return_type, std::vector<ASTNode>{},
 								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
 	} else {
-	// Use MSVC-style destructor mangling
+		// Use MSVC-style destructor mangling
 		return generateMangledNameForDestructor(dtor_node.struct_name(), namespace_path);
 	}
 }
