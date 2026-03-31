@@ -18,11 +18,11 @@ constexpr std::string_view kTemplatePatternStructSuffix = "$pattern__";
 // accidentally merging distinct return categories during semantic rewriting.
 bool placeholderReturnTypesMatch(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.type() != rhs.type() ||
-		lhs.type_index() != rhs.type_index() ||
-		lhs.cv_qualifier() != rhs.cv_qualifier() ||
-		lhs.reference_qualifier() != rhs.reference_qualifier() ||
-		lhs.pointer_depth() != rhs.pointer_depth() ||
-		lhs.array_dimensions() != rhs.array_dimensions()) {
+	    lhs.type_index() != rhs.type_index() ||
+	    lhs.cv_qualifier() != rhs.cv_qualifier() ||
+	    lhs.reference_qualifier() != rhs.reference_qualifier() ||
+	    lhs.pointer_depth() != rhs.pointer_depth() ||
+	    lhs.array_dimensions() != rhs.array_dimensions()) {
 		return false;
 	}
 
@@ -81,7 +81,7 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 	const FunctionDeclarationNode* fallback = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
 		if (member_func.operator_kind != OverloadableOperator::Multiply ||
-			!member_func.function_decl.is<FunctionDeclarationNode>()) {
+		    !member_func.function_decl.is<FunctionDeclarationNode>()) {
 			continue;
 		}
 
@@ -168,8 +168,8 @@ CanonicalTypeDesc canonicalTypeDescFromTemplateArgInfo(const TypeInfo::TemplateA
 	desc.ref_qualifier = arg.ref_qualifier;
 	for (size_t i = 0; i < arg.pointer_depth; ++i) {
 		CVQualifier level_cv = i < arg.pointer_cv_qualifiers.size()
-			? arg.pointer_cv_qualifiers[i]
-			: CVQualifier::None;
+		                           ? arg.pointer_cv_qualifiers[i]
+		                           : CVQualifier::None;
 		desc.pointer_levels.push_back(PointerLevel{level_cv});
 	}
 	if (arg.is_array && arg.array_size.has_value()) {
@@ -201,49 +201,65 @@ const TypeInfo* findStructTypeInfoByNameFragment(std::string_view struct_name) {
 		if (registered_name.size() > struct_name.size() + 1) {
 			const size_t prefix_end = registered_name.size() - struct_name.size();
 			if (registered_name.substr(prefix_end) == struct_name &&
-				(registered_name[prefix_end - 1] == ':' || registered_name[prefix_end - 1] == '<')) {
+			    (registered_name[prefix_end - 1] == ':' || registered_name[prefix_end - 1] == '<')) {
 				return type_info;
 			}
 		}
 		if (registered_name.size() > struct_name.size() &&
-			registered_name[struct_name.size()] == '<' &&
-			registered_name.starts_with(struct_name)) {
+		    registered_name[struct_name.size()] == '<' &&
+		    registered_name.starts_with(struct_name)) {
 			return type_info;
 		}
 	}
 
 	return nullptr;
 }
-}
+} // namespace
 
 // --- CanonicalTypeDesc::operator== ---
 
 bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
-	if (type_index.category() != other.type_index.category()) return false;
-	if (type_index != other.type_index) return false;
-	if (base_cv != other.base_cv) return false;
-	if (ref_qualifier != other.ref_qualifier) return false;
-	if (flags != other.flags) return false;
-	if (pointer_levels.size() != other.pointer_levels.size()) return false;
+	if (type_index.category() != other.type_index.category())
+		return false;
+	if (type_index != other.type_index)
+		return false;
+	if (base_cv != other.base_cv)
+		return false;
+	if (ref_qualifier != other.ref_qualifier)
+		return false;
+	if (flags != other.flags)
+		return false;
+	if (pointer_levels.size() != other.pointer_levels.size())
+		return false;
 	for (size_t i = 0; i < pointer_levels.size(); ++i) {
-		if (pointer_levels[i].cv_qualifier != other.pointer_levels[i].cv_qualifier) return false;
+		if (pointer_levels[i].cv_qualifier != other.pointer_levels[i].cv_qualifier)
+			return false;
 	}
-	if (array_dimensions != other.array_dimensions) return false;
-	if (function_signature.has_value() != other.function_signature.has_value()) return false;
+	if (array_dimensions != other.array_dimensions)
+		return false;
+	if (function_signature.has_value() != other.function_signature.has_value())
+		return false;
 	if (function_signature.has_value()) {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
 		if (a.returnType() != b.returnType() ||
-		    a.return_type_index != b.return_type_index) return false;
-		if (a.parameter_type_indices.size() != b.parameter_type_indices.size()) return false;
+		    a.return_type_index != b.return_type_index)
+			return false;
+		if (a.parameter_type_indices.size() != b.parameter_type_indices.size())
+			return false;
 		for (size_t i = 0; i < a.parameter_type_indices.size(); ++i) {
 			if (a.parameter_type_indices[i].category() != b.parameter_type_indices[i].category() ||
-			    a.parameter_type_indices[i] != b.parameter_type_indices[i]) return false;
+			    a.parameter_type_indices[i] != b.parameter_type_indices[i])
+				return false;
 		}
-		if (a.linkage != b.linkage) return false;
-		if (a.is_const != b.is_const) return false;
-		if (a.is_volatile != b.is_volatile) return false;
-		if (a.class_name != b.class_name) return false;
+		if (a.linkage != b.linkage)
+			return false;
+		if (a.is_const != b.is_const)
+			return false;
+		if (a.is_volatile != b.is_volatile)
+			return false;
+		if (a.class_name != b.class_name)
+			return false;
 	}
 	return true;
 }
@@ -255,7 +271,7 @@ CanonicalTypeId TypeContext::intern(const CanonicalTypeDesc& desc) {
 	if (it != index_.end())
 		return it->second;
 	types_.push_back(desc);
-	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())};  // 1-based
+	const CanonicalTypeId id{static_cast<uint32_t>(types_.size())}; // 1-based
 	index_.emplace(desc, id);
 	return id;
 }
@@ -619,56 +635,45 @@ private:
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				visit(e.get_lhs());
 				visit(e.get_rhs());
-			}
-			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				visit(e.get_operand());
-			}
-			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				visit(e.condition());
 				visit(e.true_expr());
 				visit(e.false_expr());
-			}
-			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				for (const auto& template_arg : e.template_arguments()) {
 					visit(template_arg);
 				}
 				for (const auto& arg : e.arguments()) {
 					visit(arg);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				for (const auto& arg : e.arguments()) {
 					visit(arg);
 				}
-			}
-			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				visit(e.object());
-			}
-			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				visit(e.object());
 				visit(e.member_pointer());
-			}
-			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				visit(e.object());
 				for (const auto& arg : e.arguments()) {
 					visit(arg);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				visit(e.array_expr());
 				visit(e.index_expr());
-			}
-			else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				if (!e.is_type()) {
 					visit(e.type_or_expr());
 				}
-			}
-			else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				if (!e.is_type()) {
 					visit(e.type_or_expr());
 				}
-			}
-			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
 				if (e.size_expr().has_value()) {
 					visit(*e.size_expr());
 				}
@@ -678,22 +683,18 @@ private:
 				for (const auto& arg : e.placement_args()) {
 					visit(arg);
 				}
-			}
-			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				visit(e.expr());
-			}
-			else if constexpr (std::is_same_v<T, StaticCastNode> ||
-				std::is_same_v<T, DynamicCastNode> ||
-				std::is_same_v<T, ConstCastNode> ||
-				std::is_same_v<T, ReinterpretCastNode>) {
+			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+			                     std::is_same_v<T, DynamicCastNode> ||
+			                     std::is_same_v<T, ConstCastNode> ||
+			                     std::is_same_v<T, ReinterpretCastNode>) {
 				visit(e.expr());
-			}
-			else if constexpr (std::is_same_v<T, TypeidNode>) {
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
 				if (!e.is_type()) {
 					visit(e.operand());
 				}
-			}
-			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				for (const auto& capture : e.captures()) {
 					if (capture.has_initializer()) {
 						visit(*capture.initializer());
@@ -703,8 +704,7 @@ private:
 					visit(param);
 				}
 				visit(e.body());
-			}
-			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				report_.recordFold(e.get_token());
 				if (e.init_expr().has_value()) {
 					visit(*e.init_expr());
@@ -712,28 +712,24 @@ private:
 				if (e.pack_expr().has_value()) {
 					visit(*e.pack_expr());
 				}
-			}
-			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				report_.recordPackExpansion(e.get_token());
 				visit(e.pattern());
-			}
-			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				visit(e.expr());
-			}
-			else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				for (const auto& element : e.elements()) {
 					visit(element);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				if (e.expression().has_value()) {
 					visit(*e.expression());
 				}
-			}
-			else {
+			} else {
 				// Leaf expressions intentionally do not recurse.
 			}
-		}, expr);
+		},
+		           expr);
 	}
 
 	PostParseBoundaryReport report_;
@@ -742,7 +738,7 @@ private:
 void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 	if (!report.hasViolations()) {
 		FLASH_LOG(General, Debug,
-			"Post-parse boundary check: sema-owned AST surface is free of forbidden fold/pack helper nodes");
+		          "Post-parse boundary check: sema-owned AST surface is free of forbidden fold/pack helper nodes");
 		return;
 	}
 
@@ -756,41 +752,41 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 	const bool has_pack_violation = report.pack_expansion_count != 0;
 	if (has_fold_violation) {
 		FLASH_LOG(General, Error,
-			"Post-parse boundary check: found ", report.fold_expression_count,
-			" FoldExpressionNode and ", report.pack_expansion_count,
-			" PackExpansionExprNode instances on the sema-owned AST surface; enforcing fold boundary before semantic normalization");
+		          "Post-parse boundary check: found ", report.fold_expression_count,
+		          " FoldExpressionNode and ", report.pack_expansion_count,
+		          " PackExpansionExprNode instances on the sema-owned AST surface; enforcing fold boundary before semantic normalization");
 	} else {
 		FLASH_LOG(General, Error,
-			"Post-parse boundary check: found ", report.pack_expansion_count,
-			" PackExpansionExprNode instances on the sema-owned AST surface; pack expansion is unsupported there before semantic normalization");
+		          "Post-parse boundary check: found ", report.pack_expansion_count,
+		          " PackExpansionExprNode instances on the sema-owned AST surface; pack expansion is unsupported there before semantic normalization");
 	}
 
 	for (const auto& sample : report.samples) {
 		FLASH_LOG(General, Error,
-			"  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
+		          "  sample ", sample.node_kind, " at ", sample.token.line(), ":", sample.token.column());
 	}
 
 	if (report.samples.size() < total_violations) {
 		FLASH_LOG(General, Error,
-			"  ... ", (total_violations - report.samples.size()),
-			" additional post-parse boundary sample(s) omitted");
+		          "  ... ", (total_violations - report.samples.size()),
+		          " additional post-parse boundary sample(s) omitted");
 	}
 
 	if (has_fold_violation) {
 		std::string message = "unexpanded FoldExpressionNode reached semantic analysis after parsing/template substitution";
 		if (first_fold_sample && first_fold_sample->token.line() > 0) {
 			message += " near line " + std::to_string(first_fold_sample->token.line()) +
-				":" + std::to_string(first_fold_sample->token.column());
+			           ":" + std::to_string(first_fold_sample->token.column());
 		}
 		throw InternalError(message);
 	}
 
 	if (has_pack_violation) {
 		std::string message =
-			"unsupported PackExpansionExprNode reached semantic analysis; pack expansion should have been eliminated during template substitution";
+		    "unsupported PackExpansionExprNode reached semantic analysis; pack expansion should have been eliminated during template substitution";
 		if (first_pack_sample && first_pack_sample->token.line() > 0) {
 			message += " near line " + std::to_string(first_pack_sample->token.line()) +
-				":" + std::to_string(first_pack_sample->token.column());
+			           ":" + std::to_string(first_pack_sample->token.column());
 		}
 		throw CompileError(message);
 	}
@@ -800,7 +796,7 @@ void logPostParseBoundaryReport(const PostParseBoundaryReport& report) {
 // --- SemanticAnalysis ---
 
 SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols)
-	: parser_(parser), context_(context), symbols_(symbols) {
+    : parser_(parser), context_(context), symbols_(symbols) {
 	(void)context_;
 	(void)symbols_;
 
@@ -825,15 +821,15 @@ void SemanticAnalysis::run() {
 	resolveRemainingAutoReturns();
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: pass complete - ",
-		stats_.roots_visited, " roots visited, ",
-		stats_.expressions_visited, " expressions, ",
-		stats_.statements_visited, " statements, ",
-		stats_.canonical_types_interned, " canonical types");
+	          stats_.roots_visited, " roots visited, ",
+	          stats_.expressions_visited, " expressions, ",
+	          stats_.statements_visited, " statements, ",
+	          stats_.canonical_types_interned, " canonical types");
 }
 
 std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(
-	const std::vector<ASTNode>& parameter_nodes,
-	const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const {
+    const std::vector<ASTNode>& parameter_nodes,
+    const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const {
 	if (deduced_types.empty()) {
 		return parameter_nodes;
 	}
@@ -919,8 +915,8 @@ void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaExpressi
 
 void SemanticAnalysis::registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info) {
 	const size_t binding_count = std::min(
-		lambda_info.outer_template_param_names.size(),
-		lambda_info.outer_template_args.size());
+	    lambda_info.outer_template_param_names.size(),
+	    lambda_info.outer_template_args.size());
 	for (size_t i = 0; i < binding_count; ++i) {
 		const StringHandle param_name = lambda_info.outer_template_param_names[i];
 		if (!param_name.isValid()) {
@@ -1038,12 +1034,12 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	}
 
 	lambda_info.resolved_param_nodes = normalizeGenericLambdaParams(
-		lambda_info.parameter_nodes,
-		lambda_info.deduced_auto_types);
+	    lambda_info.parameter_nodes,
+	    lambda_info.deduced_auto_types);
 
 	const auto& param_nodes = lambda_info.resolved_param_nodes.empty()
-		? lambda_info.parameter_nodes
-		: lambda_info.resolved_param_nodes;
+	                              ? lambda_info.parameter_nodes
+	                              : lambda_info.resolved_param_nodes;
 
 	symbols_.enter_scope(ScopeType::Function);
 	pushScope();
@@ -1074,8 +1070,8 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	for (const auto& capture_decl_node : lambda_info.captured_var_decls) {
 		if (const DeclarationNode* capture_decl = get_decl_from_symbol(capture_decl_node)) {
 			ASTNode symbol_node = capture_decl_node.is<DeclarationNode>()
-				? capture_decl_node
-				: ASTNode::emplace_node<DeclarationNode>(*capture_decl);
+			                          ? capture_decl_node
+			                          : ASTNode::emplace_node<DeclarationNode>(*capture_decl);
 			symbols_.insert(capture_decl->identifier_token().value(), symbol_node);
 			if (capture_decl->type_node().is<TypeSpecifierNode>()) {
 				const CanonicalTypeId tid = canonicalizeType(capture_decl->type_node().as<TypeSpecifierNode>());
@@ -1089,10 +1085,10 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 
 	if (isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
-			deduced_type.has_value()) {
+		    deduced_type.has_value()) {
 			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
 			lambda_info.returns_reference =
-				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
+			    deduced_type->is_reference() || deduced_type->is_rvalue_reference();
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);
 			lambda_info.return_size = lambda_info.returns_reference ? 64 : deduced_size;
 		}
@@ -1101,11 +1097,11 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 	SemanticContext lambda_ctx;
 	if (!isPlaceholderAutoType(lambda_info.return_type_index.category())) {
 		TypeSpecifierNode lambda_return_type(
-			lambda_info.return_type_index.withCategory(lambda_info.returnType()),
-			lambda_info.return_size,
-			lambda_info.lambda_token,
-			CVQualifier::None,
-			ReferenceQualifier::None);
+		    lambda_info.return_type_index.withCategory(lambda_info.returnType()),
+		    lambda_info.return_size,
+		    lambda_info.lambda_token,
+		    CVQualifier::None,
+		    ReferenceQualifier::None);
 		if (lambda_info.returns_reference) {
 			lambda_return_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			lambda_return_type.set_size_in_bits(64);
@@ -1117,14 +1113,14 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 }
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
-	const TypeSpecifierNode& deduced_type) const {
+                                                     const TypeSpecifierNode& deduced_type) const {
 	return resolveRangedForLoopDeclNode(original_var_decl, deduced_type);
 }
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
-	const TypeSpecifierNode& range_type,
-	const TypeSpecifierNode& begin_return_type,
-	const FunctionDeclarationNode* dereference_func) const {
+                                                     const TypeSpecifierNode& range_type,
+                                                     const TypeSpecifierNode& begin_return_type,
+                                                     const FunctionDeclarationNode* dereference_func) const {
 	if (!isPlaceholderAutoType(original_var_decl.declaration().type_node().as<TypeSpecifierNode>().type())) {
 		return original_var_decl.declaration_node();
 	}
@@ -1142,12 +1138,12 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 	}
 
 	throw InternalError(std::string(StringBuilder()
-		.append("Could not deduce range-for element type from iterator type '")
-		.append(begin_return_type.getReadableString())
-		.append("' for range type '")
-		.append(range_type.getReadableString())
-		.append("'")
-		.commit()));
+	                                    .append("Could not deduce range-for element type from iterator type '")
+	                                    .append(begin_return_type.getReadableString())
+	                                    .append("' for range type '")
+	                                    .append(range_type.getReadableString())
+	                                    .append("'")
+	                                    .commit()));
 }
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) {
@@ -1160,7 +1156,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	const ASTNode range_expr = stmt.get_range_expression();
 	std::optional<TypeSpecifierNode> range_type;
 	if (range_expr.is<ExpressionNode>() &&
-		std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
+	    std::holds_alternative<IdentifierNode>(range_expr.as<ExpressionNode>())) {
 		const auto& range_ident = std::get<IdentifierNode>(range_expr.as<ExpressionNode>());
 		const std::optional<ASTNode> range_symbol = symbols_.lookup(range_ident.name());
 		if (range_symbol.has_value()) {
@@ -1209,8 +1205,8 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::resolveRangedForIteratorDereference(
-	const TypeSpecifierNode& iterator_type,
-	bool prefer_const) const {
+    const TypeSpecifierNode& iterator_type,
+    bool prefer_const) const {
 	return getRangeIteratorDereferenceFunctionForSema(iterator_type, prefer_const);
 }
 
@@ -1251,7 +1247,7 @@ void SemanticAnalysis::resolveRemainingAutoReturnsInNode(ASTNode& node) {
 					}
 				}
 				if (auto deduced_type = deducePlaceholderReturnType(func.get_definition().value_or(ASTNode{}), return_type.type());
-					deduced_type.has_value()) {
+				    deduced_type.has_value()) {
 					func.decl_node().set_type_node(ASTNode::emplace_node<TypeSpecifierNode>(*deduced_type));
 					parser_.compute_and_set_mangled_name(func, true);
 				}
@@ -1357,7 +1353,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 				return false;
 			}
 			return visit_returns(stmt.get_then_statement()) &&
-				(!stmt.has_else() || visit_returns(stmt.get_else_statement().value()));
+			       (!stmt.has_else() || visit_returns(stmt.get_else_statement().value()));
 		}
 
 		if (node.is<ForStatementNode>()) {
@@ -1424,7 +1420,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 					auto guard = ScopeGuard([this]() { popScope(); });
 					const auto& catch_clause = handler.as<CatchClauseNode>();
 					if (catch_clause.exception_declaration().has_value() &&
-						catch_clause.exception_declaration()->is<DeclarationNode>()) {
+					    catch_clause.exception_declaration()->is<DeclarationNode>()) {
 						const auto& catch_decl = catch_clause.exception_declaration()->as<DeclarationNode>();
 						if (catch_decl.type_node().is<TypeSpecifierNode>()) {
 							const CanonicalTypeId tid = canonicalizeType(catch_decl.type_node().as<TypeSpecifierNode>());
@@ -1450,11 +1446,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::deducePlaceholderReturnType(c
 	}
 
 	return deduced_type.value_or(TypeSpecifierNode(
-		TypeCategory::Void,
-		TypeQualifier::None,
-		get_type_size_bits(TypeCategory::Void),
-		Token{},
-		CVQualifier::None));
+	    TypeCategory::Void,
+	    TypeQualifier::None,
+	    get_type_size_bits(TypeCategory::Void),
+	    Token{},
+	    CVQualifier::None));
 }
 
 TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory placeholder_type, const TypeSpecifierNode& deduced_type) const {
@@ -1464,25 +1460,21 @@ TypeSpecifierNode SemanticAnalysis::finalizePlaceholderDeduction(TypeCategory pl
 // --- Top-level dispatch ---
 
 void SemanticAnalysis::normalizeTopLevelNode(const ASTNode& node) {
-	if (!node.has_value()) return;
+	if (!node.has_value())
+		return;
 	stats_.roots_visited++;
 
 	if (node.is<FunctionDeclarationNode>()) {
 		normalizeFunctionDeclaration(node.as<FunctionDeclarationNode>());
-	}
-	else if (node.is<StructDeclarationNode>()) {
+	} else if (node.is<StructDeclarationNode>()) {
 		normalizeStructDeclaration(node.as<StructDeclarationNode>());
-	}
-	else if (node.is<NamespaceDeclarationNode>()) {
+	} else if (node.is<NamespaceDeclarationNode>()) {
 		normalizeNamespace(node.as<NamespaceDeclarationNode>());
-	}
-	else if (node.is<ConstructorDeclarationNode>()) {
+	} else if (node.is<ConstructorDeclarationNode>()) {
 		normalizeConstructorDeclaration(node.as<ConstructorDeclarationNode>());
-	}
-	else if (node.is<DestructorDeclarationNode>()) {
+	} else if (node.is<DestructorDeclarationNode>()) {
 		normalizeDestructorDeclaration(node.as<DestructorDeclarationNode>());
-	}
-	else if (node.is<VariableDeclarationNode>()) {
+	} else if (node.is<VariableDeclarationNode>()) {
 		auto& var = node.as<VariableDeclarationNode>();
 		const auto& init = var.initializer();
 		if (init.has_value()) {
@@ -1516,7 +1508,8 @@ void SemanticAnalysis::registerParametersInScope(const std::vector<ASTNode>& par
 
 void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNode& func) {
 	const auto& def = func.get_definition();
-	if (!def.has_value()) return;  // Forward declaration only
+	if (!def.has_value())
+		return; // Forward declaration only
 
 	// Hidden friends can also be queued as top-level declarations. Normalize each
 	// concrete body at most once so the enclosing-struct walk can own it without
@@ -1535,7 +1528,7 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 	std::optional<TypeIndex> member_context_type_index;
 	if (func.is_member_function()) {
 		if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(func.parent_struct_name());
-			type_info && type_info->getStructInfo()) {
+		    type_info && type_info->getStructInfo()) {
 			member_context_type_index = type_info->type_index_;
 			member_context_stack_.push_back(*member_context_type_index);
 		}
@@ -1557,8 +1550,10 @@ void SemanticAnalysis::normalizeFunctionDeclaration(const FunctionDeclarationNod
 
 void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarationNode& ctor) {
 	const auto& def = ctor.get_definition();
-	if (!def.has_value()) return;
-	if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) return;
+	if (!def.has_value())
+		return;
+	if (ctor.struct_name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos)
+		return;
 
 	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
 		return;
@@ -1568,7 +1563,7 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 	std::optional<TypeIndex> member_context_type_index;
 	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(ctor.struct_name().view());
-		type_info && type_info->getStructInfo()) {
+	    type_info && type_info->getStructInfo()) {
 		member_context_type_index = type_info->type_index_;
 		member_context_stack_.push_back(*member_context_type_index);
 	}
@@ -1607,7 +1602,8 @@ void SemanticAnalysis::normalizeConstructorDeclaration(const ConstructorDeclarat
 
 void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclarationNode& dtor) {
 	const auto& def = dtor.get_definition();
-	if (!def.has_value()) return;
+	if (!def.has_value())
+		return;
 
 	if (!normalized_bodies_.insert(static_cast<const void*>(&(*def))).second) {
 		return;
@@ -1617,7 +1613,7 @@ void SemanticAnalysis::normalizeDestructorDeclaration(const DestructorDeclaratio
 
 	std::optional<TypeIndex> member_context_type_index;
 	if (const TypeInfo* type_info = findStructTypeInfoByNameFragment(dtor.struct_name().view());
-		type_info && type_info->getStructInfo()) {
+	    type_info && type_info->getStructInfo()) {
 		member_context_type_index = type_info->type_index_;
 		member_context_stack_.push_back(*member_context_type_index);
 	}
@@ -1669,15 +1665,14 @@ void SemanticAnalysis::normalizeStructDeclaration(const StructDeclarationNode& d
 	// Walk member function bodies (includes constructors and destructors)
 	for (const auto& member_func : decl.member_functions()) {
 		const auto& func_node = member_func.function_declaration;
-		if (!func_node.has_value()) continue;
+		if (!func_node.has_value())
+			continue;
 
 		if (member_func.is_constructor && func_node.is<ConstructorDeclarationNode>()) {
 			normalizeConstructorDeclaration(func_node.as<ConstructorDeclarationNode>());
-		}
-		else if (member_func.is_destructor && func_node.is<DestructorDeclarationNode>()) {
+		} else if (member_func.is_destructor && func_node.is<DestructorDeclarationNode>()) {
 			normalizeDestructorDeclaration(func_node.as<DestructorDeclarationNode>());
-		}
-		else if (func_node.is<FunctionDeclarationNode>()) {
+		} else if (func_node.is<FunctionDeclarationNode>()) {
 			normalizeFunctionDeclaration(func_node.as<FunctionDeclarationNode>());
 		}
 	}
@@ -1714,7 +1709,8 @@ void SemanticAnalysis::normalizeNamespace(const NamespaceDeclarationNode& ns) {
 // --- Statement handler ---
 
 void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticContext& ctx) {
-	if (!node.has_value()) return;
+	if (!node.has_value())
+		return;
 	stats_.statements_visited++;
 
 	if (node.is<BlockNode>()) {
@@ -1727,11 +1723,9 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		} else {
 			normalizeBlock(block, ctx);
 		}
-	}
-	else if (node.is<ExpressionNode>()) {
+	} else if (node.is<ExpressionNode>()) {
 		normalizeExpression(node, ctx);
-	}
-	else if (node.is<ReturnStatementNode>()) {
+	} else if (node.is<ReturnStatementNode>()) {
 		const auto& ret = node.as<ReturnStatementNode>();
 		const auto& expr = ret.expression();
 		if (expr.has_value()) {
@@ -1742,14 +1736,13 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			normalizeExpression(*expr, ctx);
 		}
-	}
-	else if (node.is<VariableDeclarationNode>()) {
+	} else if (node.is<VariableDeclarationNode>()) {
 		const auto& var = node.as<VariableDeclarationNode>();
 		registerOuterTemplateBindingsInScope(var);
 		// Record local variable type in the current scope for expression inference
 		const auto& decl = var.declaration();
 		const ASTNode vtype = decl.type_node();
-		CanonicalTypeId decl_type_id{};  // default: invalid (value==0)
+		CanonicalTypeId decl_type_id{}; // default: invalid (value==0)
 		if (vtype.has_value() && vtype.is<TypeSpecifierNode>()) {
 			decl_type_id = canonicalizeType(vtype.as<TypeSpecifierNode>());
 			const StringHandle vname = decl.identifier_token().handle();
@@ -1775,15 +1768,14 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// Annotate the initializer with any needed implicit conversion to the declared type.
 			if (decl_type_id) {
 				if (!tryAnnotateCopyInitConvertingConstructor(*init, decl_type_id,
-						" in variable initialization")) {
+				                                              " in variable initialization")) {
 					tryAnnotateConversion(*init, decl_type_id);
 					diagnoseScopedEnumConversion(*init, decl_type_id, " in variable initialization");
 				}
 			}
 			normalizeExpression(*init, ctx);
 		}
-	}
-	else if (node.is<IfStatementNode>()) {
+	} else if (node.is<IfStatementNode>()) {
 		const auto& stmt = node.as<IfStatementNode>();
 		// C++17 [stmt.if]/2: variables declared in the init-statement go out of
 		// scope at the end of the if statement.  Push/pop a scope to mirror this.
@@ -1799,8 +1791,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeStatement(stmt.get_else_statement().value(), ctx);
 		}
 		popScope();
-	}
-	else if (node.is<ForStatementNode>()) {
+	} else if (node.is<ForStatementNode>()) {
 		const auto& stmt = node.as<ForStatementNode>();
 		// C++20 [stmt.for]/1: the init-statement's scope extends to the end of
 		// the for statement.  Push/pop a scope to prevent type leakage.
@@ -1818,27 +1809,23 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 		normalizeStatement(stmt.get_body_statement(), ctx);
 		popScope();
-	}
-	else if (node.is<WhileStatementNode>()) {
+	} else if (node.is<WhileStatementNode>()) {
 		const auto& stmt = node.as<WhileStatementNode>();
 		// C++20 [stmt.while]: the condition is contextually converted to bool.
 		tryAnnotateContextualBool(stmt.get_condition());
 		normalizeExpression(stmt.get_condition(), ctx);
 		normalizeStatement(stmt.get_body_statement(), ctx);
-	}
-	else if (node.is<DoWhileStatementNode>()) {
+	} else if (node.is<DoWhileStatementNode>()) {
 		const auto& stmt = node.as<DoWhileStatementNode>();
 		normalizeStatement(stmt.get_body_statement(), ctx);
 		// C++20 [stmt.do]: the condition is contextually converted to bool.
 		tryAnnotateContextualBool(stmt.get_condition());
 		normalizeExpression(stmt.get_condition(), ctx);
-	}
-	else if (node.is<SwitchStatementNode>()) {
+	} else if (node.is<SwitchStatementNode>()) {
 		const auto& stmt = node.as<SwitchStatementNode>();
 		normalizeExpression(stmt.get_condition(), ctx);
 		normalizeStatement(stmt.get_body(), ctx);
-	}
-	else if (node.is<RangedForStatementNode>()) {
+	} else if (node.is<RangedForStatementNode>()) {
 		const auto& stmt = node.as<RangedForStatementNode>();
 		pushScope();
 		if (stmt.has_init_statement()) {
@@ -1859,8 +1846,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		}
 		normalizeStatement(stmt.get_body_statement(), ctx);
 		popScope();
-	}
-	else if (node.is<TryStatementNode>()) {
+	} else if (node.is<TryStatementNode>()) {
 		const auto& stmt = node.as<TryStatementNode>();
 		normalizeStatement(stmt.try_block(), ctx);
 		for (const auto& handler : stmt.catch_clauses()) {
@@ -1868,8 +1854,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 				normalizeStatement(handler.as<CatchClauseNode>().body(), ctx);
 			}
 		}
-	}
-	else if (node.is<SehTryExceptStatementNode>()) {
+	} else if (node.is<SehTryExceptStatementNode>()) {
 		const auto& stmt = node.as<SehTryExceptStatementNode>();
 		normalizeStatement(stmt.try_block(), ctx);
 		const auto& except_clause = stmt.except_clause();
@@ -1886,8 +1871,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			// Visit except body
 			normalizeStatement(clause.body(), ctx);
 		}
-	}
-	else if (node.is<SehTryFinallyStatementNode>()) {
+	} else if (node.is<SehTryFinallyStatementNode>()) {
 		const auto& stmt = node.as<SehTryFinallyStatementNode>();
 		normalizeStatement(stmt.try_block(), ctx);
 		const auto& finally_clause = stmt.finally_clause();
@@ -1910,7 +1894,8 @@ void SemanticAnalysis::normalizeBlock(const BlockNode& block, const SemanticCont
 // --- Expression handler (Phase 2: counting + type inference for annotatable nodes) ---
 
 SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, const SemanticContext& ctx) {
-	if (!node.has_value()) return {};
+	if (!node.has_value())
+		return {};
 	stats_.expressions_visited++;
 
 	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
@@ -1923,24 +1908,24 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
 				const bool is_arithmetic =
-					op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
+				    op == "+" || op == "-" || op == "*" || op == "/" || op == "%";
 				// C++20 [expr.bit.and], [expr.bit.or], [expr.bit.xor]:
 				// usual arithmetic conversions are performed on the operands.
 				const bool is_bitwise =
-					op == "&" || op == "|" || op == "^";
+				    op == "&" || op == "|" || op == "^";
 				const bool is_comparison =
-					op == "<" || op == ">" || op == "<=" || op == ">=" ||
-					op == "==" || op == "!=";
+				    op == "<" || op == ">" || op == "<=" || op == ">=" ||
+				    op == "==" || op == "!=";
 				const bool is_logical = op == "&&" || op == "||";
 				// C++20 [expr.shift]: shift operands undergo independent integral
 				// promotions, NOT usual arithmetic conversions.
 				const bool is_shift =
-					op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
+				    op == "<<" || op == ">>" || op == "<<=" || op == ">>=";
 				const bool is_compound_assign = isCompoundAssignmentOp(op);
 				const bool needs_binary_type_inference =
-					(is_arithmetic || is_bitwise || is_comparison || is_compound_assign || is_shift) &&
-					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>();
+				    (is_arithmetic || is_bitwise || is_comparison || is_compound_assign || is_shift) &&
+				    e.get_lhs().template is<ExpressionNode>() &&
+				    e.get_rhs().template is<ExpressionNode>();
 				CanonicalTypeId lhs_type_id{};
 				CanonicalTypeId rhs_type_id{};
 				if (needs_binary_type_inference) {
@@ -1958,7 +1943,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					if (is_compound_assign && lhs_type_id) {
 						const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 						if (!lhs_desc.pointer_levels.empty() || lhs_desc.category() == TypeCategory::Struct ||
-							lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
+						    lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
 							// Skip non-primitive types
 						} else {
 							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
@@ -1974,10 +1959,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							}
 						}
 					}
-				}
-				else if ((is_arithmetic || is_bitwise || is_comparison ||
-					(is_compound_assign && !is_shift)) &&
-					needs_binary_type_inference) {
+				} else if ((is_arithmetic || is_bitwise || is_comparison ||
+				            (is_compound_assign && !is_shift)) &&
+				           needs_binary_type_inference) {
 					tryAnnotateBinaryOperandConversions(e, lhs_type_id, rhs_type_id);
 					// C++20 [expr.ass]/7: compound assignment back-conversion
 					// from common type to LHS type. Annotate so codegen can verify.
@@ -1993,20 +1977,19 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 				// For simple assignment, annotate the RHS with the LHS type.
 				if (op == "=" &&
-					e.get_lhs().template is<ExpressionNode>() &&
-					e.get_rhs().template is<ExpressionNode>()) {
+				    e.get_lhs().template is<ExpressionNode>() &&
+				    e.get_rhs().template is<ExpressionNode>()) {
 					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
 					if (lhs_id) {
 						const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
 						tryAnnotateConversion(e.get_rhs(), lhs_id, rhs_id);
 						diagnoseScopedEnumConversion(e.get_rhs(), lhs_id,
-							" in assignment", rhs_id);
+						                             " in assignment", rhs_id);
 					}
 				}
 				normalizeExpression(e.get_lhs(), ctx);
 				normalizeExpression(e.get_rhs(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				// C++20 [expr.unary.op]/9: the operand of ! is contextually
 				// converted to bool.
 				if (e.op() == "!") {
@@ -2018,8 +2001,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					tryAnnotateUnaryOperandPromotion(e);
 				}
 				normalizeExpression(e.get_operand(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/1: the condition is contextually converted to bool.
 				tryAnnotateContextualBool(e.condition());
 				// C++20 [expr.cond]/7: usual arithmetic conversions on branches.
@@ -2027,49 +2009,40 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				tryAnnotateCallArgConversions(e);
 				tryResolveCallableOperator(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				tryAnnotateMemberFunctionCallArgConversions(e);
 				normalizeExpression(e.object(), ctx);
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				normalizeExpression(e.array_expr(), ctx);
 				normalizeExpression(e.index_expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, SizeofExprNode>) {
+			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
 				if (!e.is_type()) {
 					normalizeExpression(e.type_or_expr(), ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, AlignofExprNode>) {
+			} else if constexpr (std::is_same_v<T, AlignofExprNode>) {
 				if (!e.is_type()) {
 					normalizeExpression(e.type_or_expr(), ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
 				if (e.size_expr().has_value()) {
 					normalizeExpression(*e.size_expr(), ctx);
 				}
@@ -2079,28 +2052,21 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				for (const auto& arg : e.placement_args()) {
 					normalizeExpression(arg, ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, StaticCastNode>) {
+			} else if constexpr (std::is_same_v<T, StaticCastNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, ConstCastNode>) {
+			} else if constexpr (std::is_same_v<T, ConstCastNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
+			} else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, TypeidNode>) {
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
 				if (!e.is_type()) {
 					normalizeExpression(e.operand(), ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				for (const auto& capture : e.captures()) {
 					// Non-init captures are stored as identifier tokens only; the
 					// initializer is the only child expression carried by the node.
@@ -2116,9 +2082,9 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				// deduction is handled by codegen).
 				SemanticContext lambda_ctx;
 				if (e.return_type().has_value() &&
-					e.return_type()->template is<TypeSpecifierNode>()) {
+				    e.return_type()->template is<TypeSpecifierNode>()) {
 					lambda_ctx.current_function_return_type_id =
-						canonicalizeType(e.return_type()->template as<TypeSpecifierNode>());
+					    canonicalizeType(e.return_type()->template as<TypeSpecifierNode>());
 				}
 				// Push a scope for lambda parameters so they are visible inside
 				// the body but do not leak into the enclosing scope.
@@ -2140,36 +2106,30 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 						if (decl.has_default_value()) {
 							normalizeExpression(decl.default_value(), lambda_ctx);
 						}
-					}
-					else {
+					} else {
 						throw InternalError("Lambda parameter must be a DeclarationNode");
 					}
 				}
 				normalizeStatement(e.body(), lambda_ctx);
 				popScope();
-			}
-			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				// Phase 4: unreachable after pre-sema boundary check.
 				throw InternalError(
-					"FoldExpressionNode reached SemanticAnalysis::normalizeExpression after post-parse boundary enforcement");
-			}
-			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+				    "FoldExpressionNode reached SemanticAnalysis::normalizeExpression after post-parse boundary enforcement");
+			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				// PackExpansionExprNode in a function body: this can occur legitimately
 				// for template member functions (like emplace<_Args...>) whose own
 				// variadic params haven't been resolved yet.  Leave the node as-is;
 				// it will be properly handled when the function is instantiated with
 				// concrete template arguments.
 				(void)e;
-			}
-			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				normalizeExpression(e.expr(), ctx);
-			}
-			else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				for (const auto& element : e.elements()) {
 					normalizeExpression(element, ctx);
 				}
-			}
-			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				if (e.expression().has_value()) {
 					normalizeExpression(*e.expression(), ctx);
 				}
@@ -2178,7 +2138,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			// NumericLiteralNode, BoolLiteralNode, SizeofPackNode, OffsetofExprNode,
 			// TypeTraitExprNode, TemplateParameterReferenceNode, PseudoDestructorCallNode)
 			// do not recurse into child expressions here.
-		}, expr);
+		},
+		           expr);
 	}
 
 	return {};
@@ -2255,8 +2216,8 @@ CastInfoIndex SemanticAnalysis::allocateCastInfo(const ImplicitCastInfo& info) {
 }
 
 CastInfoIndex SemanticAnalysis::allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
-	CanonicalTypeId target_type_id,
-	StandardConversionKind cast_kind) {
+                                                               CanonicalTypeId target_type_id,
+                                                               StandardConversionKind cast_kind) {
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = source_type_id;
 	cast_info.target_type_id = target_type_id;
@@ -2293,7 +2254,8 @@ CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
 // --- Expression type inference ---
 
 CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
-	if (!node.has_value()) return {};
+	if (!node.has_value())
+		return {};
 
 	if (node.is<ExpressionNode>()) {
 		const auto& expr = node.as<ExpressionNode>();
@@ -2303,15 +2265,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(e.type());
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
+			} else if constexpr (std::is_same_v<T, BoolLiteralNode>) {
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, IdentifierNode>) {
+			} else if constexpr (std::is_same_v<T, IdentifierNode>) {
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
-				if (local_id) return local_id;
+				if (local_id)
+					return local_id;
 
 				auto infer_symbol_type = [&](const ASTNode& symbol) -> CanonicalTypeId {
 					const DeclarationNode* decl = nullptr;
@@ -2362,19 +2323,19 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 
 				if (e.binding() == IdentifierBinding::NonStaticMember &&
-					!member_context_stack_.empty()) {
+				    !member_context_stack_.empty()) {
 					const TypeIndex current_struct_type = member_context_stack_.back();
 					if (const TypeInfo* type_info = tryGetTypeInfo(current_struct_type)) {
 						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {
 							if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, e.nameHandle())) {
 								return type_context_.intern(canonicalTypeDescFromStructMember(
-									*member_result.member, CVQualifier::None));
+								    *member_result.member, CVQualifier::None));
 							}
 							for (const auto& member : struct_info->members) {
 								if (member.getName() == e.nameHandle()) {
 									return type_context_.intern(canonicalTypeDescFromStructMember(
-										member, CVQualifier::None));
+									    member, CVQualifier::None));
 								}
 							}
 						}
@@ -2382,32 +2343,29 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+			} else if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
 				const CanonicalTypeId param_id = lookupLocalType(e.param_name());
-				if (param_id) return param_id;
+				if (param_id)
+					return param_id;
 				// Phase 5 (boundary plan Workstream 2): after Phase 3, outer-template bindings
 				// are seeded for all instantiated function/lambda/struct/variable bodies, so
 				// this path indicates either a not-yet-migrated context or a valid unsupported
 				// template form. Log at Debug level to make unresolved cases observable.
 				FLASH_LOG(Templates, Debug,
-					"SemanticAnalysis: TemplateParameterReferenceNode '",
-					StringTable::getStringView(e.param_name()),
-					"' not resolved via sema-owned scope — returning empty type");
+				          "SemanticAnalysis: TemplateParameterReferenceNode '",
+				          StringTable::getStringView(e.param_name()),
+				          "' not resolved via sema-owned scope — returning empty type");
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, FoldExpressionNode>) {
 				// Phase 4: unreachable after pre-sema boundary check.
 				throw InternalError(
-					"FoldExpressionNode reached SemanticAnalysis::inferExpressionType after post-parse boundary enforcement");
-			}
-			else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
+				    "FoldExpressionNode reached SemanticAnalysis::inferExpressionType after post-parse boundary enforcement");
+			} else if constexpr (std::is_same_v<T, PackExpansionExprNode>) {
 				// PackExpansionExprNode in a function body: occurs legitimately
 				// for template member functions with unresolved variadic params.
 				// Return empty type; will be resolved when function is instantiated.
 				(void)e;
-			}
-			else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {
 					return {};
@@ -2429,8 +2387,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
 				}
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
 				if (!member_pointer_type_id) {
 					return {};
@@ -2441,12 +2398,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					result_desc.pointer_levels.pop_back();
 				}
 				return type_context_.intern(result_desc);
-			}
-			else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				// Array subscript: the result type is the element type of the array.
 				// Infer the array expression type and strip one array dimension.
 				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
-				if (!array_type_id) return {};
+				if (!array_type_id)
+					return {};
 				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
 				// If it has array dimensions, strip one to get element type.
 				if (!array_desc.array_dimensions.empty()) {
@@ -2464,19 +2421,18 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				// Plain type subscript (e.g. overloaded operator[]) — return base type.
 				return array_type_id;
-			}
-			else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				const std::string_view op = e.op();
 				// Unary +, - and ~ apply integral promotion: types with rank < int become int.
 				if (op == "+" || op == "-" || op == "~") {
 					const CanonicalTypeId operand_id = inferExpressionType(e.get_operand());
-					if (!operand_id) return {};
+					if (!operand_id)
+						return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
 					// Resolve enum to underlying type
 					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
 					const bool is_small_int =
-						(isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool)
-						&& get_integer_rank(operand_cat) < 3;  // rank of int
+					    (isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool) && get_integer_rank(operand_cat) < 3; // rank of int
 					if (is_small_int) {
 						CanonicalTypeDesc promoted;
 						promoted.type_index = nativeTypeIndex(TypeCategory::Int);
@@ -2497,58 +2453,65 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return inferExpressionType(e.get_operand());
 				}
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
 				const std::string_view op = e.op();
 				// Comparison and logical operators always produce bool
 				if (op == "==" || op == "!=" || op == "<" || op == ">" ||
-					op == "<=" || op == ">=" || op == "&&" || op == "||")
-				{
+				    op == "<=" || op == ">=" || op == "&&" || op == "||") {
 					CanonicalTypeDesc desc;
 					desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 					return type_context_.intern(desc);
 				}
 				// Comma: result is the RHS type
-				if (op == ",") return inferExpressionType(e.get_rhs());
+				if (op == ",")
+					return inferExpressionType(e.get_rhs());
 				// Assignment: result is LHS type (lvalue of LHS)
 				if (op == "=" || op == "+=" || op == "-=" || op == "*=" ||
-					op == "/=" || op == "%=" || op == "&=" || op == "|=" ||
-					op == "^=" || op == "<<=" || op == ">>=")
+				    op == "/=" || op == "%=" || op == "&=" || op == "|=" ||
+				    op == "^=" || op == "<<=" || op == ">>=")
 					return inferExpressionType(e.get_lhs());
 				// Arithmetic/bitwise: usual arithmetic conversions
 				{
 					const CanonicalTypeId lhs_id = inferExpressionType(e.get_lhs());
 					const CanonicalTypeId rhs_id = inferExpressionType(e.get_rhs());
-					if (!lhs_id || !rhs_id) return {};
+					if (!lhs_id || !rhs_id)
+						return {};
 					const CanonicalTypeDesc& l = type_context_.get(lhs_id);
 					const CanonicalTypeDesc& r = type_context_.get(rhs_id);
-					if (l.category() == TypeCategory::Invalid || r.category() == TypeCategory::Invalid) return {};
-					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category())) return {};
-					if (!l.pointer_levels.empty()   || !r.pointer_levels.empty())    return {};
+					if (l.category() == TypeCategory::Invalid || r.category() == TypeCategory::Invalid)
+						return {};
+					if (isPlaceholderAutoType(l.category()) || isPlaceholderAutoType(r.category()))
+						return {};
+					if (!l.pointer_levels.empty() || !r.pointer_levels.empty())
+						return {};
 					const TypeCategory common_cat = get_common_type(l.category(), r.category());
-					if (common_cat == TypeCategory::Invalid) return {};
+					if (common_cat == TypeCategory::Invalid)
+						return {};
 					CanonicalTypeDesc desc;
 					desc.type_index = nativeTypeIndex(common_cat);
 					return type_context_.intern(desc);
 				}
-			}
-			else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
+			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 				// C++20 [expr.cond]/7: result type is the common type of the two branches.
 				const CanonicalTypeId t_id = inferExpressionType(e.true_expr());
 				const CanonicalTypeId f_id = inferExpressionType(e.false_expr());
-				if (!t_id || !f_id) return {};
-				if (canonical_types_match(t_id, f_id)) return t_id;
+				if (!t_id || !f_id)
+					return {};
+				if (canonical_types_match(t_id, f_id))
+					return t_id;
 				const CanonicalTypeDesc& t_desc = type_context_.get(t_id);
 				const CanonicalTypeDesc& f_desc = type_context_.get(f_id);
-				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct) return {};
-				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty()) return {};
+				if (t_desc.category() == TypeCategory::Struct || f_desc.category() == TypeCategory::Struct)
+					return {};
+				if (!t_desc.pointer_levels.empty() || !f_desc.pointer_levels.empty())
+					return {};
 				const TypeCategory common_cat = get_common_type(t_desc.category(), f_desc.category());
-				if (common_cat == TypeCategory::Invalid) return {};
+				if (common_cat == TypeCategory::Invalid)
+					return {};
 				CanonicalTypeDesc ternary_desc;
 				ternary_desc.type_index = nativeTypeIndex(common_cat);
 				return type_context_.intern(ternary_desc);
-			}
-			else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
 					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
 					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
@@ -2576,7 +2539,8 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 				const StringHandle callee_name = decl.identifier_token().handle();
 				const CanonicalTypeId callee_type_id = callee_name.isValid() ? lookupLocalType(callee_name) : CanonicalTypeId{};
-				if (!callee_type_id) return {};
+				if (!callee_type_id)
+					return {};
 
 				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
 				if (callee_desc.category() == TypeCategory::Struct) {
@@ -2588,65 +2552,57 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 
 					for (const auto& member_func : struct_info->member_functions) {
 						if (member_func.operator_kind == OverloadableOperator::Call &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
+						    member_func.function_decl.is<FunctionDeclarationNode>()) {
 							return canonicalizeType(
-								member_func.function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>());
+							    member_func.function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>());
 						}
 					}
 				}
 
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
 				return canonicalizeType(e.function_declaration().decl_node().type_node().template as<TypeSpecifierNode>());
-			}
-			else if constexpr (std::is_same_v<T, StaticCastNode> ||
-			                   std::is_same_v<T, ConstCastNode> ||
-			                   std::is_same_v<T, ReinterpretCastNode>) {
+			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+			                     std::is_same_v<T, ConstCastNode> ||
+			                     std::is_same_v<T, ReinterpretCastNode>) {
 				// Explicit casts: the result type is the declared target type.
 				const ASTNode& tt = e.target_type();
 				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
 					return canonicalizeType(tt.template as<TypeSpecifierNode>());
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, SizeofExprNode> ||
-			                   std::is_same_v<T, SizeofPackNode> ||
-			                   std::is_same_v<T, AlignofExprNode>) {
+			} else if constexpr (std::is_same_v<T, SizeofExprNode> ||
+			                     std::is_same_v<T, SizeofPackNode> ||
+			                     std::is_same_v<T, AlignofExprNode>) {
 				// sizeof, sizeof... and alignof always return size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, TypeidNode>) {
+			} else if constexpr (std::is_same_v<T, TypeidNode>) {
 				// The current backend models typeid as producing a const void* handle.
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				// Constructor call returns the type being constructed.
 				const ASTNode& type_node = e.type_node();
 				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>())
 					return canonicalizeType(type_node.template as<TypeSpecifierNode>());
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
 				const ASTNode& target_type_node = e.target_type();
 				if (target_type_node.has_value() && target_type_node.template is<TypeSpecifierNode>())
 					return canonicalizeType(target_type_node.template as<TypeSpecifierNode>());
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+			} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
 				// String literal has type "const char*" (array of const char).
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Char);
 				desc.base_cv = CVQualifier::Const;
 				desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+			} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 				NamespaceHandle ns_handle = e.namespace_handle();
 				if (!ns_handle.isGlobal()) {
 					std::string_view owner_name = gNamespaceRegistry.getName(ns_handle);
@@ -2677,32 +2633,27 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+			} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
 				const ASTNode& tt = e.target_type();
 				if (tt.has_value() && tt.template is<TypeSpecifierNode>())
 					return canonicalizeType(tt.template as<TypeSpecifierNode>());
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
+			} else if constexpr (std::is_same_v<T, OffsetofExprNode>) {
 				// offsetof returns size_t (UnsignedLongLong on 64-bit).
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::UnsignedLongLong);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
 				// noexcept(expr) returns bool.
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
+			} else if constexpr (std::is_same_v<T, TypeTraitExprNode>) {
 				// Type trait intrinsics return bool (e.g., __is_integral(T)).
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Bool);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, NewExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, NewExpressionNode>) {
 				// C++20 [expr.new]: new T returns T*; new T[n] returns T*.
 				const ASTNode& type_node = e.type_node();
 				if (type_node.has_value() && type_node.template is<TypeSpecifierNode>()) {
@@ -2714,19 +2665,16 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, DeleteExpressionNode>) {
 				// C++20 [expr.delete]: delete-expression is a void expression.
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
+			} else if constexpr (std::is_same_v<T, PseudoDestructorCallNode>) {
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
-			}
-			else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				// Lambda expression: its type is a unique closure class.
 				// Look up the generated __lambda_N struct in getTypesByNameMap().
 				const StringHandle lambda_name = e.generate_lambda_name();
@@ -2738,15 +2686,15 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return type_context_.intern(desc);
 				}
 				return {};
-			}
-			else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
+			} else if constexpr (std::is_same_v<T, ThrowExpressionNode>) {
 				// C++20 [expr.throw]: a throw-expression is of type void.
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			}
 			return {};
-		}, expr);
+		},
+		                  expr);
 	}
 
 	// Handle old-style nodes stored directly (not wrapped in ExpressionNode)
@@ -2765,16 +2713,18 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(
-	const ASTNode& arg,
-	CanonicalTypeId* inferred_type_id) {
+    const ASTNode& arg,
+    CanonicalTypeId* inferred_type_id) {
 	if (const CanonicalTypeId inferred_id = inferExpressionType(arg)) {
-		if (inferred_type_id) *inferred_type_id = inferred_id;
+		if (inferred_type_id)
+			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
 		adjust_argument_type_for_overload_resolution(arg, arg_type);
 		return arg_type;
 	}
 
-	if (inferred_type_id) *inferred_type_id = {};
+	if (inferred_type_id)
+		*inferred_type_id = {};
 	return std::nullopt;
 }
 
@@ -2782,19 +2732,24 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 // C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 
 void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
-	CanonicalTypeId target_type_id,
-	const char* context_description,
-	CanonicalTypeId expr_type_id) {
-	if (!target_type_id || !expr_node.is<ExpressionNode>()) return;
-	if (!expr_type_id) expr_type_id = inferExpressionType(expr_node);
-	if (!expr_type_id || expr_type_id == target_type_id) return;
+                                                    CanonicalTypeId target_type_id,
+                                                    const char* context_description,
+                                                    CanonicalTypeId expr_type_id) {
+	if (!target_type_id || !expr_node.is<ExpressionNode>())
+		return;
+	if (!expr_type_id)
+		expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id || expr_type_id == target_type_id)
+		return;
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (from_desc.category() != TypeCategory::Enum) return;
+	if (from_desc.category() != TypeCategory::Enum)
+		return;
 	// Skip when both sides are the same enum type (same-type comparison/assignment is fine).
-	if (to_desc.category() == TypeCategory::Enum && from_desc.type_index == to_desc.type_index) return;
+	if (to_desc.category() == TypeCategory::Enum && from_desc.type_index == to_desc.type_index)
+		return;
 	if (const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index)) {
 		if (const EnumTypeInfo* ei = from_type_info->getEnumInfo()) {
 			if (ei->is_scoped) {
@@ -2809,9 +2764,9 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 				if (target_name.empty())
 					target_name = getTypeName(to_desc.category());
 				throw CompileError("cannot implicitly convert from scoped enum '" +
-					std::string(StringTable::getStringView(ei->name)) +
-					"' to '" + target_name +
-					"'" + std::string(context_description) + "; use static_cast");
+				                   std::string(StringTable::getStringView(ei->name)) +
+				                   "' to '" + target_name +
+				                   "'" + std::string(context_description) + "; use static_cast");
 			}
 		}
 	}
@@ -2822,7 +2777,8 @@ void SemanticAnalysis::diagnoseScopedEnumConversion(const ASTNode& expr_node,
 // of the same scoped enum type.  Any other binary operator usage is ill-formed.
 
 static bool isScopedEnum(const CanonicalTypeDesc& desc) {
-	if (desc.category() != TypeCategory::Enum) return false;
+	if (desc.category() != TypeCategory::Enum)
+		return false;
 	if (const TypeInfo* type_info = tryGetTypeInfo(desc.type_index)) {
 		if (const EnumTypeInfo* ei = type_info->getEnumInfo())
 			return ei->is_scoped;
@@ -2839,36 +2795,42 @@ static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
 }
 
 void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
-	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
-	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
-	if (!lhs_type_id || !rhs_type_id) return;
+                                                        CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id)
+		lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id)
+		rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id)
+		return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
 	const bool lhs_scoped = isScopedEnum(lhs_desc);
 	const bool rhs_scoped = isScopedEnum(rhs_desc);
-	if (!lhs_scoped && !rhs_scoped) return;
+	if (!lhs_scoped && !rhs_scoped)
+		return;
 
 	const std::string_view op = bin_op.op();
 
 	// Same scoped enum type: relational and equality comparisons are valid.
 	if (lhs_scoped && rhs_scoped &&
-		lhs_desc.category() == rhs_desc.category() &&
-		lhs_desc.type_index == rhs_desc.type_index) {
+	    lhs_desc.category() == rhs_desc.category() &&
+	    lhs_desc.type_index == rhs_desc.type_index) {
 		const bool is_comparison =
-			op == "==" || op == "!=" || op == "<" || op == ">" ||
-			op == "<=" || op == ">=";
-		if (is_comparison) return;  // valid same-type scoped enum comparison
+		    op == "==" || op == "!=" || op == "<" || op == ">" ||
+		    op == "<=" || op == ">=";
+		if (is_comparison)
+			return; // valid same-type scoped enum comparison
 	}
 
 	// All other binary ops with a scoped enum operand are ill-formed.
 	const std::string enum_name = lhs_scoped
-		? getScopedEnumName(lhs_desc) : getScopedEnumName(rhs_desc);
+	                                  ? getScopedEnumName(lhs_desc)
+	                                  : getScopedEnumName(rhs_desc);
 	throw CompileError("invalid operands to binary expression involving scoped enum '" +
-		enum_name + "' with operator '" + std::string(op) +
-		"'; use static_cast for explicit conversion");
+	                   enum_name + "' with operator '" + std::string(op) +
+	                   "'; use static_cast for explicit conversion");
 }
 
 // --- Conversion operator existence helper (Phase 5, Phase 21 Item 2) ---
@@ -2880,17 +2842,19 @@ void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode
 // Mirrors the operator-existence logic in AstToIr::findConversionOperator, but is
 // sema-owned and avoids interning new strings (uses string_view comparison only).
 static bool structHasConversionOperatorTo(
-	const CanonicalTypeDesc& from_desc,
-	const CanonicalTypeDesc& to_desc,
-	int depth = 0) {
+    const CanonicalTypeDesc& from_desc,
+    const CanonicalTypeDesc& to_desc,
+    int depth = 0) {
 	// Guard against infinite recursion in pathological inheritance graphs.
 	static constexpr int kMaxInheritanceDepth = 8;
-	if (depth > kMaxInheritanceDepth) return false;
+	if (depth > kMaxInheritanceDepth)
+		return false;
 	const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index);
 	if (!from_type_info)
 		return false;
 	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
-	if (!struct_info) return false;
+	if (!struct_info)
+		return false;
 
 	// Determine the expected "operator X" suffix.
 	std::string_view target_name;
@@ -2901,7 +2865,8 @@ static bool structHasConversionOperatorTo(
 		target_name = StringTable::getStringView(to_type_info->name());
 	} else {
 		target_name = getTypeName(to_desc.category());
-		if (target_name.empty()) return false;
+		if (target_name.empty())
+			return false;
 	}
 
 	// Scan direct member functions for "operator TARGET".
@@ -2920,15 +2885,18 @@ static bool structHasConversionOperatorTo(
 		// accepting, to avoid spurious annotations for unrelated type-aliased operators
 		// (Devin Phase 5 review: return-type verification for operator user_defined).
 		if (mf_name == kUserDefinedOperator) {
-			if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+			if (!mf.function_decl.is<FunctionDeclarationNode>())
+				continue;
 			const auto& func_decl = mf.function_decl.as<FunctionDeclarationNode>();
 			const auto& return_type_node = func_decl.decl_node().type_node();
-			if (!return_type_node.is<TypeSpecifierNode>()) continue;
+			if (!return_type_node.is<TypeSpecifierNode>())
+				continue;
 			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
 			const CanonicalTypeAlias canonical_return_type =
-				canonicalize_type_alias(type_spec.type_index());
+			    canonicalize_type_alias(type_spec.type_index());
 			TypeCategory resolved_type = canonical_return_type.typeEnum();
-			if (resolved_type == to_desc.category()) return true;
+			if (resolved_type == to_desc.category())
+				return true;
 			// Size-based fallback for still-unresolved UserDefined return types.
 			if (resolved_type == TypeCategory::UserDefined) {
 				const int expected_size = get_type_size_bits(to_desc.category());
@@ -2940,7 +2908,8 @@ static bool structHasConversionOperatorTo(
 
 	// Recurse into non-deferred base classes (inherited conversion operators).
 	for (const auto& base : struct_info->base_classes) {
-		if (base.is_deferred) continue;
+		if (base.is_deferred)
+			continue;
 		CanonicalTypeDesc base_from_desc;
 		base_from_desc.type_index = nativeTypeIndex(TypeCategory::Struct);
 		base_from_desc.type_index = base.type_index;
@@ -2953,21 +2922,27 @@ static bool structHasConversionOperatorTo(
 // --- Core conversion annotation helper ---
 
 bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
-	CanonicalTypeId target_type_id,
-	CanonicalTypeId expr_type_id) {
-	if (!target_type_id) return false;
-	if (!expr_node.is<ExpressionNode>()) return false;
+                                             CanonicalTypeId target_type_id,
+                                             CanonicalTypeId expr_type_id) {
+	if (!target_type_id)
+		return false;
+	if (!expr_node.is<ExpressionNode>())
+		return false;
 
-	if (!expr_type_id) expr_type_id = inferExpressionType(expr_node);
-	if (!expr_type_id) return false;
-	if (expr_type_id == target_type_id) return false;  // exact match, no cast needed
+	if (!expr_type_id)
+		expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id)
+		return false;
+	if (expr_type_id == target_type_id)
+		return false; // exact match, no cast needed
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
-	const CanonicalTypeDesc& to_desc   = type_context_.get(target_type_id);
+	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
 	// Same base type but different canonical IDs (differ only in qualifiers or type_index,
 	// e.g. two UserDefined aliases, const vs non-const, etc.): no primitive conversion needed.
-	if (from_desc.category() == to_desc.category()) return false;
+	if (from_desc.category() == to_desc.category())
+		return false;
 
 	// Bail out if either side is not a plain primitive scalar (or enum/struct source).
 	// Enum source types are allowed: C++20 permits implicit enum->primitive conversions
@@ -2982,34 +2957,43 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 		return is_struct_type(t) ||
 		       t == TypeCategory::Invalid || isPlaceholderAutoType(t);
 	};
-	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
+	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
+		return false;
+	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
+		return false;
 	// Allow Struct source for user-defined conversion operators (Struct->primitive).
 	// Reject Struct->Struct (handled elsewhere) and primitive->Struct (converting constructors).
-	if (from_desc.category() == TypeCategory::Struct && to_desc.category() == TypeCategory::Struct) return false;
-	if (from_desc.category() != TypeCategory::Struct && is_unresolved_type(from_desc.category())) return false;
-	if (is_non_primitive_target(to_desc.category())) return false;
-	if (to_desc.category() == TypeCategory::Enum) return false;  // no implicit conversion TO enum
+	if (from_desc.category() == TypeCategory::Struct && to_desc.category() == TypeCategory::Struct)
+		return false;
+	if (from_desc.category() != TypeCategory::Struct && is_unresolved_type(from_desc.category()))
+		return false;
+	if (is_non_primitive_target(to_desc.category()))
+		return false;
+	if (to_desc.category() == TypeCategory::Enum)
+		return false; // no implicit conversion TO enum
 	// C++11+: scoped enums (enum class) do not allow implicit conversion to other types.
 	// Silently reject here; callers that need a diagnostic (variable init, return, assignment)
 	// check isScopedEnum() and throw CompileError themselves.
 	if (from_desc.category() == TypeCategory::Enum) {
 		if (const TypeInfo* from_type_info = tryGetTypeInfo(from_desc.type_index)) {
 			if (const EnumTypeInfo* ei = from_type_info->getEnumInfo()) {
-			if (ei->is_scoped)
-				return false;
+				if (ei->is_scoped)
+					return false;
 			}
 		}
 	}
-	if (from_desc.ref_qualifier != ReferenceQualifier::None) return false;
+	if (from_desc.ref_qualifier != ReferenceQualifier::None)
+		return false;
 
 	const CanonicalTypeAlias from_canonical = canonicalize_type_alias(from_desc.type_index);
 	const CanonicalTypeAlias to_canonical = canonicalize_type_alias(to_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(from_canonical.typeEnum(), to_canonical.typeEnum());
-	if (!plan.is_valid) return false;
+	if (!plan.is_valid)
+		return false;
 	// Allow UserDefined rank only when source is Struct (conversion operator case).
 	// Reject UserDefined for non-struct sources (converting constructors are separate).
-	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct) return false;
+	if (plan.rank == ConversionRank::UserDefined && from_desc.category() != TypeCategory::Struct)
+		return false;
 
 	// Phase 5: for UserDefined (struct->primitive) annotations, verify that a conversion
 	// operator actually exists before annotating. Without this check, sema optimistically
@@ -3019,8 +3003,8 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	if (plan.rank == ConversionRank::UserDefined) {
 		if (!structHasConversionOperatorTo(from_desc, to_desc)) {
 			FLASH_LOG(General, Debug,
-				"SemanticAnalysis: skipping UserDefined annotation — "
-				"no conversion operator found in struct source type");
+			          "SemanticAnalysis: skipping UserDefined annotation — "
+			          "no conversion operator found in struct source type");
 			return false;
 		}
 	}
@@ -3043,41 +3027,52 @@ bool SemanticAnalysis::tryAnnotateConversion(const ASTNode& expr_node,
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated conversion ",
-		static_cast<int>(from_desc.category()), " -> ",
-		static_cast<int>(to_desc.category()),
-		" (kind=", static_cast<int>(plan.kind), ")");
+	          static_cast<int>(from_desc.category()), " -> ",
+	          static_cast<int>(to_desc.category()),
+	          " (kind=", static_cast<int>(plan.kind), ")");
 	return true;
 }
 
 bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
-	CanonicalTypeId target_type_id,
-	const char* context_description,
-	CanonicalTypeId expr_type_id) {
-	if (!target_type_id) return false;
-	if (!expr_node.is<ExpressionNode>()) return false;
+                                                                CanonicalTypeId target_type_id,
+                                                                const char* context_description,
+                                                                CanonicalTypeId expr_type_id) {
+	if (!target_type_id)
+		return false;
+	if (!expr_node.is<ExpressionNode>())
+		return false;
 
-	if (!expr_type_id) expr_type_id = inferExpressionType(expr_node);
-	if (!expr_type_id || expr_type_id == target_type_id) return false;
+	if (!expr_type_id)
+		expr_type_id = inferExpressionType(expr_node);
+	if (!expr_type_id || expr_type_id == target_type_id)
+		return false;
 
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const CanonicalTypeDesc& to_desc = type_context_.get(target_type_id);
 
-	if (to_desc.category() != TypeCategory::Struct || !to_desc.type_index.is_valid()) return false;
-	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty()) return false;
-	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty()) return false;
-	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None) return false;
+	if (to_desc.category() != TypeCategory::Struct || !to_desc.type_index.is_valid())
+		return false;
+	if (!from_desc.pointer_levels.empty() || !to_desc.pointer_levels.empty())
+		return false;
+	if (!from_desc.array_dimensions.empty() || !to_desc.array_dimensions.empty())
+		return false;
+	if (from_desc.ref_qualifier != ReferenceQualifier::None || to_desc.ref_qualifier != ReferenceQualifier::None)
+		return false;
 	if (from_desc.category() == TypeCategory::UserDefined ||
-		from_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(from_desc.category())) {
+	    from_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(from_desc.category())) {
 		return false;
 	}
 	const TypeInfo* to_type_info = tryGetTypeInfo(to_desc.type_index);
-	if (!to_type_info) return false;
+	if (!to_type_info)
+		return false;
 
 	const StructTypeInfo* struct_info = to_type_info->getStructInfo();
-	if (!struct_info || !struct_info->hasAnyConstructor()) return false;
+	if (!struct_info || !struct_info->hasAnyConstructor())
+		return false;
 
 	auto arg_type_opt = buildOverloadResolutionArgType(expr_node, nullptr);
-	if (!arg_type_opt.has_value()) return false;
+	if (!arg_type_opt.has_value())
+		return false;
 
 	const TypeSpecifierNode& arg_type = *arg_type_opt;
 	const ConstructorDeclarationNode* best_non_explicit = nullptr;
@@ -3101,19 +3096,23 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 		if (parameters.empty() || countMinRequiredArgs(ctor_decl) > 1) {
 			continue;
 		}
-		if (!parameters[0].is<DeclarationNode>()) continue;
+		if (!parameters[0].is<DeclarationNode>())
+			continue;
 
 		const ASTNode& param_type_node = parameters[0].as<DeclarationNode>().type_node();
-		if (!param_type_node.is<TypeSpecifierNode>()) continue;
+		if (!param_type_node.is<TypeSpecifierNode>())
+			continue;
 		const auto& param_type = param_type_node.as<TypeSpecifierNode>();
 
 		const TypeConversionResult conversion = can_convert_type(arg_type, param_type);
-		if (!conversion.is_valid) continue;
+		if (!conversion.is_valid)
+			continue;
 		// A converting-constructor candidate already contributes the single permitted
 		// user-defined conversion in the implicit conversion sequence. The source
 		// argument must therefore reach the constructor's first parameter using only
 		// standard conversions/reference binding, not another converting constructor.
-		if (conversion.rank == ConversionRank::UserDefined) continue;
+		if (conversion.rank == ConversionRank::UserDefined)
+			continue;
 
 		if (!best_any || conversion.rank < best_any_rank) {
 			best_any = &ctor_decl;
@@ -3139,18 +3138,24 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 	if (!best_non_explicit) {
 		if (found_explicit_viable || best_any) {
+			FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for target type '",
+			          StringTable::getStringView(to_type_info->name()), "' from type category ",
+			          static_cast<int>(from_desc.category()));
 			throw CompileError("Cannot use copy initialization with explicit constructor");
 		}
 		return false;
 	}
 
 	const auto& selected_params = best_non_explicit->parameter_nodes();
-	if (selected_params.empty() || !selected_params[0].is<DeclarationNode>()) return false;
+	if (selected_params.empty() || !selected_params[0].is<DeclarationNode>())
+		return false;
 	const ASTNode& selected_param_type_node = selected_params[0].as<DeclarationNode>().type_node();
-	if (!selected_param_type_node.is<TypeSpecifierNode>()) return false;
+	if (!selected_param_type_node.is<TypeSpecifierNode>())
+		return false;
 
 	const CanonicalTypeId param_type_id = canonicalizeType(selected_param_type_node.as<TypeSpecifierNode>());
-	if (!param_type_id) return false;
+	if (!param_type_id)
+		return false;
 
 	diagnoseScopedEnumConversion(expr_node, param_type_id, context_description, expr_type_id);
 
@@ -3173,40 +3178,49 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug,
-		"SemanticAnalysis: annotated copy-init converting constructor for target struct type index ",
-		to_desc.type_index.index());
+	          "SemanticAnalysis: annotated copy-init converting constructor for target struct type index ",
+	          to_desc.type_index.index());
 	return true;
 }
 
 // --- Return conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateReturnConversion(const ASTNode& expr_node, const SemanticContext& ctx) {
-	if (!ctx.current_function_return_type_id) return;
+	if (!ctx.current_function_return_type_id)
+		return;
 	if (!tryAnnotateCopyInitConvertingConstructor(expr_node, *ctx.current_function_return_type_id,
-			" in return statement")) {
+	                                              " in return statement")) {
 		tryAnnotateConversion(expr_node, *ctx.current_function_return_type_id);
 		diagnoseScopedEnumConversion(expr_node, *ctx.current_function_return_type_id,
-			" in return statement");
+		                             " in return statement");
 	}
 }
 
 // --- Binary operand conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
-	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
-	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
-	if (!lhs_type_id || !rhs_type_id) return;
+                                                           CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id)
+		lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id)
+		rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id)
+		return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
 	// Only handle plain primitive types and enum sources (no pointers, no arrays, no structs)
-	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
-	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
-	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty())
+		return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty())
+		return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct)
+		return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid)
+		return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category()))
+		return;
 
 	// Resolve enum operands to their underlying type for get_common_type,
 	// which only handles primitive integer/floating-point types.
@@ -3214,7 +3228,8 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
-	if (common_cat == TypeCategory::Invalid) return;
+	if (common_cat == TypeCategory::Invalid)
+		return;
 
 	// Intern the common type
 	CanonicalTypeDesc common_desc;
@@ -3235,13 +3250,14 @@ void SemanticAnalysis::tryAnnotateBinaryOperandConversions(const BinaryOperatorN
 // store the resulting SemanticSlot in compound_assign_back_conv_ keyed on &bin_op.
 // Both shift and non-shift compound assignments use this same slot structure.
 void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
-	CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
+                                                       CanonicalTypeId source_type_id, CanonicalTypeId target_type_id) {
 	const CanonicalTypeDesc& src_desc = type_context_.get(source_type_id);
 	const CanonicalTypeDesc& tgt_desc = type_context_.get(target_type_id);
 	const CanonicalTypeAlias src_canonical = canonicalize_type_alias(src_desc.type_index);
 	const CanonicalTypeAlias tgt_canonical = canonicalize_type_alias(tgt_desc.type_index);
 	const ConversionPlan plan = buildConversionPlan(src_canonical.typeEnum(), tgt_canonical.typeEnum());
-	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined) return;
+	if (!plan.is_valid || plan.rank == ConversionRank::UserDefined)
+		return;
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = source_type_id;
@@ -3260,32 +3276,42 @@ void SemanticAnalysis::storeCompoundAssignBackConvSlot(const BinaryOperatorNode&
 	stats_.slots_filled++;
 
 	FLASH_LOG(General, Debug, "SemanticAnalysis: annotated compound assign back-conversion ",
-		static_cast<int>(src_desc.category()), " -> ", static_cast<int>(tgt_desc.category()),
-		" (kind=", static_cast<int>(plan.kind), ")");
+	          static_cast<int>(src_desc.category()), " -> ", static_cast<int>(tgt_desc.category()),
+	          " (kind=", static_cast<int>(plan.kind), ")");
 }
 
 void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
-	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
-	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
-	if (!lhs_type_id || !rhs_type_id) return;
+                                                               CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id)
+		lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id)
+		rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id)
+		return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
 	// Same guards as tryAnnotateBinaryOperandConversions
-	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
-	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
-	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty())
+		return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty())
+		return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct)
+		return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid)
+		return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category()))
+		return;
 
 	const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
 	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	const TypeCategory common_cat = get_common_type(lhs_cat, rhs_cat);
-	if (common_cat == TypeCategory::Invalid) return;
-	if (lhs_cat == common_cat) return;  // No back-conversion needed
+	if (common_cat == TypeCategory::Invalid)
+		return;
+	if (lhs_cat == common_cat)
+		return; // No back-conversion needed
 
 	// Build the back-conversion: common -> lhs_base
 	CanonicalTypeDesc common_desc;
@@ -3306,20 +3332,28 @@ void SemanticAnalysis::tryAnnotateCompoundAssignBackConversion(const BinaryOpera
 // promoted independently — there is no shared "common type".
 
 void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
-	CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
-	if (!lhs_type_id) lhs_type_id = inferExpressionType(bin_op.get_lhs());
-	if (!rhs_type_id) rhs_type_id = inferExpressionType(bin_op.get_rhs());
-	if (!lhs_type_id || !rhs_type_id) return;
+                                                         CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (!lhs_type_id)
+		lhs_type_id = inferExpressionType(bin_op.get_lhs());
+	if (!rhs_type_id)
+		rhs_type_id = inferExpressionType(bin_op.get_rhs());
+	if (!lhs_type_id || !rhs_type_id)
+		return;
 
 	const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 	const CanonicalTypeDesc& rhs_desc = type_context_.get(rhs_type_id);
 
 	// Only handle plain primitive integral types and enum sources (no pointers, arrays, structs, floats)
-	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty()) return;
-	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty()) return;
-	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct) return;
-	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category())) return;
+	if (!lhs_desc.pointer_levels.empty() || !rhs_desc.pointer_levels.empty())
+		return;
+	if (!lhs_desc.array_dimensions.empty() || !rhs_desc.array_dimensions.empty())
+		return;
+	if (lhs_desc.category() == TypeCategory::Struct || rhs_desc.category() == TypeCategory::Struct)
+		return;
+	if (lhs_desc.category() == TypeCategory::Invalid || rhs_desc.category() == TypeCategory::Invalid)
+		return;
+	if (isPlaceholderAutoType(lhs_desc.category()) || isPlaceholderAutoType(rhs_desc.category()))
+		return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type,
 	// which only handles primitive integer types.
@@ -3327,7 +3361,8 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 	const TypeCategory rhs_cat = resolveEnumUnderlyingTypeCategory(rhs_desc.type_index);
 
 	// Shift is only defined for integral operands
-	if (isFloatingPointType(lhs_cat) || isFloatingPointType(rhs_cat)) return;
+	if (isFloatingPointType(lhs_cat) || isFloatingPointType(rhs_cat))
+		return;
 
 	// Independent integral promotion for each operand
 	const TypeCategory promoted_lhs = promote_integer_type(lhs_cat);
@@ -3352,15 +3387,20 @@ void SemanticAnalysis::tryAnnotateShiftOperandPromotions(const BinaryOperatorNod
 
 void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode& unary_op) {
 	const CanonicalTypeId operand_type_id = inferExpressionType(unary_op.get_operand());
-	if (!operand_type_id) return;
+	if (!operand_type_id)
+		return;
 
 	const CanonicalTypeDesc& operand_desc = type_context_.get(operand_type_id);
 
 	// Only handle plain primitive types and enum sources (no pointers, arrays, structs)
-	if (!operand_desc.pointer_levels.empty()) return;
-	if (!operand_desc.array_dimensions.empty()) return;
-	if (operand_desc.category() == TypeCategory::Struct || operand_desc.category() == TypeCategory::Invalid) return;
-	if (isPlaceholderAutoType(operand_desc.category())) return;
+	if (!operand_desc.pointer_levels.empty())
+		return;
+	if (!operand_desc.array_dimensions.empty())
+		return;
+	if (operand_desc.category() == TypeCategory::Struct || operand_desc.category() == TypeCategory::Invalid)
+		return;
+	if (isPlaceholderAutoType(operand_desc.category()))
+		return;
 
 	// Resolve enum operands to their underlying type for promote_integer_type
 	const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
@@ -3370,7 +3410,8 @@ void SemanticAnalysis::tryAnnotateUnaryOperandPromotion(const UnaryOperatorNode&
 	if (unary_op.op() == "~" && isFloatingPointType(operand_cat)) {
 		throw CompileError("operand of '~' must have integral or unscoped enumeration type");
 	}
-	if (isFloatingPointType(operand_cat)) return;  // float/double: no promotion needed
+	if (isFloatingPointType(operand_cat))
+		return; // float/double: no promotion needed
 
 	const TypeCategory promoted_cat = promote_integer_type(operand_cat);
 	if (promoted_cat != operand_cat) {
@@ -3394,20 +3435,23 @@ void SemanticAnalysis::tryAnnotateContextualBool(const ASTNode& expr_node) {
 	// to bool applies to enums and pointers. Zero/null -> false, non-zero -> true.
 	// The backend TEST instruction already handles this correctly; the annotation
 	// records the semantic intent for future codegen migration.
-	if (!expr_node.is<ExpressionNode>()) return;
+	if (!expr_node.is<ExpressionNode>())
+		return;
 	const CanonicalTypeId expr_type_id = inferExpressionType(expr_node);
-	if (!expr_type_id) return;
+	if (!expr_type_id)
+		return;
 	const CanonicalTypeDesc& from_desc = type_context_.get(expr_type_id);
 	const bool is_enum = (from_desc.category() == TypeCategory::Enum);
 	const bool is_pointer = !from_desc.pointer_levels.empty();
-	if (!is_enum && !is_pointer) return;
+	if (!is_enum && !is_pointer)
+		return;
 
 	ImplicitCastInfo cast_info;
 	cast_info.source_type_id = expr_type_id;
 	cast_info.target_type_id = bool_type_id_;
 	cast_info.cast_kind = is_pointer
-		? StandardConversionKind::PointerConversion
-		: StandardConversionKind::BooleanConversion;
+	                          ? StandardConversionKind::PointerConversion
+	                          : StandardConversionKind::BooleanConversion;
 	cast_info.value_category_after = ValueCategory::PRValue;
 
 	const CastInfoIndex idx = allocateCastInfo(cast_info);
@@ -3430,32 +3474,40 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	// the variable `f`; its identifier token gives us the lookup name.
 	const DeclarationNode& callee_decl = call_node.function_declaration();
 	const StringHandle callee_name = callee_decl.identifier_token().handle();
-	if (!callee_name.isValid()) return;
+	if (!callee_name.isValid())
+		return;
 
 	// Look up the callee's canonical type from the current scope stack.
 	// This correctly handles shadowed names: if a local variable `apply` of struct type
 	// shadows a free function `apply`, lookupLocalType returns the struct type.
 	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
-	if (!callee_type_id) return;
+	if (!callee_type_id)
+		return;
 
 	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-	if (callee_desc.category() != TypeCategory::Struct) return;
+	if (callee_desc.category() != TypeCategory::Struct)
+		return;
 	const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-	if (!callee_type_info) return;
+	if (!callee_type_info)
+		return;
 
 	const StructTypeInfo* struct_info = callee_type_info->getStructInfo();
-	if (!struct_info) return;
+	if (!struct_info)
+		return;
 
 	const size_t arg_count = call_node.arguments().size();
 
 	// Collect all operator() candidates as ASTNodes for overload resolution.
 	std::vector<ASTNode> candidates;
 	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Call) continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>()) continue;
+		if (member_func.operator_kind != OverloadableOperator::Call)
+			continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>())
+			continue;
 		candidates.push_back(member_func.function_decl);
 	}
-	if (candidates.empty()) return;
+	if (candidates.empty())
+		return;
 
 	// Try to build argument type specifiers for the real overload-resolution path.
 	// inferExpressionType now covers the sema-owned cases we rely on here
@@ -3503,7 +3555,8 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 				best_match = &candidate;
 				break;
 			}
-			if (!callableOperatorAcceptsArgumentCount(candidate, arg_count)) continue;
+			if (!callableOperatorAcceptsArgumentCount(candidate, arg_count))
+				continue;
 			if (!default_argument_match) {
 				default_argument_match = &candidate;
 			} else {
@@ -3515,26 +3568,30 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 		}
 	}
 
-	if (!best_match) return;
+	if (!best_match)
+		return;
 
 	op_call_table_[&call_node] = best_match;
 	stats_.op_calls_resolved++;
 
 	FLASH_LOG_FORMAT(General, Debug,
-		"SemanticAnalysis: resolved operator() for '{}' -> {} params",
-		callee_decl.identifier_token().value(),
-		best_match->parameter_nodes().size());
+	                 "SemanticAnalysis: resolved operator() for '{}' -> {} params",
+	                 callee_decl.identifier_token().value(),
+	                 best_match->parameter_nodes().size());
 }
 
 std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferenceBinding(const ASTNode& arg,
-	const TypeSpecifierNode& param_type,
-	const char* context_description) {
-	if (!arg.is<ExpressionNode>()) return std::nullopt;
-	if (!param_type.is_reference() && !param_type.is_rvalue_reference()) return std::nullopt;
+                                                                                          const TypeSpecifierNode& param_type,
+                                                                                          const char* context_description) {
+	if (!arg.is<ExpressionNode>())
+		return std::nullopt;
+	if (!param_type.is_reference() && !param_type.is_rvalue_reference())
+		return std::nullopt;
 
 	CanonicalTypeId inferred_arg_type_id{};
 	auto arg_binding_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
-	if (!arg_binding_type_opt.has_value()) return std::nullopt;
+	if (!arg_binding_type_opt.has_value())
+		return std::nullopt;
 
 	const TypeSpecifierNode& arg_binding_type = *arg_binding_type_opt;
 	TypeSpecifierNode param_value_type = param_type;
@@ -3545,7 +3602,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 	const CanonicalTypeId param_value_type_id = canonicalizeType(param_value_type);
 	const CanonicalTypeId arg_value_type_id = canonicalizeType(arg_value_type);
-	if (!param_type_id || !param_value_type_id || !arg_value_type_id) return std::nullopt;
+	if (!param_type_id || !param_value_type_id || !arg_value_type_id)
+		return std::nullopt;
 
 	diagnoseScopedEnumConversion(arg, param_value_type_id, context_description, inferred_arg_type_id);
 
@@ -3556,8 +3614,8 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	const bool arg_is_xvalue = arg_binding_type.is_rvalue_reference();
 	const ConversionPlan direct_plan = buildConversionPlan(arg_binding_type, param_type);
 	if (direct_plan.is_valid && (arg_is_lvalue || arg_is_xvalue) &&
-		(direct_plan.kind == StandardConversionKind::None ||
-		 direct_plan.kind == StandardConversionKind::DerivedToBase)) {
+	    (direct_plan.kind == StandardConversionKind::None ||
+	     direct_plan.kind == StandardConversionKind::DerivedToBase)) {
 		info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::BindsReferenceDirectly;
 		return info;
 	}
@@ -3565,16 +3623,18 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	if (arg_is_xvalue && param_type.is_reference() && param_type.is_const()) {
 		const ConversionPlan xvalue_const_lref_plan = buildConversionPlan(arg_value_type, param_value_type);
 		if (xvalue_const_lref_plan.is_valid &&
-			xvalue_const_lref_plan.kind == StandardConversionKind::None) {
+		    xvalue_const_lref_plan.kind == StandardConversionKind::None) {
 			info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::BindsReferenceDirectly;
 			return info;
 		}
 	}
 
 	if (param_type.is_rvalue_reference()) {
-		if (arg_is_lvalue) return std::nullopt;
+		if (arg_is_lvalue)
+			return std::nullopt;
 	} else if (param_type.is_reference()) {
-		if (!param_type.is_const()) return std::nullopt;
+		if (!param_type.is_const())
+			return std::nullopt;
 	}
 
 	const ConversionPlan value_plan = buildConversionPlan(arg_value_type, param_value_type);
@@ -3585,9 +3645,9 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	info.flags = ConversionPlanFlags::IsValid | ConversionPlanFlags::MaterializesTemporary;
 	if (value_plan.kind != StandardConversionKind::None) {
 		info.pre_bind_cast_info_index = allocateNonUserDefinedCastInfo(
-			arg_value_type_id,
-			param_value_type_id,
-			value_plan.kind);
+		    arg_value_type_id,
+		    param_value_type_id,
+		    value_plan.kind);
 	}
 	return info;
 }
@@ -3605,8 +3665,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 	if (!func_decl) {
 		const auto& decl = call_node.function_declaration();
 		const std::string_view name = call_node.has_qualified_name()
-			? call_node.qualified_name()
-			: decl.identifier_token().value();
+		                                  ? call_node.qualified_name()
+		                                  : decl.identifier_token().value();
 
 		// Collect all overloads from the symbol table.
 		auto overloads = symbols_.lookup_all(name);
@@ -3623,12 +3683,15 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 
 			// Helper lambda: search a StructTypeInfo for a matching member function.
 			auto searchStructMembers = [&](const StructTypeInfo* si) -> bool {
-				if (!si) return false;
+				if (!si)
+					return false;
 				const std::string_view func_name = decl.identifier_token().value();
 				// First pass: exact DeclarationNode address match.
 				for (const auto& mf : si->member_functions) {
-					if (!mf.function_decl.has_value()) continue;
-					if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+					if (!mf.function_decl.has_value())
+						continue;
+					if (!mf.function_decl.is<FunctionDeclarationNode>())
+						continue;
 					const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
 					if (&candidate.decl_node() == &decl) {
 						func_decl = &candidate;
@@ -3640,11 +3703,13 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 				if (call_node.has_mangled_name()) {
 					const std::string_view call_mangled = call_node.mangled_name();
 					for (const auto& mf : si->member_functions) {
-						if (!mf.function_decl.has_value()) continue;
-						if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+						if (!mf.function_decl.has_value())
+							continue;
+						if (!mf.function_decl.is<FunctionDeclarationNode>())
+							continue;
 						const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
 						if (candidate.has_mangled_name() &&
-							candidate.mangled_name() == call_mangled) {
+						    candidate.mangled_name() == call_mangled) {
 							func_decl = &candidate;
 							return true;
 						}
@@ -3658,12 +3723,17 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 					const FunctionDeclarationNode* name_match = nullptr;
 					bool ambiguous = false;
 					for (const auto& mf : si->member_functions) {
-						if (!mf.function_decl.has_value()) continue;
-						if (!mf.function_decl.is<FunctionDeclarationNode>()) continue;
+						if (!mf.function_decl.has_value())
+							continue;
+						if (!mf.function_decl.is<FunctionDeclarationNode>())
+							continue;
 						const auto& candidate = mf.function_decl.as<FunctionDeclarationNode>();
 						if (candidate.decl_node().identifier_token().value() == func_name &&
-							candidate.parameter_nodes().size() == arguments.size()) {
-							if (name_match) { ambiguous = true; break; }
+						    candidate.parameter_nodes().size() == arguments.size()) {
+							if (name_match) {
+								ambiguous = true;
+								break;
+							}
 							name_match = &candidate;
 						}
 					}
@@ -3691,7 +3761,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 					// or template-argument-decorated keys.
 					if (!func_decl) {
 						for (const auto& [handle, ti] : getTypesByNameMap()) {
-							if (!ti) continue;
+							if (!ti)
+								continue;
 							const std::string_view registered_name = handle.view();
 							// Match if the registered name equals or ends with the struct name
 							// (handles namespace prefix differences).
@@ -3704,8 +3775,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 								// e.g., "Ns::MyStruct" matches struct_name "MyStruct".
 								const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 								if (registered_name.substr(prefix_end) == struct_name_sv &&
-									(registered_name[prefix_end - 1] == ':' ||
-									 registered_name[prefix_end - 1] == '<')) {
+								    (registered_name[prefix_end - 1] == ':' ||
+								     registered_name[prefix_end - 1] == '<')) {
 									if (searchStructMembers(ti->getStructInfo()))
 										break;
 								}
@@ -3715,8 +3786,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 							// MyStruct<int> where caller uses undecorated name MyStruct).
 							// e.g., "MyStruct<int>" matches struct_name "MyStruct".
 							if (registered_name.size() > struct_name_sv.size() &&
-								registered_name[struct_name_sv.size()] == '<' &&
-								registered_name.starts_with(struct_name_sv)) {
+							    registered_name[struct_name_sv.size()] == '<' &&
+							    registered_name.starts_with(struct_name_sv)) {
 								if (searchStructMembers(ti->getStructInfo()))
 									break;
 							}
@@ -3736,7 +3807,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		// The parser resolved the overload at parse time; we just need to recover the
 		// FunctionDeclarationNode that wraps it so we can read the parameter types.
 		for (const auto& overload : overloads) {
-			if (!overload.is<FunctionDeclarationNode>()) continue;
+			if (!overload.is<FunctionDeclarationNode>())
+				continue;
 			const auto& candidate = overload.as<FunctionDeclarationNode>();
 			if (&candidate.decl_node() == &decl) {
 				func_decl = &candidate;
@@ -3749,7 +3821,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (!func_decl) {
 			auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
 				for (const auto& overload : overloads) {
-					if (!overload.is<FunctionDeclarationNode>()) continue;
+					if (!overload.is<FunctionDeclarationNode>())
+						continue;
 					const auto& candidate = overload.as<FunctionDeclarationNode>();
 					if (arguments.size() == candidate.parameter_nodes().size())
 						return &candidate;
@@ -3760,27 +3833,33 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 				func_decl = &overloads[0].as<FunctionDeclarationNode>();
 			else
 				func_decl = find_by_arg_count();
-			if (!func_decl) return;
+			if (!func_decl)
+				return;
 		}
 	}
 
-	if (func_decl->is_variadic()) return;  // can't annotate variadic calls
+	if (func_decl->is_variadic())
+		return; // can't annotate variadic calls
 
 	const auto& param_nodes = func_decl->parameter_nodes();
 
-	if (arguments.size() < countMinRequiredArgs(*func_decl) || arguments.size() > param_nodes.size()) return;
+	if (arguments.size() < countMinRequiredArgs(*func_decl) || arguments.size() > param_nodes.size())
+		return;
 	auto& ref_bindings = function_call_ref_bindings_[&call_node];
 	ref_bindings.clear();
 	ref_bindings.resize(arguments.size());
 
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];
-		if (!arg.is<ExpressionNode>()) continue;
+		if (!arg.is<ExpressionNode>())
+			continue;
 
 		const ASTNode& param_node = param_nodes[i];
-		if (!param_node.is<DeclarationNode>()) continue;
+		if (!param_node.is<DeclarationNode>())
+			continue;
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
+			continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in function argument")) {
@@ -3793,9 +3872,10 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		// Quick exit when both types are inferable and already identical (no cast needed).
 		// tryAnnotateConversion will re-infer if arg_type_id is invalid, so no information is lost.
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
+			continue;
 		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
-				" in function argument", arg_type_id)) {
+		                                              " in function argument", arg_type_id)) {
 			tryAnnotateConversion(arg, param_type_id, arg_type_id);
 			diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
 		}
@@ -3804,24 +3884,29 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 
 void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node) {
 	const FunctionDeclarationNode& func_decl = call_node.function_declaration();
-	if (func_decl.is_variadic()) return;
+	if (func_decl.is_variadic())
+		return;
 
 	const auto& arguments = call_node.arguments();
 	const auto& param_nodes = func_decl.parameter_nodes();
 
-	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size()) return;
+	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size())
+		return;
 	auto& ref_bindings = member_call_ref_bindings_[&call_node];
 	ref_bindings.clear();
 	ref_bindings.resize(arguments.size());
 
 	for (size_t i = 0; i < arguments.size(); ++i) {
 		const ASTNode& arg = arguments[i];
-		if (!arg.is<ExpressionNode>()) continue;
+		if (!arg.is<ExpressionNode>())
+			continue;
 
 		const ASTNode& param_node = param_nodes[i];
-		if (!param_node.is<DeclarationNode>()) continue;
+		if (!param_node.is<DeclarationNode>())
+			continue;
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
+			continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 
 		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
@@ -3833,10 +3918,11 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
 		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
+			continue;
 
 		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
-				" in member function argument", arg_type_id)) {
+		                                              " in member function argument", arg_type_id)) {
 			tryAnnotateConversion(arg, param_type_id, arg_type_id);
 			diagnoseScopedEnumConversion(arg, param_type_id, " in member function argument");
 		}
@@ -3846,20 +3932,25 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
 	// Get the type being constructed.
 	const ASTNode& type_node = call_node.type_node();
-	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) return;
+	if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>())
+		return;
 	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
-	if (type_spec.category() != TypeCategory::Struct) return;
+	if (type_spec.category() != TypeCategory::Struct)
+		return;
 	const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-	if (!type_info) return;
+	if (!type_info)
+		return;
 
 	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	if (!struct_info || !struct_info->hasAnyConstructor()) return;
+	if (!struct_info || !struct_info->hasAnyConstructor())
+		return;
 
 	// Resolve the matching constructor via overload resolution.
 	const auto& arguments = call_node.arguments();
 	size_t num_args = 0;
 	arguments.visit([&](ASTNode) { num_args++; });
-	if (num_args == 0) return;
+	if (num_args == 0)
+		return;
 
 	std::vector<TypeSpecifierNode> arg_types;
 	std::vector<CanonicalTypeId> inferred_arg_type_ids;
@@ -3879,30 +3970,48 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
 	});
-	if (arg_types.size() != num_args) return;
+	if (arg_types.size() != num_args)
+		return;
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
-	if (!resolution.selected_overload) return;
+	if (!resolution.selected_overload)
+		return;
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
-	if (num_args > ctor_params.size()) return;
+	if (num_args > ctor_params.size())
+		return;
 
 	// Annotate each argument where its type differs from the parameter type.
 	size_t i = 0;
 	arguments.visit([&](ASTNode arg) {
-		if (i >= ctor_params.size()) { ++i; return; }
-		if (!arg.is<ExpressionNode>()) { ++i; return; }
+		if (i >= ctor_params.size()) {
+			++i;
+			return;
+		}
+		if (!arg.is<ExpressionNode>()) {
+			++i;
+			return;
+		}
 
 		const ASTNode& param_node = ctor_params[i];
-		if (!param_node.is<DeclarationNode>()) { ++i; return; }
+		if (!param_node.is<DeclarationNode>()) {
+			++i;
+			return;
+		}
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) { ++i; return; }
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) {
+			++i;
+			return;
+		}
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) { ++i; return; }
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) {
+			++i;
+			return;
+		}
 		tryAnnotateConversion(arg, param_type_id, arg_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 		++i;
@@ -3910,9 +4019,10 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 }
 
 void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
-	const InitializerListNode& init_list, const StructTypeInfo& struct_info) {
+    const InitializerListNode& init_list, const StructTypeInfo& struct_info) {
 	const auto& initializers = init_list.initializers();
-	if (initializers.empty()) return;
+	if (initializers.empty())
+		return;
 
 	// Build argument types for overload resolution.
 	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution
@@ -3946,15 +4056,20 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		const ConstructorDeclarationNode* closest_ctor = arity_res.selected_overload;
 		for (size_t i = 0; i < initializers.size(); ++i) {
 			const ASTNode& arg = initializers[i];
-			if (!arg.is<ExpressionNode>()) continue;
+			if (!arg.is<ExpressionNode>())
+				continue;
 			const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
-			if (!arg_type_id) continue;
+			if (!arg_type_id)
+				continue;
 			const CanonicalTypeDesc& arg_desc = type_context_.get(arg_type_id);
-			if (arg_desc.category() != TypeCategory::Enum) continue;
+			if (arg_desc.category() != TypeCategory::Enum)
+				continue;
 			const TypeInfo* arg_type_info = tryGetTypeInfo(arg_desc.type_index);
-			if (!arg_type_info) continue;
+			if (!arg_type_info)
+				continue;
 			const EnumTypeInfo* ei = arg_type_info->getEnumInfo();
-			if (!ei || !ei->is_scoped) continue;
+			if (!ei || !ei->is_scoped)
+				continue;
 			// Found a scoped enum arg that caused the no-match.
 			// Use the parameter type from the closest arity match for a precise error message.
 			if (closest_ctor) {
@@ -3969,8 +4084,8 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 			} else {
 				// No arity match at all; diagnose against the first constructor parameter we can find.
 				throw CompileError("cannot implicitly convert from scoped enum '" +
-					std::string(StringTable::getStringView(ei->name)) +
-					"' in constructor argument; use static_cast");
+				                   std::string(StringTable::getStringView(ei->name)) +
+				                   "' in constructor argument; use static_cast");
 			}
 		}
 		return;
@@ -3980,17 +4095,21 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 
 	for (size_t i = 0; i < initializers.size() && i < ctor_params.size(); ++i) {
 		const ASTNode& arg = initializers[i];
-		if (!arg.is<ExpressionNode>()) continue;
+		if (!arg.is<ExpressionNode>())
+			continue;
 
 		const ASTNode& param_node = ctor_params[i];
-		if (!param_node.is<DeclarationNode>()) continue;
+		if (!param_node.is<DeclarationNode>())
+			continue;
 		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>()) continue;
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
+			continue;
 
 		const CanonicalTypeId param_type_id = canonicalizeType(param_type_node.as<TypeSpecifierNode>());
 		const CanonicalTypeId arg_type_id = inferred_arg_type_ids[i];
 		FLASH_LOG(General, Debug, "SemanticAnalysis: init-list arg param_type=", param_type_id.value, " arg_type=", arg_type_id.value, " match=", (arg_type_id && canonical_types_match(arg_type_id, param_type_id)));
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id)) continue;
+		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
+			continue;
 		tryAnnotateConversion(arg, param_type_id, arg_type_id);
 		diagnoseScopedEnumConversion(arg, param_type_id, " in constructor argument", arg_type_id);
 	}
@@ -4001,18 +4120,23 @@ void SemanticAnalysis::tryAnnotateTernaryBranchConversions(const TernaryOperator
 	// arithmetic types, the usual arithmetic conversions are applied.
 	const CanonicalTypeId true_type_id = inferExpressionType(ternary_node.true_expr());
 	const CanonicalTypeId false_type_id = inferExpressionType(ternary_node.false_expr());
-	if (!true_type_id || !false_type_id) return;
-	if (canonical_types_match(true_type_id, false_type_id)) return;
+	if (!true_type_id || !false_type_id)
+		return;
+	if (canonical_types_match(true_type_id, false_type_id))
+		return;
 
 	const auto& true_desc = type_context_.get(true_type_id);
 	const auto& false_desc = type_context_.get(false_type_id);
 
 	// Only handle primitive arithmetic types (not structs, pointers, etc.)
-	if (true_desc.category() == TypeCategory::Struct || false_desc.category() == TypeCategory::Struct) return;
-	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty()) return;
+	if (true_desc.category() == TypeCategory::Struct || false_desc.category() == TypeCategory::Struct)
+		return;
+	if (!true_desc.pointer_levels.empty() || !false_desc.pointer_levels.empty())
+		return;
 	// C++20 [expr.cond]/2: when one branch is a throw-expression (or delete-expression),
 	// its type is void. The result type is the other branch's type — no conversion needed.
-	if (true_desc.category() == TypeCategory::Void || false_desc.category() == TypeCategory::Void) return;
+	if (true_desc.category() == TypeCategory::Void || false_desc.category() == TypeCategory::Void)
+		return;
 
 	TypeCategory common = get_common_type(true_desc.category(), false_desc.category());
 	CanonicalTypeDesc common_desc;
