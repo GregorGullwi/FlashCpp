@@ -5,73 +5,73 @@
 // Struct type information
 struct StructTypeInfo {
 	StringHandle name;
-	NamespaceHandle namespace_handle;  // Namespace this struct was declared in
+	NamespaceHandle namespace_handle; // Namespace this struct was declared in
 	std::vector<StructMember> members;
-	std::vector<StructStaticMember> static_members;  // Static members
+	std::vector<StructStaticMember> static_members; // Static members
 	std::vector<StructMemberFunction> member_functions;
-	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
-	size_t total_size = 0;      // Total size of struct in bytes
-	size_t alignment = 1;       // Alignment requirement of struct
+	std::vector<BaseClassSpecifier> base_classes; // Base classes for inheritance
+	size_t total_size = 0; // Total size of struct in bytes
+	size_t alignment = 1; // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
-	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
+	size_t pack_alignment = 0; // Pack alignment from #pragma pack(n), 0 = no packing
 	size_t active_bitfield_unit_offset = 0;
 	size_t active_bitfield_unit_size = 0;
 	size_t active_bitfield_unit_alignment = 0;
 	size_t active_bitfield_bits_used = 0;
 	TypeCategory active_bitfield_type = TypeCategory::Invalid;
 	AccessSpecifier default_access; // Default access for struct (public) vs class (private)
-	bool is_union = false;      // True if this is a union (all members at offset 0)
-	bool is_final = false;      // True if this class/struct is declared with 'final' keyword
-	bool needs_default_constructor = false;  // True if struct needs an implicit default constructor
+	bool is_union = false; // True if this is a union (all members at offset 0)
+	bool is_final = false; // True if this class/struct is declared with 'final' keyword
+	bool needs_default_constructor = false; // True if struct needs an implicit default constructor
 
 	// Deleted special member functions tracking
-	bool has_deleted_default_constructor = false;  // True if default constructor is = delete
-	bool has_deleted_copy_constructor = false;     // True if copy constructor is = delete
-	bool has_deleted_move_constructor = false;     // True if move constructor is = delete
-	bool has_deleted_copy_assignment = false;      // True if copy assignment operator is = delete
-	bool has_deleted_move_assignment = false;      // True if move assignment operator is = delete
-	bool has_deleted_destructor = false;           // True if destructor is = delete
+	bool has_deleted_default_constructor = false; // True if default constructor is = delete
+	bool has_deleted_copy_constructor = false; // True if copy constructor is = delete
+	bool has_deleted_move_constructor = false; // True if move constructor is = delete
+	bool has_deleted_copy_assignment = false; // True if copy assignment operator is = delete
+	bool has_deleted_move_assignment = false; // True if move assignment operator is = delete
+	bool has_deleted_destructor = false; // True if destructor is = delete
 
 	// Virtual function support (Phase 2)
-	bool has_vtable = false;    // True if this struct has virtual functions
-	bool is_abstract = false;   // True if this struct has pure virtual functions
-	bool has_deferred_base_classes = false;  // True if base classes depend on unresolved template parameters
-	std::vector<const StructMemberFunction*> vtable;  // Virtual function table (pointers to member functions)
-	std::string_view vtable_symbol;  // MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
+	bool has_vtable = false; // True if this struct has virtual functions
+	bool is_abstract = false; // True if this struct has pure virtual functions
+	bool has_deferred_base_classes = false; // True if base classes depend on unresolved template parameters
+	std::vector<const StructMemberFunction*> vtable; // Virtual function table (pointers to member functions)
+	std::string_view vtable_symbol; // MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
 
 	// Virtual base class support (Phase 3)
-	std::vector<const BaseClassSpecifier*> virtual_bases;  // Virtual base classes (shared across inheritance paths)
+	std::vector<const BaseClassSpecifier*> virtual_bases; // Virtual base classes (shared across inheritance paths)
 
 	// RTTI support (Phase 5)
-	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
+	RTTITypeInfo* rtti_info = nullptr; // Runtime type information (for polymorphic classes)
 
 	// Friend declarations support (Phase 2)
-	std::vector<StringHandle> friend_functions_;      // Friend function names
-	std::vector<StringHandle> friend_classes_;        // Friend class names
-	std::vector<std::pair<StringHandle, StringHandle>> friend_member_functions_;  // (class, function)
+	std::vector<StringHandle> friend_functions_; // Friend function names
+	std::vector<StringHandle> friend_classes_; // Friend class names
+	std::vector<std::pair<StringHandle, StringHandle>> friend_member_functions_; // (class, function)
 
 	// Nested class support (Phase 2)
-	std::vector<StructTypeInfo*> nested_classes_;    // Nested classes
-	StructTypeInfo* enclosing_class_ = nullptr;      // Enclosing class (if this is nested)
+	std::vector<StructTypeInfo*> nested_classes_; // Nested classes
+	StructTypeInfo* enclosing_class_ = nullptr; // Enclosing class (if this is nested)
 
 	// Nested enum support - tracks enum TypeIndex values for enums declared inside this struct
 	std::vector<TypeIndex> nested_enum_indices_;
 
 	// Error tracking for semantic errors detected during finalization
-	std::string finalization_error_;  // Non-empty if semantic error occurred during finalization
+	std::string finalization_error_; // Non-empty if semantic error occurred during finalization
 
 	// Cached type_index from the owning TypeInfo, set by TypeInfo::setStructInfo().
 	// Avoids fragile gTypesByName lookups in isOwnTypeIndex().
 	std::optional<TypeIndex> own_type_index_;
 
 	StructTypeInfo(StringHandle n, AccessSpecifier default_acc, bool union_type,
-	              NamespaceHandle ns)
-		: name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
-	
+	               NamespaceHandle ns)
+	    : name(n), namespace_handle(ns), default_access(default_acc), is_union(union_type) {}
+
 	StringHandle getName() const {
 		return name;
 	}
-	
+
 	NamespaceHandle getNamespaceHandle() const {
 		return namespace_handle;
 	}
@@ -117,10 +117,10 @@ struct StructTypeInfo {
 				offset = total_size;
 			} else {
 				bool can_pack_into_active_unit =
-					active_bitfield_unit_size == member_size &&
-					active_bitfield_unit_alignment == effective_alignment &&
-					active_bitfield_type == type_index.category() &&
-					(active_bitfield_bits_used + width) <= storage_bits;
+				    active_bitfield_unit_size == member_size &&
+				    active_bitfield_unit_alignment == effective_alignment &&
+				    active_bitfield_type == type_index.category() &&
+				    (active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
 					total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
@@ -160,8 +160,8 @@ struct StructTypeInfo {
 			referenced_size_bits = member_size * 8;
 		}
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
-			              access, std::move(default_initializer), reference_qualifier,
-			              referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
+		                     access, std::move(default_initializer), reference_qualifier,
+		                     referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
 		members.back().bitfield_bit_offset = bitfield_bit_offset;
 		if (function_sig.has_value()) {
 			members.back().function_signature = std::move(function_sig);
@@ -268,7 +268,7 @@ struct StructTypeInfo {
 	bool finalize() {
 		// Build vtable first (if struct has virtual functions)
 		if (!buildVTable()) {
-			return false;  // Semantic error during vtable building
+			return false; // Semantic error during vtable building
 		}
 
 		// Build RTTI information (after vtable, before layout)
@@ -287,7 +287,7 @@ struct StructTypeInfo {
 				member.offset += 8;
 			}
 			total_size += 8;
-			alignment = std::max(alignment, size_t(8));  // At least pointer alignment
+			alignment = std::max(alignment, size_t(8)); // At least pointer alignment
 		}
 
 		// Pad struct to its alignment
@@ -356,7 +356,7 @@ struct StructTypeInfo {
 
 	// Find member recursively through base classes
 	std::optional<StructMember> findMemberRecursive(StringHandle member_name) const;
-	
+
 	// Find static member recursively through base classes
 	// Returns a pair of the static member and the StructTypeInfo that defines it
 	std::pair<const StructStaticMember*, const StructTypeInfo*> findStaticMemberRecursive(StringHandle member_name) const;
@@ -439,7 +439,7 @@ struct StructTypeInfo {
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
 		                       [class_name_handle, func_name_handle](const auto& pair) {
-		                           return pair.first == class_name_handle && pair.second == func_name_handle;
+			                       return pair.first == class_name_handle && pair.second == func_name_handle;
 		                       });
 		return it != friend_member_functions_.end();
 	}
@@ -448,7 +448,7 @@ struct StructTypeInfo {
 	bool isFriendMemberFunction(StringHandle class_name, StringHandle func_name) const {
 		auto it = std::find_if(friend_member_functions_.begin(), friend_member_functions_.end(),
 		                       [class_name, func_name](const auto& pair) {
-		                           return pair.first == class_name && pair.second == func_name;
+			                       return pair.first == class_name && pair.second == func_name;
 		                       });
 		return it != friend_member_functions_.end();
 	}
@@ -510,8 +510,8 @@ struct StructTypeInfo {
 	// include_implicit → whether compiler-generated ctors participate
 	// Handles default arguments: a ctor like Foo(const Foo&, int=0) qualifies.
 	const StructMemberFunction* findSameTypeConstructorCore(
-		bool want_move,
-		bool include_implicit) const;
+	    bool want_move,
+	    bool include_implicit) const;
 
 	// Find copy constructor (takes const Type& or Type&).
 	// By default this only returns user-declared constructors; pass
@@ -528,13 +528,13 @@ struct StructTypeInfo {
 	// For lvalue sources, use copy only. Respects deleted-ctor flags.
 	// Implicit constructors participate when include_implicit=true.
 	const StructMemberFunction* findPreferredSameTypeConstructor(
-		bool prefer_move,
-		bool include_implicit = true) const;
+	    bool prefer_move,
+	    bool include_implicit = true) const;
 
 	// Collect constructor candidates matching argument count.
 	InlineVector<const StructMemberFunction*, 4> getConstructorsByParameterCount(
-		size_t parameter_count,
-		bool skip_implicit) const;
+	    size_t parameter_count,
+	    bool skip_implicit) const;
 
 	// Find destructor
 	const StructMemberFunction* findDestructor() const {
@@ -619,9 +619,11 @@ struct StructTypeInfo {
 		// 1. No virtual functions or virtual base classes
 		// 2. All non-static data members have the same access control
 		// 3. No non-static data members of reference type
-		if (has_vtable) return false;
-		if (members.empty()) return true;
-		
+		if (has_vtable)
+			return false;
+		if (members.empty())
+			return true;
+
 		AccessSpecifier first_access = members[0].access;
 		for (const auto& member : members) {
 			if (member.access != first_access) {
@@ -635,11 +637,11 @@ struct StructTypeInfo {
 // Enumerator information
 struct Enumerator {
 	StringHandle name;
-	long long value;  // Enumerator value (always an integer)
+	long long value; // Enumerator value (always an integer)
 
 	Enumerator(StringHandle n, long long v)
-		: name(n), value(v) {}
-	
+	    : name(n), value(v) {}
+
 	StringHandle getName() const {
 		return name;
 	}
@@ -648,18 +650,18 @@ struct Enumerator {
 // Enum type information
 struct EnumTypeInfo {
 	StringHandle name;
-	bool is_scoped;                  // true for enum class, false for enum
-	TypeCategory underlying_type;    // Underlying type category (default: Int)
-	unsigned char underlying_size;   // Size in bits of underlying type
+	bool is_scoped; // true for enum class, false for enum
+	TypeCategory underlying_type; // Underlying type category (default: Int)
+	unsigned char underlying_size; // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
 	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
-		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
+	    : name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 
 	// Convenience: default underlying type is Int/32-bit
 	explicit EnumTypeInfo(StringHandle n, bool scoped)
-		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
-	
+	    : EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
+
 	StringHandle getName() const {
 		return name;
 	}
@@ -686,16 +688,16 @@ struct EnumTypeInfo {
 // Bundles a namespace and identifier so they always travel together.
 // Used by TypeInfo to track the source namespace of template instantiations.
 struct QualifiedIdentifier {
-	NamespaceHandle namespace_handle;  // hierarchical namespace, GLOBAL_NAMESPACE for global
-	StringHandle identifier_handle;    // unqualified name, e.g. "vector"
+	NamespaceHandle namespace_handle; // hierarchical namespace, GLOBAL_NAMESPACE for global
+	StringHandle identifier_handle; // unqualified name, e.g. "vector"
 
 	bool valid() const { return identifier_handle.handle != 0; }
 	bool hasNamespace() const { return namespace_handle.isValid() && !namespace_handle.isGlobal(); }
 
 	// Construct from a StringHandle — resolves to string_view and delegates.
 	static QualifiedIdentifier fromQualifiedName(
-			StringHandle name,
-			NamespaceHandle current_ns) {
+	    StringHandle name,
+	    NamespaceHandle current_ns) {
 		return fromQualifiedName(StringTable::getStringView(name), current_ns);
 	}
 
@@ -703,8 +705,8 @@ struct QualifiedIdentifier {
 	// current_ns is the namespace the code is being parsed in — used to resolve
 	// unqualified names so the namespace context is never lost.
 	static QualifiedIdentifier fromQualifiedName(
-			std::string_view name,
-			NamespaceHandle current_ns) {
+	    std::string_view name,
+	    NamespaceHandle current_ns) {
 		QualifiedIdentifier result;
 		size_t pos = name.rfind("::");
 		if (pos != std::string_view::npos) {
@@ -715,9 +717,10 @@ struct QualifiedIdentifier {
 			while (start < ns_part.size()) {
 				size_t sep = ns_part.find("::", start);
 				std::string_view component = (sep == std::string_view::npos)
-					? ns_part.substr(start) : ns_part.substr(start, sep - start);
+				                                 ? ns_part.substr(start)
+				                                 : ns_part.substr(start, sep - start);
 				ns = gNamespaceRegistry.getOrCreateNamespace(ns,
-					StringTable::getOrInternStringHandle(component));
+				                                             StringTable::getOrInternStringHandle(component));
 				start = (sep == std::string_view::npos) ? ns_part.size() : sep + 2;
 			}
 			result.namespace_handle = ns;
@@ -730,14 +733,13 @@ struct QualifiedIdentifier {
 	}
 };
 
-struct TypeInfo
-{
+struct TypeInfo {
 	TypeInfo() = default;
 	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), type_index_(idx), type_size_(type_size) {
 	}
 
-	StringHandle name_;  // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
-	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
+	StringHandle name_; // Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
+	NamespaceHandle namespace_handle_; // Namespace this type was declared in (default: INVALID = not yet set)
 	TypeIndex type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
@@ -753,41 +755,42 @@ struct TypeInfo
 	std::unique_ptr<EnumTypeInfo> enum_info_;
 
 	// For typedef, store the size in bits (for primitive types)
-	int type_size_ = 0;  // Changed from unsigned char to int for large types
+	int type_size_ = 0; // Changed from unsigned char to int for large types
 
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
-	
+
 	// For typedef of reference types, store the reference qualifier
 	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;
-	
+
 	// For function pointer/reference type aliases, store the function signature
 	std::optional<FunctionSignature> function_signature_;
-	
+
 	// For template instantiations: store metadata to avoid name parsing
 	// If base_template_ is valid, this type is a template instantiation
-	QualifiedIdentifier base_template_;  // e.g., {std, "vector"} for std::vector<int>
-	
+	QualifiedIdentifier base_template_; // e.g., {std, "vector"} for std::vector<int>
+
 	// Lightweight storage for template argument type indices (avoids TemplateTypeArg dependency)
 	// For type arguments: stores TypeIndex (index into gTypeInfo)
 	// For non-type arguments: stores the value directly (supports int64_t, double, StringHandle)
 	struct TemplateArgInfo {
-		TypeIndex type_index {};        // Carries both gTypeInfo slot and TypeCategory
+		TypeIndex type_index{}; // Carries both gTypeInfo slot and TypeCategory
 		InlineVector<CVQualifier, 4> pointer_cv_qualifiers;
-		size_t pointer_depth = 0;        // Pointer indirection level
-		CVQualifier cv_qualifier = CVQualifier::None;  // cv-qualifiers on the argument
+		size_t pointer_depth = 0; // Pointer indirection level
+		CVQualifier cv_qualifier = CVQualifier::None; // cv-qualifiers on the argument
 		ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
-		std::variant<int64_t, double, StringHandle> value = int64_t{0};  // For non-type arguments
-		bool is_value = false;           // true if this is a non-type argument
+		std::variant<int64_t, double, StringHandle> value = int64_t{0}; // For non-type arguments
+		bool is_value = false; // true if this is a non-type argument
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
-		StringHandle dependent_name;     // Name of the dependent template parameter (for inner deduction)
+		StringHandle dependent_name; // Name of the dependent template parameter (for inner deduction)
+		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
 		// TypeCategory accessor (replaces legacy Type accessor)
 		TypeCategory typeEnum() const noexcept { return type_index.category(); }
-		
+
 		// Helper methods for value access
 		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
 		double doubleValue() const { return std::holds_alternative<double>(value) ? std::get<double>(value) : 0.0; }
@@ -795,20 +798,20 @@ struct TypeInfo
 	};
 	InlineVector<TemplateArgInfo, 4> template_args_;
 
-	StringHandle name() const { 
+	StringHandle name() const {
 		return name_;
 	};
-	
+
 	// Namespace this type was declared in
 	NamespaceHandle namespaceHandle() const { return namespace_handle_; }
 	void setNamespaceHandle(NamespaceHandle ns) { namespace_handle_ = ns; }
-	
+
 	// Helper methods for template instantiations
 	bool isTemplateInstantiation() const { return base_template_.valid(); }
 	StringHandle baseTemplateName() const { return base_template_.identifier_handle; }
 	NamespaceHandle sourceNamespace() const { return base_template_.namespace_handle; }
 	const InlineVector<TemplateArgInfo, 4>& templateArgs() const { return template_args_; }
-	
+
 	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_ = base_template;
 		template_args_ = std::move(args);
@@ -844,18 +847,18 @@ struct TypeInfo
 	}
 
 	// Classification helpers delegated through type_index_.
-	TypeCategory typeEnum()      const { return category(); }
-	TypeCategory resolvedType()  const { return category(); }
+	TypeCategory typeEnum() const { return category(); }
+	TypeCategory resolvedType() const { return category(); }
 	// isStructLike: true when this type (or the underlying type of an alias)
 	// is Struct or UserDefined.  register_type_alias stores the underlying
 	// TypeIndex (not the alias slot), so category() already returns the
 	// underlying category for aliases — no separate alias branch needed.
-	bool isStructLike()          const { return is_struct_type(category()); }
-	bool isVoid()                const { return category() == TypeCategory::Void; }
-	bool isPrimitive()           const { return is_primitive_type(category()); }
-	bool needsTypeIndex()        const { return needs_type_index(category()); }
+	bool isStructLike() const { return is_struct_type(category()); }
+	bool isVoid() const { return category() == TypeCategory::Void; }
+	bool isPrimitive() const { return is_primitive_type(category()); }
+	bool needsTypeIndex() const { return needs_type_index(category()); }
 	bool isTemplatePlaceholder() const { return category() == TypeCategory::Template; }
-	bool isTypeAlias()           const { return is_type_alias_; }
+	bool isTypeAlias() const { return is_type_alias_; }
 };
 
 // Returned by add_user_type / add_function_type / add_struct_type / add_enum_type /
@@ -872,40 +875,40 @@ struct TypeCreationResult {
 // Custom hash and equality for heterogeneous lookup with string_view
 struct StringHash {
 	// No transparent lookup - all keys must be StringHandle
-	size_t operator()(StringHandle sh) const { 
+	size_t operator()(StringHandle sh) const {
 		// Use identity hash - the handle value is already well-distributed
-		return std::hash<uint32_t>{}(sh.handle); 
+		return std::hash<uint32_t>{}(sh.handle);
 	}
 };
 
 struct StringEqual {
 	// No transparent lookup - all keys must be StringHandle
-	bool operator()(StringHandle lhs, StringHandle rhs) const { 
-		return lhs.handle == rhs.handle; 
+	bool operator()(StringHandle lhs, StringHandle rhs) const {
+		return lhs.handle == rhs.handle;
 	}
 };
 
 // --- Type table accessor API (Milestone 6 / Option D Step 0) ---
 // Use these instead of accessing gTypeInfo / gTypesByName / gNativeTypes directly.
-const TypeInfo& getTypeInfo(TypeIndex idx);       // read-only; asserts idx in range
-TypeInfo&       getTypeInfoMut(TypeIndex idx);    // mutable; asserts idx in range
-const TypeInfo* tryGetTypeInfo(TypeIndex idx);    // nullable lookup; returns nullptr for invalid/out-of-range
-TypeInfo*       tryGetTypeInfoMut(TypeIndex idx); // nullable lookup; returns nullptr for invalid/out-of-range
+const TypeInfo& getTypeInfo(TypeIndex idx); // read-only; asserts idx in range
+TypeInfo& getTypeInfoMut(TypeIndex idx); // mutable; asserts idx in range
+const TypeInfo* tryGetTypeInfo(TypeIndex idx); // nullable lookup; returns nullptr for invalid/out-of-range
+TypeInfo* tryGetTypeInfoMut(TypeIndex idx); // nullable lookup; returns nullptr for invalid/out-of-range
 const TypeInfo* findTypeByName(StringHandle name); // returns nullptr if not found
-const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not found
-TypeIndex       nativeTypeIndex(TypeCategory cat);  // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
-size_t          getTypeInfoCount();                // replaces gTypeInfo.size()
+const TypeInfo* findNativeType(TypeCategory cat); // returns nullptr if not found
+TypeIndex nativeTypeIndex(TypeCategory cat); // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
+size_t getTypeInfoCount(); // replaces gTypeInfo.size()
 
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
 const std::unordered_map<TypeCategory, const TypeInfo*>& getNativeTypesMap();
 
 struct CanonicalTypeAlias {
-	TypeIndex type_index {};
+	TypeIndex type_index{};
 
 	// Constructor: TypeIndex must already have the correct category embedded.
 	explicit CanonicalTypeAlias(TypeIndex idx)
-		: type_index(idx) {}
+	    : type_index(idx) {}
 
 	// Returns the TypeCategory for backward compat.
 	TypeCategory typeEnum() const { return type_index.category(); }
@@ -928,7 +931,7 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	TypeIndex current_type_index = type_index;
 	size_t depthLimit = typeInfoCount;
 	while (current_type_index.is_valid() &&
-		depthLimit-- > 0) {
+	       depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
 		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
 			TypeIndex resolved = type_info.type_index_;
@@ -937,9 +940,9 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 			return CanonicalTypeAlias{resolved};
 		}
 		if ((type_info.category() != TypeCategory::UserDefined &&
-			type_info.category() != TypeCategory::TypeAlias) ||
-			!type_info.type_index_.is_valid() ||
-			type_info.type_index_ == current_type_index) {
+		     type_info.category() != TypeCategory::TypeAlias) ||
+		    !type_info.type_index_.is_valid() ||
+		    type_info.type_index_ == current_type_index) {
 			break;
 		}
 		current_type_index = type_info.type_index_;
@@ -977,56 +980,56 @@ TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, ui
 TypeCreationResult add_empty_type_entry();
 
 // Iteration support — use instead of range-for over gTypeInfo
-template<typename Fn>
+template <typename Fn>
 inline void forEachTypeInfo(Fn&& fn) {
-    for (size_t i = 0; i < getTypeInfoCount(); ++i) {
-        fn(getTypeInfo(TypeIndex{i}));
-    }
+	for (size_t i = 0; i < getTypeInfoCount(); ++i) {
+		fn(getTypeInfo(TypeIndex{i}));
+	}
 }
 
 // Get the natural alignment for a type (in bytes)
 // This follows the x64 Windows ABI alignment rules
 inline size_t get_type_alignment(TypeCategory cat, size_t type_size_bytes) {
 	switch (cat) {
-		case TypeCategory::Void:
-			return 1;
-		case TypeCategory::Bool:
-		case TypeCategory::Char:
-		case TypeCategory::UnsignedChar:
-		case TypeCategory::Char8:
-			return 1;
-		case TypeCategory::Short:
-		case TypeCategory::UnsignedShort:
-		case TypeCategory::Char16:
-			return 2;
-		case TypeCategory::WChar:
-			// wchar_t is 16-bit on LLP64 (Windows) → alignment 2
-			// wchar_t is 32-bit on LP64 (Linux) → alignment 4
-			return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 4;
-		case TypeCategory::Int:
-		case TypeCategory::UnsignedInt:
-		case TypeCategory::Float:
-		case TypeCategory::Char32:
-			return 4;
-		case TypeCategory::Long:
-		case TypeCategory::UnsignedLong:
-			// long is 32-bit on LLP64 (Windows) → alignment 4
-			// long is 64-bit on LP64 (Linux) → alignment 8
-			return (g_target_data_model == TargetDataModel::LLP64) ? 4 : 8;
-		case TypeCategory::LongLong:
-		case TypeCategory::UnsignedLongLong:
-		case TypeCategory::Double:
-			return 8;
-		case TypeCategory::LongDouble:
-			// On x64 Windows, long double is 8 bytes (same as double)
-			return 8;
-		case TypeCategory::Struct:
-			// For structs, alignment is determined by the struct's alignment field
-			// This should be passed separately
-			return type_size_bytes;
-		default:
-			// For other types, use the size as alignment (up to 8 bytes max on x64)
-			return std::min(type_size_bytes, size_t(8));
+	case TypeCategory::Void:
+		return 1;
+	case TypeCategory::Bool:
+	case TypeCategory::Char:
+	case TypeCategory::UnsignedChar:
+	case TypeCategory::Char8:
+		return 1;
+	case TypeCategory::Short:
+	case TypeCategory::UnsignedShort:
+	case TypeCategory::Char16:
+		return 2;
+	case TypeCategory::WChar:
+		// wchar_t is 16-bit on LLP64 (Windows) → alignment 2
+		// wchar_t is 32-bit on LP64 (Linux) → alignment 4
+		return (g_target_data_model == TargetDataModel::LLP64) ? 2 : 4;
+	case TypeCategory::Int:
+	case TypeCategory::UnsignedInt:
+	case TypeCategory::Float:
+	case TypeCategory::Char32:
+		return 4;
+	case TypeCategory::Long:
+	case TypeCategory::UnsignedLong:
+		// long is 32-bit on LLP64 (Windows) → alignment 4
+		// long is 64-bit on LP64 (Linux) → alignment 8
+		return (g_target_data_model == TargetDataModel::LLP64) ? 4 : 8;
+	case TypeCategory::LongLong:
+	case TypeCategory::UnsignedLongLong:
+	case TypeCategory::Double:
+		return 8;
+	case TypeCategory::LongDouble:
+		// On x64 Windows, long double is 8 bytes (same as double)
+		return 8;
+	case TypeCategory::Struct:
+		// For structs, alignment is determined by the struct's alignment field
+		// This should be passed separately
+		return type_size_bytes;
+	default:
+		// For other types, use the size as alignment (up to 8 bytes max on x64)
+		return std::min(type_size_bytes, size_t(8));
 	}
 }
 
@@ -1044,7 +1047,7 @@ inline int get_wchar_size_bits() {
 	return (g_target_data_model == TargetDataModel::LLP64) ? 16 : 32;
 }
 
-int get_type_size_bits(TypeCategory cat);  // primary implementation — full switch on TypeCategory
+int get_type_size_bits(TypeCategory cat); // primary implementation — full switch on TypeCategory
 TypeCategory promote_integer_type(TypeCategory type);
 TypeCategory get_common_type(TypeCategory left, TypeCategory right);
 
@@ -1066,19 +1069,18 @@ public:
 
 	// TypeIndex-first constructor — preferred for new code.
 	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
-		const Token& token, CVQualifier cv_qualifier)
-		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
+	                  const Token& token, CVQualifier cv_qualifier)
+	    : size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
 
 	// TypeCategory constructor — for primitive types without a gTypeInfo index.
 	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
-		const Token& token, CVQualifier cv_qualifier)
-		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
+	                  const Token& token, CVQualifier cv_qualifier)
+	    : size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
 	// Constructor for struct types with TypeIndex
 	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
-		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
-		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
-
+	                  const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
+	    : size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
 
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }
@@ -1104,8 +1106,16 @@ public:
 	const std::vector<PointerLevel>& pointer_levels() const { return pointer_levels_; }
 	void limit_pointer_depth(size_t max_depth) { pointer_levels_.resize(std::min(max_depth, pointer_levels_.size())); }
 	void add_pointer_level(CVQualifier cv = CVQualifier::None) { pointer_levels_.push_back(PointerLevel(cv)); }
-	void add_pointer_levels(int pointer_depth) { while (pointer_depth) { pointer_levels_.push_back(PointerLevel(CVQualifier::None)); --pointer_depth; } }
-	void remove_pointer_level() { if (!pointer_levels_.empty()) pointer_levels_.pop_back(); }
+	void add_pointer_levels(int pointer_depth) {
+		while (pointer_depth) {
+			pointer_levels_.push_back(PointerLevel(CVQualifier::None));
+			--pointer_depth;
+		}
+	}
+	void remove_pointer_level() {
+		if (!pointer_levels_.empty())
+			pointer_levels_.pop_back();
+	}
 	void copy_pointer_levels_from(const TypeSpecifierNode& other) { pointer_levels_ = other.pointer_levels_; }
 
 	// Reference support
@@ -1144,8 +1154,9 @@ public:
 		array_dimensions_ = dims;
 	}
 	// Returns the first (outermost) dimension size for backwards compatibility
-	std::optional<size_t> array_size() const { 
-		if (array_dimensions_.empty()) return std::nullopt;
+	std::optional<size_t> array_size() const {
+		if (array_dimensions_.empty())
+			return std::nullopt;
 		return array_dimensions_[0];
 	}
 	// Returns all array dimensions (e.g., [2][3][4] returns {2, 3, 4})
@@ -1159,8 +1170,8 @@ public:
 	// Pointer-to-member support (for types like int Class::*)
 	bool has_member_class() const { return member_class_name_.has_value(); }
 	StringHandle member_class_name() const { return *member_class_name_; }
-	void set_member_class_name(StringHandle class_name) { 
-		member_class_name_ = class_name; 
+	void set_member_class_name(StringHandle class_name) {
+		member_class_name_ = class_name;
 	}
 
 	void set_type_index(TypeIndex index) { type_index_ = index; }
@@ -1192,7 +1203,7 @@ public:
 				return false;
 			}
 		}
-		
+
 		// Check type index for user-defined types
 		if (is_struct_type(type_index_.category())) {
 			if (type_index_ != other.type_index_) {
@@ -1202,7 +1213,7 @@ public:
 				}
 			}
 		}
-		
+
 		// For function signature matching, top-level CV qualifiers on value types are ignored
 		// Example: void f(const int) and void f(int) have the same signature
 		// However, CV qualifiers matter for pointers/references
@@ -1210,36 +1221,40 @@ public:
 		bool has_indirection = !pointer_levels_.empty() || reference_qualifier_ != ReferenceQualifier::None;
 		if (has_indirection) {
 			// For pointers/references, CV qualifiers DO matter
-			if (cv_qualifier_ != other.cv_qualifier_) return false;
+			if (cv_qualifier_ != other.cv_qualifier_)
+				return false;
 		}
 		// else: For value types, ignore top-level CV qualifiers
-		
+
 		// Check reference qualifiers
-		if (reference_qualifier_ != other.reference_qualifier_) return false;
-		
+		if (reference_qualifier_ != other.reference_qualifier_)
+			return false;
+
 		// Check pointer depth and qualifiers at each level
-		if (pointer_levels_.size() != other.pointer_levels_.size()) return false;
+		if (pointer_levels_.size() != other.pointer_levels_.size())
+			return false;
 		for (size_t i = 0; i < pointer_levels_.size(); ++i) {
-			if (pointer_levels_[i].cv_qualifier != other.pointer_levels_[i].cv_qualifier) return false;
+			if (pointer_levels_[i].cv_qualifier != other.pointer_levels_[i].cv_qualifier)
+				return false;
 		}
-		
+
 		return true;
 	}
 
 private:
-	int size_ = 0;  // Size in bits - changed from unsigned char to int to support large structs
+	int size_ = 0; // Size in bits - changed from unsigned char to int to support large structs
 	TypeQualifier qualifier_ = TypeQualifier::None;
-	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
+	CVQualifier cv_qualifier_ = CVQualifier::None; // CV-qualifier for the base type
 	Token token_;
-	TypeIndex type_index_;      // Authoritative type identity (category + gTypeInfo index)
-	std::vector<PointerLevel> pointer_levels_;  // Empty if not a pointer, one entry per * level
-	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None;  // Reference qualifier (None, LValue, or RValue)
-	bool is_array_ = false;      // True if this is an array type (T[N] or T[])
-	std::vector<size_t> array_dimensions_;  // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
-	std::optional<FunctionSignature> function_signature_;  // For function pointers
-	bool is_pack_expansion_ = false;  // True if this type is followed by ... (pack expansion)
-	std::optional<StringHandle> member_class_name_;  // For pointer-to-member types (int Class::*)
-	std::string_view concept_constraint_;  // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
+	TypeIndex type_index_; // Authoritative type identity (category + gTypeInfo index)
+	std::vector<PointerLevel> pointer_levels_; // Empty if not a pointer, one entry per * level
+	ReferenceQualifier reference_qualifier_ = ReferenceQualifier::None; // Reference qualifier (None, LValue, or RValue)
+	bool is_array_ = false; // True if this is an array type (T[N] or T[])
+	std::vector<size_t> array_dimensions_; // Array dimensions (e.g., int[2][3][4] -> {2, 3, 4})
+	std::optional<FunctionSignature> function_signature_; // For function pointers
+	bool is_pack_expansion_ = false; // True if this type is followed by ... (pack expansion)
+	std::optional<StringHandle> member_class_name_; // For pointer-to-member types (int Class::*)
+	std::string_view concept_constraint_; // Non-empty if this was a constrained auto parameter (e.g., IsInt auto x)
 
 public:
 	// For concept constraints on auto parameters (C++20)
@@ -1293,11 +1308,13 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		}
 	} else {
 		int bits = get_type_size_bits(t);
-		if (bits > 0) return bits;
+		if (bits > 0)
+			return bits;
 	}
 	// Fallback: the parser may have stored the correct size directly
 	int stored = static_cast<int>(type_spec.size_in_bits());
-	if (stored > 0) return stored;
+	if (stored > 0)
+		return stored;
 	return 0;
 }
 
@@ -1311,16 +1328,16 @@ class DeclarationNode {
 public:
 	DeclarationNode() = default;
 	DeclarationNode(ASTNode type_node, Token identifier)
-		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+	    : type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 	DeclarationNode(ASTNode type_node, Token identifier, std::optional<ASTNode> array_size)
-		: type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
+	    : type_node_(type_node), identifier_(std::move(identifier)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {
 		if (array_size.has_value()) {
 			array_dimensions_.push_back(*array_size);
 		}
 	}
 	// Multidimensional array constructor
 	DeclarationNode(ASTNode type_node, Token identifier, std::vector<ASTNode> array_dimensions)
-		: type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
+	    : type_node_(type_node), identifier_(std::move(identifier)), array_dimensions_(std::move(array_dimensions)), custom_alignment_(0), is_parameter_pack_(false), is_unsized_array_(false) {}
 
 	ASTNode type_node() const { return type_node_; }
 	void set_type_node(const ASTNode& type_node) { type_node_ = type_node; }
@@ -1329,8 +1346,9 @@ public:
 	uint32_t line_number() const { return identifier_.line(); }
 	bool is_array() const { return !array_dimensions_.empty() || is_unsized_array_; }
 	// Returns the first (outermost) dimension for backwards compatibility
-	const std::optional<ASTNode> array_size() const { 
-		if (array_dimensions_.empty()) return std::nullopt;
+	const std::optional<ASTNode> array_size() const {
+		if (array_dimensions_.empty())
+			return std::nullopt;
 		return array_dimensions_[0];
 	}
 	// Multidimensional array support
@@ -1359,26 +1377,26 @@ public:
 private:
 	ASTNode type_node_;
 	Token identifier_;
-	std::vector<ASTNode> array_dimensions_;  // For array declarations like int arr[2][3][4]
-	size_t custom_alignment_;            // Custom alignment from alignas(n), 0 = use natural alignment
-	bool is_parameter_pack_;             // True for parameter packs like Args... args
-	bool is_unsized_array_;              // True for unsized arrays like int arr[] = {1, 2, 3}
-	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
+	std::vector<ASTNode> array_dimensions_; // For array declarations like int arr[2][3][4]
+	size_t custom_alignment_; // Custom alignment from alignas(n), 0 = use natural alignment
+	bool is_parameter_pack_; // True for parameter packs like Args... args
+	bool is_unsized_array_; // True for unsized arrays like int arr[] = {1, 2, 3}
+	std::optional<ASTNode> default_value_; // Default argument value for function parameters
 };
 
 enum class IdentifierBinding : uint8_t {
-	Unresolved,       // Not yet resolved (default, templates, deferred)
-	Local,            // Local variable or function parameter
-	Global,           // Global variable (file scope / namespace scope)
-	StaticLocal,      // static local variable inside a function
-	StaticMember,     // static data member of a struct/class
-	NonStaticMember,  // non-static data member (implicit this->member)
-	CapturedByValue,  // Lambda [x] capture
-	CapturedByRef,    // Lambda [&x] capture
-	CapturedThis,     // Lambda [this] capture
+	Unresolved, // Not yet resolved (default, templates, deferred)
+	Local, // Local variable or function parameter
+	Global, // Global variable (file scope / namespace scope)
+	StaticLocal, // static local variable inside a function
+	StaticMember, // static data member of a struct/class
+	NonStaticMember, // non-static data member (implicit this->member)
+	CapturedByValue, // Lambda [x] capture
+	CapturedByRef, // Lambda [&x] capture
+	CapturedThis, // Lambda [this] capture
 	CapturedCopyThis, // Lambda [*this] capture
-	EnumConstant,     // Enumerator value
-	Function,         // Function name (not a variable; overload resolution deferred)
+	EnumConstant, // Enumerator value
+	Function, // Function name (not a variable; overload resolution deferred)
 	TemplateParameter, // Non-type or type template parameter reference (new)
 };
 
@@ -1408,12 +1426,12 @@ private:
 // Parameters with default values at the end reduce the minimum.
 // Used to detect copy/move constructors with trailing defaults
 // (e.g. Foo(const Foo&, int = 0) has min-required == 1).
-template<typename ParamContainer>
+template <typename ParamContainer>
 inline size_t computeMinRequiredArgs(const ParamContainer& params) {
 	size_t min_required = params.size();
 	for (size_t i = params.size(); i > 0; --i) {
 		if (!params[i - 1].template is<DeclarationNode>() ||
-			!params[i - 1].template as<DeclarationNode>().has_default_value()) {
+		    !params[i - 1].template as<DeclarationNode>().has_default_value()) {
 			break;
 		}
 		--min_required;
@@ -1425,7 +1443,7 @@ inline size_t computeMinRequiredArgs(const ParamContainer& params) {
 class QualifiedIdentifierNode {
 public:
 	explicit QualifiedIdentifierNode(NamespaceHandle namespace_handle, Token identifier)
-		: namespace_handle_(namespace_handle), identifier_(identifier) {}
+	    : namespace_handle_(namespace_handle), identifier_(identifier) {}
 
 	NamespaceHandle namespace_handle() const { return namespace_handle_; }
 	std::string_view name() const { return identifier_.value(); }
@@ -1450,8 +1468,8 @@ public:
 	}
 
 private:
-	NamespaceHandle namespace_handle_;  // Handle to namespace, e.g., handle for "std" in std::print
-	Token identifier_;                  // The final identifier (e.g., "print", "func")
+	NamespaceHandle namespace_handle_; // Handle to namespace, e.g., handle for "std" in std::print
+	Token identifier_; // The final identifier (e.g., "print", "func")
 };
 
 using NumericLiteralValue = std::variant<unsigned long long, double>;
@@ -1469,7 +1487,7 @@ public:
 private:
 	NumericLiteralValue value_;
 	TypeCategory type_cat_;
-	unsigned char size_;	// Size in bits
+	unsigned char size_; // Size in bits
 	TypeQualifier qualifier_;
 	Token identifier_;
 };
@@ -1507,8 +1525,8 @@ enum class BinaryOperatorSemanticResolutionState : uint8_t {
 class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
-		ASTNode rhs_node)
-		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
+	                            ASTNode rhs_node)
+	    : identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
@@ -1528,16 +1546,16 @@ public:
 		resolved_member_operator_overload_ = overload;
 		resolved_free_function_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = overload != nullptr
-			? BinaryOperatorSemanticResolutionState::MemberMatch
-			: BinaryOperatorSemanticResolutionState::NoMatch;
+		                                          ? BinaryOperatorSemanticResolutionState::MemberMatch
+		                                          : BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_resolved_free_function_operator_overload(const FunctionDeclarationNode* overload) {
 		resolved_free_function_operator_overload_ = overload;
 		resolved_member_operator_overload_ = nullptr;
 		semantic_operator_resolution_state_ = overload != nullptr
-			? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
-			: BinaryOperatorSemanticResolutionState::NoMatch;
+		                                          ? BinaryOperatorSemanticResolutionState::FreeFunctionMatch
+		                                          : BinaryOperatorSemanticResolutionState::NoMatch;
 	}
 
 	void set_no_match_operator_overload() {
@@ -1576,7 +1594,7 @@ private:
 class UnaryOperatorNode {
 public:
 	explicit UnaryOperatorNode(Token identifier, ASTNode operand_node, bool is_prefix = true, bool is_builtin_addressof = false)
-		: identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
+	    : identifier_(identifier), operand_node_(operand_node), is_prefix_(is_prefix), is_builtin_addressof_(is_builtin_addressof) {}
 
 	std::string_view op() const { return identifier_.value(); }
 	const Token& get_token() const { return identifier_; }
@@ -1594,7 +1612,7 @@ private:
 class TernaryOperatorNode {
 public:
 	explicit TernaryOperatorNode(ASTNode condition, ASTNode true_expr, ASTNode false_expr, Token question_token)
-		: condition_(condition), true_expr_(true_expr), false_expr_(false_expr), question_token_(question_token) {}
+	    : condition_(condition), true_expr_(true_expr), false_expr_(false_expr), question_token_(question_token) {}
 
 	const ASTNode& condition() const { return condition_; }
 	const ASTNode& true_expr() const { return true_expr_; }
@@ -1615,25 +1633,27 @@ private:
 // the ordinary post-parse expression surface that sema/codegen consume.
 class FoldExpressionNode {
 public:
-	enum class Direction { Left, Right };
-	enum class Type { Unary, Binary };
+	enum class Direction { Left,
+		                   Right };
+	enum class Type { Unary,
+		              Binary };
 
 	// Unary fold: (... op pack) or (pack op ...)
 	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op, Direction dir, Token token)
-		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Unary), 
-		  init_expr_(std::nullopt), pack_expr_(std::nullopt), token_(token) {}
+	    : pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Unary),
+	      init_expr_(std::nullopt), pack_expr_(std::nullopt), token_(token) {}
 
 	// Binary fold: (init op ... op pack) or (pack op ... op init)
-	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op, 
-		                         Direction dir, ASTNode init, Token token)
-		: pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Binary), 
-		  init_expr_(init), pack_expr_(std::nullopt), token_(token) {}
+	explicit FoldExpressionNode(std::string_view pack_name, std::string_view op,
+	                            Direction dir, ASTNode init, Token token)
+	    : pack_name_(pack_name), op_(op), direction_(dir), type_(Type::Binary),
+	      init_expr_(init), pack_expr_(std::nullopt), token_(token) {}
 
 	// Unary fold with complex pack expression: (expr op ...) or (... op expr)
 	// Used when the pack is a complex expression like a function call
 	explicit FoldExpressionNode(ASTNode pack_expr, std::string_view op, Direction dir, Token token)
-		: pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
-		  init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
+	    : pack_name_(""), op_(op), direction_(dir), type_(Type::Unary),
+	      init_expr_(std::nullopt), pack_expr_(pack_expr), token_(token) {}
 
 	std::string_view pack_name() const { return pack_name_; }
 	std::string_view op() const { return op_; }
@@ -1650,7 +1670,7 @@ private:
 	Direction direction_;
 	Type type_;
 	std::optional<ASTNode> init_expr_;
-	std::optional<ASTNode> pack_expr_;  // Complex pack expression (if any)
+	std::optional<ASTNode> pack_expr_; // Complex pack expression (if any)
 	Token token_;
 };
 
@@ -1662,14 +1682,14 @@ private:
 class PackExpansionExprNode {
 public:
 	explicit PackExpansionExprNode(ASTNode pattern, Token ellipsis_token)
-		: pattern_(pattern), ellipsis_token_(ellipsis_token) {}
+	    : pattern_(pattern), ellipsis_token_(ellipsis_token) {}
 
 	ASTNode pattern() const { return pattern_; }
 	const Token& get_token() const { return ellipsis_token_; }
 
 private:
-	ASTNode pattern_;        // The expression being expanded
-	Token ellipsis_token_;   // The ... token
+	ASTNode pattern_; // The expression being expanded
+	Token ellipsis_token_; // The ... token
 };
 
 class BlockNode {
@@ -1691,13 +1711,13 @@ class FunctionDeclarationNode {
 public:
 	FunctionDeclarationNode() = delete;
 	FunctionDeclarationNode(DeclarationNode& decl_node)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	    : decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, std::string_view parent_struct_name)
-		: decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	    : decl_node_(decl_node), parent_struct_name_(parent_struct_name), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, StringHandle parent_struct_name_handle)
-		: decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	    : decl_node_(decl_node), parent_struct_name_(StringTable::getStringView(parent_struct_name_handle)), is_member_function_(true), is_implicit_(false), linkage_(Linkage::None), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 	FunctionDeclarationNode(DeclarationNode& decl_node, Linkage linkage)
-		: decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
+	    : decl_node_(decl_node), parent_struct_name_(""), is_member_function_(false), is_implicit_(false), linkage_(linkage), is_constexpr_(false), is_constinit_(false), is_consteval_(false) {}
 
 	const DeclarationNode& decl_node() const {
 		return decl_node_;
@@ -1828,7 +1848,7 @@ public:
 	const std::vector<int64_t>& non_type_template_args() const { return non_type_template_args_; }
 	bool has_non_type_template_args() const { return !non_type_template_args_.empty(); }
 
-	template<typename NameContainer, typename ArgContainer>
+	template <typename NameContainer, typename ArgContainer>
 	void set_outer_template_bindings(const NameContainer& template_param_names, const ArgContainer& template_args) {
 		outer_template_param_names_.clear();
 		outer_template_args_.clear();
@@ -1851,6 +1871,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}
@@ -1862,32 +1883,32 @@ public:
 private:
 	DeclarationNode& decl_node_;
 	std::vector<ASTNode> parameter_nodes_;
-	std::optional<ASTNode> definition_block_;  // Store ASTNode to keep BlockNode alive
-	std::string_view parent_struct_name_;  // Points directly into source text from lexer token or ChunkedStringAllocator
-	NamespaceHandle namespace_handle_;  // Namespace this function was declared in (default: INVALID = not yet set)
+	std::optional<ASTNode> definition_block_; // Store ASTNode to keep BlockNode alive
+	std::string_view parent_struct_name_; // Points directly into source text from lexer token or ChunkedStringAllocator
+	NamespaceHandle namespace_handle_; // Namespace this function was declared in (default: INVALID = not yet set)
 	bool is_member_function_;
-	bool is_implicit_;  // True if this is an implicitly generated function (e.g., operator=)
+	bool is_implicit_; // True if this is an implicitly generated function (e.g., operator=)
 	bool has_template_body_ = false;
-	bool has_template_declaration_ = false;  // True if template declaration position is saved (for SFINAE re-parsing)
+	bool has_template_declaration_ = false; // True if template declaration position is saved (for SFINAE re-parsing)
 
-	bool is_variadic_ = false;  // True if this function has ... ellipsis parameter
-	Linkage linkage_;  // Linkage specification (C, C++, or None)
-	CallingConvention calling_convention_ = CallingConvention::Default;  // Calling convention (__cdecl, __stdcall, etc.)
-	SaveHandle template_body_position_handle_;  // Handle to saved position for template body (from Parser::save_token_position())
-	SaveHandle template_declaration_position_handle_;  // Handle to saved position for template declaration (for SFINAE)
-	std::optional<SaveHandle> trailing_return_type_position_handle_;  // Handle to saved position for trailing return type '->'
+	bool is_variadic_ = false; // True if this function has ... ellipsis parameter
+	Linkage linkage_; // Linkage specification (C, C++, or None)
+	CallingConvention calling_convention_ = CallingConvention::Default; // Calling convention (__cdecl, __stdcall, etc.)
+	SaveHandle template_body_position_handle_; // Handle to saved position for template body (from Parser::save_token_position())
+	SaveHandle template_declaration_position_handle_; // Handle to saved position for template declaration (for SFINAE)
+	std::optional<SaveHandle> trailing_return_type_position_handle_; // Handle to saved position for trailing return type '->'
 	bool is_constexpr_;
 	bool is_constinit_;
 	bool is_consteval_;
-	bool is_noexcept_ = false;  // True if function is declared noexcept
-	bool is_deleted_ = false;  // True if function is declared = delete
-	bool is_static_ = false;  // True if function is a static member function (no 'this' pointer)
-	bool is_const_member_function_ = false;  // True if this function is a const member function (K qualifier)
-	bool is_volatile_member_function_ = false;  // True if this function is a volatile member function (V qualifier)
-	bool inline_always_ = false;  // True if function should always be inlined (e.g., template pure expressions)
-	std::optional<ASTNode> noexcept_expression_;  // Optional noexcept(expr) expression
-	std::string_view mangled_name_;  // Pre-computed mangled name (points to ChunkedStringAllocator storage)
-	std::vector<int64_t> non_type_template_args_;  // Non-type template arguments (e.g., 0 for get<0>)
+	bool is_noexcept_ = false; // True if function is declared noexcept
+	bool is_deleted_ = false; // True if function is declared = delete
+	bool is_static_ = false; // True if function is a static member function (no 'this' pointer)
+	bool is_const_member_function_ = false; // True if this function is a const member function (K qualifier)
+	bool is_volatile_member_function_ = false; // True if this function is a volatile member function (V qualifier)
+	bool inline_always_ = false; // True if function should always be inlined (e.g., template pure expressions)
+	std::optional<ASTNode> noexcept_expression_; // Optional noexcept(expr) expression
+	std::string_view mangled_name_; // Pre-computed mangled name (points to ChunkedStringAllocator storage)
+	std::vector<int64_t> non_type_template_args_; // Non-type template arguments (e.g., 0 for get<0>)
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
@@ -1895,7 +1916,7 @@ private:
 class FunctionCallNode {
 public:
 	explicit FunctionCallNode(const DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+	    : func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const auto& arguments() const { return arguments_; }
 	const auto& function_declaration() const { return func_decl_; }
@@ -1903,13 +1924,13 @@ public:
 	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
 
 	Token called_from() const { return called_from_; }
-	
+
 	// Pre-computed mangled name support (for namespace-scoped functions)
 	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
 	std::string_view mangled_name() const { return mangled_name_.view(); }
 	StringHandle mangled_name_handle() const { return mangled_name_; }
 	bool has_mangled_name() const { return mangled_name_.isValid(); }
-	
+
 	// Qualified source name support (for template lookup in constexpr evaluation)
 	// This stores the source-level qualified name (e.g., "std::__is_complete_or_unbounded")
 	// which is needed for template function lookup in the template registry
@@ -1917,15 +1938,15 @@ public:
 	std::string_view qualified_name() const { return qualified_name_.view(); }
 	StringHandle qualified_name_handle() const { return qualified_name_; }
 	bool has_qualified_name() const { return qualified_name_.isValid(); }
-	
+
 	// Explicit template arguments support (for calls like foo<int>())
 	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
-	void set_template_arguments(std::vector<ASTNode>&& template_args) { 
+	void set_template_arguments(std::vector<ASTNode>&& template_args) {
 		template_arguments_ = std::move(template_args);
 	}
 	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
 	bool has_template_arguments() const { return !template_arguments_.empty(); }
-	
+
 	// Indirect call support (for function pointers and function references)
 	// When true, the call is through a variable holding a function address, not a direct function name
 	void set_indirect_call(bool indirect) { is_indirect_call_ = indirect; }
@@ -1935,17 +1956,17 @@ private:
 	const DeclarationNode& func_decl_;
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
-	StringHandle mangled_name_;  // Pre-computed mangled name
-	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
-	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
-	bool is_indirect_call_ = false;  // True for function pointer/reference calls
+	StringHandle mangled_name_; // Pre-computed mangled name
+	StringHandle qualified_name_; // Source-level qualified name (e.g., "std::func")
+	std::vector<ASTNode> template_arguments_; // Explicit template arguments (e.g., <T> in foo<T>())
+	bool is_indirect_call_ = false; // True for function pointer/reference calls
 };
 
 // Constructor call node - represents constructor calls like T(args)
 class ConstructorCallNode {
 public:
 	explicit ConstructorCallNode(ASTNode type_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+	    : type_node_(type_node), arguments_(std::move(arguments)), called_from_(called_from_token) {}
 
 	const ASTNode& type_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
@@ -1955,7 +1976,7 @@ public:
 	Token called_from() const { return called_from_; }
 
 private:
-	ASTNode type_node_;  // TypeSpecifierNode representing the type being constructed
+	ASTNode type_node_; // TypeSpecifierNode representing the type being constructed
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
 };
