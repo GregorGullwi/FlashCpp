@@ -205,6 +205,67 @@ the function, causing a runtime crash (signal 11) if the caller is linked.
 
 **Workaround:** Use a non-template struct holding the function pointer.
 
+## `function_signature` propagation from unsubstituted orig type is a no-op for template parameters
+
+Several code paths in `Parser_Templates_Inst_Deduction.cpp` copy `function_signature`
+from the *original unsubstituted* template declaration type (`orig_return_type` /
+`orig_param_type`) onto the newly constructed substituted `TypeSpecifierNode`. When the
+original type IS a template parameter placeholder (e.g., `T` stored as `UserDefined`),
+`has_function_signature()` returns false, making the propagation a no-op. The concrete
+`function_signature` lives on the resolved `TemplateTypeArg` (in `template_args` /
+`explicit_types` / `arg_types`), which is never consulted in these paths.
+
+**Affected locations** (all in `src/Parser_Templates_Inst_Deduction.cpp`):
+
+1. **`try_instantiate_template_explicit`**, return type (~line 700–702):
+   copies from `orig_return_type` — should use `findTemplateArgByName` or
+   `explicit_types[i]` as the source.
+
+2. **`try_instantiate_template_explicit`**, parameter type (~line 745–747):
+   copies from `orig_param_type` — same issue.
+
+3. **`try_instantiate_single_template`** (non-auto path), parameter type (~line 1970–1972):
+   copies from `orig_param_type` — should source from the matched `template_args[i]`.
+
+4. **`try_instantiate_single_template`** (fallback return path), return type (~line 1619–1621):
+   copies from `orig_return_type` — same issue.
+
+**Correct reference implementation**: the `auto` parameter path at ~line 1911–1914
+correctly sources `function_signature` from `deduced_arg_type` (the call-site argument
+type), demonstrating the right approach.
+
+**Impact**: When a free function template has a parameter or return type that is a
+template parameter substituted with a function-pointer type (e.g.,
+`template<typename F> void call(F fn)` instantiated with `int(*)(int)`), the Itanium
+mangler may crash with "FunctionPointer type missing function signature". This is the
+same class of bug that was fixed for lazy member instantiation and class-template
+instantiation in this PR, but the free-function deduction paths were not fully addressed.
+
+**Why it hasn't been observed yet**: The `should_reparse` path (lines 1477–1593) handles
+the common case by re-parsing the declaration with template parameters in scope, which
+naturally produces a `TypeSpecifierNode` with the correct `function_signature`. The
+fallback non-reparse path (lines 1595–1628 for return type, lines 1927–1977 for params)
+is only taken when the return type is not template-dependent, which is uncommon for
+function-pointer template parameters. Similarly, the explicit-instantiation path
+(`try_instantiate_template_explicit`) is less commonly exercised with function-pointer
+arguments than the deduction path.
+
+**Suggested fix**: Apply the same `findTemplateArgByName` fallback pattern used in
+`Parser_Templates_Lazy.cpp` and `Parser_Templates_Inst_ClassTemplate.cpp`:
+
+```cpp
+if (orig_param_type.has_function_signature()) {
+    param_type_ref.set_function_signature(orig_param_type.function_signature());
+} else if (subst_type_index.category() == TypeCategory::FunctionPointer ||
+           subst_type_index.category() == TypeCategory::MemberFunctionPointer) {
+    if (const auto* arg = findTemplateArgByName(
+            orig_param_type.token().value(), template_params, template_args)) {
+        if (arg->function_signature.has_value())
+            param_type_ref.set_function_signature(*arg->function_signature);
+    }
+}
+```
+
 ## Implicit function-name → function-pointer conversion for overload resolution
 
 Passing a bare function name to a parameter whose declared type is a typedef'd or
