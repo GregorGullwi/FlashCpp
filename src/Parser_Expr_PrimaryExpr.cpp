@@ -1140,8 +1140,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// NOTE: Only treat BUILT-IN types as functional casts here.
 		// User-defined types with Type(args) syntax are constructor calls, not casts,
 		// and should be handled by the normal identifier/function call path below.
-		if ((current_token_.value() == "(" || current_token_.value() == "{") &&
-			!current_token_.value().starts_with("::")) {
+		if (current_token_.value() == "(" || current_token_.value() == "{") {
 			std::string_view id_name = identifier_token.value();
 
 			// Only check for built-in type names (not user-defined types)

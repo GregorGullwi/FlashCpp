@@ -59,6 +59,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		return ParseResult::error("Expected '(' or '{' for builtin type construction", type_token);
 	}
 
+	Token init_token = current_token_;
 	bool is_brace_init = (current_token_.value() == "{");
 	std::string_view closing_delimiter = is_brace_init ? "}"sv : ")"sv;
 
@@ -91,10 +92,10 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 	}
 
-	auto make_constructor_call = [&](ChunkedVector<ASTNode>&& args) -> ParseResult {
+	auto make_constructor_call = [&](ChunkedVector<ASTNode>&& args, const Token& called_from_token) -> ParseResult {
 		auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
 		auto result = emplace_node<ExpressionNode>(
-			ConstructorCallNode(type_node, std::move(args), type_token));
+			ConstructorCallNode(type_node, std::move(args), called_from_token));
 		return ParseResult::success(result);
 	};
 
@@ -103,7 +104,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		advance(); // consume ')' or '}'
 
 		ChunkedVector<ASTNode> args;
-		return make_constructor_call(std::move(args));
+		return make_constructor_call(std::move(args), is_brace_init ? init_token : type_token);
 	}
 
 	// Parse the expression inside the parentheses
@@ -139,7 +140,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	if (is_brace_init) {
 		ChunkedVector<ASTNode> args;
 		args.push_back(*final_expr);
-		return make_constructor_call(std::move(args));
+		return make_constructor_call(std::move(args), init_token);
 	}
 
 	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
