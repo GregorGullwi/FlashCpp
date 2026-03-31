@@ -113,7 +113,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-1. **Template deduction / semantic follow-on failures after the earlier mangling blockers**: In the 2026-03-31 targeted retest, `<algorithm>` no longer failed first on unresolved-`auto` mangling. It now gets further and then fails on concepts/ranges diagnostics followed by explicit-constructor copy-initialization errors. The same family of deeper issues likely explains several headers previously bucketed under the stale unresolved-`auto` note.
+1. **Template deduction / semantic follow-on failures after the earlier mangling blockers**: In the 2026-03-31 targeted retest, `<algorithm>` no longer failed first on unresolved- `auto` mangling. It now gets further and then fails on concepts/ranges diagnostics followed by explicit-constructor copy-initialization errors. The same family of deeper issues likely explains several headers previously bucketed under the stale unresolved- `auto` note.
 
 2. **Function pointer signature propagation through template instantiation metadata (fixed 2026-03-31)**: Function pointer signatures were being dropped in lazy member instantiation, outer-template bindings, and free-function template instantiation. This previously caused the Itanium mangler to crash on headers such as `<string>` and `<stdexcept>`. After the fix, those headers progress past the mangling crash and now fail later on unrelated issues.
 
