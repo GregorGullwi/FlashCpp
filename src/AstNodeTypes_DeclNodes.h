@@ -899,27 +899,7 @@ const TypeInfo* findNativeType(TypeCategory cat);  // returns nullptr if not fou
 TypeIndex nativeTypeIndex(TypeCategory cat);	 // real gTypeInfo slot for native types; TypeIndex{0,cat} for non-native
 size_t getTypeInfoCount();				   // replaces gTypeInfo.size()
 
-inline bool isExactComparisonCategoryType(TypeIndex type_index) {
-	if (!type_index.is_valid()) {
-		return false;
-	}
-
-	constexpr std::string_view comparison_category_names[] = {
-		"std::strong_ordering",
-		"std::weak_ordering",
-		"std::partial_ordering",
-		"strong_ordering",
-		"weak_ordering",
-		"partial_ordering",
-	};
-	for (std::string_view name : comparison_category_names) {
-		const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
-		if (type_info && type_info->type_index_ == type_index) {
-			return true;
-		}
-	}
-	return false;
-}
+bool isExactComparisonCategoryType(TypeIndex type_index);
 
 // Map accessors — use these instead of the extern globals
 std::unordered_map<StringHandle, TypeInfo*, StringHash, StringEqual>& getTypesByNameMap();
