@@ -782,6 +782,7 @@ struct TypeInfo
 		bool is_array = false;
 		std::optional<size_t> array_size = std::nullopt;
 		StringHandle dependent_name;     // Name of the dependent template parameter (for inner deduction)
+		std::optional<FunctionSignature> function_signature; // For function pointer template arguments
 
 		// Category accessor (delegates to type_index.category())
 		TypeCategory category() const noexcept { return type_index.category(); }
@@ -1078,7 +1079,6 @@ public:
 	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
 		const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
 		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
-
 
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }
@@ -1851,6 +1851,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}

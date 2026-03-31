@@ -478,6 +478,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& pl : param_type_spec.pointer_levels())
 							sub_type.add_pointer_level(pl.cv_qualifier);
 						sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+						if (elem.function_signature.has_value()) {
+							sub_type.set_function_signature(*elem.function_signature);
+						}
 						StringBuilder name_builder;
 						name_builder.append(orig_name).append('_').append(pi);
 						Token elem_token(Token::Type::Identifier, name_builder.commit(),
@@ -509,6 +512,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 			if (param_type_spec.has_function_signature()) {
 				substituted_param_type.set_function_signature(param_type_spec.function_signature());
+			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+			           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+				if (const auto* arg = findTemplateArgByName(
+						param_type_spec.token().value(),
+						tmpl_params,
+						tmpl_args)) {
+					if (arg->function_signature.has_value()) {
+						substituted_param_type.set_function_signature(*arg->function_signature);
+					}
+				}
 			}
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -5113,6 +5126,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+				if (return_type_spec.has_function_signature()) {
+					substituted_return_type.set_function_signature(return_type_spec.function_signature());
+				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
+				           return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					if (const auto* arg = findTemplateArgByName(
+							return_type_spec.token().value(),
+							template_params,
+							template_args_to_use)) {
+						if (arg->function_signature.has_value()) {
+							substituted_return_type.set_function_signature(*arg->function_signature);
+						}
+					}
+				}
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -5148,6 +5174,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+						           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+							if (const auto* arg = findTemplateArgByName(
+									param_type_spec.token().value(),
+									template_params,
+									template_args_to_use)) {
+								if (arg->function_signature.has_value()) {
+									substituted_param_type.set_function_signature(*arg->function_signature);
+								}
+							}
 						}
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
@@ -5244,6 +5280,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+				if (return_type_spec.has_function_signature()) {
+					substituted_return_type.set_function_signature(return_type_spec.function_signature());
+				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
+				           return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					if (const auto* arg = findTemplateArgByName(
+							return_type_spec.token().value(),
+							template_params,
+							template_args_to_use)) {
+						if (arg->function_signature.has_value()) {
+							substituted_return_type.set_function_signature(*arg->function_signature);
+						}
+					}
+				}
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -5281,6 +5330,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+						           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+							if (const auto* arg = findTemplateArgByName(
+									param_type_spec.token().value(),
+									template_params,
+									template_args_to_use)) {
+								if (arg->function_signature.has_value()) {
+									substituted_param_type.set_function_signature(*arg->function_signature);
+								}
+							}
 						}
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
@@ -5502,6 +5561,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+				if (return_type_spec.has_function_signature()) {
+					substituted_return_type.set_function_signature(return_type_spec.function_signature());
+				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
+				           return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					if (const auto* arg = findTemplateArgByName(
+							return_type_spec.token().value(),
+							template_params,
+							template_args_to_use)) {
+						if (arg->function_signature.has_value()) {
+							substituted_return_type.set_function_signature(*arg->function_signature);
+						}
+					}
+				}
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -5537,6 +5609,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
 						if (param_type_spec.has_function_signature()) {
 							substituted_param_type.set_function_signature(param_type_spec.function_signature());
+						} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+						           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+							if (const auto* arg = findTemplateArgByName(
+									param_type_spec.token().value(),
+									template_params,
+									template_args_to_use)) {
+								if (arg->function_signature.has_value()) {
+									substituted_param_type.set_function_signature(*arg->function_signature);
+								}
+							}
 						}
 
 						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
@@ -5772,6 +5854,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				for (const auto& pl : return_type_spec.pointer_levels())
 					new_return_spec.add_pointer_level(pl.cv_qualifier);
 				new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
+				if (return_type_spec.has_function_signature()) {
+					new_return_spec.set_function_signature(return_type_spec.function_signature());
+				} else if (ret_type_index.category() == TypeCategory::FunctionPointer ||
+				           ret_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					if (const auto* arg = findTemplateArgByName(
+							return_type_spec.token().value(),
+							template_params,
+							template_args_to_use)) {
+						if (arg->function_signature.has_value()) {
+							new_return_spec.set_function_signature(*arg->function_signature);
+						}
+					}
+				}
 
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 				    new_return_type, decl_node.identifier_token());
@@ -5804,6 +5899,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						for (const auto& pl : param_type_spec.pointer_levels())
 							new_param_spec.add_pointer_level(pl.cv_qualifier);
 						new_param_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
+						if (param_type_spec.has_function_signature()) {
+							new_param_spec.set_function_signature(param_type_spec.function_signature());
+						} else if (new_param_type_index.category() == TypeCategory::FunctionPointer ||
+						           new_param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+							if (const auto* arg = findTemplateArgByName(
+									param_type_spec.token().value(),
+									template_params,
+									template_args_to_use)) {
+								if (arg->function_signature.has_value()) {
+									new_param_spec.set_function_signature(*arg->function_signature);
+								}
+							}
+						}
 
 						auto new_param_decl = emplace_node<DeclarationNode>(
 						    new_param_type_node, param_decl.identifier_token());

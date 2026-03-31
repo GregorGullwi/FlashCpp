@@ -4,7 +4,6 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 // Helper: register type-kind template parameters as TypeInfo / getTypesByNameMap() entries so
 // that body re-parsing can resolve their names.  Non-type (value) parameters are
 // intentionally skipped: makeValue() leaves base_type as the value-type (e.g. Type::Int
@@ -698,6 +697,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
 	return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
+	if (orig_return_type.has_function_signature()) {
+		return_type_ref.set_function_signature(orig_return_type.function_signature());
+	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -740,6 +742,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 			}
 			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
+			if (orig_param_type.has_function_signature()) {
+				param_type_ref.set_function_signature(orig_param_type.function_signature());
+			}
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			// Preserve default argument value from the original template declaration
@@ -1065,6 +1070,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						synth_ts.set_reference_qualifier(c.ref_qualifier);
 						if (c.is_array) {
 							synth_ts.set_array(true, c.array_size);
+						}
+						if (c.function_signature.has_value()) {
+							synth_ts.set_function_signature(*c.function_signature);
 						}
 						TemplateTypeArg new_arg = TemplateTypeArg::makeTypeSpecifier(synth_ts);
 						auto [it, inserted] = param_name_to_arg.emplace(p.dependent_name, new_arg);
@@ -1608,6 +1616,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+		if (orig_return_type.has_function_signature()) {
+			new_return_type.set_function_signature(orig_return_type.function_signature());
+		}
 		
 		// Preserve pointer levels
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
@@ -1897,6 +1908,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						cv
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
+					if (deduced_arg_type.has_function_signature()) {
+						param_type.as<TypeSpecifierNode>().set_function_signature(deduced_arg_type.function_signature());
+					}
 					// Copy pointer levels from the deduced argument type
 					for (const auto& ptr_level : deduced_arg_type.pointer_levels()) {
 						param_type.as<TypeSpecifierNode>().add_pointer_level(ptr_level.cv_qualifier);
@@ -1953,6 +1967,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						orig_param_type.cv_qualifier()
 					);
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
+					if (orig_param_type.has_function_signature()) {
+						param_type.as<TypeSpecifierNode>().set_function_signature(orig_param_type.function_signature());
+					}
 
 					// Preserve pointer levels from the original declaration
 					for (const auto& ptr_level : orig_param_type.pointer_levels()) {
@@ -2132,7 +2149,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 	// Add to top-level AST so it gets visited by the code generator
 	ast_nodes_.push_back(new_func_node);
-
 
 	return new_func_node;
 }

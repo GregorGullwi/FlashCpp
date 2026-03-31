@@ -22,6 +22,7 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.array_size = arg.array_size;
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
+	ta.function_signature = arg.function_signature;
 	if (arg.is_value) {
 		ta.value = arg.intValue();
 	}
@@ -137,6 +138,7 @@ struct TemplatePattern {
 			deduced.pointer_cv_qualifiers = c.pointer_cv_qualifiers;
 			deduced.is_array = c.is_array;
 			deduced.array_size = c.array_size;
+			deduced.function_signature = c.function_signature;
 		}
 		return deduced;
 	}

@@ -4,7 +4,6 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 ParseResult Parser::parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr) {
 	if (peek() != ":"_tok) {
 		return ParseResult::success();
@@ -1009,12 +1008,7 @@ ParseResult Parser::parse_template_declaration() {
 					}
 					
 					// Create template type argument
-					TemplateTypeArg arg;
-					arg.type_index = TemplateTypeArg::makeTypeIndex(type_spec.type_index().withCategory(type_spec.type()));
-					arg.is_value = false;
-					arg.cv_qualifier = type_spec.cv_qualifier();
-					arg.pointer_depth = type_spec.pointer_depth();
-					arg.ref_qualifier = type_spec.reference_qualifier();
+					TemplateTypeArg arg(type_spec);
 					arg.is_array = is_array;
 					// Mark as dependent only for partial specializations
 					// For full specializations (template<>), the types are concrete, not dependent
@@ -2842,7 +2836,6 @@ ParseResult Parser::parse_template_declaration() {
 				}
 			}
 
-
 			// Check for forward declaration: template<typename T> struct Name<T*>;
 			if (peek() == ";"_tok) {
 				advance(); // consume ';'
@@ -4132,8 +4125,9 @@ if (struct_type_info.getStructInfo()) {
 							else if (paren_depth == 0 && angle_depth == 0 &&
 									 (peek() == ","_tok || peek() == ")"_tok)) {
 								break;
+							} else {
+								advance();
 							}
-							else { advance(); }
 						}
 					}
 

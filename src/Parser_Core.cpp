@@ -131,6 +131,7 @@ InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::v
 		info.value = arg.value;
 		info.is_value = arg.is_value;
 		info.dependent_name = arg.dependent_name;
+		info.function_signature = arg.function_signature;
 		result.push_back(info);
 	}
 	return result;
@@ -1143,7 +1144,6 @@ void Parser::register_builtin_functions() {
 		// Register in global symbol table
 		gSymbolTable.insert(name, func_decl_node);
 	};
-	
 	
 	// Register variadic argument intrinsics (support both __va_start and __builtin_va_start)
 	// __builtin_va_start(va_list*, last_param) - Clang-style

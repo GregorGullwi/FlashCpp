@@ -603,6 +603,25 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 	return deduced;
 }
 
+// Find the TemplateTypeArg that was bound to a named template parameter.
+// Returns nullptr when param_name does not match any template parameter.
+// Used to recover concrete type metadata (e.g. function_signature) that
+// substitute_template_parameter does not return through its TypeIndex result.
+// Templated on container types to avoid InlineVector -> std::vector conversion,
+// which would create temporaries and make the returned pointer dangle.
+template <typename ParamContainer, typename ArgContainer>
+inline const TemplateTypeArg* findTemplateArgByName(
+	std::string_view param_name,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+		if (!template_params[i].template is<TemplateParameterNode>()) continue;
+		if (template_params[i].template as<TemplateParameterNode>().name() == param_name)
+			return &template_args[i];
+	}
+	return nullptr;
+}
+
 // ============================================================================
 // Implementation of TemplateTypes.h helper functions
 // ============================================================================

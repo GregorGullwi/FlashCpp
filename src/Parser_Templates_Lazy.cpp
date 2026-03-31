@@ -6,7 +6,6 @@
 #include "ExpressionSubstitutor.h"
 #include "ParserTemplateClassShared.h"
 
-
 std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info) {
 	FLASH_LOG(Templates, Debug, "instantiateLazyMemberFunction: ", 
 	          lazy_info.identity.instantiated_owner_name, "::", effectiveLookupName(lazy_info.identity));
@@ -75,6 +74,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 								for (const auto& pl : param_type_spec.pointer_levels())
 									sub_type.add_pointer_level(pl.cv_qualifier);
 								sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+								if (elem.function_signature.has_value()) {
+									sub_type.set_function_signature(*elem.function_signature);
+								}
 								StringBuilder name_builder;
 								name_builder.append(orig_name).append('_').append(pi);
 								Token elem_token(Token::Type::Identifier, name_builder.commit(),
@@ -107,6 +109,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 					substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+				if (param_type_spec.has_function_signature()) {
+					substituted_param_type.set_function_signature(param_type_spec.function_signature());
+				} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+				           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+					// The original param_type_spec is a dependent placeholder (e.g. "F")
+					// that has no function_signature.  Look up the concrete TemplateTypeArg.
+					if (const auto* arg = findTemplateArgByName(param_type_spec.token().value(),
+							lazy_info.template_params, lazy_info.template_args)) {
+						if (arg->function_signature.has_value())
+							substituted_param_type.set_function_signature(*arg->function_signature);
+					}
+				}
 
 				auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 				auto substituted_param_decl = emplace_node<DeclarationNode>(substituted_param_type_node, param_decl.identifier_token());
@@ -127,11 +141,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		std::vector<TemplateTypeArg> converted_template_args;
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
-			}
+
+				converted_template_args.push_back(ttype_arg);
 		}
 
 		auto substituteInitExpr = [&](const ASTNode& expr) -> ASTNode {
@@ -268,11 +279,8 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		std::vector<TemplateTypeArg> converted_template_args;
 		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
-			}
+
+				converted_template_args.push_back(ttype_arg);
 		}
 
 		ASTNode substituted_body = substituteTemplateParameters(
@@ -341,6 +349,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 	}
 	substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
+	if (return_type_spec.has_function_signature()) {
+		substituted_return_type.set_function_signature(return_type_spec.function_signature());
+	} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
+	           return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+		// The original return_type_spec is a dependent placeholder (e.g. "F")
+		// that has no function_signature.  Look up the concrete TemplateTypeArg.
+		if (const auto* arg = findTemplateArgByName(return_type_spec.token().value(),
+				lazy_info.template_params, lazy_info.template_args)) {
+			if (arg->function_signature.has_value())
+				substituted_return_type.set_function_signature(*arg->function_signature);
+		}
+	}
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -403,6 +423,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							for (const auto& pl : param_type_spec.pointer_levels())
 								sub_type.add_pointer_level(pl.cv_qualifier);
 							sub_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+							if (elem.function_signature.has_value()) {
+								sub_type.set_function_signature(*elem.function_signature);
+							}
 							StringBuilder name_builder;
 							name_builder.append(orig_name).append('_').append(pi);
 							Token elem_token(Token::Type::Identifier, name_builder.commit(),
@@ -442,6 +465,18 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				substituted_param_type.add_pointer_level(ptr_level.cv_qualifier);
 			}
 			substituted_param_type.set_reference_qualifier(param_type_spec.reference_qualifier());
+			if (param_type_spec.has_function_signature()) {
+				substituted_param_type.set_function_signature(param_type_spec.function_signature());
+			} else if (param_type_index.category() == TypeCategory::FunctionPointer ||
+			           param_type_index.category() == TypeCategory::MemberFunctionPointer) {
+				// The original param_type_spec is a dependent placeholder (e.g. "F")
+				// that has no function_signature.  Look up the concrete TemplateTypeArg.
+				if (const auto* arg = findTemplateArgByName(param_type_spec.token().value(),
+						lazy_info.template_params, lazy_info.template_args)) {
+					if (arg->function_signature.has_value())
+						substituted_param_type.set_function_signature(*arg->function_signature);
+				}
+			}
 
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -542,12 +577,10 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	if (body_to_substitute.has_value()) {
 		// Build template argument vector for registration
 		std::vector<TemplateTypeArg> converted_template_args;
+		converted_template_args.reserve(lazy_info.template_args.size());
 		for (const auto& ttype_arg : lazy_info.template_args) {
-			if (ttype_arg.is_value) {
-				converted_template_args.push_back(TemplateTypeArg::makeValue(ttype_arg.value, ttype_arg.typeEnum()));
-			} else {
-				converted_template_args.push_back(TemplateTypeArg::makeType(ttype_arg.type_index));
-			}
+
+				converted_template_args.push_back(ttype_arg);
 		}
 
 		// Push struct parsing context so that get_class_template_pack_size can find pack info in the registry

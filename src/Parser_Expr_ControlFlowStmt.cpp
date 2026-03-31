@@ -4,7 +4,6 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 ParseResult Parser::parse_for_loop() {
     if (!consume("for"_tok)) {
         return ParseResult::error("Expected 'for' keyword", current_token_);
@@ -641,7 +640,6 @@ ParseResult Parser::parse_lambda_expression() {
                     Token id_token = token;
                     advance();
                     
-                    
                     // Check for init-capture: [x = expr]
                     if (peek() == "="_tok) {
                         advance(); // consume '='
@@ -1137,6 +1135,7 @@ ParseResult Parser::parse_lambda_expression() {
 					info.is_array = subst.substituted_type.is_array;
 					info.array_size = subst.substituted_type.array_size;
 					info.dependent_name = subst.substituted_type.dependent_name;
+					info.function_signature = subst.substituted_type.function_signature;
 				} else {
 					continue;
 				}

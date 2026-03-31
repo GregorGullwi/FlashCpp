@@ -8,7 +8,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 |--------|-----------|--------|-------|
 | `<limits>` | `test_std_limits.cpp` | ✅ Compiled | ~153ms |
 | `<type_traits>` | `test_std_type_traits.cpp` | ✅ Compiled | ~196ms |
-| `<compare>` | `test_std_compare_ret42.cpp` | ❌ Codegen Error | Ambiguous constructor call in `weak_ordering` |
+| `<compare>` | `test_std_compare_ret42.cpp` | ✅ Compiled | ~20ms (targeted retest 2026-03-31) |
 | `<version>` | `test_std_version.cpp` | ✅ Compiled | ~15ms |
 | `<source_location>` | `test_std_source_location.cpp` | ✅ Compiled | ~3ms |
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
@@ -20,9 +20,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Operator== not defined for operand types |
-| `<string>` | `test_std_string.cpp` | ❌ Codegen Error | Itanium mangling: FunctionPointer type missing function signature |
+| `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~4150ms (targeted retest 2026-03-31). Previous function-pointer mangling blocker fixed; now fails later on `Missing identifier: string`, missing `std::basic_string` primary template lookups, and explicit-constructor copy-init errors |
 | `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2100ms (targeted retest 2026-03-31). No longer reproduces unresolved-`auto` mangling here; now fails later on explicit-constructor copy-init after concepts/ranges diagnostics |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | member '_M_start' not found in struct '_Vector_impl' (base class member access) |
@@ -42,7 +42,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<atomic>` | `test_std_atomic.cpp` | ❌ Parse Error | non-dependent name `__w` not declared before template definition |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
-| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Codegen Error | Itanium mangling: FunctionPointer type missing function signature |
+| `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~4220ms (targeted retest 2026-03-31). Same post-fix state as `<string>`: no function-pointer mangling crash, but later `string`/`std::basic_string` and explicit-constructor copy-init failures remain |
 | `<typeinfo>` | N/A | ✅ Compiled | ~32ms |
 | `<typeindex>` | N/A | ✅ Compiled | ~284ms |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~632ms |
@@ -107,13 +107,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
+**Targeted retest note (2026-03-31):** The table entries for `<compare>`, `<algorithm>`, `<string>`, and `<stdexcept>` were re-verified individually after the function-pointer signature fix below. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+
 ### Known Blockers
 
 The most impactful blockers preventing more headers from compiling, ordered by impact:
 
-1. **Itanium name mangling: unresolved 'auto' type**: Many headers that now parse successfully fail during codegen because the Itanium mangler encounters an unresolved `auto` return type. The parser needs to propagate deduced return types to the mangler. Affects: `<algorithm>`, `<tuple>`, `<deque>`, `<set>`, `<queue>`, `<stack>`, `<memory>`, `<functional>`.
+1. **Template deduction / semantic follow-on failures after the earlier mangling blockers**: In the 2026-03-31 targeted retest, `<algorithm>` no longer failed first on unresolved- `auto` mangling. It now gets further and then fails on concepts/ranges diagnostics followed by explicit-constructor copy-initialization errors. The same family of deeper issues likely explains several headers previously bucketed under the stale unresolved- `auto` note.
 
-2. **Itanium name mangling: FunctionPointer type missing function signature**: The mangler fails on function pointer types that don't carry their full function signature. Affects: `<string>`, `<stdexcept>`.
+2. **Function pointer signature propagation through template instantiation metadata (fixed 2026-03-31)**: Function pointer signatures were being dropped in lazy member instantiation, outer-template bindings, and free-function template instantiation. This previously caused the Itanium mangler to crash on headers such as `<string>` and `<stdexcept>`. After the fix, those headers progress past the mangling crash and now fail later on unrelated issues.
+
+   - Core fix areas: `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_Deduction.cpp`, and `TypeInfo::TemplateArgInfo` / outer-template binding serialization.
+   - Regression test: `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
 
 3. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
@@ -128,6 +133,12 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 8. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
 9. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class fail because sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-03-31)
+
+1. **Function pointer signatures now survive template instantiation and deferred/lazy member materialization**: Several template paths rebuilt `TemplateTypeArg` or `TypeSpecifierNode` values from bare `TypeIndex` metadata, silently discarding `function_signature`. This broke Itanium mangling for instantiated function-pointer parameters such as `__gnu_cxx::__stoa(_TRet (*__convf)(...), ...)` from `<string>`. The fix preserves `function_signature` in lazy member instantiation, free-function template instantiation, and the metadata used for outer-template bindings / stored template args. Regression tests: existing `tests/test_funcptr_template_signature_ret0.cpp` plus new `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
+
+2. **`<compare>` targeted retest now compiles again**: `tests/std/test_std_compare_ret42.cpp` currently compiles in ~20ms on Linux with the current branch state. The older `weak_ordering` constructor note was stale.
 
 ### Recent Fixes (2026-03-14)
 

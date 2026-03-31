@@ -754,6 +754,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}

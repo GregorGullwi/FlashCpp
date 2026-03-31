@@ -290,6 +290,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}
@@ -486,6 +487,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}
@@ -582,6 +584,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}
@@ -979,6 +982,7 @@ public:
 			info.is_array = arg.is_array;
 			info.array_size = arg.array_size;
 			info.dependent_name = arg.dependent_name;
+			info.function_signature = arg.function_signature;
 			outer_template_args_.push_back(std::move(info));
 		}
 	}
@@ -1052,5 +1056,4 @@ private:
 	InlineVector<std::string_view, 4> template_param_names_;  // Parameter names for lookup
 	ASTNode class_declaration_;  // StructDeclarationNode
 	std::vector<DeferredTemplateMemberBody> deferred_bodies_;  // Member function bodies to parse at instantiation
-
 };

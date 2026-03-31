@@ -1,7 +1,7 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4
-UseTab: ForIndentation
+UseTab: Always
 BreakBeforeBraces: Attach
 AccessModifierOffset: -4
 PointerAlignment: Left
@@ -11,5 +11,6 @@ IncludeBlocks: Preserve
 SortIncludes: Never
 ColumnLimit: 0
 ReflowComments: false
-AlignTrailingComments: false
+AlignTrailingComments:
+  Kind: Leave
 AllowShortFunctionsOnASingleLine: All
