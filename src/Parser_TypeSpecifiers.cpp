@@ -48,15 +48,22 @@ std::optional<std::pair<TypeCategory, unsigned char>> Parser::get_builtin_type_i
 	return std::nullopt;
 }
 
-// Helper function to parse functional-style cast: Type(expression) or Type() for value initialization
-// This consolidates the logic for parsing functional casts from both keyword and identifier contexts
+// Helper function to parse built-in functional-style construction syntax:
+// Type(expression), Type(), Type{expression}, or Type{}.
+// This consolidates the logic for built-in type construction from both keyword
+// and identifier contexts.
 ParseResult Parser::parse_functional_cast(std::string_view type_name, const Token& type_token) {
-	// Expect '(' after type name
-	if (current_token_.kind().is_eof() || current_token_.value() != "(") {
-		return ParseResult::error("Expected '(' for functional cast", type_token);
+	// Expect '(' or '{' after type name
+	if (current_token_.kind().is_eof() ||
+		(current_token_.value() != "(" && current_token_.value() != "{")) {
+		return ParseResult::error("Expected '(' or '{' for builtin type construction", type_token);
 	}
 
-	advance(); // consume '('
+	Token init_token = current_token_;
+	bool is_brace_init = (current_token_.value() == "{");
+	std::string_view closing_delimiter = is_brace_init ? "}"sv : ")"sv;
+
+	advance(); // consume '(' or '{'
 
 	// Get type information first (needed for both empty and non-empty cases)
 	TypeCategory cast_type = TypeCategory::Int; // default
@@ -85,23 +92,19 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 	}
 
-	// Check for empty parentheses: Type() is value initialization (zero for scalar types)
-	if (current_token_.value() == ")") {
-		advance(); // consume ')'
+	auto make_constructor_call = [&](ChunkedVector<ASTNode>&& args, const Token& called_from_token) -> ParseResult {
+		auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
+		auto result = emplace_node<ExpressionNode>(
+			ConstructorCallNode(type_node, std::move(args), called_from_token));
+		return ParseResult::success(result);
+	};
 
-		// Create a zero literal of the appropriate type (value initialization)
-		Token zero_token(Token::Type::Literal, "0"sv, type_token.line(), type_token.column(), type_token.file_index());
+	// Check for empty constructor syntax: Type() / Type{} value-initializes to zero.
+	if (current_token_.value() == closing_delimiter) {
+		advance(); // consume ')' or '}'
 
-		// Use 0.0 for floating point types, 0 for integral types
-		if (cast_type == TypeCategory::Double || cast_type == TypeCategory::Float) {
-			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0.0, cast_type, qualifier, type_size));
-			return ParseResult::success(zero_expr);
-		} else {
-			auto zero_expr = emplace_node<ExpressionNode>(
-				NumericLiteralNode(zero_token, 0ULL, cast_type, qualifier, type_size));
-			return ParseResult::success(zero_expr);
-		}
+		ChunkedVector<ASTNode> args;
+		return make_constructor_call(std::move(args), is_brace_init ? init_token : type_token);
 	}
 
 	// Parse the expression inside the parentheses
@@ -124,8 +127,20 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		}
 	}
 
-	if (!consume(")"_tok)) {
-		return ParseResult::error("Expected ')' after functional cast expression", current_token_);
+	if (is_brace_init) {
+		if (!consume("}"_tok)) {
+			return ParseResult::error("Expected '}' after builtin brace construction", current_token_);
+		}
+	} else {
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after functional cast expression", current_token_);
+		}
+	}
+
+	if (is_brace_init) {
+		ChunkedVector<ASTNode> args;
+		args.push_back(*final_expr);
+		return make_constructor_call(std::move(args), init_token);
 	}
 
 	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);

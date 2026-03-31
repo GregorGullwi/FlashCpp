@@ -176,20 +176,6 @@ they represent true C++ violations (not evaluator gaps), then the existing enfor
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
 
-## `wchar_t{}` / `char16_t{}` / `char32_t{}` constructor-call syntax in non-template context
-
-Using `wchar_t{}`, `char16_t{}`, or `char32_t{}` as direct constructor-call expressions
-(e.g., `constexpr wchar_t v = wchar_t{};`) fails with a parser error:
-"Failed to parse initializer expression".  The keyword-typed wide character types are not
-yet handled in the expression parser's constructor-call path.
-
-**Workaround:** Use cast syntax (`static_cast<char16_t>(0)`) or a template helper
-(`template<typename T> constexpr T zero_init() { return T{}; }`).
-
-The template path works correctly since `T{}` is parsed as a dependent expression, and
-the constexpr evaluator (ConstExprEvaluator_Core.cpp `evaluate_constructor_call`) now
-handles `WChar`, `Char8`, `Char16`, and `Char32` in its zero-initialization switch.
-
 ## Function pointer stored in a template struct — indirect call IR error
 
 Instantiating a template struct whose member is a typedef'd or `using`-alias function

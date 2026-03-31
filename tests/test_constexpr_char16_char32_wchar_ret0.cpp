@@ -1,8 +1,14 @@
-// T30: Test constexpr default-construction of wide/Unicode char types via templates.
-// Verifies the constexpr evaluator handles WChar/Char8/Char16/Char32 in T{} constructor.
+// T30: Test constexpr default-construction of wide/Unicode char types via both
+// direct keyword syntax and templates.
+// Verifies the parser accepts direct wchar_t{} / char16_t{} / char32_t{} and the
+// constexpr evaluator handles the resulting WChar/Char16/Char32 zero-init path.
 //
-// Uses template T{} path to reach evaluate_constructor_call with zero args,
-// covering the switch cases that were missing before the fix.
+// Uses both direct and template T{} paths to reach evaluate_constructor_call with
+// zero args, covering the switch cases that were missing before the fix.
+
+constexpr char16_t direct16 = char16_t{};
+constexpr char32_t direct32 = char32_t{};
+constexpr wchar_t directwc = wchar_t{};
 
 template <typename T>
 constexpr T zero_init() { return T{}; }
@@ -26,23 +32,30 @@ struct Box {
 };
 
 int main() {
-	if (v16 != static_cast<char16_t>(0))
+	if (direct16 != static_cast<char16_t>(0))
 		return 1;
-	if (v32 != static_cast<char32_t>(0))
+	if (direct32 != static_cast<char32_t>(0))
 		return 2;
-	if (vwc != static_cast<wchar_t>(0))
+	if (directwc != static_cast<wchar_t>(0))
 		return 3;
+
+	if (v16 != static_cast<char16_t>(0))
+		return 4;
+	if (v32 != static_cast<char32_t>(0))
+		return 5;
+	if (vwc != static_cast<wchar_t>(0))
+		return 6;
 
 	// Verify the template works at runtime too
 	char16_t r16 = zero_init<char16_t>();
 	char32_t r32 = zero_init<char32_t>();
 	wchar_t rwc = zero_init<wchar_t>();
 	if (r16 != 0)
-		return 4;
+		return 7;
 	if (r32 != 0)
-		return 5;
+		return 8;
 	if (rwc != 0)
-		return 6;
+		return 9;
 
 	return 0;
 }

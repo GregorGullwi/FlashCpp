@@ -1,6 +1,32 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "BuiltinListInitNarrowing.h"
+
+namespace {
+
+[[noreturn]] void throwNarrowingBuiltinBraceInitCompileError(
+	TypeCategory source,
+	TypeCategory target) {
+	std::string_view source_name = getTypeName(source);
+	if (source_name.empty()) {
+		source_name = "expression";
+	}
+	std::string_view target_name = getTypeName(target);
+	if (target_name.empty()) {
+		target_name = "target type";
+	}
+	throw CompileError(std::string(
+		StringBuilder()
+			.append("Narrowing conversion from '")
+			.append(source_name)
+			.append("' to '")
+			.append(target_name)
+			.append("' in direct-list-initialization")
+			.commit()));
+}
+
+} // namespace
 
 void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) {
 	if (!node.get_definition().has_value() && !node.is_implicit()) {
@@ -2532,6 +2558,30 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 				throw InternalError("Primitive constructor call argument must be an expression");
 			}
 			ExprResult arg_result = visitExpressionNode(first_arg.as<ExpressionNode>());
+			if (BuiltinListInitNarrowing::isBraceConstructedBuiltin(constructorCallNode)) {
+				std::optional<ConstExpr::EvalResult> constant_value;
+				ConstExpr::EvaluationContext ctx(symbol_table);
+				if (global_symbol_table_) {
+					ctx.global_symbols = global_symbol_table_;
+				}
+				if (current_struct_name_.isValid()) {
+					auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
+					if (struct_type_it != getTypesByNameMap().end()) {
+						const TypeInfo* struct_type_info = struct_type_it->second;
+						ctx.struct_info = struct_type_info->getStructInfo();
+					}
+				}
+				if (ConstExpr::EvalResult eval_result = ConstExpr::Evaluator::evaluate(first_arg, ctx);
+					eval_result.success()) {
+					constant_value = std::move(eval_result);
+				}
+
+				TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(arg_result.category(), arg_result.type_index);
+				TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec.category(), type_spec.type_index());
+				if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, constant_value)) {
+					throwNarrowingBuiltinBraceInitCompileError(source_category, target_category);
+				}
+			}
 			return generateTypeConversion(arg_result, arg_result.category(), type_spec.category(), constructorCallNode.called_from());
 		}
 		throw CompileError("Primitive constructor call must have 0 or 1 arguments");
