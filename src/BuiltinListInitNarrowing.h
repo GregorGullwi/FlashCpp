@@ -217,14 +217,14 @@ inline bool isFloatingValueWithinRepresentableRange(double value) {
 	return std::isfinite(converted);
 }
 
-inline bool isFloatingValueExactlyRepresentableInTarget(double value, TypeCategory target) {
+inline bool isFloatingValueWithinRepresentableRangeOfTarget(double value, TypeCategory target) {
 	switch (target) {
 	case TypeCategory::Float:
-		return isFloatingValueExactlyRepresentableAs<float>(value);
+		return isFloatingValueWithinRepresentableRange<float>(value);
 	case TypeCategory::Double:
-		return isFloatingValueExactlyRepresentableAs<double>(value);
+		return isFloatingValueWithinRepresentableRange<double>(value);
 	case TypeCategory::LongDouble:
-		return isFloatingValueExactlyRepresentableAs<long double>(value);
+		return isFloatingValueWithinRepresentableRange<long double>(value);
 	default:
 		return false;
 	}
@@ -260,7 +260,7 @@ inline bool isNarrowingConversion(
 		}
 		const double* floating_value = std::get_if<double>(&constant_value->value);
 		return floating_value == nullptr ||
-			   !isFloatingValueExactlyRepresentableInTarget(*floating_value, target);
+			   !isFloatingValueWithinRepresentableRangeOfTarget(*floating_value, target);
 	}
 
 	if (isIntegerLikeCategory(source) && isIntegerLikeCategory(target)) {
