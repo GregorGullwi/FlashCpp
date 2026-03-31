@@ -697,9 +697,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 	}
 	return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
-		if (orig_return_type.has_function_signature()) {
-			return_type_ref.set_function_signature(orig_return_type.function_signature());
-		}
+	if (orig_return_type.has_function_signature()) {
+		return_type_ref.set_function_signature(orig_return_type.function_signature());
+	}
 
 	auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -742,9 +742,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 			}
 			param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
-				if (orig_param_type.has_function_signature()) {
-					param_type_ref.set_function_signature(orig_param_type.function_signature());
-				}
+			if (orig_param_type.has_function_signature()) {
+				param_type_ref.set_function_signature(orig_param_type.function_signature());
+			}
 
 			auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			// Preserve default argument value from the original template declaration

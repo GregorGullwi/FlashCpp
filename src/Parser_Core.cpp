@@ -24,7 +24,7 @@
         #define NOMINMAX  // Prevent Windows.h from defining min/max macros
     #endif
     #include <windows.h>
-    #define DEBUG_BREAK()          \ if (IsDebuggerPresent()) { \ DebugBreak();          \ }
+    #define DEBUG_BREAK() if (IsDebuggerPresent()) { DebugBreak(); }
 #else
     // On non-Windows platforms, define as a no-op (does nothing)
     #define DEBUG_BREAK() ((void)0)
