@@ -6,15 +6,15 @@
 #define MUL(a, b) ((a) * (b))
 
 // Macro name on one line, '(' on next line
-int x = ADD
-  (3, 4);
+int x = ADD(3, 4);
 
 // Same but with more whitespace
-int y = MUL
-    (5, 2);
+int y = MUL(5, 2);
 
 int main() {
-	if (x != 7) return 1;
-	if (y != 10) return 2;
+	if (x != 7)
+		return 1;
+	if (y != 10)
+		return 2;
 	return 0;
 }

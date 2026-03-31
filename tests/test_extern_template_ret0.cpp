@@ -2,25 +2,25 @@
 // Verifies that 'extern template class T<args>;' is parsed correctly
 // in both top-level and namespace scopes.
 
-template<typename T>
+template <typename T>
 class MyVec {
 public:
-    T val;
+	T val;
 };
 
 extern template class MyVec<int>;
 
 namespace ns {
-    template<typename T>
-    class Box {
-    public:
-        T data;
-    };
-    extern template class Box<double>;
-}
+template <typename T>
+class Box {
+public:
+	T data;
+};
+extern template class Box<double>;
+} // namespace ns
 
 int main() {
-    MyVec<int> v;
-    v.val = 42;
-    return v.val == 42 ? 0 : 1;
+	MyVec<int> v;
+	v.val = 42;
+	return v.val == 42 ? 0 : 1;
 }

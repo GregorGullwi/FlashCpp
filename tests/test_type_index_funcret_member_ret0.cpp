@@ -20,39 +20,41 @@
 // a struct with type_index_ == 0 (user structs always get index > 0 in gTypeInfo).
 
 struct Decoy {
-    int dummy;
+	int dummy;
 };
 
 struct Target {
-    int value;
+	int value;
 };
 
 // Path 1: free function returning Target
 Target make_target() {
-    Target t;
-    t.value = 42;
-    return t;
+	Target t;
+	t.value = 42;
+	return t;
 }
 
 // Path 2: member function returning Target
 struct Factory {
-    Target produce() {
-        Target t;
-        t.value = 42;
-        return t;
-    }
+	Target produce() {
+		Target t;
+		t.value = 42;
+		return t;
+	}
 };
 
 int main() {
-    // Without the fix, extractBaseFromOperands receives type_index=0, resolves to
-    // Decoy (which has no "value" member), and the compiler throws InternalError or
-    // silently reads Decoy::dummy (0) instead of Target::value (42).
-    int a = make_target().value;    // must be 42
+	// Without the fix, extractBaseFromOperands receives type_index=0, resolves to
+	// Decoy (which has no "value" member), and the compiler throws InternalError or
+	// silently reads Decoy::dummy (0) instead of Target::value (42).
+	int a = make_target().value;	 // must be 42
 
-    Factory f;
-    int b = f.produce().value;      // must be 42
+	Factory f;
+	int b = f.produce().value;	   // must be 42
 
-    if (a != 42) return 1;
-    if (b != 42) return 2;
-    return 0;
+	if (a != 42)
+		return 1;
+	if (b != 42)
+		return 2;
+	return 0;
 }

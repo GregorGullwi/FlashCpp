@@ -23,7 +23,7 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 		const MemberAccessNode& base_member = std::get<MemberAccessNode>(*current);
 		result.member_name = base_member.member_name();
 		FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found MemberAccessNode, member_name={}",
-		                 std::string(result.member_name));
+						 std::string(result.member_name));
 
 		// Get the object
 		if (base_member.object().is<ExpressionNode>()) {
@@ -54,13 +54,13 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 					const auto& type_node = decl_node->type_node().as<TypeSpecifierNode>();
 
 					FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: Found decl, is_struct={}, type_index={}",
-					                 is_struct_type(type_node.category()), type_node.type_index());
+									 is_struct_type(type_node.category()), type_node.type_index());
 
 					if (is_struct_type(type_node.category()) && type_node.type_index().is_valid()) {
 						TypeIndex type_index = type_node.type_index();
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-						    type_index,
-						    StringTable::getOrInternStringHandle(std::string(result.member_name)));
+							type_index,
+							StringTable::getOrInternStringHandle(std::string(result.member_name)));
 
 						FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: gLazyMemberResolver.resolve returned {}", static_cast<bool>(member_result));
 
@@ -69,7 +69,7 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 							result.member_info = member;
 
 							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: member->is_array={}, array_dimensions.size()={}",
-							                 member->is_array, member->array_dimensions.size());
+											 member->is_array, member->array_dimensions.size());
 
 							// Reverse the indices so they're in order from outermost to innermost
 							result.indices.reserve(indices_reversed.size());
@@ -79,13 +79,13 @@ AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(co
 
 							// Valid if member is a multidimensional array with matching indices
 							result.is_valid = member->is_array &&
-							                  !member->array_dimensions.empty() &&
-							                  (member->array_dimensions.size() == result.indices.size()) &&
-							                  (result.indices.size() > 1);
+											  !member->array_dimensions.empty() &&
+											  (member->array_dimensions.size() == result.indices.size()) &&
+											  (result.indices.size() > 1);
 
 							FLASH_LOG_FORMAT(Codegen, Debug, "collectMultiDim: is_valid={} (is_array={}, dim_size={}, indices_size={}, indices>1={})",
-							                 result.is_valid, member->is_array, member->array_dimensions.size(),
-							                 result.indices.size(), (result.indices.size() > 1));
+											 result.is_valid, member->is_array, member->array_dimensions.size(),
+											 result.indices.size(), (result.indices.size() > 1));
 						}
 					}
 				}
@@ -127,15 +127,15 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 		}
 
 		result.is_valid = (result.base_decl != nullptr) &&
-		                  (result.base_decl->array_dimension_count() == result.indices.size()) &&
-		                  (result.indices.size() > 1); // Only valid for multidimensional
+						  (result.base_decl->array_dimension_count() == result.indices.size()) &&
+						  (result.indices.size() > 1); // Only valid for multidimensional
 	}
 
 	return result;
 }
 
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
-                                             ExpressionContext context) {
+											 ExpressionContext context) {
 	auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 		ExprResult result;
 		result.ir_type = toIrType(type);
@@ -155,7 +155,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	// If the array expression is itself an ArraySubscriptNode, we have a multidimensional access
 	const ExpressionNode& array_expr = arraySubscriptNode.array_expr().as<ExpressionNode>();
 	FLASH_LOG_FORMAT(Codegen, Debug, "generateArraySubscriptIr: array_expr is ArraySubscriptNode = {}",
-	                 std::holds_alternative<ArraySubscriptNode>(array_expr));
+					 std::holds_alternative<ArraySubscriptNode>(array_expr));
 	if (std::holds_alternative<ArraySubscriptNode>(array_expr)) {
 		// First check if this is a multidimensional member array access (obj.arr[i][j])
 		auto member_multi_dim = collectMultiDimMemberArrayIndices(arraySubscriptNode);
@@ -231,12 +231,12 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 			// Generate single array access with flat index
 			TempVar result_var = var_counter.next();
 			StringHandle qualified_name = StringTable::getOrInternStringHandle(
-			    StringBuilder().append(member_multi_dim.object_name).append(".").append(member_multi_dim.member_name));
+				StringBuilder().append(member_multi_dim.object_name).append(".").append(member_multi_dim.member_name));
 
 			LValueInfo lvalue_info(
-			    LValueInfo::Kind::ArrayElement,
-			    qualified_name,
-			    static_cast<int64_t>(member->offset));
+				LValueInfo::Kind::ArrayElement,
+				qualified_name,
+				static_cast<int64_t>(member->offset));
 			lvalue_info.array_index = IrValue{flat_index};
 			lvalue_info.is_pointer_to_array = false;
 			setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -368,9 +368,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 				// Mark array element access as lvalue using metadata system
 				LValueInfo lvalue_info(
-				    LValueInfo::Kind::ArrayElement,
-				    StringTable::getOrInternStringHandle(multi_dim.base_array_name),
-				    0 // offset computed dynamically by index
+					LValueInfo::Kind::ArrayElement,
+					StringTable::getOrInternStringHandle(multi_dim.base_array_name),
+					0 // offset computed dynamically by index
 				);
 				lvalue_info.array_index = IrValue{flat_index};
 				lvalue_info.is_pointer_to_array = false; // This is a real array, not a pointer
@@ -421,8 +421,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						TypeIndex struct_type_index = type_node.type_index();
 						if (struct_type_index.is_valid()) {
 							auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-							    struct_type_index,
-							    StringTable::getOrInternStringHandle(std::string(member_name)));
+								struct_type_index,
+								StringTable::getOrInternStringHandle(std::string(member_name)));
 
 							if (member_result) {
 								const StructMember* member = member_result.member;
@@ -453,11 +453,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 								// Mark array element access as lvalue (Option 2: Value Category Tracking)
 								StringHandle qualified_name = StringTable::getOrInternStringHandle(
-								    StringBuilder().append(object_name).append(".").append(member_name));
+									StringBuilder().append(object_name).append(".").append(member_name));
 								LValueInfo lvalue_info(
-								    LValueInfo::Kind::ArrayElement,
-								    qualified_name,
-								    static_cast<int64_t>(member_result.adjusted_offset) // member offset in struct
+									LValueInfo::Kind::ArrayElement,
+									qualified_name,
+									static_cast<int64_t>(member_result.adjusted_offset) // member offset in struct
 								);
 								// Store index information for unified assignment handler
 								lvalue_info.array_index = toIrValue(index_result.value);
@@ -604,8 +604,8 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		if (base_element_size > 0 && element_size_bits > base_element_size) {
 			// This is likely an array where we got the total size instead of element size
 			FLASH_LOG_FORMAT(Codegen, Debug,
-			                 "Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
-			                 element_size_bits, base_element_size);
+							 "Array subscript on TempVar: fixing element_size from {} bits (total) to {} bits (element)",
+							 element_size_bits, base_element_size);
 			element_size_bits = base_element_size;
 		}
 	}
@@ -633,11 +633,11 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 					const auto& type_node = decl_node.type_node().as<TypeSpecifierNode>();
 					if (is_struct_type(type_node.category()) && type_node.type_index().is_valid()) {
 						auto member_result = FlashCpp::gLazyMemberResolver.resolve(
-						    type_node.type_index(),
-						    StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
+							type_node.type_index(),
+							StringTable::getOrInternStringHandle(std::string(member_access.member_name())));
 						if (member_result) {
 							base_variant = StringTable::getOrInternStringHandle(
-							    StringBuilder().append(object_name).append(".").append(member_access.member_name()));
+								StringBuilder().append(object_name).append(".").append(member_access.member_name()));
 							base_member_offset = static_cast<int>(member_result.adjusted_offset);
 							// Member access via '.' is not a pointer access for locals
 						}
@@ -669,7 +669,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				if (std::holds_alternative<StringHandle>(base_lv->base)) {
 					auto obj_name = std::get<StringHandle>(base_lv->base);
 					base_variant = StringTable::getOrInternStringHandle(
-					    StringBuilder().append(StringTable::getStringView(obj_name)).append(".").append(StringTable::getStringView(base_lv->member_name.value())));
+						StringBuilder().append(StringTable::getStringView(obj_name)).append(".").append(StringTable::getStringView(base_lv->member_name.value())));
 					base_member_offset = base_lv->offset;
 					base_is_pointer_to_member = base_lv->is_pointer_to_member;
 				}
@@ -689,9 +689,9 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	// Mark array element access as lvalue (Option 2: Value Category Tracking)
 	// arr[i] is an lvalue - it designates an object with a stable address
 	LValueInfo lvalue_info(
-	    LValueInfo::Kind::ArrayElement,
-	    base_variant,
-	    base_member_offset // offset for member arrays (otherwise 0)
+		LValueInfo::Kind::ArrayElement,
+		base_variant,
+		base_member_offset // offset for member arrays (otherwise 0)
 	);
 	// Store index information for unified assignment handler
 	// Support both constant and variable indices
@@ -736,31 +736,31 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		// Just return the metadata with the result temp var
 		// The metadata contains all information needed for store operations
 		return makeArrayResult(
-		    element_type,
-		    element_size_bits,
-		    result_var,
-		    element_type_index,
-		    PointerDepth{element_pointer_depth},
-		    ValueStorage::ContainsAddress);
+			element_type,
+			element_size_bits,
+			result_var,
+			element_type_index,
+			PointerDepth{element_pointer_depth},
+			ValueStorage::ContainsAddress);
 	}
 
 	// Create instruction with typed payload (Load context - default)
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
 
 	return makeArrayResult(
-	    element_type,
-	    element_size_bits,
-	    result_var,
-	    element_type_index,
-	    PointerDepth{element_pointer_depth},
-	    ValueStorage::ContainsData);
+		element_type,
+		element_size_bits,
+		result_var,
+		element_type_index,
+		PointerDepth{element_pointer_depth},
+		ValueStorage::ContainsData);
 }
 
 bool AstToIr::validateAndSetupIdentifierMemberAccess(
-    std::string_view object_name,
-    std::variant<StringHandle, TempVar>& base_object,
-    TypeIndex& base_type_index,
-    bool& is_pointer_dereference) {
+	std::string_view object_name,
+	std::variant<StringHandle, TempVar>& base_object,
+	TypeIndex& base_type_index,
+	bool& is_pointer_dereference) {
 
 	// Look up the object in the symbol table (local first, then global)
 	std::optional<ASTNode> symbol = symbol_table.lookup(object_name);
@@ -801,7 +801,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 	// Note: Type can be either Struct or UserDefined (for user-defined types like Point)
 	// For pointers, the type might be Void with pointer_depth > 0 and type_index pointing to struct
 	bool is_valid_for_member_access = is_struct_type(object_type.category()) ||
-	                                  (object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
+									  (object_type.pointer_depth() > 0 && object_type.type_index().is_valid());
 	if (!is_valid_for_member_access) {
 		FLASH_LOG(Codegen, Error, "member access '.' on non-struct type '", object_name, "'");
 		return false;
@@ -821,10 +821,10 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 }
 
 bool AstToIr::extractBaseFromOperands(
-    const ExprResult& operands,
-    std::variant<StringHandle, TempVar>& base_object,
-    TypeIndex& base_type_index,
-    std::string_view error_context) {
+	const ExprResult& operands,
+	std::variant<StringHandle, TempVar>& base_object,
+	TypeIndex& base_type_index,
+	std::string_view error_context) {
 
 	if (const auto* temp_var = std::get_if<TempVar>(&operands.value)) {
 		base_object = *temp_var;
@@ -849,7 +849,7 @@ ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, T
 	// (i.e., are instantiated template structs, not placeholders or primitive type params)
 	TypeCategory cat = type_index.category();
 	if (cat == TypeCategory::Struct ||
-	    (cat == TypeCategory::UserDefined && type_index.is_valid() && tryGetStructTypeInfo(type_index) != nullptr)) {
+		(cat == TypeCategory::UserDefined && type_index.is_valid() && tryGetStructTypeInfo(type_index) != nullptr)) {
 		result.type_index = TypeIndex{type_index};
 	} else {
 		result.type_index = nativeTypeIndex(cat);
@@ -858,11 +858,11 @@ ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, T
 }
 
 bool AstToIr::setupBaseFromIdentifier(
-    const IdentifierNode& identifier,
-    const Token& member_token,
-    std::variant<StringHandle, TempVar>& base_object,
-    TypeIndex& base_type_index,
-    bool& is_pointer_dereference) {
+	const IdentifierNode& identifier,
+	const Token& member_token,
+	std::variant<StringHandle, TempVar>& base_object,
+	TypeIndex& base_type_index,
+	bool& is_pointer_dereference) {
 
 	if (identifier.name() == "this") {
 		// First try [*this] capture - returns copy of the object
@@ -892,7 +892,7 @@ bool AstToIr::setupBaseFromIdentifier(
 }
 
 ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
-                                           ExpressionContext context) {
+										   ExpressionContext context) {
 	// Get the object being accessed
 	ASTNode object_node = memberAccessNode.object();
 	std::string_view member_name = memberAccessNode.member_name();
@@ -936,7 +936,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (overload_result.has_match) {
 				// Found an overload! Call operator->() to get pointer, then access member
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}",
-				                 type_node->type_index());
+								 type_node->type_index());
 
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -952,14 +952,14 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				std::vector<TypeSpecifierNode> empty_params;
 				std::vector<std::string_view> empty_namespace;
 				auto mangled_name = NameMangling::generateMangledName(
-				    operator_func_name,
-				    return_type,
-				    empty_params,
-				    false,
-				    struct_name,
-				    empty_namespace,
-				    Linkage::CPlusPlus,
-				    func_decl.is_const_member_function());
+					operator_func_name,
+					return_type,
+					empty_params,
+					false,
+					struct_name,
+					empty_namespace,
+					Linkage::CPlusPlus,
+					func_decl.is_const_member_function());
 
 				// Generate the call to operator->()
 				TempVar ptr_result = var_counter.next();
@@ -996,7 +996,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	if (!base_setup_complete) {
 		if (const IdentifierNode* ident = get_identifier()) {
 			if (!setupBaseFromIdentifier(*ident, memberAccessNode.member_token(),
-			                             base_object, base_type_index, is_pointer_dereference)) {
+										 base_object, base_type_index, is_pointer_dereference)) {
 				throw InternalError(std::string("Failed to setup base from identifier '") + std::string(ident->name()) + "' for member access");
 			}
 		} else if (const QualifiedIdentifierNode* qualified_ident = tryGetQualifiedIdentifier(object_node)) {
@@ -1037,7 +1037,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				TempVar nested_temp = std::get<TempVar>(nested_result.value);
 				auto nested_lv = getTempVarLValueInfo(nested_temp);
 				if (nested_lv.has_value() &&
-				    (nested_lv->is_pointer_to_member || nested_lv->kind == LValueInfo::Kind::Indirect)) {
+					(nested_lv->is_pointer_to_member || nested_lv->kind == LValueInfo::Kind::Indirect)) {
 					is_pointer_dereference = true;
 				}
 			}
@@ -1061,11 +1061,11 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				std::string_view ptr_name = ptr_ident.name();
 
 				if (ptr_name == "this" && current_lambda_context_.isActive() &&
-				    current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
+					current_lambda_context_.captures.find(StringTable::getOrInternStringHandle("this"sv)) != current_lambda_context_.captures.end()) {
 					is_lambda_this = true;
 					auto capture_kind_it = current_lambda_context_.capture_kinds.find(StringTable::getOrInternStringHandle("this"sv));
 					if (capture_kind_it != current_lambda_context_.capture_kinds.end() &&
-					    capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
+						capture_kind_it->second == LambdaCaptureNode::CaptureKind::CopyThis) {
 						// [*this] capture: load from the copied object in __copy_this
 						const StructTypeInfo* closure_struct = getCurrentClosureStruct();
 						const StructMember* copy_this_member = closure_struct ? closure_struct->findMember("__copy_this") : nullptr;
@@ -1086,9 +1086,9 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(load_copy_this), memberAccessNode.member_token()));
 
 						LValueInfo lvalue_info(
-						    LValueInfo::Kind::Member,
-						    StringTable::getOrInternStringHandle("this"sv),
-						    copy_this_offset);
+							LValueInfo::Kind::Member,
+							StringTable::getOrInternStringHandle("this"sv),
+							copy_this_offset);
 						lvalue_info.member_name = StringTable::getOrInternStringHandle("__copy_this");
 						lvalue_info.is_pointer_to_member = true;
 						setTempVarMetadata(copy_this_ref, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
@@ -1236,7 +1236,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(global_load), Token()));
 
 		return makeMemberResult(SizeInBits{sm_size_bits}, result_var, static_member->type_index,
-		                        PointerDepth{static_cast<int>(static_member->pointer_depth)}, ValueStorage::ContainsData);
+								PointerDepth{static_cast<int>(static_member->pointer_depth)}, ValueStorage::ContainsData);
 	}
 
 	// Use recursive lookup to find instance members in base classes as well
@@ -1314,9 +1314,9 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// recover the materialized temporary address when the base is a prvalue/xvalue.
 	// Use adjusted_offset from member_result to handle inheritance correctly.
 	LValueInfo lvalue_info(
-	    LValueInfo::Kind::Member,
-	    did_unwrap ? ultimate_base : base_object,
-	    did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset));
+		LValueInfo::Kind::Member,
+		did_unwrap ? ultimate_base : base_object,
+		did_unwrap ? accumulated_offset : static_cast<int>(member_result.adjusted_offset));
 	// Store member name for unified assignment handler
 	lvalue_info.member_name = ultimate_member_name;
 	lvalue_info.is_pointer_to_member = is_pointer_dereference; // Mark if accessing through pointer
@@ -1352,7 +1352,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// because references store a pointer value that needs to be returned
 	if (context == ExpressionContext::LValueAddress && !member->is_reference()) {
 		return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
-		                        PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
+								PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 	}
 
 	// Add the member access instruction (Load context - default)
@@ -1363,13 +1363,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// so that assignment goes THROUGH the pointer (dereference store), not to the member slot.
 	if (context == ExpressionContext::LValueAddress && member->is_reference()) {
 		LValueInfo ref_lvalue_info(
-		    LValueInfo::Kind::Indirect,
-		    result_var, // The TempVar holding the loaded pointer
-		    0 // No offset - the pointer points directly to the target
+			LValueInfo::Kind::Indirect,
+			result_var, // The TempVar holding the loaded pointer
+			0 // No offset - the pointer points directly to the target
 		);
 		setTempVarMetadata(result_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
 		return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
-		                        PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
+								PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 	}
 
 	// For reference members in Load context (reading the value):
@@ -1393,7 +1393,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			// Return the loaded pointer directly — the next level of member access will
 			// treat it as a pointer-to-struct base (is_pointer_dereference = true).
 			return makeMemberResult(SizeInBits{pointee_size_bits}, result_var, member->type_index,
-			                        PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
+									PointerDepth{member->pointer_depth}, ValueStorage::ContainsAddress);
 		}
 
 		TempVar deref_var = emitDereference(member->memberType(), 64, 1, IrValue(result_var), Token());
@@ -1402,11 +1402,11 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		LValueInfo ref_lvalue_info(LValueInfo::Kind::Indirect, result_var, 0);
 		setTempVarMetadata(deref_var, TempVarMetadata::makeLValue(ref_lvalue_info, TypeCategory::Invalid, 0));
 		return makeMemberResult(SizeInBits{pointee_size_bits}, deref_var, member->type_index,
-		                        PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
+								PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 	}
 
 	return makeMemberResult(SizeInBits{member_size_bits}, result_var, member->type_index,
-	                        PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
+							PointerDepth{member->pointer_depth}, ValueStorage::ContainsData);
 }
 
 std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
@@ -1725,8 +1725,8 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 									// Check if this is an instantiation of the base template
 									// Instantiated names start with base_name followed by '_' or '$'
 									if (ti_name.size() > base_type_name.size() &&
-									    ti_name.substr(0, base_type_name.size()) == base_type_name &&
-									    (ti_name[base_type_name.size()] == '_' || ti_name[base_type_name.size()] == '$')) {
+										ti_name.substr(0, base_type_name.size()) == base_type_name &&
+										(ti_name[base_type_name.size()] == '_' || ti_name[base_type_name.size()] == '$')) {
 										const StructTypeInfo* inst_struct_info = ti.getStructInfo();
 										if (inst_struct_info && !inst_struct_info->members.empty()) {
 											for (const auto& member : inst_struct_info->members) {
@@ -1798,14 +1798,14 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 								if (!eval_result.success()) {
 									// Can't evaluate dimension at compile time, fall through to IR generation
 									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not evaluate dimension ", i,
-									          " for '", id_node.name(), "', falling back to IR generation");
+											  " for '", id_node.name(), "', falling back to IR generation");
 									goto fallback_to_ir;
 								}
 
 								long long dim_size = eval_result.as_int();
 								if (dim_size <= 0) {
 									FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Invalid dimension size ", dim_size,
-									          " for '", id_node.name(), "'");
+											  " for '", id_node.name(), "'");
 									goto fallback_to_ir;
 								}
 
@@ -1814,13 +1814,13 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 
 							size_in_bytes = element_size * sub_array_count;
 							FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): multidim array=", id_node.name(),
-							          " element_size=", element_size, " sub_array_count=", sub_array_count,
-							          " total=", size_in_bytes);
+									  " element_size=", element_size, " sub_array_count=", sub_array_count,
+									  " total=", size_in_bytes);
 						} else {
 							// Single dimension or non-array, just return element size
 							size_in_bytes = element_size;
 							FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): array=", id_node.name(),
-							          " element_size=", size_in_bytes);
+									  " element_size=", size_in_bytes);
 						}
 
 						// Return the size without generating runtime IR
@@ -1831,7 +1831,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 
 					// If we couldn't resolve compile-time, log and fall through
 					FLASH_LOG(Codegen, Debug, "sizeof(arr[index]): Could not resolve '", id_node.name(),
-					          "' at compile-time, falling back to IR generation");
+							  "' at compile-time, falling back to IR generation");
 				}
 			}
 		}
@@ -2138,14 +2138,14 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	size_t pointer_depth = type_spec.pointer_depth();
 	auto getStructInfoIfPlainObject = [](const TypeSpecifierNode& spec) -> const StructTypeInfo* {
 		if (spec.category() != TypeCategory::Struct || spec.is_reference() || spec.pointer_depth() != 0 ||
-		    spec.type_index().index() >= getTypeInfoCount()) {
+			spec.type_index().index() >= getTypeInfoCount()) {
 			return nullptr;
 		}
 		return getTypeInfo(spec.type_index()).getStructInfo();
 	};
 
 	auto getStructPairIfPlainObjects = [&](const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs)
-	    -> std::pair<const StructTypeInfo*, const StructTypeInfo*> {
+		-> std::pair<const StructTypeInfo*, const StructTypeInfo*> {
 		const StructTypeInfo* lhs_struct = getStructInfoIfPlainObject(lhs);
 		const StructTypeInfo* rhs_struct = getStructInfoIfPlainObject(rhs);
 		return {lhs_struct, rhs_struct};
@@ -2166,7 +2166,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Both types must be class types (not references, not pointers)
 				if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
-				    base_struct && derived_struct) {
+					base_struct && derived_struct) {
 					if (base_struct && derived_struct) {
 						// Same type is considered base of itself
 						if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2195,13 +2195,13 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Check if all properties match exactly
 				result = (type_category == second_spec.category() &&
-				          is_reference == second_spec.is_reference() &&
-				          is_rvalue_reference == second_spec.is_rvalue_reference() &&
-				          pointer_depth == second_spec.pointer_depth() &&
-				          type_spec.type_index() == second_spec.type_index() &&
-				          type_spec.is_array() == second_spec.is_array() &&
-				          type_spec.is_const() == second_spec.is_const() &&
-				          type_spec.is_volatile() == second_spec.is_volatile());
+						  is_reference == second_spec.is_reference() &&
+						  is_rvalue_reference == second_spec.is_rvalue_reference() &&
+						  pointer_depth == second_spec.pointer_depth() &&
+						  type_spec.type_index() == second_spec.type_index() &&
+						  type_spec.is_array() == second_spec.is_array() &&
+						  type_spec.is_const() == second_spec.is_const() &&
+						  type_spec.is_volatile() == second_spec.is_volatile());
 			}
 		}
 		break;
@@ -2223,19 +2223,19 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Same type is always convertible
 				if (from_type == to_type && from_is_ref == to_is_ref &&
-				    from_ptr_depth == to_ptr_depth &&
-				    from_spec.type_index() == to_spec.type_index()) {
+					from_ptr_depth == to_ptr_depth &&
+					from_spec.type_index() == to_spec.type_index()) {
 					result = true;
 				}
 				// Arithmetic types are generally convertible to each other
 				else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
-				         !from_is_ref && !to_is_ref &&
-				         from_ptr_depth == 0 && to_ptr_depth == 0) {
+						 !from_is_ref && !to_is_ref &&
+						 from_ptr_depth == 0 && to_ptr_depth == 0) {
 					result = true;
 				}
 				// Pointers with same depth and compatible types
 				else if (from_ptr_depth > 0 && to_ptr_depth > 0 &&
-				         from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
+						 from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
 					// Pointer convertibility (same type or derived-to-base)
 					result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 				}
@@ -2245,10 +2245,10 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				}
 				// Derived to base conversion for class types
 				else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
-				         !from_is_ref && !to_is_ref &&
-				         from_ptr_depth == 0 && to_ptr_depth == 0 &&
-				         from_spec.type_index().is_valid() &&
-				         to_spec.type_index().is_valid()) {
+						 !from_is_ref && !to_is_ref &&
+						 from_ptr_depth == 0 && to_ptr_depth == 0 &&
+						 from_spec.type_index().is_valid() &&
+						 to_spec.type_index().is_valid()) {
 					// Check if from_type is derived from to_type
 					if (const StructTypeInfo* from_struct = tryGetStructTypeInfo(from_spec.type_index())) {
 						for (const auto& base_class : from_struct->base_classes) {
@@ -2281,19 +2281,19 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Same type is always nothrow convertible
 				if (from_type == to_type && from_is_ref == to_is_ref &&
-				    from_ptr_depth == to_ptr_depth &&
-				    from_spec.type_index() == to_spec.type_index()) {
+					from_ptr_depth == to_ptr_depth &&
+					from_spec.type_index() == to_spec.type_index()) {
 					result = true;
 				}
 				// Arithmetic types are nothrow convertible to each other
 				else if (isArithmeticType(from_type) && isArithmeticType(to_type) &&
-				         !from_is_ref && !to_is_ref &&
-				         from_ptr_depth == 0 && to_ptr_depth == 0) {
+						 !from_is_ref && !to_is_ref &&
+						 from_ptr_depth == 0 && to_ptr_depth == 0) {
 					result = true;
 				}
 				// Pointers with same depth and compatible types
 				else if (from_ptr_depth > 0 && to_ptr_depth > 0 &&
-				         from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
+						 from_ptr_depth == to_ptr_depth && !from_is_ref && !to_is_ref) {
 					result = (from_type == to_type || from_spec.type_index() == to_spec.type_index());
 				}
 				// nullptr_t is nothrow convertible to any pointer type
@@ -2302,10 +2302,10 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				}
 				// Derived to base conversion for class types (nothrow if no virtual base)
 				else if (from_spec.category() == TypeCategory::Struct && to_spec.category() == TypeCategory::Struct &&
-				         !from_is_ref && !to_is_ref &&
-				         from_ptr_depth == 0 && to_ptr_depth == 0 &&
-				         from_spec.type_index().is_valid() &&
-				         to_spec.type_index().is_valid()) {
+						 !from_is_ref && !to_is_ref &&
+						 from_ptr_depth == 0 && to_ptr_depth == 0 &&
+						 from_spec.type_index().is_valid() &&
+						 to_spec.type_index().is_valid()) {
 					// Check if from_type is derived from to_type
 					if (const StructTypeInfo* from_struct = tryGetStructTypeInfo(from_spec.type_index())) {
 						for (const auto& base_class : from_struct->base_classes) {
@@ -2393,7 +2393,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				for (const auto& member : struct_info->members) {
 					if (member.access == AccessSpecifier::Private ||
-					    member.access == AccessSpecifier::Protected) {
+						member.access == AccessSpecifier::Protected) {
 						all_public = false;
 						break;
 					}
@@ -2415,7 +2415,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// - No base classes with non-static data members
 		// - No base classes of the same type as first non-static data member
 		if (type == TypeCategory::Struct && type_spec.type_index().is_valid() &&
-		    !is_reference && pointer_depth == 0) {
+			!is_reference && pointer_depth == 0) {
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
 				if (!struct_info->is_union) {
 					// Basic check: no virtual functions
@@ -2457,8 +2457,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		if (isScalarType(type_category, is_reference, pointer_depth)) {
 			result = true;
 		} else if (isIrStructType(toIrType(type)) &&
-		           type_spec.type_index().is_valid() &&
-		           !is_reference && pointer_depth == 0) {
+				   type_spec.type_index().is_valid() &&
+				   !is_reference && pointer_depth == 0) {
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 			result = type_info ? isTriviallyCopyableStruct(type_info->getStructInfo()) : false;
 		}
@@ -2470,8 +2470,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		if (isScalarType(type_category, is_reference, pointer_depth)) {
 			result = true;
 		} else if (isIrStructType(toIrType(type)) &&
-		           type_spec.type_index().is_valid() &&
-		           !is_reference && pointer_depth == 0) {
+				   type_spec.type_index().is_valid() &&
+				   !is_reference && pointer_depth == 0) {
 			const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 			result = type_info ? isTrivialStruct(type_info->getStructInfo()) : false;
 		}
@@ -2503,9 +2503,9 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 	case TypeTraitKind::IsLiteralType:
 		// __is_literal_type - deprecated in C++17, removed in C++20
 		FLASH_LOG(Codegen, Warning, "__is_literal_type is deprecated in C++17 and removed in C++20. "
-		                            "This trait is likely being invoked from a standard library header (e.g., <type_traits>) "
-		                            "that hasn't been fully updated for C++20. In modern C++, use std::is_constant_evaluated() "
-		                            "to check for compile-time contexts, or use other appropriate type traits.");
+									"This trait is likely being invoked from a standard library header (e.g., <type_traits>) "
+									"that hasn't been fully updated for C++20. In modern C++, use std::is_constant_evaluated() "
+									"to check for compile-time contexts, or use other appropriate type traits.");
 		// A literal type is one that can be used in constexpr context:
 		// - Scalar types
 		// - References
@@ -2548,14 +2548,14 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// __is_bounded_array - array with known bound (e.g., int[10])
 		// Check if it's an array and the size is known
 		result = type_spec.is_array() & int(type_spec.array_size() > 0) &
-		         !is_reference & (pointer_depth == 0);
+				 !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsUnboundedArray:
 		// __is_unbounded_array - array with unknown bound (e.g., int[])
 		// Check if it's an array and the size is unknown (0 or negative)
 		result = type_spec.is_array() & int(type_spec.array_size() <= 0) &
-		         !is_reference & (pointer_depth == 0);
+				 !is_reference & (pointer_depth == 0);
 		break;
 
 	case TypeTraitKind::IsConstructible:
@@ -2571,8 +2571,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				const TypeSpecifierNode& arg_spec = arg_types[0].as<TypeSpecifierNode>();
 				// Same type or convertible arithmetic types
 				result = (arg_spec.category() == type_category) ||
-				         (isScalarType(arg_spec.category(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
-				          !arg_spec.is_reference() && arg_spec.pointer_depth() == 0);
+						 (isScalarType(arg_spec.category(), arg_spec.is_reference(), arg_spec.pointer_depth()) &&
+						  !arg_spec.is_reference() && arg_spec.pointer_depth() == 0);
 			}
 		}
 		// Class types: check for appropriate constructor
@@ -2655,7 +2655,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 									break;
 								}
 								if (param_type.category() == TypeCategory::Struct &&
-								    param_type.type_index() != arg_type.type_index()) {
+									param_type.type_index() != arg_type.type_index()) {
 									match = false;
 									break;
 								}
@@ -2714,8 +2714,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 					if (struct_info && !struct_info->is_union) {
 						// If has copy/move assignment or no user-defined, assume assignable
 						result = struct_info->hasCopyAssignmentOperator() ||
-						         struct_info->hasMoveAssignmentOperator() ||
-						         !struct_info->hasUserDefinedConstructor();
+								 struct_info->hasMoveAssignmentOperator() ||
+								 !struct_info->hasUserDefinedConstructor();
 					}
 				}
 			}
@@ -2731,15 +2731,15 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Scalar types are trivially assignable
 				if (isScalarType(type_category, is_reference, pointer_depth) &&
-				    isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
+					isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 					result = true;
 				}
 				// Class types: no virtual, no user-defined assignment
 				else if (const StructTypeInfo* struct_info = getStructInfoIfPlainObject(type_spec)) {
 					if (struct_info && !struct_info->is_union) {
 						result = !struct_info->has_vtable &&
-						         !struct_info->hasCopyAssignmentOperator() &&
-						         !struct_info->hasMoveAssignmentOperator();
+								 !struct_info->hasCopyAssignmentOperator() &&
+								 !struct_info->hasMoveAssignmentOperator();
 					}
 				}
 			}
@@ -2755,7 +2755,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Scalar types don't throw on assignment
 				if (isScalarType(type_category, is_reference, pointer_depth) &&
-				    isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
+					isScalarType(from_spec.category(), from_spec.is_reference(), from_spec.pointer_depth())) {
 					result = true;
 				}
 				// Class types: implicitly-generated assignment ops are noexcept;
@@ -2763,11 +2763,11 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				// Note: For assignability, the first type is typically T& (lvalue reference),
 				// so we check the underlying struct type regardless of reference qualifier
 				else if (type_category == TypeCategory::Struct && pointer_depth == 0 &&
-				         type_spec.type_index().is_valid()) {
+						 type_spec.type_index().is_valid()) {
 					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
 						if (!struct_info->is_union) {
 							bool has_user_assign = struct_info->hasCopyAssignmentOperator() ||
-							                       struct_info->hasMoveAssignmentOperator();
+												   struct_info->hasMoveAssignmentOperator();
 							if (!has_user_assign) {
 								// Implicitly-generated assignment ops are noexcept
 								result = !struct_info->has_vtable;
@@ -2790,7 +2790,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 									if (param_type.type() != from_spec.type())
 										continue;
 									if (param_type.category() == TypeCategory::Struct &&
-									    param_type.type_index() != from_spec.type_index())
+										param_type.type_index() != from_spec.type_index())
 										continue;
 									if (param_type.reference_qualifier() != from_spec.reference_qualifier())
 										continue;
@@ -2875,7 +2875,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		}
 		// Class types: no virtual, no user-defined destructor
 		else if (type == TypeCategory::Struct && type_spec.type_index().is_valid() &&
-		         !is_reference && pointer_depth == 0) {
+				 !is_reference && pointer_depth == 0) {
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
 				if (!struct_info->is_union) {
 					// Trivially destructible if no vtable and no user-defined destructor
@@ -2928,8 +2928,8 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Same type is always layout compatible with itself
 				if (type_category == second_spec.category() &&
-				    pointer_depth == second_spec.pointer_depth() &&
-				    is_reference == second_spec.is_reference()) {
+					pointer_depth == second_spec.pointer_depth() &&
+					is_reference == second_spec.is_reference()) {
 					if (type_category == TypeCategory::Struct) {
 						result = (type_spec.type_index() == second_spec.type_index());
 					} else {
@@ -2938,7 +2938,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				}
 				// Different standard layout types with same size
 				else if (isScalarType(type_category, is_reference, pointer_depth) &&
-				         isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.pointer_depth())) {
+						 isScalarType(second_spec.category(), second_spec.is_reference(), second_spec.pointer_depth())) {
 					result = (type_spec.size_in_bits() == second_spec.size_in_bits());
 				}
 			}
@@ -2957,7 +2957,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 
 				// Both must be class types (not references, not pointers)
 				if (auto [base_struct, derived_struct] = getStructPairIfPlainObjects(type_spec, derived_spec);
-				    base_struct && derived_struct) {
+					base_struct && derived_struct) {
 					if (base_struct && derived_struct) {
 						// Same type is pointer interconvertible with itself
 						if (type_spec.type_index() == derived_spec.type_index()) {
@@ -2988,7 +2988,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 		// __underlying_type(T) returns the underlying type of an enum
 		// This is a type query, not a bool result - handle specially
 		if (type == TypeCategory::Enum && !is_reference && pointer_depth == 0 &&
-		    type_spec.type_index().is_valid()) {
+			type_spec.type_index().is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 				const EnumTypeInfo* enum_info = type_info->getEnumInfo();
 				if (enum_info) {
@@ -3024,10 +3024,10 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 // Helper function to check if access to a member is allowed
 // Returns true if access is allowed, false otherwise
 bool AstToIr::checkMemberAccess(const StructMember* member,
-                                const StructTypeInfo* member_owner_struct,
-                                const StructTypeInfo* accessing_struct,
-                                [[maybe_unused]] const BaseClassSpecifier* inheritance_path,
-                                const std::string_view& accessing_function) const {
+								const StructTypeInfo* member_owner_struct,
+								const StructTypeInfo* accessing_struct,
+								[[maybe_unused]] const BaseClassSpecifier* inheritance_path,
+								const std::string_view& accessing_function) const {
 	if (!member || !member_owner_struct) {
 		return false;
 	}
@@ -3109,7 +3109,7 @@ bool AstToIr::checkMemberAccess(const StructMember* member,
 //      strip the "$pattern" separator to recover the base template name,
 //      preserving the namespace prefix for correct matching.
 bool AstToIr::checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
-                                     const StructTypeInfo* accessing_struct) const {
+									 const StructTypeInfo* accessing_struct) const {
 	if (!accessing_struct)
 		return false;
 
@@ -3216,7 +3216,7 @@ bool AstToIr::isSameClassOrInstantiation(const StructTypeInfo* a, const StructTy
 
 // Helper to check if accessing_struct is nested within member_owner_struct
 bool AstToIr::isNestedWithin(const StructTypeInfo* accessing_struct,
-                             const StructTypeInfo* member_owner_struct) const {
+							 const StructTypeInfo* member_owner_struct) const {
 	if (!accessing_struct || !member_owner_struct) {
 		return false;
 	}
@@ -3235,7 +3235,7 @@ bool AstToIr::isNestedWithin(const StructTypeInfo* accessing_struct,
 
 // Helper to check if derived_struct can access protected members of base_struct
 bool AstToIr::isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
-                                             const StructTypeInfo* base_struct) const {
+											 const StructTypeInfo* base_struct) const {
 	if (!derived_struct || !base_struct) {
 		return false;
 	}
@@ -3257,7 +3257,7 @@ bool AstToIr::isAccessibleThroughInheritance(const StructTypeInfo* derived_struc
 		if (base_info == base_struct) {
 			// Protected members are accessible if inherited as public or protected
 			return base.access == AccessSpecifier::Public ||
-			       base.access == AccessSpecifier::Protected;
+				   base.access == AccessSpecifier::Protected;
 		}
 
 		// Recursively check base classes
@@ -3290,9 +3290,9 @@ const StructTypeInfo* AstToIr::getCurrentStructContext() const {
 
 // Helper function to check if access to a member function is allowed
 bool AstToIr::checkMemberFunctionAccess(const StructMemberFunction* member_func,
-                                        const StructTypeInfo* member_owner_struct,
-                                        const StructTypeInfo* accessing_struct,
-                                        std::string_view accessing_function) const {
+										const StructTypeInfo* member_owner_struct,
+										const StructTypeInfo* accessing_struct,
+										std::string_view accessing_function) const {
 	if (!member_func || !member_owner_struct) {
 		return false;
 	}
@@ -3372,8 +3372,8 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 // Handles nested member access like o.inner.callback by recursively resolving types
 // Returns true if successfully resolved, with the struct_info and member populated
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
-                                      const StructTypeInfo*& out_struct_info,
-                                      const StructMember*& out_member) const {
+									  const StructTypeInfo*& out_struct_info,
+									  const StructMember*& out_member) const {
 	// Get the base object expression
 	const ASTNode& base_node = member_access.object();
 	auto base_type_opt = buildCodegenOverloadResolutionArgType(base_node);
@@ -3487,9 +3487,9 @@ bool AstToIr::isExprConstQualified(const ASTNode& expr_node) const {
 // Returns nullptr if no suitable conversion operator is found
 // Searches the struct and its base classes for "operator target_type()"
 const StructMemberFunction* AstToIr::findConversionOperator(
-    const StructTypeInfo* struct_info,
-    TypeIndex target_type_index,
-    bool source_is_const) const {
+	const StructTypeInfo* struct_info,
+	TypeIndex target_type_index,
+	bool source_is_const) const {
 
 	if (!struct_info)
 		return nullptr;
@@ -3601,7 +3601,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
 							if (source_is_const == member_func.is_const()) {
 								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-								          type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type_index.category()), " (size=", expected_size, ")");
+										  type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type_index.category()), " (size=", expected_size, ")");
 								return &member_func;
 							}
 							if (!fallback_user_defined)
@@ -3623,7 +3623,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 			if (base_type_info->isStruct()) {
 				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 				const StructMemberFunction* result = findConversionOperator(
-				    base_struct_info, target_type_index, source_is_const);
+					base_struct_info, target_type_index, source_is_const);
 				if (result)
 					return result;
 			}
@@ -3636,12 +3636,12 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 // Emit a call to a user-defined conversion operator and return the converted ExprResult.
 // All three call sites (return, variable-init, function-arg) share this implementation.
 std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
-    const ExprResult& source,
-    const TypeInfo& source_type_info,
-    const StructMemberFunction& conv_op,
-    TypeIndex target_type_index,
-    int target_size_bits,
-    const Token& token) {
+	const ExprResult& source,
+	const TypeInfo& source_type_info,
+	const StructMemberFunction& conv_op,
+	TypeIndex target_type_index,
+	int target_size_bits,
+	const Token& token) {
 
 	if (!conv_op.function_decl.is<FunctionDeclarationNode>())
 		return std::nullopt;
@@ -3658,13 +3658,13 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 			StringHandle canonical_name = conv_op.getName();
 			const bool conv_is_const = conv_op.is_const();
 			if (LazyMemberInstantiationRegistry::getInstance().needsInstantiation(
-			        source_type_info.name(), canonical_name, conv_is_const)) {
+					source_type_info.name(), canonical_name, conv_is_const)) {
 				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
-				    source_type_info.name(), canonical_name, conv_is_const);
+					source_type_info.name(), canonical_name, conv_is_const);
 				if (lazy_info_opt.has_value()) {
 					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
 					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
-					    source_type_info.name(), canonical_name, conv_is_const);
+						source_type_info.name(), canonical_name, conv_is_const);
 					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
 					if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
 						DeferredMemberFunctionInfo deferred_info;
@@ -3725,12 +3725,12 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	IrValue source_value = std::visit([](auto&& arg) -> IrValue {
 		using T = std::decay_t<decltype(arg)>;
 		if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
-		              std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>)
+					  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>)
 			return arg;
 		else
 			return 0ULL;
 	},
-	                                  source.value);
+									  source.value);
 
 	if (const auto* source_temp = std::get_if<TempVar>(&source.value)) {
 		TempVar current = *source_temp;
@@ -3758,7 +3758,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 	if (std::holds_alternative<StringHandle>(source_value)) {
 		// Named variable — take its address using the shared emitAddressOf helper
 		TempVar this_ptr = emitAddressOf(source.category(), source.size_in_bits.value,
-		                                 IrValue(std::get<StringHandle>(source_value)), token);
+										 IrValue(std::get<StringHandle>(source_value)), token);
 
 		TypedValue this_arg;
 		this_arg.setType(source.category());

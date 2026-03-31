@@ -4,6 +4,6 @@
 
 // This should not expand infinitely - RECURSIVE_A should expand to RECURSIVE_B and stop
 int main() {
-    RECURSIVE_A;
-    return 0;
+	RECURSIVE_A;
+	return 0;
 }

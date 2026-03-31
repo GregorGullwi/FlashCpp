@@ -16,11 +16,14 @@ int main() {
 		throw 42;
 	} catch (int value) {
 		Guard guard;
-		if (value != 42) return 1;
+		if (value != 42)
+			return 1;
 		caught = true;
 	}
 
-	if (!caught) return 2;
-	if (g_destroyed != 1) return 3;
+	if (!caught)
+		return 2;
+	if (g_destroyed != 1)
+		return 3;
 	return 0;
 }

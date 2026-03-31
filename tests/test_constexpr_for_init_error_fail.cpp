@@ -6,11 +6,11 @@
 int runtime_value() { return 0; }
 
 constexpr int bad_for_init() {
-    int sum = 0;
-    for (int i = runtime_value(); i < 3; i++) {
-        sum += i;
-    }
-    return sum;
+	int sum = 0;
+	for (int i = runtime_value(); i < 3; i++) {
+		sum += i;
+	}
+	return sum;
 }
 
 static_assert(bad_for_init() == 3);

@@ -8,4 +8,3 @@ struct Point {
 int main() {
 	return 0;
 }
-

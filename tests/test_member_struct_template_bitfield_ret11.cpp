@@ -1,6 +1,6 @@
-template<typename T>
+template <typename T>
 struct Outer {
-	template<typename U>
+	template <typename U>
 	struct Inner {
 		int a : 3;
 		U b;

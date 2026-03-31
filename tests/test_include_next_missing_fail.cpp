@@ -3,5 +3,5 @@
 #include_next <nonexistent_header_that_does_not_exist.h>
 
 int main() {
-    return 0;
+	return 0;
 }

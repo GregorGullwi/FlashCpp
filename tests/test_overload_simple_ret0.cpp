@@ -4,16 +4,16 @@ extern "C" int printf(const char*, ...);
 
 // Test function overloads
 void test_func(int& x) {
-    printf("lvalue\n");
+	printf("lvalue\n");
 }
 
 void test_func(int&& x) {
-    printf("rvalue\n");
+	printf("rvalue\n");
 }
 
 int main() {
-    int a = 5;
-    test_func(a);  // lvalue
-    
-    return 0;
+	int a = 5;
+	test_func(a);  // lvalue
+
+	return 0;
 }

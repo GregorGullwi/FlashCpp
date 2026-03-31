@@ -6,12 +6,12 @@
 #pragma pack(push, label2, 8)  // Push with label2, set to 8
 // Alignment should be 8 here
 
-#pragma pack(pop, label2)      // Pop back to label2 state (should restore to state before label2)
+#pragma pack(pop, label2)	  // Pop back to label2 state (should restore to state before label2)
 // Should be back to 4
 
-#pragma pack(pop, label1)      // Pop back to label1 state
+#pragma pack(pop, label1)	  // Pop back to label1 state
 // Should be back to original
 
 int main() {
-    return 0;
+	return 0;
 }

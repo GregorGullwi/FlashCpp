@@ -5,13 +5,13 @@
 // This file is a _fail test — compilation must fail.
 
 struct NoDflt {
-    int v;
-    constexpr NoDflt(int a, int b) : v(a + b) {}
+	int v;
+	constexpr NoDflt(int a, int b) : v(a + b) {}
 };
 
 constexpr int make() {
-    NoDflt n{};   // ERROR: no default constructor
-    return n.v;
+	NoDflt n{};	// ERROR: no default constructor
+	return n.v;
 }
 
 // The static_assert forces constexpr evaluation of make(), which should

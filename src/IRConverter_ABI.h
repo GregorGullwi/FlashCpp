@@ -22,8 +22,8 @@
 static constexpr std::array<X64Register, 4> WIN64_INT_PARAM_REGS = {
 	X64Register::RCX,  // First integer/pointer argument
 	X64Register::RDX,  // Second integer/pointer argument
-	X64Register::R8,   // Third integer/pointer argument
-	X64Register::R9    // Fourth integer/pointer argument
+	X64Register::R8,	 // Third integer/pointer argument
+	X64Register::R9	// Fourth integer/pointer argument
 };
 
 static constexpr std::array<X64Register, 4> WIN64_FLOAT_PARAM_REGS = {
@@ -39,8 +39,8 @@ static constexpr std::array<X64Register, 6> SYSV_INT_PARAM_REGS = {
 	X64Register::RSI,  // Second integer/pointer argument
 	X64Register::RDX,  // Third integer/pointer argument
 	X64Register::RCX,  // Fourth integer/pointer argument
-	X64Register::R8,   // Fifth integer/pointer argument
-	X64Register::R9    // Sixth integer/pointer argument
+	X64Register::R8,	 // Fifth integer/pointer argument
+	X64Register::R9	// Sixth integer/pointer argument
 };
 
 static constexpr std::array<X64Register, 8> SYSV_FLOAT_PARAM_REGS = {
@@ -57,12 +57,12 @@ static constexpr std::array<X64Register, 8> SYSV_FLOAT_PARAM_REGS = {
 // ============================================================================
 // Platform-Specific ABI Helper Functions
 // ============================================================================
-// These template functions select the correct parameter registers based on 
+// These template functions select the correct parameter registers based on
 // whether we're targeting Windows (COFF/PE) or Linux (ELF).
 // ============================================================================
 
 // Get the integer parameter register for the given index based on platform
-template<typename TWriterClass>
+template <typename TWriterClass>
 constexpr X64Register getIntParamReg(size_t index) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		// Linux: System V AMD64 ABI (6 integer parameter registers)
@@ -74,7 +74,7 @@ constexpr X64Register getIntParamReg(size_t index) {
 }
 
 // Get the float parameter register for the given index based on platform
-template<typename TWriterClass>
+template <typename TWriterClass>
 constexpr X64Register getFloatParamReg(size_t index) {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		// Linux: System V AMD64 ABI (8 float parameter registers)
@@ -86,7 +86,7 @@ constexpr X64Register getFloatParamReg(size_t index) {
 }
 
 // Get the maximum number of integer parameter registers based on platform
-template<typename TWriterClass>
+template <typename TWriterClass>
 constexpr size_t getMaxIntParamRegs() {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 		return SYSV_INT_PARAM_REGS.size();  // 6 for Linux
@@ -96,20 +96,20 @@ constexpr size_t getMaxIntParamRegs() {
 }
 
 // Get the maximum number of float parameter registers based on platform
-template<typename TWriterClass>
+template <typename TWriterClass>
 constexpr size_t getMaxFloatParamRegs() {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		return SYSV_FLOAT_PARAM_REGS.size();  // 8 for Linux
+		return SYSV_FLOAT_PARAM_REGS.size();	 // 8 for Linux
 	} else {
 		return WIN64_FLOAT_PARAM_REGS.size(); // 4 for Windows
 	}
 }
 
 // Get the shadow space size based on platform
-template<typename TWriterClass>
+template <typename TWriterClass>
 constexpr size_t getShadowSpaceSize() {
 	if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
-		return 0;   // Linux: No shadow space
+		return 0;	  // Linux: No shadow space
 	} else {
 		return 32;  // Windows: 32 bytes (4 * 8) for spilling register parameters
 	}
@@ -117,25 +117,42 @@ constexpr size_t getShadowSpaceSize() {
 
 // Converts an X64Register enum to its corresponding CodeView register code.
 inline uint16_t getX64RegisterCodeViewCode(X64Register reg) {
-    switch (reg) {
-        case X64Register::RAX: return 328;
-        case X64Register::RCX: return 329;
-        case X64Register::RDX: return 330;
-        case X64Register::RBX: return 331;
-        case X64Register::RSP: return 332;
-        case X64Register::RBP: return 333;
-        case X64Register::RSI: return 334;
-        case X64Register::RDI: return 335;
-        case X64Register::R8:  return 336;
-        case X64Register::R9:  return 337;
-        case X64Register::R10: return 338;
-        case X64Register::R11: return 339;
-        case X64Register::R12: return 340;
-        case X64Register::R13: return 341;
-        case X64Register::R14: return 342;
-        case X64Register::R15: return 343;
-        default: return 0; // Should not happen for general purpose registers
-    }
+	switch (reg) {
+	case X64Register::RAX:
+		return 328;
+	case X64Register::RCX:
+		return 329;
+	case X64Register::RDX:
+		return 330;
+	case X64Register::RBX:
+		return 331;
+	case X64Register::RSP:
+		return 332;
+	case X64Register::RBP:
+		return 333;
+	case X64Register::RSI:
+		return 334;
+	case X64Register::RDI:
+		return 335;
+	case X64Register::R8:
+		return 336;
+	case X64Register::R9:
+		return 337;
+	case X64Register::R10:
+		return 338;
+	case X64Register::R11:
+		return 339;
+	case X64Register::R12:
+		return 340;
+	case X64Register::R13:
+		return 341;
+	case X64Register::R14:
+		return 342;
+	case X64Register::R15:
+		return 343;
+	default:
+		return 0; // Should not happen for general purpose registers
+	}
 }
 
 inline std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) {
@@ -150,16 +167,14 @@ inline std::optional<TempVar> getTempVarFromOffset(int32_t stackVariableOffset) 
 	return std::nullopt;
 }
 
-
-struct RegisterAllocator
-{
+struct RegisterAllocator {
 	static constexpr uint8_t REGISTER_COUNT = static_cast<uint8_t>(X64Register::Count);
 	struct AllocatedRegister {
 		X64Register reg = X64Register::Count;
 		bool isAllocated = false;
-		bool isDirty = false;	// Does the stack variable need to be updated on a flush
+		bool isDirty = false; // Does the stack variable need to be updated on a flush
 		int32_t stackVariableOffset = INT_MIN;
-		SizeInBits size_in_bits;	// Size of the value stored in this register (for proper spilling)
+		SizeInBits size_in_bits; // Size of the value stored in this register (for proper spilling)
 	};
 	std::array<AllocatedRegister, REGISTER_COUNT> registers;
 
@@ -167,19 +182,19 @@ struct RegisterAllocator
 		for (size_t i = 0; i < REGISTER_COUNT; ++i) {
 			registers[i].reg = static_cast<X64Register>(i);
 		}
-		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
-		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
+		registers[static_cast<int>(X64Register::RSP)].isAllocated = true; // assume RSP is always allocated
+		registers[static_cast<int>(X64Register::RBP)].isAllocated = true; // assume RBP is always allocated
 	}
 
 	void reset() {
 		for (auto& reg : registers) {
-			reg = AllocatedRegister{ .reg = reg.reg, .size_in_bits = {} };
+			reg = AllocatedRegister{.reg = reg.reg, .size_in_bits = {}};
 		}
-		registers[static_cast<int>(X64Register::RSP)].isAllocated = true;	// assume RSP is always allocated
-		registers[static_cast<int>(X64Register::RBP)].isAllocated = true;	// assume RBP is always allocated
+		registers[static_cast<int>(X64Register::RSP)].isAllocated = true; // assume RSP is always allocated
+		registers[static_cast<int>(X64Register::RBP)].isAllocated = true; // assume RBP is always allocated
 	}
 
-	template<typename Func>
+	template <typename Func>
 	void flushAllDirtyRegisters(Func func) {
 		for (auto& reg : registers) {
 			if (reg.isDirty) {
@@ -245,9 +260,9 @@ struct RegisterAllocator
 		// Iterate only over general-purpose registers (RAX to R15)
 		for (size_t i = static_cast<size_t>(X64Register::RAX); i <= static_cast<size_t>(X64Register::R15); ++i) {
 			if (registers[i].isAllocated &&
-			    registers[i].reg != X64Register::RSP &&
-			    registers[i].reg != X64Register::RBP &&
-			    registers[i].reg != exclude) {
+				registers[i].reg != X64Register::RSP &&
+				registers[i].reg != X64Register::RBP &&
+				registers[i].reg != exclude) {
 
 				if (!registers[i].isDirty) {
 					// Found a clean register - best case, return immediately
@@ -308,8 +323,9 @@ struct RegisterAllocator
 	}
 
 	void release(X64Register reg) {
-		if (reg == X64Register::Count) return; // No register to release
-		registers[static_cast<int>(reg)] = AllocatedRegister{ .reg = reg, .size_in_bits = {} };
+		if (reg == X64Register::Count)
+			return; // No register to release
+		registers[static_cast<int>(reg)] = AllocatedRegister{.reg = reg, .size_in_bits = {}};
 	}
 
 	bool is_allocated(X64Register reg) const {
@@ -379,12 +395,12 @@ struct RegisterAllocator
 		if (size_in_bytes == 8) {
 			// Build REX prefix: 0100WRXB
 			// W=1 for 64-bit, R=1 if src_reg is R8-R15, B=1 if dst_reg is R8-R15
-			uint8_t rex = 0x48;  // REX.W = 1
+			uint8_t rex = 0x48;	// REX.W = 1
 			if (static_cast<uint8_t>(src_reg) >= 8) {
-				rex |= 0x04;  // REX.R = 1
+				rex |= 0x04;	 // REX.R = 1
 			}
 			if (static_cast<uint8_t>(dst_reg) >= 8) {
-				rex |= 0x01;  // REX.B = 1
+				rex |= 0x01;	 // REX.B = 1
 			}
 			result.op_codes[0] = rex;
 			result.op_codes[1] = 0x89;  // MOV r64, r64
@@ -396,12 +412,12 @@ struct RegisterAllocator
 		else if (size_in_bytes == 4) {
 			// Check if we need REX prefix for extended registers
 			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
-				uint8_t rex = 0x40;  // Base REX prefix
+				uint8_t rex = 0x40;	// Base REX prefix
 				if (static_cast<uint8_t>(src_reg) >= 8) {
-					rex |= 0x04;  // REX.R = 1
+					rex |= 0x04;	 // REX.R = 1
 				}
 				if (static_cast<uint8_t>(dst_reg) >= 8) {
-					rex |= 0x01;  // REX.B = 1
+					rex |= 0x01;	 // REX.B = 1
 				}
 				result.op_codes[0] = rex;
 				result.op_codes[1] = 0x89;  // MOV r32, r32
@@ -418,12 +434,12 @@ struct RegisterAllocator
 			result.op_codes[0] = 0x66;
 			// Check if we need REX prefix for extended registers
 			if (static_cast<uint8_t>(src_reg) >= 8 || static_cast<uint8_t>(dst_reg) >= 8) {
-				uint8_t rex = 0x40;  // Base REX prefix
+				uint8_t rex = 0x40;	// Base REX prefix
 				if (static_cast<uint8_t>(src_reg) >= 8) {
-					rex |= 0x04;  // REX.R = 1
+					rex |= 0x04;	 // REX.R = 1
 				}
 				if (static_cast<uint8_t>(dst_reg) >= 8) {
-					rex |= 0x01;  // REX.B = 1
+					rex |= 0x01;	 // REX.B = 1
 				}
 				result.op_codes[1] = rex;
 				result.op_codes[2] = 0x89;  // MOV r16, r16
@@ -441,17 +457,17 @@ struct RegisterAllocator
 			// 1. Extended registers (R8-R15)
 			// 2. To access SIL, DIL, BPL, SPL instead of AH, CH, DH, BH (RSI=6, RDI=7, RBP=5, RSP=4)
 			bool needs_rex = (static_cast<uint8_t>(src_reg) >= 4 && static_cast<uint8_t>(src_reg) <= 7) ||
-			                 (static_cast<uint8_t>(dst_reg) >= 4 && static_cast<uint8_t>(dst_reg) <= 7) ||
-			                 static_cast<uint8_t>(src_reg) >= 8 || 
-			                 static_cast<uint8_t>(dst_reg) >= 8;
-			
+							 (static_cast<uint8_t>(dst_reg) >= 4 && static_cast<uint8_t>(dst_reg) <= 7) ||
+							 static_cast<uint8_t>(src_reg) >= 8 ||
+							 static_cast<uint8_t>(dst_reg) >= 8;
+
 			if (needs_rex) {
-				uint8_t rex = 0x40;  // Base REX prefix
+				uint8_t rex = 0x40;	// Base REX prefix
 				if (static_cast<uint8_t>(src_reg) >= 8) {
-					rex |= 0x04;  // REX.R = 1
+					rex |= 0x04;	 // REX.R = 1
 				}
 				if (static_cast<uint8_t>(dst_reg) >= 8) {
-					rex |= 0x01;  // REX.B = 1
+					rex |= 0x01;	 // REX.B = 1
 				}
 				result.op_codes[0] = rex;
 				result.op_codes[1] = 0x88;  // MOV r8, r8
@@ -473,8 +489,7 @@ struct RegisterAllocator
 		// Clear general-purpose caller-saved registers
 		const X64Register caller_saved_gpr[] = {
 			X64Register::RAX, X64Register::RCX, X64Register::RDX,
-			X64Register::R8, X64Register::R9, X64Register::R10, X64Register::R11
-		};
+			X64Register::R8, X64Register::R9, X64Register::R10, X64Register::R11};
 		for (auto reg : caller_saved_gpr) {
 			int idx = static_cast<int>(reg);
 			// Don't release if not allocated, but clear the stack variable mapping
@@ -482,7 +497,7 @@ struct RegisterAllocator
 				invalidateRegister(reg);
 			}
 		}
-		
+
 		// Clear all XMM registers (all are caller-saved)
 		for (size_t i = static_cast<size_t>(X64Register::XMM0); i <= static_cast<size_t>(X64Register::XMM15); ++i) {
 			if (registers[i].isAllocated) {
@@ -491,4 +506,3 @@ struct RegisterAllocator
 		}
 	}
 };
-

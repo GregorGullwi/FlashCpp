@@ -15,15 +15,15 @@
 // int* SimpleContainer::end() { return &data[3]; }
 
 int main() {
-    int arr[3];
-    arr[0] = 5;
-    arr[1] = 10;
-    arr[2] = 15;
-    
-    int sum = 0;
-    for (int x : arr) {
-        sum = sum + x;
-    }
-    
-    return sum;  // Expected: 30 (5+10+15)
+	int arr[3];
+	arr[0] = 5;
+	arr[1] = 10;
+	arr[2] = 15;
+
+	int sum = 0;
+	for (int x : arr) {
+		sum = sum + x;
+	}
+
+	return sum;	// Expected: 30 (5+10+15)
 }

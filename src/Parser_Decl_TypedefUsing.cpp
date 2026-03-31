@@ -233,7 +233,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 			// After &, &&, or *, expect ')'
 			if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
-			    peek() == ")"_tok) {
+				peek() == ")"_tok) {
 				advance(); // consume ')'
 
 				// Now expect '(' for the parameter list
@@ -254,7 +254,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 						// Handle pointer/reference/cv-qualifier modifiers after type
 						while (peek() == "*"_tok || peek() == "&"_tok || peek() == "&&"_tok ||
-						       peek() == "const"_tok || peek() == "volatile"_tok) {
+							   peek() == "const"_tok || peek() == "volatile"_tok) {
 							advance();
 						}
 
@@ -292,8 +292,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						}
 
 						FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type: ",
-						          is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
-						          " to function");
+								  is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
+								  " to function");
 
 						// Discard saved position - we successfully parsed
 						discard_saved_token(func_type_saved_pos);
@@ -363,7 +363,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Parse reference modifiers: & or &&
 		ReferenceQualifier ref_qual = parse_reference_qualifier();
 		FLASH_LOG_FORMAT(Parser, Debug, "Type alias '{}': ref_qual={} (0=None, 1=LValue, 2=RValue)",
-		                 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
+						 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
 		type_spec.set_reference_qualifier(ref_qual);
 
 		// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
@@ -429,7 +429,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// Also register namespace-qualified name "ns::Container::AliasStatus"
 				// so that ADL and type lookups work from outside the namespace.
 				StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-				    current_ns, struct_relative_handle);
+					current_ns, struct_relative_handle);
 				if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
 					getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 				}
@@ -447,7 +447,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 	// Pattern: typedef struct { ... } Alias;
 	// Pattern: typedef enum { ... } Alias;
 	if (!peek().is_eof() &&
-	    (peek() == "struct"_tok || peek() == "class"_tok || peek() == "enum"_tok)) {
+		(peek() == "struct"_tok || peek() == "class"_tok || peek() == "enum"_tok)) {
 		// This is potentially an inline definition - use the full parse_typedef_declaration logic
 		// We already consumed 'typedef', so we need to restore it
 		// Actually, we can't restore easily, so let's handle it inline here
@@ -490,9 +490,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			} else {
 				// Anonymous struct - generate a unique name using StringBuilder for persistent storage
 				struct_name_view = StringBuilder()
-				                       .append("__anonymous_typedef_struct_")
-				                       .append(ast_nodes_.size())
-				                       .commit();
+									   .append("__anonymous_typedef_struct_")
+									   .append(ast_nodes_.size())
+									   .commit();
 			}
 
 			// Register the struct type early
@@ -537,8 +537,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto member_name_token = peek_info();
 				if (!member_name_token.kind().is_identifier()) {
 					FLASH_LOG(Parser, Debug, "Expected member name but got: type=",
-					          !member_name_token.kind().is_eof() ? static_cast<int>(member_name_token.type()) : -1,
-					          " value='", !member_name_token.kind().is_eof() ? member_name_token.value() : "NONE", "'");
+							  !member_name_token.kind().is_eof() ? static_cast<int>(member_name_token.type()) : -1,
+							  " value='", !member_name_token.kind().is_eof() ? member_name_token.value() : "NONE", "'");
 					return ParseResult::error("Expected member name in struct", member_name_token);
 				}
 				advance(); // consume the member name
@@ -590,8 +590,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						}
 					}
 					auto next_decl = emplace_node<DeclarationNode>(
-					    emplace_node<TypeSpecifierNode>(member_type_spec),
-					    next_name);
+						emplace_node<TypeSpecifierNode>(member_type_spec),
+						next_name);
 					struct_ref_inner.add_member(next_decl, member_access, std::nullopt, next_bitfield_width);
 				}
 
@@ -617,23 +617,23 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 				// Calculate member size and alignment
 				auto [member_size_in_bits, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-				    member_type_spec, member_type_spec.type_index());
+					member_type_spec, member_type_spec.type_index());
 
 				// Phase 7B: Intern member name and use StringHandle overload
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
-				    member_name_handle,
-				    member_type_spec.type_index(),
-				    member_size_in_bits,
-				    member_alignment,
-				    member_access,
-				    std::nullopt,
-				    member_type_spec.reference_qualifier(),
-				    member_type_spec.size_in_bits(),
-				    false,
-				    {},
-				    static_cast<int>(member_type_spec.pointer_depth()),
-				    member_decl.bitfield_width);
+					member_name_handle,
+					member_type_spec.type_index(),
+					member_size_in_bits,
+					member_alignment,
+					member_access,
+					std::nullopt,
+					member_type_spec.reference_qualifier(),
+					member_type_spec.size_in_bits(),
+					false,
+					{},
+					static_cast<int>(member_type_spec.pointer_depth()),
+					member_decl.bitfield_width);
 			}
 
 			// Finalize struct layout
@@ -666,11 +666,11 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				struct_size_bits = static_cast<int>(finalized_struct_info->total_size * 8);
 			}
 			TypeSpecifierNode type_spec(
-			    struct_type_index.withCategory(TypeCategory::Struct),
-			    struct_size_bits,
-			    alias_token,
-			    CVQualifier::None,
-			    ReferenceQualifier::None);
+				struct_type_index.withCategory(TypeCategory::Struct),
+				struct_size_bits,
+				alias_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
 			ASTNode type_node = emplace_node<TypeSpecifierNode>(type_spec);
 
 			// Store the alias in the struct (if struct_ref provided)
@@ -697,8 +697,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			} else {
 				// Anonymous enum - generate a unique name using StringBuilder for persistent storage
 				enum_name = StringTable::getOrInternStringHandle(StringBuilder()
-				                                                     .append("__anonymous_typedef_enum_")
-				                                                     .append(ast_nodes_.size()));
+																	 .append("__anonymous_typedef_enum_")
+																	 .append(ast_nodes_.size()));
 			}
 
 			// Register the enum type early
@@ -808,8 +808,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 				{
 					auto enum_type_node = emplace_node<TypeSpecifierNode>(
-					    enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
-					    CVQualifier::None, ReferenceQualifier::None);
+						enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+						CVQualifier::None, ReferenceQualifier::None);
 					auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 					gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 				}
@@ -891,7 +891,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				if (!current_ns_name.empty() && original_enum_type_info) {
 					// Also register namespace-qualified name "ns::Container::Status"
 					StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-					    current_ns, struct_relative_handle);
+						current_ns, struct_relative_handle);
 					getTypesByNameMap().emplace(ns_qualified_handle, original_enum_type_info);
 				}
 
@@ -1046,7 +1046,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 		if (!current_ns_name.empty()) {
 			StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-			    current_ns, struct_relative_handle);
+				current_ns, struct_relative_handle);
 			if (getTypesByNameMap().find(ns_qualified_handle) == getTypesByNameMap().end()) {
 				getTypesByNameMap().emplace(ns_qualified_handle, &alias_info);
 			}
@@ -1093,7 +1093,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Check for 'class' or 'struct' keyword (enum class / enum struct)
 		[[maybe_unused]] bool has_class_keyword = false;
 		if (peek().is_keyword() &&
-		    (peek() == "class"_tok || peek() == "struct"_tok)) {
+			(peek() == "class"_tok || peek() == "struct"_tok)) {
 			has_class_keyword = true;
 			advance(); // consume 'class' or 'struct'
 		}
@@ -1108,7 +1108,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			advance(); // consume enum name
 
 			if (!peek().is_eof() &&
-			    (peek() == "{"_tok || peek() == ":"_tok)) {
+				(peek() == "{"_tok || peek() == ":"_tok)) {
 				// Pattern 2: typedef enum _Name { ... } alias;
 				// or typedef enum _Name : type { ... } alias;
 				is_inline_enum = true;
@@ -1124,7 +1124,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			is_inline_enum = false;
 		}
 	} else if (!peek().is_eof() &&
-	           (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok)) {
+			   (peek() == "struct"_tok || peek() == "class"_tok || peek() == "union"_tok)) {
 		// Look ahead to see if this is an inline definition
 		// Pattern 1: typedef struct { ... } alias;
 		// Pattern 2: typedef struct Name { ... } alias;
@@ -1286,8 +1286,8 @@ ParseResult Parser::parse_typedef_declaration() {
 			// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 			{
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
-				    enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
-				    CVQualifier::None, ReferenceQualifier::None);
+					enum_type_index.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token,
+					CVQualifier::None, ReferenceQualifier::None);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 				gSymbolTable.insert(enumerator_name_token.value(), enumerator_decl);
 			}
@@ -1339,10 +1339,10 @@ ParseResult Parser::parse_typedef_declaration() {
 
 		// Push struct parsing context
 		struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name_for_typedef),
-		                                         &struct_ref,
-		                                         nullptr,
-		                                         gSymbolTable.get_current_namespace_handle(),
-		                                         {}});
+												 &struct_ref,
+												 nullptr,
+												 gSymbolTable.get_current_namespace_handle(),
+												 {}});
 
 		// Create StructTypeInfo
 		auto struct_info = std::make_unique<StructTypeInfo>(struct_name_for_typedef, AccessSpecifier::Public, is_inline_union, gSymbolTable.get_current_namespace_handle());
@@ -1370,7 +1370,7 @@ ParseResult Parser::parse_typedef_declaration() {
 		while (!peek().is_eof() && peek() != "}"_tok) {
 			// Check for anonymous union/struct (union { ... };)
 			if (peek().is_keyword() &&
-			    (peek() == "union"_tok || peek() == "struct"_tok)) {
+				(peek() == "union"_tok || peek() == "struct"_tok)) {
 				// Peek ahead to see if this is anonymous (followed by '{')
 				SaveHandle saved_pos = save_token_position();
 				auto union_or_struct_keyword = advance(); // consume 'union' or 'struct'
@@ -1398,10 +1398,10 @@ ParseResult Parser::parse_typedef_declaration() {
 						// Generate a unique name for the anonymous union/struct type
 						static int typedef_anonymous_type_counter = 0;
 						std::string_view anon_type_name = StringBuilder()
-						                                      .append("__typedef_anonymous_")
-						                                      .append(is_union ? "union_" : "struct_")
-						                                      .append(static_cast<int64_t>(typedef_anonymous_type_counter++))
-						                                      .commit();
+															  .append("__typedef_anonymous_")
+															  .append(is_union ? "union_" : "struct_")
+															  .append(static_cast<int64_t>(typedef_anonymous_type_counter++))
+															  .commit();
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
 
 						// Create the anonymous struct/union type
@@ -1481,7 +1481,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 							// Create type specifier for the anonymous type
 							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None,
-							                                 static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword, CVQualifier::None);
+															 static_cast<int>(anon_type_info.getStructInfo()->total_size * 8), union_or_struct_keyword, CVQualifier::None);
 							anon_type_spec.set_type_index(anon_type_info.type_index_);
 							for (int i = 0; i < ptr_levels; i++) {
 								anon_type_spec.add_pointer_level(CVQualifier::None);
@@ -1513,7 +1513,7 @@ ParseResult Parser::parse_typedef_declaration() {
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						// Check for nested anonymous union
 						if (peek().is_keyword() &&
-						    (peek() == "union"_tok || peek() == "struct"_tok)) {
+							(peek() == "union"_tok || peek() == "struct"_tok)) {
 							SaveHandle nested_saved_pos = save_token_position();
 							advance(); // consume 'union' or 'struct'
 
@@ -1562,7 +1562,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 										// Expect closing ']'
 										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-										    peek() != "]"_tok) {
+											peek() != "]"_tok) {
 											return ParseResult::error("Expected ']' after array size", current_token_);
 										}
 										advance(); // consume ']'
@@ -1641,7 +1641,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 							// Expect closing ']'
 							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-							    peek() != "]"_tok) {
+								peek() != "]"_tok) {
 								return ParseResult::error("Expected ']' after array size", current_token_);
 							}
 							advance(); // consume ']'
@@ -1731,7 +1731,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 				// Expect closing ']'
 				if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-				    peek() != "]"_tok) {
+					peek() != "]"_tok) {
 					return ParseResult::error("Expected ']' after array size", current_token_);
 				}
 				advance(); // consume ']'
@@ -1801,8 +1801,8 @@ ParseResult Parser::parse_typedef_declaration() {
 
 				// Create declaration with same type
 				auto next_member_decl = emplace_node<DeclarationNode>(
-				    emplace_node<TypeSpecifierNode>(member_type_spec),
-				    next_member_name);
+					emplace_node<TypeSpecifierNode>(member_type_spec),
+					next_member_name);
 				members.push_back({next_member_decl, current_access, std::nullopt, additional_bitfield_width});
 				members.back().bitfield_width_expr = additional_bitfield_width_expr;
 				struct_ref.add_member(next_member_decl, current_access, std::nullopt, additional_bitfield_width, additional_bitfield_width_expr);
@@ -1829,7 +1829,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 			// Calculate member size and alignment
 			auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-			    member_type_spec, member_type_spec.type_index());
+				member_type_spec, member_type_spec.type_index());
 			size_t referenced_size_bits = member_type_spec.size_in_bits();
 
 			if (!member_type_spec.is_pointer() && !member_type_spec.is_reference() && !member_type_spec.is_rvalue_reference()) {
@@ -1848,18 +1848,18 @@ ParseResult Parser::parse_typedef_declaration() {
 			// Phase 7B: Intern member name and use StringHandle overload
 			StringHandle member_name_handle = decl.identifier_token().handle();
 			struct_info->addMember(
-			    member_name_handle,
-			    member_type_spec.type_index(),
-			    member_size,
-			    member_alignment,
-			    member_decl.access,
-			    member_decl.default_initializer,
-			    ref_qual,
-			    referenced_size_bits,
-			    false,
-			    {},
-			    static_cast<int>(member_type_spec.pointer_depth()),
-			    member_decl.bitfield_width);
+				member_name_handle,
+				member_type_spec.type_index(),
+				member_size,
+				member_alignment,
+				member_decl.access,
+				member_decl.default_initializer,
+				ref_qual,
+				referenced_size_bits,
+				false,
+				{},
+				static_cast<int>(member_type_spec.pointer_depth()),
+				member_decl.bitfield_width);
 		}
 
 		// Finalize struct layout (add padding)
@@ -1877,11 +1877,11 @@ ParseResult Parser::parse_typedef_declaration() {
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
-		    Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_type_info.getStructInfo()->total_size * 8),
+			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
+			CVQualifier::None,
+			ReferenceQualifier::None);
 		type_node = emplace_node<TypeSpecifierNode>(type_spec);
 	} else {
 		// Parse the underlying type normally

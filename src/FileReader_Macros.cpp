@@ -42,27 +42,27 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 	// Use a working copy to avoid const_cast issues
 	std::string current = input;
 	std::string output;
-	output.reserve(current.size() * 2);  // Reserve space to avoid reallocations
-	
+	output.reserve(current.size() * 2);	// Reserve space to avoid reallocations
+
 	size_t loop_guard = 1000;  // Safety limit for expansion iterations
-	bool needs_another_pass = true;  // Controls iteration - start with true to do at least one pass
-	
+	bool needs_another_pass = true;	// Controls iteration - start with true to do at least one pass
+
 	// We need to iterate because expansions can introduce new macros
 	// Each pass scans the entire string for macros to expand
 	while (needs_another_pass && loop_guard-- > 0) {
-		needs_another_pass = false;  // Will be set true if we expand any macros
+		needs_another_pass = false;	// Will be set true if we expand any macros
 		output.clear();
-		
+
 		size_t pos = 0;
 		size_t input_size = current.size();
 		bool in_string = false;
 		bool in_char = false;
 		bool in_raw_string = false;
 		std::string raw_delimiter;
-		
+
 		while (pos < input_size) {
 			char c = current[pos];
-			
+
 			// Handle escape sequences in strings
 			if ((in_string || in_char) && c == '\\' && pos + 1 < input_size) {
 				output += c;
@@ -70,7 +70,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				++pos;
 				continue;
 			}
-			
+
 			// Handle raw string literals
 			if (!in_string && !in_char && !in_raw_string && c == 'R' && pos + 1 < input_size && current[pos + 1] == '"') {
 				// Start of raw string - find delimiter
@@ -86,12 +86,12 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					continue;
 				}
 			}
-			
+
 			if (in_raw_string) {
 				// Look for closing delimiter
 				std::string closing = ")" + raw_delimiter + "\"";
-				if (pos + closing.size() <= input_size && 
-				    current.compare(pos, closing.size(), closing) == 0) {
+				if (pos + closing.size() <= input_size &&
+					current.compare(pos, closing.size(), closing) == 0) {
 					// Found closing, copy it and exit raw string mode
 					output += current.substr(pos, closing.size());
 					pos += closing.size();
@@ -103,7 +103,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				++pos;
 				continue;
 			}
-			
+
 			// Handle regular string literals
 			if (!in_char && c == '"') {
 				in_string = !in_string;
@@ -111,7 +111,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				++pos;
 				continue;
 			}
-			
+
 			// Handle character literals
 			if (!in_string && c == '\'') {
 				in_char = !in_char;
@@ -119,14 +119,14 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				++pos;
 				continue;
 			}
-			
+
 			// Inside string/char literal, just copy
 			if (in_string || in_char) {
 				output += c;
 				++pos;
 				continue;
 			}
-			
+
 			// Check for identifier start (letter or underscore)
 			if (std::isalpha(static_cast<unsigned char>(c)) || c == '_') {
 				size_t ident_start = pos;
@@ -135,10 +135,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				while (pos < input_size && (std::isalnum(static_cast<unsigned char>(current[pos])) || current[pos] == '_')) {
 					++pos;
 				}
-				
+
 				std::string_view ident(current.data() + ident_start, pos - ident_start);
 				std::string ident_str(ident);
-				
+
 				// Handle _Pragma() operator (C++20 §15.9 [cpp.pragma.op])
 				// _Pragma("string") is destringized and processed as #pragma string
 				if (ident == "_Pragma") {
@@ -153,8 +153,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							// Extract string literal content between parens
 							std::string_view inner(current.data() + paren_pos + 1, close_paren - paren_pos - 1);
 							// Trim whitespace
-							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.front()))) inner.remove_prefix(1);
-							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.back()))) inner.remove_suffix(1);
+							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.front())))
+								inner.remove_prefix(1);
+							while (!inner.empty() && std::isspace(static_cast<unsigned char>(inner.back())))
+								inner.remove_suffix(1);
 							// Destringize: remove surrounding quotes, unescape backslash sequences
 							if (inner.size() >= 2 && inner.front() == '"' && inner.back() == '"') {
 								std::string pragma_content(inner.substr(1, inner.size() - 2));
@@ -163,7 +165,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								destringized.reserve(pragma_content.size());
 								for (size_t i = 0; i < pragma_content.size(); ++i) {
 									if (pragma_content[i] == '\\' && i + 1 < pragma_content.size() &&
-									    (pragma_content[i + 1] == '"' || pragma_content[i + 1] == '\\')) {
+										(pragma_content[i + 1] == '"' || pragma_content[i + 1] == '\\')) {
 										++i; // skip backslash, take next char
 									}
 									destringized += pragma_content[i];
@@ -173,8 +175,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									if (!filestack_.empty()) {
 										processedHeaders_.insert(std::string(filestack_.top().file_name));
 									}
-								}
-								else if (destringized.find("pack") == 0) {
+								} else if (destringized.find("pack") == 0) {
 									std::string pragma_line = "#pragma " + destringized;
 									processPragmaPack(pragma_line);
 								}
@@ -189,22 +190,22 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					output += ident;
 					continue;
 				}
-				
+
 				// Skip if this macro is being expanded (prevent recursion per C++ standard)
 				if (expanding_macros.count(ident_str) > 0) {
 					output += ident;
 					continue;
 				}
-				
+
 				// Look up identifier in defines
 				auto it = defines_.find(ident_str);
 				if (it != defines_.end()) {
 					const Directive& directive = it->second;
 					std::string replace_str;
-					
+
 					if (auto* defineDirective = directive.get_if<DefineDirective>()) {
 						replace_str = defineDirective->body;
-						
+
 						// Use the is_function_like flag to properly detect function-like macros
 						// This handles variadic macros like #define FOO(...) which have empty args but are function-like
 						if (defineDirective->is_function_like) {
@@ -213,13 +214,13 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 							while (paren_pos < input_size && std::isspace(static_cast<unsigned char>(current[paren_pos]))) {
 								++paren_pos;
 							}
-							
+
 							if (paren_pos >= input_size || current[paren_pos] != '(') {
 								// No '(' found - this is not a macro invocation, just copy the identifier
 								output += ident;
 								continue;
 							}
-							
+
 							size_t args_start = paren_pos;
 							size_t args_end = findMatchingClosingParen(current, args_start);
 							if (args_end == std::string::npos) {
@@ -227,10 +228,10 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								output += ident;
 								continue;
 							}
-							
+
 							std::vector<std::string_view> args = splitArgs(
 								std::string_view(current).substr(args_start + 1, args_end - args_start - 1));
-							
+
 							// Handle variadic arguments (__VA_ARGS__)
 							std::string va_args_str;
 							bool has_variadic_args = false;
@@ -243,7 +244,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									va_args_str += args[i];
 								}
 							}
-							
+
 							// Handle __VA_OPT__ (C++20 feature)
 							// __VA_OPT__(content) expands to content if __VA_ARGS__ is non-empty, otherwise empty
 							size_t va_opt_pos = 0;
@@ -256,23 +257,25 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 										std::string replacement = has_variadic_args ? opt_content : "";
 										replace_str.replace(va_opt_pos, opt_paren_end - va_opt_pos + 1, replacement);
 										va_opt_pos += replacement.length();
-									} else break;
-								} else break;
+									} else
+										break;
+								} else
+									break;
 							}
-							
+
 							// Handle __VA_ARGS__
 							size_t va_args_pos = replace_str.find("__VA_ARGS__");
 							if (va_args_pos != std::string::npos) {
 								replace_str.replace(va_args_pos, 11, va_args_str);
 							}
-							
+
 							// Substitute macro arguments
 							if (args.size() < defineDirective->args.size()) {
 								// Not enough arguments per C++ standard - skip expansion
 								output += ident;
 								continue;
 							}
-							
+
 							// Per C++ standard 6.10.3.1: Determine which parameters are operands of # or ##
 							// Arguments for such parameters must NOT be pre-expanded
 							auto is_separator = [](char c) {
@@ -282,19 +285,22 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								size_t search_pos = 0;
 								while (search_pos < body.size()) {
 									size_t found = body.find(param_name, search_pos);
-									if (found == std::string::npos) break;
+									if (found == std::string::npos)
+										break;
 									// Check if this is a whole-word match
 									bool start_ok = (found == 0) || is_separator(body[found - 1]);
 									bool end_ok = (found + param_name.size() >= body.size()) || is_separator(body[found + param_name.size()]);
 									if (start_ok && end_ok) {
 										// Check if preceded by ## (skip whitespace)
 										size_t before = found;
-										while (before > 0 && std::isspace(static_cast<unsigned char>(body[before - 1]))) --before;
+										while (before > 0 && std::isspace(static_cast<unsigned char>(body[before - 1])))
+											--before;
 										if (before >= 2 && body[before - 2] == '#' && body[before - 1] == '#')
 											return true;
 										// Check if followed by ## (skip whitespace)
 										size_t after = found + param_name.size();
-										while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after]))) ++after;
+										while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after])))
+											++after;
 										if (after + 1 < body.size() && body[after] == '#' && body[after + 1] == '#')
 											return true;
 									}
@@ -302,7 +308,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								}
 								return false;
 							};
-							
+
 							for (size_t i = 0; i < defineDirective->args.size(); ++i) {
 								// Handle stringification (#) - uses UNEXPANDED argument per C++ standard
 								size_t stringify_pos = 0;
@@ -319,8 +325,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 										continue;
 									}
 									// Stringification uses unexpanded argument
-									replace_str.replace(stringify_pos, search_str.length(), 
-										std::format("\"{0}\"", args[i]));
+									replace_str.replace(stringify_pos, search_str.length(),
+														std::format("\"{0}\"", args[i]));
 									stringify_pos += args[i].length() + 2;
 								}
 								// Per C++ standard: arguments NOT adjacent to # or ## are expanded before substitution
@@ -333,23 +339,25 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 								}
 								replaceAll(replace_str, defineDirective->args[i], arg_value);
 							}
-							
-							pos = args_end + 1;  // Move past the closing paren
+
+							pos = args_end + 1;	// Move past the closing paren
 						}
 					} else if (auto* function_directive = directive.get_if<FunctionDirective>()) {
 						replace_str = function_directive->getBody();
 					}
-					
+
 					// Per C standard 6.10.3.3: Process ## token-pasting BEFORE rescanning
 					// This must happen after argument substitution but before macro expansion
 					{
 						size_t pp = 0;
 						while ((pp = replace_str.find("##", pp)) != std::string::npos) {
 							size_t wb = pp;
-							while (wb > 0 && std::isspace(static_cast<unsigned char>(replace_str[wb - 1]))) --wb;
+							while (wb > 0 && std::isspace(static_cast<unsigned char>(replace_str[wb - 1])))
+								--wb;
 							size_t wa = pp + 2;
-							while (wa < replace_str.size() && std::isspace(static_cast<unsigned char>(replace_str[wa]))) ++wa;
-							
+							while (wa < replace_str.size() && std::isspace(static_cast<unsigned char>(replace_str[wa])))
+								++wa;
+
 							// Before concatenating, expand predefined macros (FunctionDirectives like
 							// __COUNTER__, __LINE__, etc.) on either side of ##. These are not macro
 							// arguments, so the "don't expand adjacent to ##" rule doesn't apply to them.
@@ -391,9 +399,9 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 									}
 								}
 							}
-							
+
 							replace_str = replace_str.substr(0, wb) + replace_str.substr(wa);
-							pp = wb;  // Continue scanning from the paste point
+							pp = wb;	 // Continue scanning from the paste point
 						}
 					}
 
@@ -401,7 +409,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 					auto new_expanding = expanding_macros;
 					new_expanding.insert(ident_str);
 					replace_str = expandMacros(replace_str, new_expanding);
-					
+
 					output += replace_str;
 					needs_another_pass = true;  // We expanded something, may need another pass
 				} else {
@@ -414,7 +422,7 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 				++pos;
 			}
 		}
-		
+
 		// Prepare for next iteration if we had expansions
 		if (needs_another_pass) {
 			current = std::move(output);
@@ -422,15 +430,15 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 			output.reserve(current.size() * 2);
 		}
 	}
-	
+
 	if (loop_guard == 0) {
 		FLASH_LOG(Lexer, Warning, "Macro expansion limit reached for line (possible infinite recursion): ", input.substr(0, 100));
 	}
-	
+
 	// The final result is in 'output' if we completed a full pass without expansions,
 	// or in 'current' if we hit the loop guard during a pass with expansions
 	std::string& result = needs_another_pass ? current : output;
-	
+
 	// Handle token-pasting operator (##) - done after all substitutions per C++ standard
 	size_t paste_pos;
 	while ((paste_pos = result.find("##")) != std::string::npos) {
@@ -451,8 +459,8 @@ std::string FileReader::expandMacros(const std::string& input, std::unordered_se
 void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& ops) {
 	if (ops.empty() || values.size() < 1) {
 		if (settings_.isVerboseMode()) {
-			FLASH_LOG(Lexer, Trace, "apply_operator: ops.empty()=", ops.empty(), 
-			          " values.size()=", values.size());
+			FLASH_LOG(Lexer, Trace, "apply_operator: ops.empty()=", ops.empty(),
+					  " values.size()=", values.size());
 		}
 		FLASH_LOG(Lexer, Error, "Internal compiler error, values don't match the ops!");
 		return;
@@ -462,7 +470,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 	if (settings_.isVerboseMode()) {
 		FLASH_LOG(Lexer, Trace, "Applying operator (values.size=", values.size(), ")");
 	}
-	
+
 	if (op == Operator::OpenParen) {
 		ops.pop();
 		return;
@@ -473,13 +481,11 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 		auto value = values.top();
 		values.pop();
 		values.push(!value);
-	}
-	else if (op == Operator::BitwiseNot) {
+	} else if (op == Operator::BitwiseNot) {
 		auto value = values.top();
 		values.pop();
 		values.push(~value);
-	}
-	else if (values.size() >= 2) {
+	} else if (values.size() >= 2) {
 		auto right = values.top();
 		values.pop();
 		auto left = values.top();
@@ -526,7 +532,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 			} else {
 				if (!filestack_.empty()) {
 					FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0) at ",
-					          filestack_.top().file_name, ":", filestack_.top().line_number);
+							  filestack_.top().file_name, ":", filestack_.top().line_number);
 				} else {
 					FLASH_LOG(Lexer, Warning, "Division by zero in preprocessor expression (", left, " / 0)");
 				}
@@ -539,7 +545,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 			} else {
 				if (!filestack_.empty()) {
 					FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0) at ",
-					          filestack_.top().file_name, ":", filestack_.top().line_number);
+							  filestack_.top().file_name, ":", filestack_.top().line_number);
 				} else {
 					FLASH_LOG(Lexer, Warning, "Modulo by zero in preprocessor expression (", left, " % 0)");
 				}
@@ -573,7 +579,7 @@ void FileReader::apply_operator(std::stack<long>& values, std::stack<Operator>& 
 
 bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::string* out_literal) {
 	std::string literal;
-	iss >> std::ws;  // Skip leading whitespace
+	iss >> std::ws;	// Skip leading whitespace
 	int base = 10;
 
 	if (iss.peek() == '0') {
@@ -592,13 +598,19 @@ bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::
 	}
 
 	auto is_digit_char = [&](char c) {
-		if (c == '\'') return true; // digit separator
+		if (c == '\'')
+			return true; // digit separator
 		switch (base) {
-			case 2:  return c == '0' || c == '1';
-			case 8:  return c >= '0' && c <= '7';
-			case 10: return static_cast<bool>(std::isdigit(static_cast<unsigned char>(c)));
-			case 16: return static_cast<bool>(std::isxdigit(static_cast<unsigned char>(c)));
-			default: return false;
+		case 2:
+			return c == '0' || c == '1';
+		case 8:
+			return c >= '0' && c <= '7';
+		case 10:
+			return static_cast<bool>(std::isdigit(static_cast<unsigned char>(c)));
+		case 16:
+			return static_cast<bool>(std::isxdigit(static_cast<unsigned char>(c)));
+		default:
+			return false;
 		}
 	};
 
@@ -613,17 +625,18 @@ bool FileReader::parseIntegerLiteral(std::istringstream& iss, long& value, std::
 	if (literal.empty())
 		return false;
 
-	while (iss && (iss.peek()=='u'||iss.peek()=='U'||iss.peek()=='l'||iss.peek()=='L'))
+	while (iss && (iss.peek() == 'u' || iss.peek() == 'U' || iss.peek() == 'l' || iss.peek() == 'L'))
 		iss.get();
 
 	auto [ptr, ec] = std::from_chars(literal.data(),
-									 literal.data()+literal.size(),
+									 literal.data() + literal.size(),
 									 value,
 									 base);
 
-	if (out_literal) *out_literal = literal;
+	if (out_literal)
+		*out_literal = literal;
 	return ec == std::errc() &&
-		   ptr == literal.data()+literal.size();
+		   ptr == literal.data() + literal.size();
 }
 
 long FileReader::evaluate_expression(std::istringstream& iss) {
@@ -636,10 +649,10 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 		iss.seekg(pos);
 		FLASH_LOG(Lexer, Trace, "Evaluating expression: '", debug_expr, "'");
 	}
-	
+
 	// Check if expression is empty (all whitespace) - treat as 0
 	auto start_pos = iss.tellg();
-	iss >> std::ws;  // Skip whitespace
+	iss >> std::ws;	// Skip whitespace
 	if (iss.eof() || iss.peek() == EOF) {
 		if (settings_.isVerboseMode()) {
 			FLASH_LOG(Lexer, Trace, "  Empty expression, returning 0");
@@ -647,12 +660,12 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 		return 0;
 	}
 	iss.seekg(start_pos);  // Reset to start
-	
+
 	std::stack<long> values;
 	std::stack<Operator> ops;
 
 	std::string op_str;
-	size_t eval_loop_guard = 10000;  // Add loop guard
+	size_t eval_loop_guard = 10000;	// Add loop guard
 
 	while (iss && eval_loop_guard-- > 0) {
 		char c = iss.peek();
@@ -662,15 +675,13 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 			if (!parseIntegerLiteral(iss, value, &literal)) {
 				FLASH_LOG_FORMAT(Lexer, Error, "Failed to parse integer literal '", literal, "' in preprocessor expression, in file ",
 								 filestack_.empty() ? "<unknown>" : filestack_.top().file_name,
-								" at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
+								 " at line ", filestack_.empty() ? 0 : filestack_.top().line_number);
 				values.push(0);
-			}
-			else {
+			} else {
 				values.push(value);
 				FLASH_LOG(Lexer, Trace, "  Pushed value: ", value, " (values.size=", values.size(), ")");
 			}
-		}
-		else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
+		} else if (auto it = char_info_table.find(c); it != char_info_table.end()) {
 			CharInfo info = it->second;
 			op_str = iss.get(); // Consume the operator
 
@@ -680,35 +691,33 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 			}
 
 			const Operator op = string_to_operator(op_str);
-			
+
 			if (settings_.isVerboseMode()) {
 				FLASH_LOG(Lexer, Trace, "  Found operator: '", op_str, "' (values.size=", values.size(), ", ops.size=", ops.size(), ")");
 			}
 
 			if (c == '(') {
 				ops.push(op);
-			}
-			else if (c == ')') {
+			} else if (c == ')') {
 				while (!ops.empty() && ops.top() != Operator::OpenParen) {
 					apply_operator(values, ops);
 				}
 				if (!ops.empty() && ops.top() == Operator::OpenParen) {
 					ops.pop(); // Remove the '(' from the stack
 				}
-			}
-			else {
+			} else {
 				while (!ops.empty() && op != Operator::Not && precedence_table[op] <= precedence_table[ops.top()]) {
 					apply_operator(values, ops);
 				}
 				ops.push(op);
 			}
-		}
-		else if (isalpha(c) || c == '_') {
+		} else if (isalpha(c) || c == '_') {
 			// Manually consume only identifier characters to avoid consuming operators
 			std::string keyword;
 			while (iss) {
 				char next = iss.peek();
-				if (!isalnum(next) && next != '_') break;
+				if (!isalnum(next) && next != '_')
+					break;
 				keyword += iss.get();
 			}
 			if (keyword == "defined") {
@@ -731,50 +740,49 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 					FLASH_LOG(Lexer, Trace, "  Pushed defined() result: ", value, " (symbol='", symbol, "', values.size=", values.size(), ")");
 					// Don't print stream state here anymore since it was misleading
 				}
-			}
-			else if (keyword == "__has_include") {
+			} else if (keyword == "__has_include") {
 				// __has_include(<header>) or __has_include("header") - check if header exists
 				// Read the argument from the input stream
 				long exists = 0;
 				char include_name_buf[256] = {};
-				
+
 				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
-					
+
 					// Skip whitespace after '('
 					iss >> std::ws;
-					
+
 					// Check for < or "
 					char quote_char = iss.peek();
 					char end_char = (quote_char == '<') ? '>' : '"';
-					
+
 					if (quote_char == '<' || quote_char == '"') {
 						iss.ignore(); // Consume opening < or "
-						
+
 						// Read the include name into buffer
 						size_t i = 0;
 						while (i < sizeof(include_name_buf) - 1 && iss && iss.peek() != end_char) {
 							include_name_buf[i++] = iss.get();
 						}
 						include_name_buf[i] = '\0';
-						
+
 						// Consume closing > or "
 						if (iss.peek() == end_char) {
 							iss.ignore();
 						}
-						
+
 						// Skip whitespace before ')'
 						iss >> std::ws;
-						
+
 						// Consume closing ')' if present
 						if (iss.peek() == ')') {
 							iss.ignore();
 						}
-						
+
 						std::string_view include_name(include_name_buf);
-						
+
 						// Check if the file exists in any include directory
 						for (const auto& include_dir : settings_.getIncludeDirs()) {
 							std::string include_file(include_dir);
@@ -785,45 +793,44 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 								break;
 							}
 						}
-						
+
 						if (settings_.isVerboseMode()) {
 							std::cout << "__has_include(" << quote_char << include_name << end_char << ") = " << exists << std::endl;
 						}
 					}
 				}
 				values.push(exists);
-			}
-			else if (keyword == "__has_builtin") {
+			} else if (keyword == "__has_builtin") {
 				// __has_builtin(__builtin_name) - check if a compiler builtin is supported
 				// Read the argument from the input stream
 				long exists = 0;
 				char builtin_name_buf[128] = {};
-				
+
 				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
-					
+
 					// Skip whitespace after '(' (allows "__has_builtin( __is_void)")
 					iss >> std::ws;
-					
+
 					// Read the builtin name into buffer
 					size_t i = 0;
 					while (i < sizeof(builtin_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
 						builtin_name_buf[i++] = iss.get();
 					}
 					builtin_name_buf[i] = '\0';
-					
+
 					// Skip whitespace before ')' (allows "__has_builtin(__is_void )")
 					iss >> std::ws;
-					
+
 					// Consume closing ')' if present
 					if (iss.peek() == ')') {
 						iss.ignore();
 					}
-					
+
 					std::string_view builtin_name(builtin_name_buf);
-					
+
 					// Set of all supported type trait and other compiler builtins
 					// This must match the builtins supported in Parser.cpp
 					static const std::unordered_set<std::string_view> supported_builtins = {
@@ -848,7 +855,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 						"__is_constructible", "__is_trivially_constructible", "__is_nothrow_constructible",
 						"__is_assignable", "__is_trivially_assignable", "__is_nothrow_assignable",
 						"__is_destructible", "__is_trivially_destructible", "__is_nothrow_destructible",
-						"__has_trivial_destructor",  // GCC/Clang intrinsic, equivalent to __is_trivially_destructible
+						"__has_trivial_destructor",	// GCC/Clang intrinsic, equivalent to __is_trivially_destructible
 						// Layout traits
 						"__is_layout_compatible", "__is_pointer_interconvertible_base_of",
 						// Constant evaluation
@@ -866,60 +873,57 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 						// Type inspection
 						"__underlying_type",
 						// Pack and tuple support
-						"__type_pack_element"
-					};
-					
+						"__type_pack_element"};
+
 					exists = supported_builtins.count(builtin_name) > 0 ? 1 : 0;
-					
+
 					if (settings_.isVerboseMode()) {
 						std::cout << "__has_builtin(" << builtin_name << ") = " << exists << std::endl;
 					}
 				}
 				values.push(exists);
-			}
-			else if (keyword == "__has_cpp_attribute") {
+			} else if (keyword == "__has_cpp_attribute") {
 				// __has_cpp_attribute(attribute_name) - check C++ attribute support
 				// Read the argument from the input stream
 				long version = 0;
 				char attribute_name_buf[128] = {};
-				
+
 				// Skip whitespace and expect '('
 				iss >> std::ws;
 				if (iss.peek() == '(') {
 					iss.ignore(); // Consume '('
-					
+
 					// Skip whitespace after '('
 					iss >> std::ws;
-					
+
 					// Read the attribute name into buffer
 					size_t i = 0;
 					while (i < sizeof(attribute_name_buf) - 1 && iss && iss.peek() != ')' && !std::isspace(iss.peek())) {
 						attribute_name_buf[i++] = iss.get();
 					}
 					attribute_name_buf[i] = '\0';
-					
+
 					// Skip whitespace before ')'
 					iss >> std::ws;
-					
+
 					// Consume closing ')' if present
 					if (iss.peek() == ')') {
 						iss.ignore();
 					}
-					
+
 					std::string_view attribute_name(attribute_name_buf);
-					
+
 					// Check if the attribute is supported and get its version
 					if (auto attr_it = has_cpp_attribute_versions.find(attribute_name); attr_it != has_cpp_attribute_versions.end()) {
 						version = attr_it->second;
 					}
-					
+
 					if (settings_.isVerboseMode()) {
 						std::cout << "__has_cpp_attribute(" << attribute_name << ") = " << version << std::endl;
 					}
 				}
 				values.push(version);
-			}
-			else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
+			} else if (auto define_it = defines_.find(keyword); define_it != defines_.end()) {
 				// convert the value to an int
 				const auto& body = define_it->second.getBody();
 				if (!body.empty()) {
@@ -928,28 +932,24 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 					std::string literal;
 					if (!parseIntegerLiteral(body_iss, value, &literal)) {
 						FLASH_LOG_FORMAT(Lexer, Warning, "Non-integer macro value in #if directive: ", keyword, "='", body, "' literal='", literal, "' at ",
-							filestack_.top().file_name, ":", filestack_.top().line_number);
+										 filestack_.top().file_name, ":", filestack_.top().line_number);
 						values.push(0);
-					}
-					else {
+					} else {
 						values.push(value);
 					}
-				}
-				else {
+				} else {
 					if (settings_.isVerboseMode()) {
 						std::cout << "Checking unknown keyword value in #if directive: " << keyword << std::endl;
 					}
 					values.push(0);
 				}
-			}
-			else {
+			} else {
 				if (settings_.isVerboseMode()) {
 					std::cout << "Checking unknown keyword in #if directive: " << keyword << std::endl;
 				}
 				values.push(0);
 			}
-		}
-		else {
+		} else {
 			c = iss.get();
 		}
 	}
@@ -965,7 +965,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 
 	if (values.size() == 0) {
 		FLASH_LOG(Lexer, Error, "Internal compiler error, mismatched operator in file ", filestack_.top().file_name, ":", filestack_.top().line_number,
-		          settings_.isVerboseMode() ? (std::string(" - values stack is empty, ops.size()=") + std::to_string(ops.size())) : "");
+				  settings_.isVerboseMode() ? (std::string(" - values stack is empty, ops.size()=") + std::to_string(ops.size())) : "");
 		return 0;
 	}
 
@@ -1100,7 +1100,7 @@ bool FileReader::processIncludeNextDirective(const std::string& line, const std:
 		// (exact match only - not a parent directory, since #include_next
 		// should only skip the specific include dir used to find the file)
 		if (!current_dir_str.empty() &&
-		    current_dir_str == canonical_include_dir) {
+			current_dir_str == canonical_include_dir) {
 			found_current_dir = true;
 			if (settings_.isVerboseMode()) {
 				FLASH_LOG(Lexer, Trace, "  Skipping include dir (contains current file): ", include_dir);
@@ -1231,7 +1231,7 @@ void FileReader::processPragmaPack(std::string_view line) {
 				std::from_chars(second_part.data(), second_part.data() + second_part.size(), alignment);
 				// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 				if (alignment == 0 || alignment == 1 || alignment == 2 ||
-				    alignment == 4 || alignment == 8 || alignment == 16) {
+					alignment == 4 || alignment == 8 || alignment == 16) {
 					settings_.pushPackAlignment(alignment);
 				}
 				// Invalid alignment values are silently ignored (matches MSVC behavior)
@@ -1248,7 +1248,7 @@ void FileReader::processPragmaPack(std::string_view line) {
 		std::from_chars(content.data(), content.data() + content.size(), alignment);
 		// Validate alignment (must be 0, 1, 2, 4, 8, or 16)
 		if (alignment == 0 || alignment == 1 || alignment == 2 ||
-		    alignment == 4 || alignment == 8 || alignment == 16) {
+			alignment == 4 || alignment == 8 || alignment == 16) {
 			settings_.setPackAlignment(alignment);
 		}
 		// Invalid alignment values are silently ignored (matches MSVC behavior)
@@ -1279,7 +1279,7 @@ void FileReader::processLineDirective(const std::string& line) {
 
 	// Check if there's a filename
 	std::string filename;
-	iss >> std::ws;  // Skip whitespace
+	iss >> std::ws;	// Skip whitespace
 	if (!iss.eof()) {
 		std::getline(iss, filename);
 		// Remove quotes if present
@@ -1344,22 +1344,19 @@ void FileReader::handleDefine(std::istringstream& iss) {
 
 				if (token == "..." && !found_variadic_args) {
 					found_variadic_args = true;
-				}
-				else if (token == "..." && found_variadic_args) {
+				} else if (token == "..." && found_variadic_args) {
 					FLASH_LOG(Lexer, Error, "Duplicate variadic arguments '...' detected in macro argument list for ", name);
 					return;
-				}
-				else {
+				} else {
 					define.args.push_back(std::move(token));
-					token = std::string();	// it's undefined behavior to move a string and then use it again
+					token = std::string(); // it's undefined behavior to move a string and then use it again
 				}
 			}
 
 			// Save the macro body after the closing parenthesis
 			rest_of_line.erase(0, rest_of_line.find_first_not_of(' ', close_paren + 1));
-			define.is_function_like = true;  // This is a function-like macro
-		}
-		else {
+			define.is_function_like = true;	// This is a function-like macro
+		} else {
 			rest_of_line.erase(0, rest_of_line.find_first_not_of(' '));
 		}
 	}
@@ -1372,186 +1369,186 @@ void FileReader::handleDefine(std::istringstream& iss) {
 
 void FileReader::addBuiltinDefines() {
 	// Add __cplusplus with the value corresponding to the C++ standard in use
-	defines_["__cplusplus"] = DefineDirective{ "202002L", {} };  // C++20
-	defines_["__STDC_HOSTED__"] = DefineDirective{ "1", {} };
-	defines_["__STDCPP_THREADS__"] = DefineDirective{ "1", {} };
+	defines_["__cplusplus"] = DefineDirective{"202002L", {}};  // C++20
+	defines_["__STDC_HOSTED__"] = DefineDirective{"1", {}};
+	defines_["__STDCPP_THREADS__"] = DefineDirective{"1", {}};
 	defines_["_LIBCPP_LITTLE_ENDIAN"] = DefineDirective{};
-	
+
 	// GCC compatibility macros (needed for standard library headers like wchar.h)
 	// These allow __GNUC_PREREQ checks to pass and expose C++ overloads
-	defines_["__GNUC__"] = DefineDirective{ "12", {} };  // GCC 12.x compatible
-	defines_["__GNUC_MINOR__"] = DefineDirective{ "2", {} };
-	defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{ "0", {} };
-	defines_["__GNUG__"] = DefineDirective{ "12", {} };  // C++ compiler version
+	defines_["__GNUC__"] = DefineDirective{"12", {}};  // GCC 12.x compatible
+	defines_["__GNUC_MINOR__"] = DefineDirective{"2", {}};
+	defines_["__GNUC_PATCHLEVEL__"] = DefineDirective{"0", {}};
+	defines_["__GNUG__"] = DefineDirective{"12", {}};  // C++ compiler version
 	defines_["__extension__"] = DefineDirective{};  // Strip __extension__ keyword (GCC extension)
-	
+
 	// GCC atomic memory ordering macros (used by <atomic>, <iostream> via atomicity.h)
-	defines_["__ATOMIC_RELAXED"] = DefineDirective{ "0", {} };
-	defines_["__ATOMIC_CONSUME"] = DefineDirective{ "1", {} };
-	defines_["__ATOMIC_ACQUIRE"] = DefineDirective{ "2", {} };
-	defines_["__ATOMIC_RELEASE"] = DefineDirective{ "3", {} };
-	defines_["__ATOMIC_ACQ_REL"] = DefineDirective{ "4", {} };
-	defines_["__ATOMIC_SEQ_CST"] = DefineDirective{ "5", {} };
-	
+	defines_["__ATOMIC_RELAXED"] = DefineDirective{"0", {}};
+	defines_["__ATOMIC_CONSUME"] = DefineDirective{"1", {}};
+	defines_["__ATOMIC_ACQUIRE"] = DefineDirective{"2", {}};
+	defines_["__ATOMIC_RELEASE"] = DefineDirective{"3", {}};
+	defines_["__ATOMIC_ACQ_REL"] = DefineDirective{"4", {}};
+	defines_["__ATOMIC_SEQ_CST"] = DefineDirective{"5", {}};
+
 	// GCC libstdc++ macros
-	defines_["_GLIBCXX_VISIBILITY"] = DefineDirective{ "", { "V" }, true };
+	defines_["_GLIBCXX_VISIBILITY"] = DefineDirective{"", {"V"}, true};
 	defines_["_GLIBCXX_BEGIN_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning
-	defines_["_GLIBCXX_END_NAMESPACE_VERSION"] = DefineDirective{};  // Inline namespace for versioning
-	defines_["_GLIBCXX_DEPRECATED"] = DefineDirective{};  // Strip deprecated attributes
-	defines_["_GLIBCXX_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
+	defines_["_GLIBCXX_END_NAMESPACE_VERSION"] = DefineDirective{};	// Inline namespace for versioning
+	defines_["_GLIBCXX_DEPRECATED"] = DefineDirective{};	 // Strip deprecated attributes
+	defines_["_GLIBCXX_DEPRECATED_SUGGEST"] = DefineDirective{"", {"ALT"}, true};
 	defines_["_GLIBCXX11_DEPRECATED"] = DefineDirective{};  // Strip C++11 deprecated attributes
-	defines_["_GLIBCXX11_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
+	defines_["_GLIBCXX11_DEPRECATED_SUGGEST"] = DefineDirective{"", {"ALT"}, true};
 	defines_["_GLIBCXX14_DEPRECATED"] = DefineDirective{};  // Strip C++14 deprecated attributes
-	defines_["_GLIBCXX14_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
+	defines_["_GLIBCXX14_DEPRECATED_SUGGEST"] = DefineDirective{"", {"ALT"}, true};
 	defines_["_GLIBCXX17_DEPRECATED"] = DefineDirective{};  // Strip C++17 deprecated attributes
-	defines_["_GLIBCXX17_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
-	defines_["_GLIBCXX20_DEPRECATED"] = DefineDirective{ "", { "MSG" }, true };
+	defines_["_GLIBCXX17_DEPRECATED_SUGGEST"] = DefineDirective{"", {"ALT"}, true};
+	defines_["_GLIBCXX20_DEPRECATED"] = DefineDirective{"", {"MSG"}, true};
 	defines_["_GLIBCXX23_DEPRECATED"] = DefineDirective{};  // Strip C++23 deprecated attributes
-	defines_["_GLIBCXX23_DEPRECATED_SUGGEST"] = DefineDirective{ "", { "ALT" }, true };
-	defines_["_GLIBCXX_NODISCARD"] = DefineDirective{};  // Strip nodiscard attributes
+	defines_["_GLIBCXX23_DEPRECATED_SUGGEST"] = DefineDirective{"", {"ALT"}, true};
+	defines_["_GLIBCXX_NODISCARD"] = DefineDirective{};	// Strip nodiscard attributes
 	defines_["_GLIBCXX_PURE"] = DefineDirective{};  // Strip pure attributes
-	defines_["_GLIBCXX_CONST"] = DefineDirective{};  // Strip const attributes
+	defines_["_GLIBCXX_CONST"] = DefineDirective{};	// Strip const attributes
 	defines_["_GLIBCXX_NORETURN"] = DefineDirective{};  // Strip noreturn attributes
 	defines_["_GLIBCXX_NOTHROW"] = DefineDirective{};  // Strip nothrow attributes
-	defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword
-	defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{ "noexcept", {} };  // Map to noexcept keyword (C++11 mode)
-	defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{ "noexcept(_Cond)", { "_Cond" }, true };
-	defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{};  // Strip noexcept qualifier (works with _GLIBCXX_NOEXCEPT_PARM)
-	defines_["_GLIBCXX_NOEXCEPT_PARM"] = DefineDirective{};  // Strip noexcept parameter specifier (works with _GLIBCXX_NOEXCEPT_QUAL)
-	defines_["_GLIBCXX_THROW"] = DefineDirective{ "", { "_Spec" }, true };  // Strip old-style exception specifications throw(...)
-	defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};  // Strip exception specs
+	defines_["_GLIBCXX_NOEXCEPT"] = DefineDirective{"noexcept", {}};	 // Map to noexcept keyword
+	defines_["_GLIBCXX_USE_NOEXCEPT"] = DefineDirective{"noexcept", {}};	 // Map to noexcept keyword (C++11 mode)
+	defines_["_GLIBCXX_NOEXCEPT_IF"] = DefineDirective{"noexcept(_Cond)", {"_Cond"}, true};
+	defines_["_GLIBCXX_NOEXCEPT_QUAL"] = DefineDirective{};	// Strip noexcept qualifier (works with _GLIBCXX_NOEXCEPT_PARM)
+	defines_["_GLIBCXX_NOEXCEPT_PARM"] = DefineDirective{};	// Strip noexcept parameter specifier (works with _GLIBCXX_NOEXCEPT_QUAL)
+	defines_["_GLIBCXX_THROW"] = DefineDirective{"", {"_Spec"}, true};  // Strip old-style exception specifications throw(...)
+	defines_["_GLIBCXX_THROW_OR_ABORT"] = DefineDirective{};	 // Strip exception specs
 	defines_["_GLIBCXX_TXN_SAFE"] = DefineDirective{};  // Strip transactional memory attributes
 	defines_["_GLIBCXX_TXN_SAFE_DYN"] = DefineDirective{};  // Strip transactional memory attributes
-	defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{ "1", {} };  // Use C++11 ABI for std::string and std::list
+	defines_["_GLIBCXX_USE_CXX11_ABI"] = DefineDirective{"1", {}};  // Use C++11 ABI for std::string and std::list
 	// C++11 ABI namespace macros (when _GLIBCXX_USE_CXX11_ABI is 1)
-	defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{ "__cxx11::", {} };
-	defines_["_GLIBCXX_BEGIN_NAMESPACE_CXX11"] = DefineDirective{ "namespace __cxx11 {", {} };
-	defines_["_GLIBCXX_END_NAMESPACE_CXX11"] = DefineDirective{ "}", {} };
-	defines_["_GLIBCXX_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "__cxx11::", {} };
-	defines_["_GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "namespace __cxx11 {", {} };
-	defines_["_GLIBCXX_END_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{ "}", {} };
+	defines_["_GLIBCXX_NAMESPACE_CXX11"] = DefineDirective{"__cxx11::", {}};
+	defines_["_GLIBCXX_BEGIN_NAMESPACE_CXX11"] = DefineDirective{"namespace __cxx11 {", {}};
+	defines_["_GLIBCXX_END_NAMESPACE_CXX11"] = DefineDirective{"}", {}};
+	defines_["_GLIBCXX_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"__cxx11::", {}};
+	defines_["_GLIBCXX_BEGIN_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"namespace __cxx11 {", {}};
+	defines_["_GLIBCXX_END_NAMESPACE_LDBL_OR_CXX11"] = DefineDirective{"}", {}};
 	// Container namespace macros (for std::list iterators)
-	defines_["_GLIBCXX_BEGIN_NAMESPACE_CONTAINER"] = DefineDirective{};  // Strip container namespace
+	defines_["_GLIBCXX_BEGIN_NAMESPACE_CONTAINER"] = DefineDirective{};	// Strip container namespace
 	defines_["_GLIBCXX_END_NAMESPACE_CONTAINER"] = DefineDirective{};  // Strip container namespace
-	defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
-	defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // Enable constexpr
-	defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++14 constexpr
-	defines_["_GLIBCXX17_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++17 constexpr
-	defines_["_GLIBCXX17_INLINE"] = DefineDirective{ "inline", {} };  // C++17 inline variables
-	defines_["_GLIBCXX20_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++20 constexpr
-	defines_["_GLIBCXX23_CONSTEXPR"] = DefineDirective{ "constexpr", {} };  // C++23 constexpr
-	defines_["_GLIBCXX_INLINE_VERSION"] = DefineDirective{ "0", {} };  // Inline namespace version (0 = no versioning)
-	defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};  // Strip ABI tags
-	defines_["_GLIBCXX_USE_WCHAR_T"] = DefineDirective{ "1", {} };  // Enable wchar_t support and wide char functions
-	
+	defines_["_GLIBCXX_CONSTEXPR"] = DefineDirective{"constexpr", {}};  // Enable constexpr
+	defines_["_GLIBCXX_USE_CONSTEXPR"] = DefineDirective{"constexpr", {}};  // Enable constexpr
+	defines_["_GLIBCXX14_CONSTEXPR"] = DefineDirective{"constexpr", {}};	 // C++14 constexpr
+	defines_["_GLIBCXX17_CONSTEXPR"] = DefineDirective{"constexpr", {}};	 // C++17 constexpr
+	defines_["_GLIBCXX17_INLINE"] = DefineDirective{"inline", {}};  // C++17 inline variables
+	defines_["_GLIBCXX20_CONSTEXPR"] = DefineDirective{"constexpr", {}};	 // C++20 constexpr
+	defines_["_GLIBCXX23_CONSTEXPR"] = DefineDirective{"constexpr", {}};	 // C++23 constexpr
+	defines_["_GLIBCXX_INLINE_VERSION"] = DefineDirective{"0", {}};	// Inline namespace version (0 = no versioning)
+	defines_["_GLIBCXX_ABI_TAG_CXX11"] = DefineDirective{};	// Strip ABI tags
+	defines_["_GLIBCXX_USE_WCHAR_T"] = DefineDirective{"1", {}};	 // Enable wchar_t support and wide char functions
+
 	// MSVC C++ standard version feature flags (cumulative)
-	defines_["_HAS_CXX17"] = DefineDirective{ "1", {} };  // C++17 features available
-	defines_["_HAS_CXX20"] = DefineDirective{ "1", {} };  // C++20 features available
-	defines_["_MSVC_LANG"] = DefineDirective{ "202002L", {} };  // MSVC language version (C++20)
+	defines_["_HAS_CXX17"] = DefineDirective{"1", {}};  // C++17 features available
+	defines_["_HAS_CXX20"] = DefineDirective{"1", {}};  // C++20 features available
+	defines_["_MSVC_LANG"] = DefineDirective{"202002L", {}};	 // MSVC language version (C++20)
 
 	// FlashCpp compiler identification
-	defines_["__FLASHCPP__"] = DefineDirective{ "1", {} };
-	defines_["__FLASHCPP_VERSION__"] = DefineDirective{ "1", {} };
-	defines_["__FLASHCPP_VERSION_MAJOR__"] = DefineDirective{ "0", {} };
-	defines_["__FLASHCPP_VERSION_MINOR__"] = DefineDirective{ "1", {} };
-	defines_["__FLASHCPP_VERSION_PATCH__"] = DefineDirective{ "0", {} };
+	defines_["__FLASHCPP__"] = DefineDirective{"1", {}};
+	defines_["__FLASHCPP_VERSION__"] = DefineDirective{"1", {}};
+	defines_["__FLASHCPP_VERSION_MAJOR__"] = DefineDirective{"0", {}};
+	defines_["__FLASHCPP_VERSION_MINOR__"] = DefineDirective{"1", {}};
+	defines_["__FLASHCPP_VERSION_PATCH__"] = DefineDirective{"0", {}};
 
 	// Windows platform macros
-	defines_["_WIN32"] = DefineDirective{ "1", {} };
-	defines_["_WIN64"] = DefineDirective{ "1", {} };
-	defines_["_MSC_VER"] = DefineDirective{ "1944", {} };  // MSVC 2022 (match clang behavior)
-	defines_["_MSC_FULL_VER"] = DefineDirective{ "194435217", {} };  // MSVC 2022 full version
-	defines_["_MSC_BUILD"] = DefineDirective{ "1", {} };
-	defines_["_MSC_EXTENSIONS"] = DefineDirective{ "1", {} };  // Enable MSVC extensions
-	
+	defines_["_WIN32"] = DefineDirective{"1", {}};
+	defines_["_WIN64"] = DefineDirective{"1", {}};
+	defines_["_MSC_VER"] = DefineDirective{"1944", {}};	// MSVC 2022 (match clang behavior)
+	defines_["_MSC_FULL_VER"] = DefineDirective{"194435217", {}};  // MSVC 2022 full version
+	defines_["_MSC_BUILD"] = DefineDirective{"1", {}};
+	defines_["_MSC_EXTENSIONS"] = DefineDirective{"1", {}};	// Enable MSVC extensions
+
 	// MSVC STL macros
-	defines_["_HAS_EXCEPTIONS"] = DefineDirective{ "1", {} };  // Exception handling enabled
-	defines_["_CPPRTTI"] = DefineDirective{ "1", {} };  // RTTI enabled
-	defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{ "1", {} };  // wchar_t is native type
-	defines_["_WCHAR_T_DEFINED"] = DefineDirective{ "1", {} };
-	
+	defines_["_HAS_EXCEPTIONS"] = DefineDirective{"1", {}};	// Exception handling enabled
+	defines_["_CPPRTTI"] = DefineDirective{"1", {}};	 // RTTI enabled
+	defines_["_NATIVE_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};	// wchar_t is native type
+	defines_["_WCHAR_T_DEFINED"] = DefineDirective{"1", {}};
+
 	// Additional common MSVC macros
-	defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{ "64", {} };
-	defines_["_MT"] = DefineDirective{ "1", {} };  // Multithreaded
-	defines_["_DLL"] = DefineDirective{ "1", {} };  // Using DLL runtime
+	defines_["_INTEGRAL_MAX_BITS"] = DefineDirective{"64", {}};
+	defines_["_MT"] = DefineDirective{"1", {}};	// Multithreaded
+	defines_["_DLL"] = DefineDirective{"1", {}};	 // Using DLL runtime
 
 	// Architecture macros
-	defines_["__x86_64__"] = DefineDirective{ "1", {} };
-	defines_["__amd64__"] = DefineDirective{ "1", {} };
-	defines_["__amd64"] = DefineDirective{ "1", {} };
-	defines_["_M_X64"] = DefineDirective{ "100", {} };  // MSVC-style
-	defines_["_M_AMD64"] = DefineDirective{ "100", {} };
+	defines_["__x86_64__"] = DefineDirective{"1", {}};
+	defines_["__amd64__"] = DefineDirective{"1", {}};
+	defines_["__amd64"] = DefineDirective{"1", {}};
+	defines_["_M_X64"] = DefineDirective{"100", {}};	 // MSVC-style
+	defines_["_M_AMD64"] = DefineDirective{"100", {}};
 
 	// Byte order macros (needed by <compare> and other headers)
-	defines_["__ORDER_LITTLE_ENDIAN__"] = DefineDirective{ "1234", {} };
-	defines_["__ORDER_BIG_ENDIAN__"] = DefineDirective{ "4321", {} };
-	defines_["__ORDER_PDP_ENDIAN__"] = DefineDirective{ "3412", {} };
-	defines_["__BYTE_ORDER__"] = DefineDirective{ "__ORDER_LITTLE_ENDIAN__", {} };  // x86_64 is little endian
+	defines_["__ORDER_LITTLE_ENDIAN__"] = DefineDirective{"1234", {}};
+	defines_["__ORDER_BIG_ENDIAN__"] = DefineDirective{"4321", {}};
+	defines_["__ORDER_PDP_ENDIAN__"] = DefineDirective{"3412", {}};
+	defines_["__BYTE_ORDER__"] = DefineDirective{"__ORDER_LITTLE_ENDIAN__", {}};	 // x86_64 is little endian
 
 	// C++ feature test macros (SD-6)
 	// These indicate which C++ language features are supported
-	defines_["__cpp_aggregate_bases"] = DefineDirective{ "201603L", {} };  // C++17 aggregate base classes
-	defines_["__cpp_aggregate_nsdmi"] = DefineDirective{ "201304L", {} };  // Aggregate NSDMI
-	defines_["__cpp_aggregate_paren_init"] = DefineDirective{ "201902L", {} };  // C++20 aggregate parenthesized init (P0960)
-	defines_["__cpp_alias_templates"] = DefineDirective{ "200704L", {} };  // Alias templates
-	defines_["__cpp_aligned_new"] = DefineDirective{ "201606L", {} };  // Over-aligned new
-	defines_["__cpp_attributes"] = DefineDirective{ "200809L", {} };  // Attributes
-	defines_["__cpp_auto_type"] = DefineDirective{ "200606L", {} };  // auto type deduction
-	defines_["__cpp_binary_literals"] = DefineDirective{ "201304L", {} };  // Binary literals
-	defines_["__cpp_capture_star_this"] = DefineDirective{ "201603L", {} };  // Lambda capture *this by value
-	defines_["__cpp_char8_t"] = DefineDirective{ "201811L", {} };  // char8_t
-	defines_["__cpp_concepts"] = DefineDirective{ "201907L", {} };  // C++20 concepts
-	defines_["__cpp_conditional_explicit"] = DefineDirective{ "201806L", {} };  // explicit(bool)
-	defines_["__cpp_conditional_trivial"] = DefineDirective{ "202002L", {} };  // Conditional trivial special members
-	defines_["__cpp_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 relaxed constexpr
-	defines_["__cpp_constexpr_in_decltype"] = DefineDirective{ "201711L", {} };  // decltype during constant eval
-	defines_["__cpp_constinit"] = DefineDirective{ "201907L", {} };  // constinit
-	defines_["__cpp_decltype"] = DefineDirective{ "200707L", {} };  // decltype
-	defines_["__cpp_decltype_auto"] = DefineDirective{ "201304L", {} };  // decltype(auto)
-	defines_["__cpp_deduction_guides"] = DefineDirective{ "201907L", {} };  // CTAD for aggregates/aliases
-	defines_["__cpp_delegating_constructors"] = DefineDirective{ "200604L", {} };  // Delegating constructors
-	defines_["__cpp_designated_initializers"] = DefineDirective{ "201707L", {} };  // Designated initializers
-	defines_["__cpp_enumerator_attributes"] = DefineDirective{ "201411L", {} };  // Enumerator attributes
-	defines_["__cpp_exceptions"] = DefineDirective{ "199711L", {} };  // Exception handling (throw/catch/unwind)
-	defines_["__cpp_fold_expressions"] = DefineDirective{ "201603L", {} };  // Fold expressions
-	defines_["__cpp_generic_lambdas"] = DefineDirective{ "201707L", {} };  // Generic lambdas with template params
-	defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{ "201606L", {} };  // Guaranteed copy elision
-	defines_["__cpp_hex_float"] = DefineDirective{ "201603L", {} };  // Hexadecimal float literals
-	defines_["__cpp_if_constexpr"] = DefineDirective{ "201606L", {} };  // C++17 if constexpr
+	defines_["__cpp_aggregate_bases"] = DefineDirective{"201603L", {}};	// C++17 aggregate base classes
+	defines_["__cpp_aggregate_nsdmi"] = DefineDirective{"201304L", {}};	// Aggregate NSDMI
+	defines_["__cpp_aggregate_paren_init"] = DefineDirective{"201902L", {}};	 // C++20 aggregate parenthesized init (P0960)
+	defines_["__cpp_alias_templates"] = DefineDirective{"200704L", {}};	// Alias templates
+	defines_["__cpp_aligned_new"] = DefineDirective{"201606L", {}};	// Over-aligned new
+	defines_["__cpp_attributes"] = DefineDirective{"200809L", {}};  // Attributes
+	defines_["__cpp_auto_type"] = DefineDirective{"200606L", {}};  // auto type deduction
+	defines_["__cpp_binary_literals"] = DefineDirective{"201304L", {}};	// Binary literals
+	defines_["__cpp_capture_star_this"] = DefineDirective{"201603L", {}};  // Lambda capture *this by value
+	defines_["__cpp_char8_t"] = DefineDirective{"201811L", {}};	// char8_t
+	defines_["__cpp_concepts"] = DefineDirective{"201907L", {}};	 // C++20 concepts
+	defines_["__cpp_conditional_explicit"] = DefineDirective{"201806L", {}};	 // explicit(bool)
+	defines_["__cpp_conditional_trivial"] = DefineDirective{"202002L", {}};	// Conditional trivial special members
+	defines_["__cpp_constexpr"] = DefineDirective{"201603L", {}};  // C++17 relaxed constexpr
+	defines_["__cpp_constexpr_in_decltype"] = DefineDirective{"201711L", {}};  // decltype during constant eval
+	defines_["__cpp_constinit"] = DefineDirective{"201907L", {}};  // constinit
+	defines_["__cpp_decltype"] = DefineDirective{"200707L", {}};	 // decltype
+	defines_["__cpp_decltype_auto"] = DefineDirective{"201304L", {}};  // decltype(auto)
+	defines_["__cpp_deduction_guides"] = DefineDirective{"201907L", {}};	 // CTAD for aggregates/aliases
+	defines_["__cpp_delegating_constructors"] = DefineDirective{"200604L", {}};	// Delegating constructors
+	defines_["__cpp_designated_initializers"] = DefineDirective{"201707L", {}};	// Designated initializers
+	defines_["__cpp_enumerator_attributes"] = DefineDirective{"201411L", {}};  // Enumerator attributes
+	defines_["__cpp_exceptions"] = DefineDirective{"199711L", {}};  // Exception handling (throw/catch/unwind)
+	defines_["__cpp_fold_expressions"] = DefineDirective{"201603L", {}};	 // Fold expressions
+	defines_["__cpp_generic_lambdas"] = DefineDirective{"201707L", {}};	// Generic lambdas with template params
+	defines_["__cpp_guaranteed_copy_elision"] = DefineDirective{"201606L", {}};	// Guaranteed copy elision
+	defines_["__cpp_hex_float"] = DefineDirective{"201603L", {}};  // Hexadecimal float literals
+	defines_["__cpp_if_constexpr"] = DefineDirective{"201606L", {}};	 // C++17 if constexpr
 	// __cpp_impl_coroutine intentionally NOT defined - coroutines (co_await, co_yield,
 	// co_return) are not implemented and not planned for FlashCpp.
-	defines_["__cpp_impl_destroying_delete"] = DefineDirective{ "201806L", {} };  // Destroying delete
-	defines_["__cpp_impl_three_way_comparison"] = DefineDirective{ "201907L", {} };  // <=> support
-	defines_["__cpp_inheriting_constructors"] = DefineDirective{ "200802L", {} };  // Inheriting constructors
-	defines_["__cpp_init_captures"] = DefineDirective{ "201803L", {} };  // Lambda init-capture pack expansion
-	defines_["__cpp_initializer_lists"] = DefineDirective{ "200806L", {} };  // Initializer lists
-	defines_["__cpp_inline_variables"] = DefineDirective{ "201606L", {} };  // C++17 inline variables
-	defines_["__cpp_lambdas"] = DefineDirective{ "200907L", {} };  // Lambda expressions
+	defines_["__cpp_impl_destroying_delete"] = DefineDirective{"201806L", {}};  // Destroying delete
+	defines_["__cpp_impl_three_way_comparison"] = DefineDirective{"201907L", {}};  // <=> support
+	defines_["__cpp_inheriting_constructors"] = DefineDirective{"200802L", {}};	// Inheriting constructors
+	defines_["__cpp_init_captures"] = DefineDirective{"201803L", {}};  // Lambda init-capture pack expansion
+	defines_["__cpp_initializer_lists"] = DefineDirective{"200806L", {}};  // Initializer lists
+	defines_["__cpp_inline_variables"] = DefineDirective{"201606L", {}};	 // C++17 inline variables
+	defines_["__cpp_lambdas"] = DefineDirective{"200907L", {}};	// Lambda expressions
 	//defines_["__cpp_modules"] = DefineDirective{ "201907L", {} };  // Modules
-	defines_["__cpp_namespace_attributes"] = DefineDirective{ "201411L", {} };  // Namespace attributes
-	defines_["__cpp_noexcept_function_type"] = DefineDirective{ "201510L", {} };  // C++17 noexcept in type
-	defines_["__cpp_nontype_template_args"] = DefineDirective{ "201911L", {} };  // Class/float NTTP
-	defines_["__cpp_nontype_template_parameter_auto"] = DefineDirective{ "201606L", {} };  // auto NTTP
-	defines_["__cpp_nullptr"] = DefineDirective{ "200704L", {} };  // nullptr keyword
-	defines_["__cpp_nsdmi"] = DefineDirective{ "200809L", {} };  // Non-static data member initializers
-	defines_["__cpp_range_based_for"] = DefineDirective{ "201603L", {} };  // Range-based for (C++17 update)
-	defines_["__cpp_raw_strings"] = DefineDirective{ "200710L", {} };  // Raw string literals
-	defines_["__cpp_ref_qualifiers"] = DefineDirective{ "200710L", {} };  // Ref-qualified member funcs
-	defines_["__cpp_return_type_deduction"] = DefineDirective{ "201304L", {} };  // Return type deduction
-	defines_["__cpp_rtti"] = DefineDirective{ "199711L", {} };  // RTTI (typeid, dynamic_cast)
-	defines_["__cpp_rvalue_references"] = DefineDirective{ "200610L", {} };  // Rvalue references
-	defines_["__cpp_sized_deallocation"] = DefineDirective{ "201309L", {} };  // Sized deallocation
-	defines_["__cpp_static_assert"] = DefineDirective{ "201411L", {} };  // C++17 static_assert with message
-	defines_["__cpp_structured_bindings"] = DefineDirective{ "201606L", {} };  // C++17 structured bindings
-	defines_["__cpp_template_template_args"] = DefineDirective{ "201611L", {} };  // Template template parameter matching
-	defines_["__cpp_threadsafe_static_init"] = DefineDirective{ "200806L", {} };  // Thread-safe static init
-	defines_["__cpp_unicode_characters"] = DefineDirective{ "200704L", {} };  // char16_t/char32_t
-	defines_["__cpp_unicode_literals"] = DefineDirective{ "200710L", {} };  // Unicode string literals
-	defines_["__cpp_user_defined_literals"] = DefineDirective{ "200809L", {} };  // User Defined Literals
-	defines_["__cpp_using_enum"] = DefineDirective{ "201907L", {} };  // using enum (C++20)
-	defines_["__cpp_variable_templates"] = DefineDirective{ "201304L", {} };  // Variable templates
-	defines_["__cpp_variadic_templates"] = DefineDirective{ "200704L", {} };  // Variadic templates
-	defines_["__cpp_variadic_using"] = DefineDirective{ "201611L", {} };  // Pack expansions in using
+	defines_["__cpp_namespace_attributes"] = DefineDirective{"201411L", {}};	 // Namespace attributes
+	defines_["__cpp_noexcept_function_type"] = DefineDirective{"201510L", {}};  // C++17 noexcept in type
+	defines_["__cpp_nontype_template_args"] = DefineDirective{"201911L", {}};  // Class/float NTTP
+	defines_["__cpp_nontype_template_parameter_auto"] = DefineDirective{"201606L", {}};	// auto NTTP
+	defines_["__cpp_nullptr"] = DefineDirective{"200704L", {}};	// nullptr keyword
+	defines_["__cpp_nsdmi"] = DefineDirective{"200809L", {}};  // Non-static data member initializers
+	defines_["__cpp_range_based_for"] = DefineDirective{"201603L", {}};	// Range-based for (C++17 update)
+	defines_["__cpp_raw_strings"] = DefineDirective{"200710L", {}};	// Raw string literals
+	defines_["__cpp_ref_qualifiers"] = DefineDirective{"200710L", {}};  // Ref-qualified member funcs
+	defines_["__cpp_return_type_deduction"] = DefineDirective{"201304L", {}};  // Return type deduction
+	defines_["__cpp_rtti"] = DefineDirective{"199711L", {}};	 // RTTI (typeid, dynamic_cast)
+	defines_["__cpp_rvalue_references"] = DefineDirective{"200610L", {}};  // Rvalue references
+	defines_["__cpp_sized_deallocation"] = DefineDirective{"201309L", {}};  // Sized deallocation
+	defines_["__cpp_static_assert"] = DefineDirective{"201411L", {}};  // C++17 static_assert with message
+	defines_["__cpp_structured_bindings"] = DefineDirective{"201606L", {}};	// C++17 structured bindings
+	defines_["__cpp_template_template_args"] = DefineDirective{"201611L", {}};  // Template template parameter matching
+	defines_["__cpp_threadsafe_static_init"] = DefineDirective{"200806L", {}};  // Thread-safe static init
+	defines_["__cpp_unicode_characters"] = DefineDirective{"200704L", {}};  // char16_t/char32_t
+	defines_["__cpp_unicode_literals"] = DefineDirective{"200710L", {}};	 // Unicode string literals
+	defines_["__cpp_user_defined_literals"] = DefineDirective{"200809L", {}};  // User Defined Literals
+	defines_["__cpp_using_enum"] = DefineDirective{"201907L", {}};  // using enum (C++20)
+	defines_["__cpp_variable_templates"] = DefineDirective{"201304L", {}};  // Variable templates
+	defines_["__cpp_variadic_templates"] = DefineDirective{"200704L", {}};  // Variadic templates
+	defines_["__cpp_variadic_using"] = DefineDirective{"201611L", {}};  // Pack expansions in using
 
 	// Note: __has_builtin is NOT defined as a macro here
 	// It is handled specially in expandMacrosForConditional and evaluate_expression
@@ -1560,111 +1557,111 @@ void FileReader::addBuiltinDefines() {
 	// C++ library feature test macros (SD-6)
 	// These indicate which C++ standard library features are supported
 	// Values are in format YYYYMML (year/month when feature was standardized)
-	defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{ "201510L", {} };  // C++17 (Oct 2015)
-	defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{ "201603L", {} };  // C++17 (Mar 2016)
-	defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{ "201304L", {} };  // C++14 (Apr 2013)
-	defines_["__cpp_lib_is_aggregate"] = DefineDirective{ "201703L", {} };  // C++17 (Mar 2017)
-	defines_["__cpp_lib_void_t"] = DefineDirective{ "201411L", {} };  // C++17 (Nov 2014)
-	defines_["__cpp_lib_bool_constant"] = DefineDirective{ "201505L", {} };  // C++17 (May 2015)
+	defines_["__cpp_lib_type_trait_variable_templates"] = DefineDirective{"201510L", {}};  // C++17 (Oct 2015)
+	defines_["__cpp_lib_addressof_constexpr"] = DefineDirective{"201603L", {}};	// C++17 (Mar 2016)
+	defines_["__cpp_lib_integral_constant_callable"] = DefineDirective{"201304L", {}};  // C++14 (Apr 2013)
+	defines_["__cpp_lib_is_aggregate"] = DefineDirective{"201703L", {}};	 // C++17 (Mar 2017)
+	defines_["__cpp_lib_void_t"] = DefineDirective{"201411L", {}};  // C++17 (Nov 2014)
+	defines_["__cpp_lib_bool_constant"] = DefineDirective{"201505L", {}};  // C++17 (May 2015)
 
 	// Compiler builtin type macros - values depend on compiler mode
 	// MSVC (default): Windows x64 types
 	// GCC/Clang: Linux x64 types
 	if (settings_.isMsvcMode()) {
 		// MSVC x64 builtin types
-		defines_["__SIZE_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__WCHAR_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__INTMAX_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__UINTMAX_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__INTPTR_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__UINTPTR_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__INT8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT64_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__UINT8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__INT_LEAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_LEAST16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT_LEAST32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT_LEAST64_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "__int64", {} };
-		defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned __int64", {} };
-		defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+		defines_["__SIZE_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__PTRDIFF_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__WCHAR_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__INTMAX_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__UINTMAX_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__INTPTR_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__UINTPTR_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__INT8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT64_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__UINT8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT64_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__INT_LEAST8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT_LEAST16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT_LEAST32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT_LEAST64_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__INT_FAST8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT_FAST16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT_FAST32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT_FAST64_TYPE__"] = DefineDirective{"__int64", {}};
+		defines_["__UINT_FAST8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT_FAST16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT_FAST32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT_FAST64_TYPE__"] = DefineDirective{"unsigned __int64", {}};
+		defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__CHAR16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__CHAR32_TYPE__"] = DefineDirective{"unsigned int", {}};
 	} else if (settings_.isGccMode()) {
 		// GCC/Clang x64 builtin types (Linux/macOS)
-		defines_["__SIZE_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__PTRDIFF_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__WCHAR_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INTMAX_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINTMAX_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__INTPTR_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINTPTR_TYPE__"] = DefineDirective{ "long unsigned int", {} };
-		defines_["__INT8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__INT_LEAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_LEAST16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT_LEAST32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT_LEAST64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__INT_FAST8_TYPE__"] = DefineDirective{ "signed char", {} };
-		defines_["__INT_FAST16_TYPE__"] = DefineDirective{ "short", {} };
-		defines_["__INT_FAST32_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__INT_FAST64_TYPE__"] = DefineDirective{ "long int", {} };
-		defines_["__UINT_FAST8_TYPE__"] = DefineDirective{ "unsigned char", {} };
-		defines_["__UINT_FAST16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__UINT_FAST32_TYPE__"] = DefineDirective{ "unsigned int", {} };
-		defines_["__UINT_FAST64_TYPE__"] = DefineDirective{ "unsigned long int", {} };
-		defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{ "int", {} };
-		defines_["__CHAR16_TYPE__"] = DefineDirective{ "unsigned short", {} };
-		defines_["__CHAR32_TYPE__"] = DefineDirective{ "unsigned int", {} };
+		defines_["__SIZE_TYPE__"] = DefineDirective{"long unsigned int", {}};
+		defines_["__PTRDIFF_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__WCHAR_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INTMAX_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__UINTMAX_TYPE__"] = DefineDirective{"long unsigned int", {}};
+		defines_["__INTPTR_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__UINTPTR_TYPE__"] = DefineDirective{"long unsigned int", {}};
+		defines_["__INT8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT64_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__UINT8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT64_TYPE__"] = DefineDirective{"unsigned long int", {}};
+		defines_["__INT_LEAST8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT_LEAST16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT_LEAST32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT_LEAST64_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__UINT_LEAST8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT_LEAST16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT_LEAST32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT_LEAST64_TYPE__"] = DefineDirective{"unsigned long int", {}};
+		defines_["__INT_FAST8_TYPE__"] = DefineDirective{"signed char", {}};
+		defines_["__INT_FAST16_TYPE__"] = DefineDirective{"short", {}};
+		defines_["__INT_FAST32_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__INT_FAST64_TYPE__"] = DefineDirective{"long int", {}};
+		defines_["__UINT_FAST8_TYPE__"] = DefineDirective{"unsigned char", {}};
+		defines_["__UINT_FAST16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__UINT_FAST32_TYPE__"] = DefineDirective{"unsigned int", {}};
+		defines_["__UINT_FAST64_TYPE__"] = DefineDirective{"unsigned long int", {}};
+		defines_["__SIG_ATOMIC_TYPE__"] = DefineDirective{"int", {}};
+		defines_["__CHAR16_TYPE__"] = DefineDirective{"unsigned short", {}};
+		defines_["__CHAR32_TYPE__"] = DefineDirective{"unsigned int", {}};
 
 		// GCC/Clang specific predefined macros
-		defines_["__STRICT_ANSI__"] = DefineDirective{ "1", {} };
+		defines_["__STRICT_ANSI__"] = DefineDirective{"1", {}};
 		// _GNU_SOURCE enables POSIX/GNU features in glibc headers (e.g., uselocale in locale.h)
 		// Both Clang and GCC define this by default on Linux, even with -std=c++20
-		defines_["_GNU_SOURCE"] = DefineDirective{ "1", {} };
+		defines_["_GNU_SOURCE"] = DefineDirective{"1", {}};
 		if (settings_.getDataModel() == CompileContext::DataModel::LP64) {
-			defines_["__ELF__"] = DefineDirective{ "1", {} };
+			defines_["__ELF__"] = DefineDirective{"1", {}};
 		}
-		defines_["__VERSION__"] = DefineDirective{ "\"FlashCpp (gcc compatibility)\"", {} };
-		defines_["__GCC_ATOMIC_BOOL_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_CHAR_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_CHAR16_T_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_CHAR32_T_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_WCHAR_T_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_SHORT_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_INT_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_LONG_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_LLONG_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_POINTER_LOCK_FREE"] = DefineDirective{ "2", {} };
-		defines_["__GCC_ATOMIC_TEST_AND_SET_TRUEVAL"] = DefineDirective{ "1", {} };
+		defines_["__VERSION__"] = DefineDirective{"\"FlashCpp (gcc compatibility)\"", {}};
+		defines_["__GCC_ATOMIC_BOOL_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_CHAR_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_CHAR16_T_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_CHAR32_T_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_WCHAR_T_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_SHORT_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_INT_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_LONG_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_LLONG_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_POINTER_LOCK_FREE"] = DefineDirective{"2", {}};
+		defines_["__GCC_ATOMIC_TEST_AND_SET_TRUEVAL"] = DefineDirective{"1", {}};
 
-		defines_["__BASE_FILE__"] = FunctionDirective{ [this]() -> std::string {
+		defines_["__BASE_FILE__"] = FunctionDirective{[this]() -> std::string {
 			// Prefer the main input file if available, otherwise fall back to the current file
 			if (auto input = settings_.getInputFile()) {
 				std::filesystem::path p(*input);
@@ -1675,92 +1672,92 @@ void FileReader::addBuiltinDefines() {
 				return "\"" + p.generic_string() + "\"";
 			}
 			return "\"\"";
-		} };
+		}};
 
-		defines_["__FILE_NAME__"] = FunctionDirective{ [this]() -> std::string {
+		defines_["__FILE_NAME__"] = FunctionDirective{[this]() -> std::string {
 			if (filestack_.empty()) {
 				return "\"\"";
 			}
 			std::filesystem::path file_path(filestack_.top().file_name);
 			return "\"" + file_path.filename().generic_string() + "\"";
-		} };
+		}};
 
 		// Integer limit macros
-		defines_["__SIG_ATOMIC_MAX__"] = DefineDirective{ "2147483647", {} };
-		defines_["__SIG_ATOMIC_MIN__"] = DefineDirective{ "(-2147483648)", {} };
+		defines_["__SIG_ATOMIC_MAX__"] = DefineDirective{"2147483647", {}};
+		defines_["__SIG_ATOMIC_MIN__"] = DefineDirective{"(-2147483648)", {}};
 
-		defines_["__INT_LEAST8_MAX__"] = DefineDirective{ "127", {} };
-		defines_["__INT_LEAST16_MAX__"] = DefineDirective{ "32767", {} };
-		defines_["__INT_LEAST32_MAX__"] = DefineDirective{ "2147483647", {} };
-		defines_["__INT_LEAST64_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
-		defines_["__UINT_LEAST8_MAX__"] = DefineDirective{ "255", {} };
-		defines_["__UINT_LEAST16_MAX__"] = DefineDirective{ "65535", {} };
-		defines_["__UINT_LEAST32_MAX__"] = DefineDirective{ "4294967295U", {} };
-		defines_["__UINT_LEAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+		defines_["__INT_LEAST8_MAX__"] = DefineDirective{"127", {}};
+		defines_["__INT_LEAST16_MAX__"] = DefineDirective{"32767", {}};
+		defines_["__INT_LEAST32_MAX__"] = DefineDirective{"2147483647", {}};
+		defines_["__INT_LEAST64_MAX__"] = DefineDirective{"9223372036854775807L", {}};
+		defines_["__UINT_LEAST8_MAX__"] = DefineDirective{"255", {}};
+		defines_["__UINT_LEAST16_MAX__"] = DefineDirective{"65535", {}};
+		defines_["__UINT_LEAST32_MAX__"] = DefineDirective{"4294967295U", {}};
+		defines_["__UINT_LEAST64_MAX__"] = DefineDirective{"18446744073709551615UL", {}};
 
-		defines_["__INT_FAST8_MAX__"] = DefineDirective{ "127", {} };
-		defines_["__INT_FAST16_MAX__"] = DefineDirective{ "32767", {} };
-		defines_["__INT_FAST32_MAX__"] = DefineDirective{ "2147483647", {} };
-		defines_["__INT_FAST64_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
-		defines_["__UINT_FAST8_MAX__"] = DefineDirective{ "255", {} };
-		defines_["__UINT_FAST16_MAX__"] = DefineDirective{ "65535", {} };
-		defines_["__UINT_FAST32_MAX__"] = DefineDirective{ "4294967295U", {} };
-		defines_["__UINT_FAST64_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+		defines_["__INT_FAST8_MAX__"] = DefineDirective{"127", {}};
+		defines_["__INT_FAST16_MAX__"] = DefineDirective{"32767", {}};
+		defines_["__INT_FAST32_MAX__"] = DefineDirective{"2147483647", {}};
+		defines_["__INT_FAST64_MAX__"] = DefineDirective{"9223372036854775807L", {}};
+		defines_["__UINT_FAST8_MAX__"] = DefineDirective{"255", {}};
+		defines_["__UINT_FAST16_MAX__"] = DefineDirective{"65535", {}};
+		defines_["__UINT_FAST32_MAX__"] = DefineDirective{"4294967295U", {}};
+		defines_["__UINT_FAST64_MAX__"] = DefineDirective{"18446744073709551615UL", {}};
 
-		defines_["__INTPTR_MAX__"] = DefineDirective{ "9223372036854775807L", {} };
-		defines_["__UINTPTR_MAX__"] = DefineDirective{ "18446744073709551615UL", {} };
+		defines_["__INTPTR_MAX__"] = DefineDirective{"9223372036854775807L", {}};
+		defines_["__UINTPTR_MAX__"] = DefineDirective{"18446744073709551615UL", {}};
 
-		defines_["__WCHAR_MIN__"] = DefineDirective{ "(-2147483648)", {} };
-		defines_["__WINT_MIN__"] = DefineDirective{ "0", {} };
+		defines_["__WCHAR_MIN__"] = DefineDirective{"(-2147483648)", {}};
+		defines_["__WINT_MIN__"] = DefineDirective{"0", {}};
 
 		// Integer constant macros
 		{
-			DefineDirective macro{ "c", { "c" } };
+			DefineDirective macro{"c", {"c"}};
 			macro.is_function_like = true;
 			defines_["__INT8_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c", { "c" } };
+			DefineDirective macro{"c", {"c"}};
 			macro.is_function_like = true;
 			defines_["__INT16_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c", { "c" } };
+			DefineDirective macro{"c", {"c"}};
 			macro.is_function_like = true;
 			defines_["__INT32_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##L", { "c" } };
+			DefineDirective macro{"c##L", {"c"}};
 			macro.is_function_like = true;
 			defines_["__INT64_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c", { "c" } };
+			DefineDirective macro{"c", {"c"}};
 			macro.is_function_like = true;
 			defines_["__UINT8_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##U", { "c" } };
+			DefineDirective macro{"c##U", {"c"}};
 			macro.is_function_like = true;
 			defines_["__UINT16_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##U", { "c" } };
+			DefineDirective macro{"c##U", {"c"}};
 			macro.is_function_like = true;
 			defines_["__UINT32_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##UL", { "c" } };
+			DefineDirective macro{"c##UL", {"c"}};
 			macro.is_function_like = true;
 			defines_["__UINT64_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##L", { "c" } };
+			DefineDirective macro{"c##L", {"c"}};
 			macro.is_function_like = true;
 			defines_["__INTMAX_C"] = std::move(macro);
 		}
 		{
-			DefineDirective macro{ "c##UL", { "c" } };
+			DefineDirective macro{"c##UL", {"c"}};
 			macro.is_function_like = true;
 			defines_["__UINTMAX_C"] = std::move(macro);
 		}
@@ -1768,170 +1765,170 @@ void FileReader::addBuiltinDefines() {
 
 	// Compiler builtin macros for numeric limits - required by <limits> header
 	// These are common to both MSVC and GCC/Clang modes on x86_64
-	defines_["__CHAR_BIT__"] = DefineDirective{ "8", {} };
-	defines_["__SCHAR_MAX__"] = DefineDirective{ "127", {} };
-	defines_["__SHRT_MAX__"] = DefineDirective{ "32767", {} };
-	defines_["__INT_MAX__"] = DefineDirective{ "2147483647", {} };
-	defines_["__LONG_LONG_MAX__"] = DefineDirective{ "9223372036854775807LL", {} };
-	defines_["__WCHAR_MAX__"] = DefineDirective{ "2147483647", {} };
-	defines_["__WINT_MAX__"] = DefineDirective{ "4294967295U", {} };
-	
+	defines_["__CHAR_BIT__"] = DefineDirective{"8", {}};
+	defines_["__SCHAR_MAX__"] = DefineDirective{"127", {}};
+	defines_["__SHRT_MAX__"] = DefineDirective{"32767", {}};
+	defines_["__INT_MAX__"] = DefineDirective{"2147483647", {}};
+	defines_["__LONG_LONG_MAX__"] = DefineDirective{"9223372036854775807LL", {}};
+	defines_["__WCHAR_MAX__"] = DefineDirective{"2147483647", {}};
+	defines_["__WINT_MAX__"] = DefineDirective{"4294967295U", {}};
+
 	// intmax_t and uintmax_t limits - required by <ratio> and <cstdint> headers
 	// intmax_t is 64-bit on x64 platforms
-	defines_["__INTMAX_MAX__"] = DefineDirective{ "9223372036854775807LL", {} };
-	defines_["__INTMAX_MIN__"] = DefineDirective{ "(-9223372036854775807LL - 1)", {} };
-	defines_["__UINTMAX_MAX__"] = DefineDirective{ "18446744073709551615ULL", {} };
+	defines_["__INTMAX_MAX__"] = DefineDirective{"9223372036854775807LL", {}};
+	defines_["__INTMAX_MIN__"] = DefineDirective{"(-9223372036854775807LL - 1)", {}};
+	defines_["__UINTMAX_MAX__"] = DefineDirective{"18446744073709551615ULL", {}};
 
 	// Platform-specific __LONG_MAX__ (differs between Windows and Linux x64)
 	if (settings_.isMsvcMode()) {
-		defines_["__LONG_MAX__"] = DefineDirective{ "2147483647L", {} };  // 32-bit long on Windows
+		defines_["__LONG_MAX__"] = DefineDirective{"2147483647L", {}};  // 32-bit long on Windows
 	} else {
-		defines_["__LONG_MAX__"] = DefineDirective{ "9223372036854775807L", {} };  // 64-bit long on Linux
+		defines_["__LONG_MAX__"] = DefineDirective{"9223372036854775807L", {}};	// 64-bit long on Linux
 	}
 
 	// Compiler builtin macros for sizeof types - required by <limits> header
-	defines_["__SIZEOF_SHORT__"] = DefineDirective{ "2", {} };
-	defines_["__SIZEOF_INT__"] = DefineDirective{ "4", {} };
-	defines_["__SIZEOF_LONG_LONG__"] = DefineDirective{ "8", {} };
-	defines_["__SIZEOF_FLOAT__"] = DefineDirective{ "4", {} };
-	defines_["__SIZEOF_DOUBLE__"] = DefineDirective{ "8", {} };
-	defines_["__SIZEOF_POINTER__"] = DefineDirective{ "8", {} };
-	defines_["__SIZEOF_SIZE_T__"] = DefineDirective{ "8", {} };
-	defines_["__SIZEOF_PTRDIFF_T__"] = DefineDirective{ "8", {} };
-	defines_["__SIZEOF_WCHAR_T__"] = DefineDirective{ "4", {} };
-	defines_["__SIZEOF_WINT_T__"] = DefineDirective{ "4", {} };
+	defines_["__SIZEOF_SHORT__"] = DefineDirective{"2", {}};
+	defines_["__SIZEOF_INT__"] = DefineDirective{"4", {}};
+	defines_["__SIZEOF_LONG_LONG__"] = DefineDirective{"8", {}};
+	defines_["__SIZEOF_FLOAT__"] = DefineDirective{"4", {}};
+	defines_["__SIZEOF_DOUBLE__"] = DefineDirective{"8", {}};
+	defines_["__SIZEOF_POINTER__"] = DefineDirective{"8", {}};
+	defines_["__SIZEOF_SIZE_T__"] = DefineDirective{"8", {}};
+	defines_["__SIZEOF_PTRDIFF_T__"] = DefineDirective{"8", {}};
+	defines_["__SIZEOF_WCHAR_T__"] = DefineDirective{"4", {}};
+	defines_["__SIZEOF_WINT_T__"] = DefineDirective{"4", {}};
 
 	// Platform-specific __SIZEOF_LONG__ (differs between Windows and Linux x64)
 	if (settings_.isMsvcMode()) {
-		defines_["__SIZEOF_LONG__"] = DefineDirective{ "4", {} };  // 32-bit long on Windows
+		defines_["__SIZEOF_LONG__"] = DefineDirective{"4", {}};	// 32-bit long on Windows
 	} else {
-		defines_["__SIZEOF_LONG__"] = DefineDirective{ "8", {} };  // 64-bit long on Linux
+		defines_["__SIZEOF_LONG__"] = DefineDirective{"8", {}};	// 64-bit long on Linux
 	}
 
 	// Floating-point limit macros - required by <limits> and <cfloat> headers
 	// These values are for IEEE 754 floating-point (x86_64 architecture)
 	// Float (32-bit IEEE 754)
-	defines_["__FLT_RADIX__"] = DefineDirective{ "2", {} };
-	defines_["__FLT_MANT_DIG__"] = DefineDirective{ "24", {} };
-	defines_["__FLT_DIG__"] = DefineDirective{ "6", {} };
-	defines_["__FLT_DECIMAL_DIG__"] = DefineDirective{ "9", {} };
-	defines_["__FLT_MIN_EXP__"] = DefineDirective{ "(-125)", {} };
-	defines_["__FLT_MIN_10_EXP__"] = DefineDirective{ "(-37)", {} };
-	defines_["__FLT_MAX_EXP__"] = DefineDirective{ "128", {} };
-	defines_["__FLT_MAX_10_EXP__"] = DefineDirective{ "38", {} };
-	defines_["__FLT_MIN__"] = DefineDirective{ "1.17549435082228750796873653722224568e-38F", {} };
-	defines_["__FLT_MAX__"] = DefineDirective{ "3.40282346638528859811704183484516925e+38F", {} };
-	defines_["__FLT_EPSILON__"] = DefineDirective{ "1.19209289550781250000000000000000000e-7F", {} };
-	defines_["__FLT_DENORM_MIN__"] = DefineDirective{ "1.40129846432481707092372958328991613e-45F", {} };
-	defines_["__FLT_NORM_MAX__"] = DefineDirective{ "3.40282346638528859811704183484516925e+38F", {} };
-	defines_["__FLT_HAS_DENORM__"] = DefineDirective{ "1", {} };
-	defines_["__FLT_HAS_INFINITY__"] = DefineDirective{ "1", {} };
-	defines_["__FLT_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
-	defines_["__FLT_IS_IEC_60559__"] = DefineDirective{ "1", {} };
-	defines_["__FLT_EVAL_METHOD__"] = DefineDirective{ "0", {} };
-	defines_["__FLT_EVAL_METHOD_TS_18661_3__"] = DefineDirective{ "0", {} };
+	defines_["__FLT_RADIX__"] = DefineDirective{"2", {}};
+	defines_["__FLT_MANT_DIG__"] = DefineDirective{"24", {}};
+	defines_["__FLT_DIG__"] = DefineDirective{"6", {}};
+	defines_["__FLT_DECIMAL_DIG__"] = DefineDirective{"9", {}};
+	defines_["__FLT_MIN_EXP__"] = DefineDirective{"(-125)", {}};
+	defines_["__FLT_MIN_10_EXP__"] = DefineDirective{"(-37)", {}};
+	defines_["__FLT_MAX_EXP__"] = DefineDirective{"128", {}};
+	defines_["__FLT_MAX_10_EXP__"] = DefineDirective{"38", {}};
+	defines_["__FLT_MIN__"] = DefineDirective{"1.17549435082228750796873653722224568e-38F", {}};
+	defines_["__FLT_MAX__"] = DefineDirective{"3.40282346638528859811704183484516925e+38F", {}};
+	defines_["__FLT_EPSILON__"] = DefineDirective{"1.19209289550781250000000000000000000e-7F", {}};
+	defines_["__FLT_DENORM_MIN__"] = DefineDirective{"1.40129846432481707092372958328991613e-45F", {}};
+	defines_["__FLT_NORM_MAX__"] = DefineDirective{"3.40282346638528859811704183484516925e+38F", {}};
+	defines_["__FLT_HAS_DENORM__"] = DefineDirective{"1", {}};
+	defines_["__FLT_HAS_INFINITY__"] = DefineDirective{"1", {}};
+	defines_["__FLT_HAS_QUIET_NAN__"] = DefineDirective{"1", {}};
+	defines_["__FLT_IS_IEC_60559__"] = DefineDirective{"1", {}};
+	defines_["__FLT_EVAL_METHOD__"] = DefineDirective{"0", {}};
+	defines_["__FLT_EVAL_METHOD_TS_18661_3__"] = DefineDirective{"0", {}};
 
 	// Double (64-bit IEEE 754)
-	defines_["__DBL_MANT_DIG__"] = DefineDirective{ "53", {} };
-	defines_["__DBL_DIG__"] = DefineDirective{ "15", {} };
-	defines_["__DBL_DECIMAL_DIG__"] = DefineDirective{ "17", {} };
-	defines_["__DBL_MIN_EXP__"] = DefineDirective{ "(-1021)", {} };
-	defines_["__DBL_MIN_10_EXP__"] = DefineDirective{ "(-307)", {} };
-	defines_["__DBL_MAX_EXP__"] = DefineDirective{ "1024", {} };
-	defines_["__DBL_MAX_10_EXP__"] = DefineDirective{ "308", {} };
-	defines_["__DBL_MIN__"] = DefineDirective{ "((double)2.22507385850720138309023271733240406e-308L)", {} };
-	defines_["__DBL_MAX__"] = DefineDirective{ "((double)1.79769313486231570814527423731704357e+308L)", {} };
-	defines_["__DBL_EPSILON__"] = DefineDirective{ "((double)2.22044604925031308084726333618164062e-16L)", {} };
-	defines_["__DBL_DENORM_MIN__"] = DefineDirective{ "((double)4.94065645841246544176568792868221372e-324L)", {} };
-	defines_["__DBL_NORM_MAX__"] = DefineDirective{ "((double)1.79769313486231570814527423731704357e+308L)", {} };
-	defines_["__DBL_HAS_DENORM__"] = DefineDirective{ "1", {} };
-	defines_["__DBL_HAS_INFINITY__"] = DefineDirective{ "1", {} };
-	defines_["__DBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
-	defines_["__DBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
+	defines_["__DBL_MANT_DIG__"] = DefineDirective{"53", {}};
+	defines_["__DBL_DIG__"] = DefineDirective{"15", {}};
+	defines_["__DBL_DECIMAL_DIG__"] = DefineDirective{"17", {}};
+	defines_["__DBL_MIN_EXP__"] = DefineDirective{"(-1021)", {}};
+	defines_["__DBL_MIN_10_EXP__"] = DefineDirective{"(-307)", {}};
+	defines_["__DBL_MAX_EXP__"] = DefineDirective{"1024", {}};
+	defines_["__DBL_MAX_10_EXP__"] = DefineDirective{"308", {}};
+	defines_["__DBL_MIN__"] = DefineDirective{"((double)2.22507385850720138309023271733240406e-308L)", {}};
+	defines_["__DBL_MAX__"] = DefineDirective{"((double)1.79769313486231570814527423731704357e+308L)", {}};
+	defines_["__DBL_EPSILON__"] = DefineDirective{"((double)2.22044604925031308084726333618164062e-16L)", {}};
+	defines_["__DBL_DENORM_MIN__"] = DefineDirective{"((double)4.94065645841246544176568792868221372e-324L)", {}};
+	defines_["__DBL_NORM_MAX__"] = DefineDirective{"((double)1.79769313486231570814527423731704357e+308L)", {}};
+	defines_["__DBL_HAS_DENORM__"] = DefineDirective{"1", {}};
+	defines_["__DBL_HAS_INFINITY__"] = DefineDirective{"1", {}};
+	defines_["__DBL_HAS_QUIET_NAN__"] = DefineDirective{"1", {}};
+	defines_["__DBL_IS_IEC_60559__"] = DefineDirective{"1", {}};
 
 	// Long Double (80-bit extended precision on x86_64)
-	defines_["__LDBL_MANT_DIG__"] = DefineDirective{ "64", {} };
-	defines_["__LDBL_DIG__"] = DefineDirective{ "18", {} };
-	defines_["__LDBL_DECIMAL_DIG__"] = DefineDirective{ "21", {} };
-	defines_["__LDBL_MIN_EXP__"] = DefineDirective{ "(-16381)", {} };
-	defines_["__LDBL_MIN_10_EXP__"] = DefineDirective{ "(-4931)", {} };
-	defines_["__LDBL_MAX_EXP__"] = DefineDirective{ "16384", {} };
-	defines_["__LDBL_MAX_10_EXP__"] = DefineDirective{ "4932", {} };
-	defines_["__LDBL_MIN__"] = DefineDirective{ "3.36210314311209350626267781732175260e-4932L", {} };
-	defines_["__LDBL_MAX__"] = DefineDirective{ "1.18973149535723176502126385303097021e+4932L", {} };
-	defines_["__LDBL_EPSILON__"] = DefineDirective{ "1.08420217248550443400745280086994171e-19L", {} };
-	defines_["__LDBL_DENORM_MIN__"] = DefineDirective{ "3.64519953188247460252840593361941982e-4951L", {} };
-	defines_["__LDBL_NORM_MAX__"] = DefineDirective{ "1.18973149535723176502126385303097021e+4932L", {} };
-	defines_["__LDBL_HAS_DENORM__"] = DefineDirective{ "1", {} };
-	defines_["__LDBL_HAS_INFINITY__"] = DefineDirective{ "1", {} };
-	defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{ "1", {} };
-	defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{ "1", {} };
+	defines_["__LDBL_MANT_DIG__"] = DefineDirective{"64", {}};
+	defines_["__LDBL_DIG__"] = DefineDirective{"18", {}};
+	defines_["__LDBL_DECIMAL_DIG__"] = DefineDirective{"21", {}};
+	defines_["__LDBL_MIN_EXP__"] = DefineDirective{"(-16381)", {}};
+	defines_["__LDBL_MIN_10_EXP__"] = DefineDirective{"(-4931)", {}};
+	defines_["__LDBL_MAX_EXP__"] = DefineDirective{"16384", {}};
+	defines_["__LDBL_MAX_10_EXP__"] = DefineDirective{"4932", {}};
+	defines_["__LDBL_MIN__"] = DefineDirective{"3.36210314311209350626267781732175260e-4932L", {}};
+	defines_["__LDBL_MAX__"] = DefineDirective{"1.18973149535723176502126385303097021e+4932L", {}};
+	defines_["__LDBL_EPSILON__"] = DefineDirective{"1.08420217248550443400745280086994171e-19L", {}};
+	defines_["__LDBL_DENORM_MIN__"] = DefineDirective{"3.64519953188247460252840593361941982e-4951L", {}};
+	defines_["__LDBL_NORM_MAX__"] = DefineDirective{"1.18973149535723176502126385303097021e+4932L", {}};
+	defines_["__LDBL_HAS_DENORM__"] = DefineDirective{"1", {}};
+	defines_["__LDBL_HAS_INFINITY__"] = DefineDirective{"1", {}};
+	defines_["__LDBL_HAS_QUIET_NAN__"] = DefineDirective{"1", {}};
+	defines_["__LDBL_IS_IEC_60559__"] = DefineDirective{"1", {}};
 
 	// Width / word order / deprecation markers (GCC compatibility)
-	defines_["__SCHAR_WIDTH__"] = DefineDirective{ "8", {} };
-	defines_["__SHRT_WIDTH__"] = DefineDirective{ "16", {} };
-	defines_["__INT_WIDTH__"] = DefineDirective{ "32", {} };
-	defines_["__LONG_WIDTH__"] = DefineDirective{ settings_.getLongSizeBits() == 32 ? "32" : "64", {} };
-	defines_["__LONG_LONG_WIDTH__"] = DefineDirective{ "64", {} };
-	defines_["__PTRDIFF_WIDTH__"] = DefineDirective{ "64", {} };
-	defines_["__SIG_ATOMIC_WIDTH__"] = DefineDirective{ "32", {} };
-	defines_["__SIZE_WIDTH__"] = DefineDirective{ "64", {} };
-	defines_["__WCHAR_WIDTH__"] = DefineDirective{ "32", {} };
-	defines_["__WINT_WIDTH__"] = DefineDirective{ "32", {} };
-	defines_["__INTPTR_WIDTH__"] = DefineDirective{ "64", {} };
-	defines_["__INTMAX_WIDTH__"] = DefineDirective{ "64", {} };
+	defines_["__SCHAR_WIDTH__"] = DefineDirective{"8", {}};
+	defines_["__SHRT_WIDTH__"] = DefineDirective{"16", {}};
+	defines_["__INT_WIDTH__"] = DefineDirective{"32", {}};
+	defines_["__LONG_WIDTH__"] = DefineDirective{settings_.getLongSizeBits() == 32 ? "32" : "64", {}};
+	defines_["__LONG_LONG_WIDTH__"] = DefineDirective{"64", {}};
+	defines_["__PTRDIFF_WIDTH__"] = DefineDirective{"64", {}};
+	defines_["__SIG_ATOMIC_WIDTH__"] = DefineDirective{"32", {}};
+	defines_["__SIZE_WIDTH__"] = DefineDirective{"64", {}};
+	defines_["__WCHAR_WIDTH__"] = DefineDirective{"32", {}};
+	defines_["__WINT_WIDTH__"] = DefineDirective{"32", {}};
+	defines_["__INTPTR_WIDTH__"] = DefineDirective{"64", {}};
+	defines_["__INTMAX_WIDTH__"] = DefineDirective{"64", {}};
 
 	// Floating-point word order
-	defines_["__FLOAT_WORD_ORDER__"] = DefineDirective{ "__BYTE_ORDER__", {} };
+	defines_["__FLOAT_WORD_ORDER__"] = DefineDirective{"__BYTE_ORDER__", {}};
 
 	// Deprecation marker
-	defines_["__DEPRECATED"] = DefineDirective{ "__attribute__((deprecated))", {} };
-	
-	defines_["__FILE__"] = FunctionDirective{ [this]() -> std::string {
+	defines_["__DEPRECATED"] = DefineDirective{"__attribute__((deprecated))", {}};
+
+	defines_["__FILE__"] = FunctionDirective{[this]() -> std::string {
 		// Use std::filesystem to normalize path separators for cross-platform compatibility
 		// This converts backslashes to forward slashes on all platforms
 		std::filesystem::path file_path(filestack_.top().file_name);
 		std::string normalized_path = file_path.generic_string();
 		return "\"" + normalized_path + "\"";
-	} };
-	defines_["__LINE__"] = FunctionDirective{ [this]() -> std::string {
+	}};
+	defines_["__LINE__"] = FunctionDirective{[this]() -> std::string {
 		return std::to_string(filestack_.top().line_number);
-	} };
-	defines_["__COUNTER__"] = FunctionDirective{ [this]() -> std::string {
+	}};
+	defines_["__COUNTER__"] = FunctionDirective{[this]() -> std::string {
 		return std::to_string(counter_value_++);
-	} };
+	}};
 
-	defines_["__DATE__"] = FunctionDirective{ [] {
+	defines_["__DATE__"] = FunctionDirective{[] {
 		auto now = std::chrono::system_clock::now();
 		auto time_t_now = std::chrono::system_clock::to_time_t(now);
 		std::tm tm_now = localtime_safely(&time_t_now);
 		char buffer[12];
 		std::strftime(buffer, sizeof(buffer), "\"%b %d %Y\"", &tm_now);
 		return std::string(buffer);
-	} };
+	}};
 
-	defines_["__TIME__"] = FunctionDirective{ [] {
+	defines_["__TIME__"] = FunctionDirective{[] {
 		auto now = std::chrono::system_clock::now();
 		auto time_t_now = std::chrono::system_clock::to_time_t(now);
 		std::tm tm_now = localtime_safely(&time_t_now);
 		char buffer[10];
 		std::strftime(buffer, sizeof(buffer), "\"%H:%M:%S\"", &tm_now);
 		return std::string(buffer);
-	} };
+	}};
 
 	// __TIMESTAMP__ - file modification time
-	defines_["__TIMESTAMP__"] = FunctionDirective{ [this]() -> std::string {
+	defines_["__TIMESTAMP__"] = FunctionDirective{[this]() -> std::string {
 		if (!filestack_.empty()) {
 			return filestack_.top().timestamp;
 		}
 		return "\"??? ??? ?? ??:??:?? ????\"";
-	} };
+	}};
 
 	// __INCLUDE_LEVEL__ - nesting depth of includes (0 for main file)
-	defines_["__INCLUDE_LEVEL__"] = FunctionDirective{ [this]() -> std::string {
+	defines_["__INCLUDE_LEVEL__"] = FunctionDirective{[this]() -> std::string {
 		// Stack size - 1 because the main file is at level 0
 		return std::to_string(filestack_.size() > 0 ? filestack_.size() - 1 : 0);
-	} };
+	}};
 
 	// __FUNCTION__ (MSVC extension)
 	defines_["__FUNCTION__"] = DefineDirective("__func__", {});
@@ -1945,29 +1942,29 @@ void FileReader::addBuiltinDefines() {
 	// when they appear inside a function body
 	//
 
-	defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{ [] {
+	defines_["__STDCPP_DEFAULT_NEW_ALIGNMENT__"] = FunctionDirective{[] {
 		constexpr std::size_t default_new_alignment = alignof(std::max_align_t);
 		char buffer[32];
 		std::snprintf(buffer, sizeof(buffer), "%zuU", default_new_alignment);
 		return std::string(buffer);
-	} };
+	}};
 }
 
 FileReader::ScopedFileStack::ScopedFileStack(std::stack<CurrentFile>& filestack, std::string_view file, long included_at_line) : filestack_(filestack) {
 		// Get file modification timestamp
-		std::string timestamp_str;
-		try {
-			auto ftime = std::filesystem::last_write_time(file);
-			auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-				ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
-			auto time_t_now = std::chrono::system_clock::to_time_t(sctp);
-			std::tm tm_now = localtime_safely(&time_t_now);
-			char buffer[32];
-			std::strftime(buffer, sizeof(buffer), "\"%a %b %d %H:%M:%S %Y\"", &tm_now);
-			timestamp_str = buffer;
-		} catch (...) {
+	std::string timestamp_str;
+	try {
+		auto ftime = std::filesystem::last_write_time(file);
+		auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+			ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
+		auto time_t_now = std::chrono::system_clock::to_time_t(sctp);
+		std::tm tm_now = localtime_safely(&time_t_now);
+		char buffer[32];
+		std::strftime(buffer, sizeof(buffer), "\"%a %b %d %H:%M:%S %Y\"", &tm_now);
+		timestamp_str = buffer;
+	} catch (...) {
 			// If we can't get the timestamp, use a default
-			timestamp_str = "\"??? ??? ?? ??:??:?? ????\"";
-		}
-		filestack_.push({ file, 0, timestamp_str, included_at_line });
+		timestamp_str = "\"??? ??? ?? ??:??:?? ????\"";
+	}
+	filestack_.push({file, 0, timestamp_str, included_at_line});
 }

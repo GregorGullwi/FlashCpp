@@ -15,19 +15,17 @@ int main() {
 
 	__try {
 		__try {
-			// Cause an access violation
+	// Cause an access violation
 			int* p = 0;
 			*p = 123;
 			result = 99; // Should not be reached
-		}
-		__finally {
-			// This MUST execute during unwind
+		} __finally {
+	// This MUST execute during unwind
 			result = 42;
 		}
 		result = 99; // Should not be reached
-	}
-	__except(1) {
-		// Exception caught after __finally ran
+	} __except (1) {
+	// Exception caught after __finally ran
 	}
 
 	return result;

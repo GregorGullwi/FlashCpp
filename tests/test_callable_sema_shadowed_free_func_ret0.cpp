@@ -15,8 +15,8 @@ struct Increment {
 };
 
 int call_it(Increment process, int value) {
-	// 'process' here is the struct parameter, not the free function above.
-	// sema must use the struct's operator() rather than the free function.
+ // 'process' here is the struct parameter, not the free function above.
+ // sema must use the struct's operator() rather than the free function.
 	return process(value);
 }
 

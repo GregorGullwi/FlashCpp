@@ -4,7 +4,7 @@ struct NoPlus {
 	int value;
 };
 
-template<typename T>
+template <typename T>
 int addValues(T lhs, T rhs) {
 	auto sum = lhs + rhs;
 	return sum.value;

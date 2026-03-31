@@ -2,7 +2,7 @@
 #include "IrGenerator.h"
 
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
-    : global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
+	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST
 	generateStaticMemberDeclarations();
 	// Generate trivial default constructors for structs that need them
@@ -333,7 +333,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 		ctx.struct_info = struct_info;
 		if (struct_info) {
 			if (const LazyClassInstantiationInfo* lazy_class_info =
-			        LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
+					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
 				ctx.template_args = lazy_class_info->template_args;
 				ctx.template_param_names.reserve(lazy_class_info->template_params.size());
 				for (const auto& template_param : lazy_class_info->template_params) {
@@ -348,7 +348,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
 					if (param_handles.empty()) {
 						if (auto template_node_opt = gTemplateRegistry.lookupTemplate(struct_type->baseTemplateName());
-						    template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
+							template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
 							for (std::string_view param_name : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
 								ctx.template_param_names.push_back(param_name);
 							}
@@ -390,7 +390,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
-						    func_decl.parameter_nodes().size() != func_call.arguments().size()) {
+							func_decl.parameter_nodes().size() != func_call.arguments().size()) {
 							continue;
 						}
 
@@ -411,11 +411,11 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
 							StringBuilder qualified_name_builder;
 							StringHandle qualified_name = StringTable::getOrInternStringHandle(
-							    qualified_name_builder
-							        .append(member_function_decl->parent_struct_name())
-							        .append("::")
-							        .append(member_function_decl->decl_node().identifier_token().value())
-							        .commit());
+								qualified_name_builder
+									.append(member_function_decl->parent_struct_name())
+									.append("::")
+									.append(member_function_decl->decl_node().identifier_token().value())
+									.commit());
 							if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name)) {
 								rebound_ctx.template_args.assign(outer_binding->param_args.begin(), outer_binding->param_args.end());
 								rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
@@ -497,7 +497,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (std::holds_alternative<SizeofPackNode>(expr)) {
 						// This is an uninstantiated template - skip
 						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-						          "' with unsubstituted sizeof... in type '", type_name, "'");
+								  "' with unsubstituted sizeof... in type '", type_name, "'");
 						continue;
 					}
 					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
@@ -505,8 +505,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 						// Skip it (instantiated versions will have NumericLiteralNode instead)
 						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
 						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-						          "' with unsubstituted template parameter '", tparam.param_name(),
-						          "' in type '", type_name, "'");
+								  "' with unsubstituted template parameter '", tparam.param_name(),
+								  "' in type '", type_name, "'");
 						continue;
 					}
 					// Also skip IdentifierNode that looks like an unsubstituted template parameter
@@ -520,8 +520,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (!symbol.has_value()) {
 							// Not found in global symbol table - likely a template parameter
 							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-							          "' with identifier initializer '", id.name(),
-							          "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+									  "' with identifier initializer '", id.name(),
+									  "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
 							unresolved_identifier_initializer = true;
 						}
 					}
@@ -730,7 +730,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 												}
 												evaluated_ctor = true;
 												FLASH_LOG(Codegen, Debug, "Evaluated constexpr ConstructorCallNode initializer for static member '",
-												          qualified_name, "'");
+														  qualified_name, "'");
 											}
 										}
 									}
@@ -738,7 +738,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							}
 							if (!evaluated_ctor) {
 								FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '",
-								          qualified_name, "' - initializing to zero");
+										  qualified_name, "' - initializing to zero");
 								size_t byte_count = op.size_in_bits.value / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
 									op.init_data.push_back(0);
@@ -747,7 +747,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						} else if (std::holds_alternative<BoolLiteralNode>(init_expr)) {
 							const auto& bool_lit = std::get<BoolLiteralNode>(init_expr);
 							FLASH_LOG(Codegen, Debug, "Processing BoolLiteralNode initializer for static member '",
-							          qualified_name, "' value=", bool_lit.value() ? "true" : "false");
+									  qualified_name, "' value=", bool_lit.value() ? "true" : "false");
 							unsigned long long value = bool_lit.value() ? 1ULL : 0ULL;
 							size_t byte_count = op.size_in_bits.value / 8;
 							for (size_t i = 0; i < byte_count; ++i) {
@@ -756,7 +756,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							FLASH_LOG(Codegen, Debug, "  Wrote ", byte_count, " bytes to init_data");
 						} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
 							FLASH_LOG(Codegen, Debug, "Processing NumericLiteralNode initializer for static member '",
-							          qualified_name, "'");
+									  qualified_name, "'");
 							// Evaluate the initializer expression
 							ExprResult init_operands = visitExpressionNode(init_expr);
 							// Convert to raw bytes
@@ -778,7 +778,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							}
 						} else if (std::holds_alternative<TemplateParameterReferenceNode>(init_expr)) {
 							FLASH_LOG(Codegen, Debug, "WARNING: Processing TemplateParameterReferenceNode initializer for static member '",
-							          qualified_name, "' - should have been substituted!");
+									  qualified_name, "' - should have been substituted!");
 							// Try to evaluate anyway
 							ExprResult init_operands = visitExpressionNode(init_expr);
 							{
@@ -797,7 +797,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						} else if (std::holds_alternative<IdentifierNode>(init_expr)) {
 							const auto& id = std::get<IdentifierNode>(init_expr);
 							FLASH_LOG(Codegen, Debug, "Processing IdentifierNode '", id.name(), "' initializer for static member '",
-							          qualified_name, "'");
+									  qualified_name, "'");
 							// For reference members, the initializer is an identifier whose address
 							// should be stored via a data relocation (like &x for int& ref = x)
 							if (static_member.reference_qualifier != ReferenceQualifier::None) {
@@ -834,7 +834,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (std::holds_alternative<IdentifierNode>(inner)) {
 									const auto& target_id = std::get<IdentifierNode>(inner);
 									FLASH_LOG(Codegen, Debug, "Processing &", target_id.name(), " initializer for static member '",
-									          qualified_name, "'");
+											  qualified_name, "'");
 									StringHandle target_handle = StringTable::getOrInternStringHandle(target_id.name());
 									op.reloc_target = target_handle;
 									// Zero-fill the pointer slot; the linker fills the actual address
@@ -844,7 +844,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									}
 								} else {
 									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
-									          qualified_name, "' - zero-initializing");
+											  qualified_name, "' - zero-initializing");
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							} else {
@@ -860,7 +860,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							unsigned long long evaluated_value = 0;
 							if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 								FLASH_LOG(Codegen, Debug, "Evaluated constexpr initializer for static member '",
-								          qualified_name, "' = ", evaluated_value);
+										  qualified_name, "' = ", evaluated_value);
 								append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 							} else {
 								// Try triggering lazy instantiation for template static members
@@ -873,7 +873,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									if (updated && updated->initializer.has_value()) {
 										if (evaluate_static_initializer(*updated->initializer, evaluated_value, struct_info)) {
 											FLASH_LOG(Codegen, Debug, "Evaluated lazy-instantiated constexpr initializer for static member '",
-											          qualified_name, "' = ", evaluated_value);
+													  qualified_name, "' = ", evaluated_value);
 											append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 											resolved_via_lazy = true;
 										}
@@ -881,7 +881,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								}
 								if (!resolved_via_lazy) {
 									FLASH_LOG(Codegen, Debug, "Processing unknown expression type initializer for static member '",
-									          qualified_name, "' - skipping evaluation");
+											  qualified_name, "' - skipping evaluation");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
 									append_bytes(0, op.size_in_bits.value, op.init_data);
@@ -917,7 +917,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (const TypeInfo* resolved_type = tryGetTypeInfo(base_type.type_index_)) {
 						base_info = resolved_type->getStructInfo();
 						FLASH_LOG(Codegen, Debug, "Resolved type alias '", StringTable::getStringView(base_type.name_),
-						          "' to struct '", StringTable::getStringView(resolved_type->name_), "'");
+								  "' to struct '", StringTable::getStringView(resolved_type->name_), "'");
 					}
 				}
 
@@ -934,7 +934,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							const StructTypeInfo* actual_info = actual_struct_it->second->getStructInfo();
 							if (actual_info) {
 								FLASH_LOG(Codegen, Debug, "Using actual struct '", actual_struct_name,
-								          "' instead of type alias '", base.name, "' for static members");
+										  "' instead of type alias '", base.name, "' for static members");
 								base_info = actual_info;
 							}
 						}
@@ -992,7 +992,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						std::string_view base_name_str = base.name;
 
 						FLASH_LOG(Codegen, Debug, "Generating inherited static member '", member_name,
-						          "' for ", type_name, " from base ", base_name_str);
+								  "' for ", type_name, " from base ", base_name_str);
 
 						GlobalVariableDeclOp alias_op;
 						alias_op.type_index = static_member_ptr->type_index;
@@ -1005,7 +1005,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						unsigned long long inferred_value = 0;
 
 						if (static_member_ptr->initializer.has_value() &&
-						    static_member_ptr->initializer->is<ExpressionNode>()) {
+							static_member_ptr->initializer->is<ExpressionNode>()) {
 							const ExpressionNode& init_expr = static_member_ptr->initializer->as<ExpressionNode>();
 
 							if (const auto* bool_lit = std::get_if<BoolLiteralNode>(&init_expr)) {
@@ -1118,7 +1118,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 			if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::MSVC) {
 				// MSVC uses dedicated constructor mangling (??0ClassName@@...)
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
-				    NameMangling::generateMangledNameForConstructor(class_name, empty_params, empty_namespace_path));
+					NameMangling::generateMangledNameForConstructor(class_name, empty_params, empty_namespace_path));
 			} else if (NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium) {
 				// Itanium uses regular mangling with class name as function name (produces C1 marker)
 				// Extract the last component for func_name (handles nested classes like "Outer::Inner")
@@ -1129,15 +1129,15 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				}
 				TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 				ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(NameMangling::generateMangledName(
-				    func_name,
-				    void_return,
-				    empty_params,
-				    false, // not variadic
-				    class_name, // struct_name
-				    empty_namespace_path,
-				    Linkage::CPlusPlus,
-				    false // constructors are never const
-				    ));
+					func_name,
+					void_return,
+					empty_params,
+					false, // not variadic
+					class_name, // struct_name
+					empty_namespace_path,
+					Linkage::CPlusPlus,
+					false // constructors are never const
+					));
 			} else {
 				assert(false && "Unhandled name mangling type");
 			}
@@ -1448,20 +1448,20 @@ size_t AstToIr::resolveTemplateSizeFromStructName(std::string_view struct_name) 
 // For sub-members that are themselves structs (> 64 bits), recurse instead of
 // emitting a single MemberStore with 0ULL (which would only zero the first 8 bytes).
 void AstToIr::emitRecursiveZeroFill(
-    const StructTypeInfo& struct_info,
-    StringHandle base_object,
-    int base_offset,
-    const Token& token) {
+	const StructTypeInfo& struct_info,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token) {
 	for (const StructMember& sub_member : struct_info.members) {
 		const StructTypeInfo* sub_struct_info = tryGetStructTypeInfo(sub_member.type_index);
 		bool is_nested_struct = isIrStructType(toIrType(sub_member.memberType())) && sub_struct_info && (sub_member.size * 8) > 64;
 
 		if (is_nested_struct) {
 			emitRecursiveZeroFill(
-			    *sub_struct_info,
-			    base_object,
-			    base_offset + static_cast<int>(sub_member.offset),
-			    token);
+				*sub_struct_info,
+				base_object,
+				base_offset + static_cast<int>(sub_member.offset),
+				token);
 		} else {
 			MemberStoreOp member_store;
 			member_store.value.setType(sub_member.type_index.category());
@@ -1479,11 +1479,11 @@ void AstToIr::emitRecursiveZeroFill(
 
 // Implementation of recursive nested member store generation
 bool AstToIr::tryEmitArrayMemberStores(
-    const StructMember& member,
-    const InitializerListNode& init_list,
-    StringHandle base_object,
-    int base_offset,
-    const Token& token) {
+	const StructMember& member,
+	const InitializerListNode& init_list,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token) {
 	if (!member.is_array || member.array_dimensions.empty()) {
 		return false;
 	}
@@ -1525,8 +1525,8 @@ bool AstToIr::tryEmitArrayMemberStores(
 	const size_t first_dimension_limit = member.array_dimensions[0];
 	size_t nested_subarray_count = 0;
 	const size_t subarray_limit = member.array_dimensions.size() > 1
-	                                  ? (element_count / first_dimension_limit)
-	                                  : element_count;
+									  ? (element_count / first_dimension_limit)
+									  : element_count;
 	for (const ASTNode& node : init_list.initializers()) {
 		if (node.is<InitializerListNode>()) {
 			nested_subarray_count++;
@@ -1534,7 +1534,7 @@ bool AstToIr::tryEmitArrayMemberStores(
 				throw CompileError("Too many initializers for array");
 			}
 			if (member.array_dimensions.size() > 1 &&
-			    count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
+				count_expressions(count_expressions, node.as<InitializerListNode>()) > subarray_limit) {
 				throw CompileError("Too many initializers for array subobject");
 			}
 		}
@@ -1560,14 +1560,14 @@ bool AstToIr::tryEmitArrayMemberStores(
 		ExprResult init_operands = visitExpressionNode(*flat_initializers[i]);
 
 		emitArrayStore(
-		    member.memberType(),
-		    element_size_bits,
-		    base_object,
-		    makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
-		    toTypedValue(init_operands),
-		    base_offset + static_cast<int>(member.offset),
-		    false,
-		    token);
+			member.memberType(),
+			element_size_bits,
+			base_object,
+			makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+			toTypedValue(init_operands),
+			base_offset + static_cast<int>(member.offset),
+			false,
+			token);
 	}
 
 	// Zero-fill trailing uninitialized elements.
@@ -1582,18 +1582,18 @@ bool AstToIr::tryEmitArrayMemberStores(
 			int element_byte_offset = base_offset + static_cast<int>(member.offset) + static_cast<int>(i) * (element_size_bits / 8);
 
 			emitRecursiveZeroFill(*member_struct_info,
-			                      base_object, element_byte_offset, token);
+								  base_object, element_byte_offset, token);
 		} else {
 			auto zero_value = makeTypedValue(member.memberType(), SizeInBits{element_size_bits}, 0ULL);
 			emitArrayStore(
-			    member.memberType(),
-			    element_size_bits,
-			    base_object,
-			    makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
-			    zero_value,
-			    base_offset + static_cast<int>(member.offset),
-			    false,
-			    token);
+				member.memberType(),
+				element_size_bits,
+				base_object,
+				makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(i)),
+				zero_value,
+				base_offset + static_cast<int>(member.offset),
+				false,
+				token);
 		}
 	}
 
@@ -1601,11 +1601,11 @@ bool AstToIr::tryEmitArrayMemberStores(
 }
 
 void AstToIr::generateNestedMemberStores(
-    const StructTypeInfo& struct_info,
-    const InitializerListNode& init_list,
-    StringHandle base_object,
-    int base_offset,
-    const Token& token) {
+	const StructTypeInfo& struct_info,
+	const InitializerListNode& init_list,
+	StringHandle base_object,
+	int base_offset,
+	const Token& token) {
 	// Build map of member names to initializer expressions
 	std::unordered_map<StringHandle, const ASTNode*> member_values;
 	size_t positional_index = 0;
@@ -1654,11 +1654,11 @@ void AstToIr::generateNestedMemberStores(
 				if (!member_struct_info->members.empty()) {
 					// RECURSIVE CALL for nested struct
 					generateNestedMemberStores(
-					    *member_struct_info,
-					    nested_init_list,
-					    base_object,
-					    base_offset + static_cast<int>(member.offset),
-					    token);
+						*member_struct_info,
+						nested_init_list,
+						base_object,
+						base_offset + static_cast<int>(member.offset),
+						token);
 					continue;
 				}
 			}
@@ -1738,11 +1738,11 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 
 	// Create mangled name token
 	Token mangled_token(
-	    Token::Type::Identifier,
-	    StringTable::getStringView(inst_info.mangled_name),
-	    template_decl.identifier_token().line(),
-	    template_decl.identifier_token().column(),
-	    template_decl.identifier_token().file_index());
+		Token::Type::Identifier,
+		StringTable::getStringView(inst_info.mangled_name),
+		template_decl.identifier_token().line(),
+		template_decl.identifier_token().column(),
+		template_decl.identifier_token().file_index());
 
 	StringHandle full_func_name = inst_info.mangled_name;
 	StringHandle struct_name = inst_info.struct_name;
@@ -1795,7 +1795,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 			std::string_view param_name = param_decl.identifier_token().value();
 			if (param_name.empty()) {
 				func_param.name = StringTable::getOrInternStringHandle(
-				    StringBuilder().append("__param_").append(template_unnamed_param_counter++).commit());
+					StringBuilder().append("__param_").append(template_unnamed_param_counter++).commit());
 			} else {
 				func_param.name = StringTable::getOrInternStringHandle(param_name);
 			}
@@ -1857,11 +1857,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Create mangled name token
 	Token mangled_token(
-	    Token::Type::Identifier,
-	    StringTable::getStringView(inst_info.mangled_name),
-	    template_decl.identifier_token().line(),
-	    template_decl.identifier_token().column(),
-	    template_decl.identifier_token().file_index());
+		Token::Type::Identifier,
+		StringTable::getStringView(inst_info.mangled_name),
+		template_decl.identifier_token().line(),
+		template_decl.identifier_token().column(),
+		template_decl.identifier_token().file_index());
 
 	// Enter function scope
 	symbol_table.enter_scope(ScopeType::Function);
@@ -1880,20 +1880,20 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	if (struct_type_info) {
 		// Create a 'this' pointer type (pointer to the struct)
 		auto this_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-		    struct_type_info->type_index_.withCategory(TypeCategory::Struct),
-		    64, // Pointer size in bits
-		    template_decl.identifier_token(),
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_info->type_index_.withCategory(TypeCategory::Struct),
+			64, // Pointer size in bits
+			template_decl.identifier_token(),
+			CVQualifier::None,
+			ReferenceQualifier::None);
 
 		// Set pointer depth to 1 (this is a pointer)
 		this_type_node.as<TypeSpecifierNode>().add_pointer_level(CVQualifier::None);
 
 		// Create 'this' declaration
 		Token this_token(Token::Type::Identifier, "this"sv,
-		                 template_decl.identifier_token().line(),
-		                 template_decl.identifier_token().column(),
-		                 template_decl.identifier_token().file_index());
+						 template_decl.identifier_token().line(),
+						 template_decl.identifier_token().column(),
+						 template_decl.identifier_token().file_index());
 		auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type_node, this_token);
 
 		// Add 'this' to symbol table
@@ -1910,10 +1910,10 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 			if (i < inst_info.template_args.size()) {
 				TypeCategory concrete_cat = inst_info.template_args[i];
 				auto concrete_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				    concrete_cat,
-				    TypeQualifier::None,
-				    get_type_size_bits(concrete_cat),
-				    param_decl.identifier_token(), CVQualifier::None);
+					concrete_cat,
+					TypeQualifier::None,
+					get_type_size_bits(concrete_cat),
+					param_decl.identifier_token(), CVQualifier::None);
 				auto concrete_param_decl = ASTNode::emplace_node<DeclarationNode>(concrete_type_node, param_decl.identifier_token());
 				symbol_table.insert(param_decl.identifier_token().value(), concrete_param_decl);
 			} else {
@@ -1925,11 +1925,11 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 	// Parse the template body with concrete types
 	// Pass the struct name and type index so the parser can set up member function context
 	auto body_node_opt = parser_->parseTemplateBody(
-	    inst_info.body_position,
-	    inst_info.template_param_names,
-	    inst_info.template_args,
-	    inst_info.struct_name.isValid() ? inst_info.struct_name : StringHandle(), // Pass struct name
-	    struct_type_info ? struct_type_info->type_index_ : TypeIndex{} // Pass type index
+		inst_info.body_position,
+		inst_info.template_param_names,
+		inst_info.template_args,
+		inst_info.struct_name.isValid() ? inst_info.struct_name : StringHandle(), // Pass struct name
+		struct_type_info ? struct_type_info->type_index_ : TypeIndex{} // Pass type index
 	);
 
 	if (body_node_opt.has_value()) {

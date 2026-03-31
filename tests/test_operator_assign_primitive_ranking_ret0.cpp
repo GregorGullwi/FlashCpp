@@ -17,7 +17,8 @@ struct Target {
 int main() {
 	Target value;
 	value = 7;
-	if (value.which != 1) return 1;
+	if (value.which != 1)
+		return 1;
 
 	value = 3.5;
 	return value.which == 2 ? 0 : 2;

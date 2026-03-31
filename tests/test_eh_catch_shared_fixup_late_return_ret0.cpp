@@ -8,7 +8,7 @@ int classify(int tag) {
 		}
 		throw 2.0;
 	} catch (int) {
-		// Fall through normally so the first CatchEnd emits the shared fixup stub.
+	// Fall through normally so the first CatchEnd emits the shared fixup stub.
 	} catch (double) {
 		return 42;
 	}
@@ -17,7 +17,9 @@ int classify(int tag) {
 }
 
 int main() {
-	if (classify(0) != 0) return 1;
-	if (classify(1) != 42) return 2;
+	if (classify(0) != 0)
+		return 1;
+	if (classify(1) != 42)
+		return 2;
 	return 0;
 }

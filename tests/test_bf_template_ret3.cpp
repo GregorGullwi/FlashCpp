@@ -1,4 +1,4 @@
-template<typename T>
+template <typename T>
 struct Flags {
 	T a : 2;
 	T b : 4;

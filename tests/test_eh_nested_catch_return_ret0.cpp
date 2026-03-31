@@ -17,6 +17,7 @@ int nested_catch_return(int x) {
 
 int main() {
 	int result = nested_catch_return(100);
-	if (result != 103) return 1;
+	if (result != 103)
+		return 1;
 	return 0;
 }

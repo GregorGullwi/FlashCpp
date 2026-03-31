@@ -1,10 +1,10 @@
-template<typename T>
+template <typename T>
 class Vector {
 public:
-    T data;
+	T data;
 };
 
 int main() {
-    Vector<int> v;
-    return 0;
+	Vector<int> v;
+	return 0;
 }

@@ -6,9 +6,9 @@ struct MyType {
 	using size_type = unsigned long;
 };
 
-template<typename T>
+template <typename T>
 int test_func(typename T::value_type const* lhs,
-              typename T::size_type lhs_len) {
+			  typename T::size_type lhs_len) {
 	if (lhs != nullptr && lhs_len > 0)
 		return 1;
 	return 0;

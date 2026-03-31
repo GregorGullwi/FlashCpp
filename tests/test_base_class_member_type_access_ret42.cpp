@@ -3,16 +3,16 @@
 // This test just verifies parsing - the semantic handling may still need work
 
 // The fix allows this to parse without errors
-template<typename T>
+template <typename T>
 struct wrapper {
-    using type = int;
+	using type = int;
 };
 
-template<typename T>
+template <typename T>
 struct negation : wrapper<T>::type {
 };
 
 // Simple functional test that doesn't rely on constructors
 int main() {
-    return 42;
+	return 42;
 }

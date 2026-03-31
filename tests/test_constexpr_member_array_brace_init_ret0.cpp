@@ -27,7 +27,8 @@ struct Container {
 	}
 	constexpr int sum() const {
 		int s = 0;
-		for (int i = 0; i < 4; i++) s += data[i];
+		for (int i = 0; i < 4; i++)
+			s += data[i];
 		return s;
 	}
 };

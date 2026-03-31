@@ -26,7 +26,8 @@ int main() {
 	} catch (int) {
 		return 1;
 	} catch (VBase v) {
-		if (v.vb != 17) return 2;
+		if (v.vb != 17)
+			return 2;
 		caught = true;
 	}
 	return caught ? 0 : 3;

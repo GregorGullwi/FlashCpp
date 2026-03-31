@@ -5,11 +5,10 @@ struct B {
 };
 
 struct A {
-	B b1 = { .a = 1 };  // Designated initializer
+	B b1 = {.a = 1};	 // Designated initializer
 };
 
 int main() {
 	A obj;
-	return obj.b1.a;  // Should return 1
+	return obj.b1.a;	 // Should return 1
 }
-

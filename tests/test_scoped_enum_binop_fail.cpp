@@ -1,6 +1,8 @@
 // C++20: scoped enum (enum class) does not allow implicit conversion in binary arithmetic.
 // This should produce a compile error.
-enum class Color { Red, Green, Blue };
+enum class Color { Red,
+				   Green,
+				   Blue };
 
 int main() {
 	Color c = Color::Green;

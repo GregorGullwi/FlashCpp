@@ -10,7 +10,7 @@ class ConstructorDeclarationNode;
 // --- Standard conversion kinds (C++20 [conv]) ---
 
 enum class StandardConversionKind : uint8_t {
-	None,                         // No conversion / identity (used as sentinel in ConversionPlan)
+	None,						 // No conversion / identity (used as sentinel in ConversionPlan)
 	LValueToRValue,
 	ArrayToPointer,
 	FunctionToPointer,
@@ -66,10 +66,10 @@ inline bool hasFlag(SemanticSlotFlags flags, SemanticSlotFlags flag) {
 // Target: ~8 bytes. Compact handle layer into interning tables.
 
 struct SemanticSlot {
-	CanonicalTypeId type_id{};                                    // 4 bytes
-	CastInfoIndex cast_info_index{};                              // 2 bytes
-	ValueCategory value_category = ValueCategory::PRValue;        // 1 byte
-	SemanticSlotFlags flags = SemanticSlotFlags::None;            // 1 byte
+	CanonicalTypeId type_id{};									// 4 bytes
+	CastInfoIndex cast_info_index{};								 // 2 bytes
+	ValueCategory value_category = ValueCategory::PRValue;		   // 1 byte
+	SemanticSlotFlags flags = SemanticSlotFlags::None;			   // 1 byte
 	// Total: 8 bytes
 
 	bool has_cast() const { return static_cast<bool>(cast_info_index); }

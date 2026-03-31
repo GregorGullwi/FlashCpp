@@ -1,11 +1,11 @@
 // Test function pointer in primary template (not specialization)
 
-template<typename T>
+template <typename T>
 struct Calculator {
-    int (*operation)(int, int);
+	int (*operation)(int, int);
 };
 
 int main() {
-    Calculator<int> c;
-    return 0;
+	Calculator<int> c;
+	return 0;
 }

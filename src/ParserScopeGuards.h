@@ -36,7 +36,7 @@ namespace FlashCpp {
 class TemplateParameterScope {
 public:
 	TemplateParameterScope() = default;
-	
+
 	~TemplateParameterScope() {
 		// Remove all registered template parameter types from the global type map
 		for (const auto* type_info : registered_types_) {
@@ -45,11 +45,11 @@ public:
 			}
 		}
 	}
-	
+
 	// Prevent copying (scope is unique)
 	TemplateParameterScope(const TemplateParameterScope&) = delete;
 	TemplateParameterScope& operator=(const TemplateParameterScope&) = delete;
-	
+
 	// Allow moving
 	TemplateParameterScope(TemplateParameterScope&& other) noexcept
 		: registered_types_(std::move(other.registered_types_)) {
@@ -68,29 +68,28 @@ public:
 		}
 		return *this;
 	}
-	
+
 	// Register a template parameter type for automatic cleanup
 	void addParameter(TypeInfo* type_info) {
 		if (type_info) {
 			registered_types_.push_back(type_info);
 		}
 	}
-	
+
 	// Get the list of registered types (for iteration if needed)
 	const std::vector<TypeInfo*>& registeredTypes() const {
 		return registered_types_;
 	}
-	
+
 	// Check if any parameters are registered
 	bool empty() const { return registered_types_.empty(); }
-	
+
 	// Dismiss the guard (don't clean up - caller takes responsibility)
 	void dismiss() { registered_types_.clear(); }
 
 private:
 	std::vector<TypeInfo*> registered_types_;
 };
-
 
 // =============================================================================
 // SymbolTableScope
@@ -108,17 +107,17 @@ public:
 	explicit SymbolTableScope(ScopeType type) : active_(true) {
 		gSymbolTable.enter_scope(type);
 	}
-	
+
 	~SymbolTableScope() {
 		if (active_) {
 			gSymbolTable.exit_scope();
 		}
 	}
-	
+
 	// Prevent copying
 	SymbolTableScope(const SymbolTableScope&) = delete;
 	SymbolTableScope& operator=(const SymbolTableScope&) = delete;
-	
+
 	// Allow moving
 	SymbolTableScope(SymbolTableScope&& other) noexcept : active_(other.active_) {
 		other.active_ = false;
@@ -133,17 +132,16 @@ public:
 		}
 		return *this;
 	}
-	
+
 	// Dismiss the guard (don't exit scope - caller takes responsibility)
 	void dismiss() { active_ = false; }
-	
+
 	// Check if guard is still active
 	bool isActive() const { return active_; }
 
 private:
 	bool active_;
 };
-
 
 // =============================================================================
 // FunctionParsingScopeGuard
@@ -178,8 +176,7 @@ public:
 		StringHandle struct_name,
 		TypeIndex struct_type_index,
 		const std::vector<ASTNode>& params,
-		const FunctionDeclarationNode* current_function
-	);
+		const FunctionDeclarationNode* current_function);
 	~FunctionParsingScopeGuard();
 
 	// Non-copyable, non-movable
@@ -192,8 +189,6 @@ private:
 	bool pop_member_ctx_;
 	const FunctionDeclarationNode* saved_function_;
 };
-
-
 
 // =============================================================================
 // Generic RAII guard that saves a value on construction and restores it on
@@ -214,7 +209,7 @@ private:
 //   /* ... */
 //   field = std::move(saved);
 
-template<typename T>
+template <typename T>
 class ScopedState {
 public:
 	// Unconditional save/restore (the common case).
@@ -226,16 +221,18 @@ public:
 	//   ScopedState guard(field, !vec.empty());
 	//   if (!vec.empty()) field = new_value;
 	explicit ScopedState(T& field, bool active)
-		: field_ref_(field)
-		, saved_state_(active ? std::optional<T>{std::move(field)} : std::nullopt) {}
+		: field_ref_(field), saved_state_(active ? std::optional<T>{std::move(field)} : std::nullopt) {}
 
-	~ScopedState() { if (saved_state_) field_ref_ = std::move(*saved_state_); }
+	~ScopedState() {
+		if (saved_state_)
+			field_ref_ = std::move(*saved_state_);
+	}
 
 	ScopedState(const ScopedState&) = delete;
 	ScopedState& operator=(const ScopedState&) = delete;
 
 private:
-	T&              field_ref_;
+	T& field_ref_;
 	std::optional<T> saved_state_;
 };
 
@@ -255,9 +252,13 @@ private:
 class TemplateDepthGuard {
 public:
 	explicit TemplateDepthGuard(size_t& depth) : depth_(depth) { depth_++; }
-	~TemplateDepthGuard() { if (depth_ > 0) depth_--; }
+	~TemplateDepthGuard() {
+		if (depth_ > 0)
+			depth_--;
+	}
 	TemplateDepthGuard(const TemplateDepthGuard&) = delete;
 	TemplateDepthGuard& operator=(const TemplateDepthGuard&) = delete;
+
 private:
 	size_t& depth_;
 };

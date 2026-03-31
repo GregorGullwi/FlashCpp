@@ -17,14 +17,12 @@ int main() {
 		__try {
 			*p = 123; // access violation
 			result = 99;
-		}
-		__finally {
+		} __finally {
 			result += 40;
 		}
 
 		result = 99;
-	}
-	__except(p == 0 ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+	} __except (p == 0 ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
 		result += 2;
 	}
 

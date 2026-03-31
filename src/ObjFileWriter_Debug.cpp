@@ -4,12 +4,7 @@
 // ObjFileWriter_Debug.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-
-
 // --- Helper structs for exception info sub-functions ---
-
-
-
 
 // --- Helper static methods ---
 
@@ -116,4 +111,3 @@ ObjectFileWriter::UnwindCodeResult ObjectFileWriter::build_unwind_codes(bool is_
 
 	return result;
 }
-

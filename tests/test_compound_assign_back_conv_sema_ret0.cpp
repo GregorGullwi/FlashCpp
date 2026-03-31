@@ -5,18 +5,21 @@
 int main() {
 	short x = 10;
 	int y = 5;
-	x += y;  // common type is int; result must be back-converted to short
-	if (x != 15) return 1;
+	x += y;	// common type is int; result must be back-converted to short
+	if (x != 15)
+		return 1;
 
 	char c = 'A';
-	c += 1;  // common type is int; back-convert to char
-	if (c != 'B') return 2;
+	c += 1;	// common type is int; back-convert to char
+	if (c != 'B')
+		return 2;
 
 	float f = 1.5f;
 	double d = 2.5;
-	f += d;  // common type is double; back-convert to float
-	// f should be approximately 4.0
-	if (f < 3.9f || f > 4.1f) return 3;
+	f += d;	// common type is double; back-convert to float
+ // f should be approximately 4.0
+	if (f < 3.9f || f > 4.1f)
+		return 3;
 
 	return 0;
 }

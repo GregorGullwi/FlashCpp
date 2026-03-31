@@ -3,7 +3,10 @@
 // Previously, outer_bindings (function parameters and locals) were not passed to the
 // aggregate materializer, causing evaluation to fail.
 
-struct Pt { int x; int y; };
+struct Pt {
+	int x;
+	int y;
+};
 
 constexpr int f(int a, int b) {
 	Pt p{a, b};
@@ -12,7 +15,11 @@ constexpr int f(int a, int b) {
 
 static_assert(f(3, 7) == 10);
 
-struct Triple { int a; int b; int c; };
+struct Triple {
+	int a;
+	int b;
+	int c;
+};
 
 constexpr int g(int x, int y, int z) {
 	Triple t{x, y, z};

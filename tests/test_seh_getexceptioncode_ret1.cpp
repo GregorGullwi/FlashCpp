@@ -9,9 +9,8 @@ unsigned long GetExceptionCode();
 int main() {
 	int* p = 0;
 	__try {
-		*p = 42;  // Access violation
-	}
-	__except(GetExceptionCode() == 0xC0000005 ? 1 : -1) {
+		*p = 42;	 // Access violation
+	} __except (GetExceptionCode() == 0xC0000005 ? 1 : -1) {
 		return 1;  // Exception was caught with correct code
 	}
 	return 0;  // Should not reach here

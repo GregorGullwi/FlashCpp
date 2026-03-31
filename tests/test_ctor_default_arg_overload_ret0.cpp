@@ -5,7 +5,9 @@
 // nullopt for scoped enum arguments, preventing resolve_constructor_overload
 // from running and leaving default arg handling untested.
 
-enum class Color { Red = 1, Green = 2, Blue = 3 };
+enum class Color { Red = 1,
+				   Green = 2,
+				   Blue = 3 };
 
 struct Pixel {
 	int color_val;
@@ -15,6 +17,6 @@ struct Pixel {
 
 int main() {
 	Pixel p(Color::Green);  // uses default alpha = 255
-	// color_val == 2, alpha == 255 => 2 + 255 - 257 == 0
+ // color_val == 2, alpha == 255 => 2 + 255 - 257 == 0
 	return p.color_val + p.alpha - 257;
 }

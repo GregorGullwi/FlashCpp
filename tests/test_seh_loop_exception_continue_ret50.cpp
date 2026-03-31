@@ -10,11 +10,10 @@ int main() {
 		__try {
 			int* p = 0;
 			*p = 42;
-		}
-		__except(EXCEPTION_EXECUTE_HANDLER) {
+		} __except (EXCEPTION_EXECUTE_HANDLER) {
 			caught = 1;
 		}
-		// Code after __try/__except but still in loop
+	// Code after __try/__except but still in loop
 		if (caught) {
 			result = result + 10;
 		}

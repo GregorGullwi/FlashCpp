@@ -1,4 +1,4 @@
-template<typename U, class C, int N>
+template <typename U, class C, int N>
 struct Outer {
 	struct Inner {
 		int value = N + sizeof(C) - sizeof(U);

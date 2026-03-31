@@ -9,6 +9,6 @@
 int arr[SIZE_EXPR];
 
 int main() {
-    // SIZE_EXPR = 1024 / (8 * 4) = 32
-    return SIZE_EXPR;
+	// SIZE_EXPR = 1024 / (8 * 4) = 32
+	return SIZE_EXPR;
 }

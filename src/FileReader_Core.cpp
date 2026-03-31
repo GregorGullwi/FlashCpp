@@ -34,7 +34,6 @@ FileReader::FileReader(CompileContext& settings, FileTree& tree) : settings_(set
 	result_.reserve(default_result_size);
 }
 
-
 size_t FileReader::find_first_non_whitespace_after_hash(const std::string& str) {
 	size_t pos = str.find('#');
 	if (pos == std::string::npos) {
@@ -61,10 +60,10 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	// Save the current file index and parent line to restore when we return from this file
 	size_t saved_file_index = current_file_index_;
 	size_t saved_parent_line = current_parent_line_;
-	
+
 	// Register this file in the file_paths_ vector and update current index
 	current_file_index_ = get_or_add_file_path(file);
-	
+
 	// The parent line is the preprocessed line number corresponding to the #include directive
 	// in the parent file. We need to find that in the line_map.
 	// For the main file, included_at_line is 0, so current_parent_line_ stays 0
@@ -73,7 +72,7 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 		// We search backwards because we just processed that line
 		for (size_t i = line_map_.size(); i > 0; --i) {
 			if (line_map_[i - 1].source_file_index == saved_file_index &&
-			    line_map_[i - 1].source_line == static_cast<size_t>(included_at_line)) {
+				line_map_[i - 1].source_line == static_cast<size_t>(included_at_line)) {
 				current_parent_line_ = i; // 1-based preprocessed line number
 				break;
 			}
@@ -89,7 +88,7 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	std::string file_str(file);
 	std::ifstream stream(file_str);
 	if (!stream.is_open()) {
-		current_file_index_ = saved_file_index;  // Restore on error
+		current_file_index_ = saved_file_index;	// Restore on error
 		current_parent_line_ = saved_parent_line;
 		return false;
 	}
@@ -103,11 +102,11 @@ bool FileReader::readFile(std::string_view file, long included_at_line) {
 	stream.read(file_content.data(), file_size);
 
 	bool result = preprocessFileContent(file_content);
-	
+
 	// Restore the previous file index and parent line when returning
 	current_file_index_ = saved_file_index;
 	current_parent_line_ = saved_parent_line;
-	
+
 	return result;
 }
 
@@ -128,8 +127,8 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 	long& line_number = !filestack_.empty() ? filestack_.top().line_number : line_number_fallback;
 	long prev_line_number = -1;
 	const bool isPreprocessorOnlyMode = settings_.isPreprocessorOnlyMode();
-	size_t line_counter = 0;  // Add counter for debugging
-	
+	size_t line_counter = 0;	 // Add counter for debugging
+
 	// Modified loop to handle pending lines
 	auto getNextLine = [&]() -> bool {
 		if (has_pending_line) {
@@ -144,7 +143,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		stripTrailingCarriageReturn(line);
 		return true;
 	};
-	
+
 	while (getNextLine()) {
 		line_counter++;
 		if (settings_.isVerboseMode() && line_counter % 100 == 0) {
@@ -159,8 +158,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 		if (isPreprocessorOnlyMode && prev_line_number != line_number - 1) {
 			std::cout << "# " << line_number << " \"" << filestack_.top().file_name << "\"\n";
 			prev_line_number = line_number;
-		}
-		else {
+		} else {
 			++prev_line_number;
 		}
 
@@ -169,8 +167,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			if (end_comment_pos != std::string::npos) {
 				in_comment = false;
 				line = line.substr(end_comment_pos + 2);
-			}
-			else {
+			} else {
 				continue;
 			}
 		}
@@ -219,7 +216,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 							size_t nested = line.find("/*", i + 2);
 							if (nested != std::string::npos && nested < close && !filestack_.empty()) {
 								FLASH_LOG(Lexer, Warning, "'/*' within block comment at ",
-								          filestack_.top().file_name, ":", line_number);
+										  filestack_.top().file_name, ":", line_number);
 							}
 							i = close + 2; // skip past */
 						} else {
@@ -244,12 +241,13 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				}
 			}
 			line = std::move(result);
-			if (in_comment) continue;
+			if (in_comment)
+				continue;
 		}
 
 		if (skipping_stack.size() == 0) {
 			FLASH_LOG(Lexer, Error, "Internal compiler error in file ", filestack_.top().file_name, ":", line_number,
-			          " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
+					  " - preprocessor directive stack underflow (too many #endif directives or preprocessor state corruption). Line content: '", line, "'");
 			return false;
 		}
 		const bool skipping = skipping_stack.top();
@@ -290,20 +288,18 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				skipping_stack.pop();
 				condition_was_true_stack.pop();
 				FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
-			}
-			else if (line.find("#if", 0) == 0) {
+			} else if (line.find("#if", 0) == 0) {
 				// Nesting: #if, #ifdef, #ifndef all start with "#if"
 				// Push a new skipping state for any nested conditional
 				// Mark condition_was_true as true to prevent #else/#elif from activating
 				// (since we're skipping due to an outer condition, not this one)
-				FLASH_LOG(Lexer, Debug, "Preprocessor: #if while skipping, pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
+				FLASH_LOG(Lexer, Debug, "Preprocessor: #if while skipping, pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.push(true);
-				condition_was_true_stack.push(true);  // Changed from false
-			}
-			else if (line.find("#elif", 0) == 0) {
+				condition_was_true_stack.push(true);	 // Changed from false
+			} else if (line.find("#elif", 0) == 0) {
 				// If we're skipping and haven't found a true condition yet, evaluate #elif
 				if (!condition_was_true_stack.top()) {
-					std::string condition = line.substr(5);  // Skip "#elif"
+					std::string condition = line.substr(5);	// Skip "#elif"
 					// Strip comments from the condition before evaluating
 					// Handle // line comments
 					size_t line_comment_pos = condition.find("//");
@@ -319,7 +315,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 						} else {
 							// Unterminated block comment - remove to end and log warning
 							FLASH_LOG(Lexer, Warning, "Unterminated block comment in #elif condition at ",
-							          filestack_.top().file_name, ":", filestack_.top().line_number);
+									  filestack_.top().file_name, ":", filestack_.top().line_number);
 							condition = condition.substr(0, block_start);
 							break;
 						}
@@ -342,8 +338,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 					}
 				}
 				// If a previous condition was true, keep skipping
-			}
-			else if (line.find("#else", 0) == 0) {
+			} else if (line.find("#else", 0) == 0) {
 				// Only stop skipping if no previous condition was true
 				if (!condition_was_true_stack.top()) {
 					skipping_stack.top() = false;
@@ -359,30 +354,27 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// Used by C++ standard library headers to include underlying C headers.
 			// Must be checked before #include since #include_next starts with #include.
 			append_line_with_tracking("// " + line);
-			
+
 			if (!processIncludeNextDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
 			}
 			prev_line_number = 0;
-		}
-		else if (line.find("#include", 0) == 0) {
+		} else if (line.find("#include", 0) == 0) {
 			// Record the #include line in line_map BEFORE processing it
 			// so that the included file can find its parent
-			append_line_with_tracking("// " + line);  // Comment it out in output
-			
+			append_line_with_tracking("// " + line);	 // Comment it out in output
+
 			if (!processIncludeDirective(line, filestack_.top().file_name, line_number)) {
 				return false;
 			}
 			// Reset prev_line_number so we print the next row
 			prev_line_number = 0;
-		}
-		else if (line.find("#define", 0) == 0) {
+		} else if (line.find("#define", 0) == 0) {
 			std::istringstream iss(line);
 			iss.seekg("#define"sv.length());
 			handleDefine(iss);
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#ifdef", 0) == 0) {
+		} else if (line.find("#ifdef", 0) == 0) {
 			std::istringstream iss(line);
 			iss.seekg("#ifdef"sv.length());
 			std::string symbol;
@@ -391,35 +383,32 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// to check if the feature is available, then uses __has_builtin(x) with arguments.
 			// We return true for "#ifdef __has_builtin" so the library defines _GLIBCXX_HAS_BUILTIN.
 			bool is_defined = (symbol == "__has_builtin") || (defines_.count(symbol) > 0);
-			FLASH_LOG(Lexer, Debug, "Preprocessor: #ifdef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
+			FLASH_LOG(Lexer, Debug, "Preprocessor: #ifdef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 			skipping_stack.push(!is_defined);
 			condition_was_true_stack.push(is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#ifndef", 0) == 0) {
+		} else if (line.find("#ifndef", 0) == 0) {
 			std::istringstream iss(line);
 			iss.seekg("#ifndef"sv.length());
 			std::string symbol;
 			iss >> symbol;
 			bool is_defined = defines_.count(symbol) > 0;
-			FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
+			FLASH_LOG(Lexer, Debug, "Preprocessor: #ifndef ", symbol, " (defined=", is_defined, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 			skipping_stack.push(is_defined);
 			condition_was_true_stack.push(!is_defined);
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#if", 0) == 0) {
+		} else if (line.find("#if", 0) == 0) {
 			// Extract and expand macros in the condition before evaluation
-			std::string condition = line.substr(3);  // Skip "#if"
+			std::string condition = line.substr(3);	// Skip "#if"
 			condition = expandMacrosForConditional(condition);
 			std::istringstream iss(condition);
 			long expression_result = evaluate_expression(iss);
 			bool condition_true = (expression_result != 0);
-			FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size()+1, " at ", filestack_.top().file_name, ":", line_number);
+			FLASH_LOG(Lexer, Debug, "Preprocessor: #if (result=", condition_true, "), pushing, stack size: ", skipping_stack.size(), " -> ", skipping_stack.size() + 1, " at ", filestack_.top().file_name, ":", line_number);
 			skipping_stack.push(!condition_true);
 			condition_was_true_stack.push(condition_true);
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#elif", 0) == 0) {
+		} else if (line.find("#elif", 0) == 0) {
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #elif directive");
 				return false;
@@ -427,10 +416,9 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// If a previous condition was true, start skipping
 			if (condition_was_true_stack.top()) {
 				skipping_stack.top() = true;
-			}
-			else {
+			} else {
 				// Evaluate the #elif condition
-				std::string condition = line.substr(5);  // Skip "#elif"
+				std::string condition = line.substr(5);	// Skip "#elif"
 				condition = expandMacrosForConditional(condition);
 				std::istringstream iss(condition);
 				long expression_result = evaluate_expression(iss);
@@ -440,36 +428,31 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				}
 			}
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#else", 0) == 0) {
+		} else if (line.find("#else", 0) == 0) {
 			if (skipping_stack.empty() || condition_was_true_stack.empty()) {
 				FLASH_LOG(Lexer, Error, "Unmatched #else directive");
 				return false;
 			}
 			// Only execute #else block if no previous condition was true
 			if (condition_was_true_stack.top()) {
-				skipping_stack.top() = true;  // Start skipping
-			}
-			else {
+				skipping_stack.top() = true;	 // Start skipping
+			} else {
 				skipping_stack.top() = false;  // Stop skipping
 				condition_was_true_stack.top() = true;  // Mark that we're in a true block
 			}
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#endif", 0) == 0) {
+		} else if (line.find("#endif", 0) == 0) {
 			if (!skipping_stack.empty()) {
 				FLASH_LOG(Lexer, Debug, "Preprocessor: #endif (not skipping), stack size before pop: ", skipping_stack.size(), " at ", filestack_.top().file_name, ":", line_number);
 				skipping_stack.pop();
 				condition_was_true_stack.pop();
 				FLASH_LOG(Lexer, Debug, "Preprocessor: stack size after pop: ", skipping_stack.size());
-			}
-			else {
+			} else {
 				FLASH_LOG(Lexer, Error, "Unmatched #endif directive");
 				return false;
 			}
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#error", 0) == 0) {
+		} else if (line.find("#error", 0) == 0) {
 			std::string message = line.substr(6);
 			// Trim leading whitespace
 			size_t first_non_space = message.find_first_not_of(" \t");
@@ -478,8 +461,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			}
 			FLASH_LOG(Lexer, Error, message);
 			return false;
-		}
-		else if (line.find("#warning", 0) == 0) {
+		} else if (line.find("#warning", 0) == 0) {
 			std::string message = line.substr(8);
 			// Trim leading whitespace
 			size_t first_non_space = message.find_first_not_of(" \t");
@@ -487,33 +469,27 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				message = message.substr(first_non_space);
 			}
 			FLASH_LOG(Lexer, Warning, message);
-		}
-		else if (line.find("#undef") == 0) {
+		} else if (line.find("#undef") == 0) {
 			std::istringstream iss(line);
 			iss.seekg("#undef"sv.length());
 			std::string symbol;
 			iss >> symbol;
 			defines_.erase(symbol);
 			append_line_with_tracking("");  // Preserve line numbering
-		}
-		else if (line.find("#pragma once", 0) == 0) {
+		} else if (line.find("#pragma once", 0) == 0) {
 			processedHeaders_.insert(std::string(filestack_.top().file_name));
-		}
-		else if (line.find("#pragma pack", 0) == 0) {
+		} else if (line.find("#pragma pack", 0) == 0) {
 			processPragmaPack(line);
 			// Pass through the pragma pack directive to the parser
 			append_line_with_tracking(line);
-		}
-		else if (line.find("#pragma", 0) == 0) {
+		} else if (line.find("#pragma", 0) == 0) {
 			// Skip other #pragma directives (like #pragma GCC visibility)
 			// These are compiler-specific and don't need to be passed to the parser
 			// Just output a blank line to preserve line numbers
 			append_line_with_tracking("");
-		}
-		else if (line.find("#line", 0) == 0) {
+		} else if (line.find("#line", 0) == 0) {
 			processLineDirective(line);
-		}
-		else {
+		} else {
 			// Handle multiline macro invocations.
 			// If a line has an incomplete macro invocation (unmatched parens),
 			// keep reading lines until we have matching parens.
@@ -522,10 +498,11 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 			// because preprocessor directives cannot be inside macro invocations.
 			auto mergeNextLine = [&]() -> bool {
 				std::string next_line;
-				if (!std::getline(stream, next_line)) return false;
+				if (!std::getline(stream, next_line))
+					return false;
 				stripTrailingCarriageReturn(next_line);
 				++line_number;
-				
+
 				size_t first_non_ws = next_line.find_first_not_of(" \t");
 				if (first_non_ws != std::string::npos && next_line[first_non_ws] == '#') {
 					pending_line = std::move(next_line);
@@ -538,12 +515,13 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 				// by the main loop's comment stripping since they come from
 				// raw stream reads during multi-line macro merging).
 				stripLineComment(next_line);
-				
+
 				line += " " + next_line;
 				return true;
 			};
 			while (hasIncompleteMacroInvocation(line)) {
-				if (!mergeNextLine()) break;
+				if (!mergeNextLine())
+					break;
 			}
 			// C standard §6.10.3: If a function-like macro name is NOT followed
 			// by '(' it is not a macro invocation. When the '(' appears on the
@@ -582,7 +560,8 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 									line += " " + peek_line;
 									// Continue merging if parens are still unmatched
 									while (hasIncompleteMacroInvocation(line)) {
-										if (!mergeNextLine()) break;
+										if (!mergeNextLine())
+											break;
 									}
 								} else {
 									// Not a macro invocation; push back the peeked line
@@ -597,7 +576,7 @@ bool FileReader::preprocessFileContent(const std::string& file_content) {
 					}
 				}
 			}
-			
+
 			// Expand macros in non-directive lines (regular source code).
 			// Only expand if the line is non-empty to avoid unnecessary processing.
 			if (line.size() > 0)
@@ -619,14 +598,14 @@ void FileReader::append_line_with_tracking(const std::string& line) {
 	// Record the mapping before appending
 	if (!filestack_.empty()) {
 		const auto& current_file = filestack_.top();
-		
+
 		line_map_.push_back({
-			current_file_index_,  // Current file
+			current_file_index_,	 // Current file
 			static_cast<size_t>(current_file.line_number),  // Line in current file
-			current_parent_line_  // Preprocessed line where current file was #included
+			current_parent_line_	 // Preprocessed line where current file was #included
 		});
 	}
-	
+
 	result_.append(line).append("\n");
 	current_output_line_++;
 }
@@ -730,20 +709,20 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 	if (settings_.isVerboseMode()) {
 		FLASH_LOG(Lexer, Trace, "expandMacrosForConditional input: '", input, "'");
 	}
-	
+
 	std::string result;
 	size_t pos = 0;
-	
+
 	while (pos < input.size()) {
 		// Look for "defined" or "__has_builtin" keywords
 		size_t defined_pos = input.find("defined", pos);
 		size_t has_builtin_pos = input.find("__has_builtin", pos);
-		
+
 		// Choose the earlier one
 		size_t keyword_pos = std::string::npos;
 		size_t keyword_len = 0;
 		bool is_has_builtin = false;
-		
+
 		if (defined_pos != std::string::npos && (has_builtin_pos == std::string::npos || defined_pos < has_builtin_pos)) {
 			keyword_pos = defined_pos;
 			keyword_len = 7; // "defined"
@@ -752,7 +731,7 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 			keyword_len = 13; // "__has_builtin"
 			is_has_builtin = true;
 		}
-		
+
 		if (keyword_pos == std::string::npos) {
 			// No more special keywords, expand the rest
 			if (settings_.isVerboseMode() && pos < input.size()) {
@@ -761,7 +740,7 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 			result += expandMacros(input.substr(pos));
 			break;
 		}
-		
+
 		// Check if this is actually a keyword (not part of another identifier)
 		bool is_keyword = true;
 		if (keyword_pos > 0) {
@@ -776,57 +755,59 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 				is_keyword = false;
 			}
 		}
-		
+
 		if (!is_keyword) {
 			// Not actually a keyword, just expand and continue
 			result += expandMacros(input.substr(pos, keyword_pos - pos + 1));
 			pos = keyword_pos + 1;
 			continue;
 		}
-		
+
 		// Expand everything before the keyword
 		if (settings_.isVerboseMode() && keyword_pos > pos) {
 			FLASH_LOG(Lexer, Trace, "  Expanding before keyword: '", input.substr(pos, keyword_pos - pos), "'");
 		}
 		result += expandMacros(input.substr(pos, keyword_pos - pos));
-		
+
 		// For __has_builtin, copy the entire __has_builtin(...) expression without expansion
 		if (is_has_builtin) {
 			result += "__has_builtin";
 			pos = keyword_pos + keyword_len;
-			
+
 			// Skip whitespace
 			while (pos < input.size() && std::isspace(input[pos])) {
 				result += input[pos++];
 			}
-			
+
 			// Expect '(' for __has_builtin
 			if (pos < input.size() && input[pos] == '(') {
 				result += "(";
 				pos++;
-				
+
 				// Find matching ')'
 				int paren_depth = 1;
 				while (pos < input.size() && paren_depth > 0) {
-					if (input[pos] == '(') paren_depth++;
-					else if (input[pos] == ')') paren_depth--;
+					if (input[pos] == '(')
+						paren_depth++;
+					else if (input[pos] == ')')
+						paren_depth--;
 					result += input[pos++];
 				}
 			}
 			continue;
 		}
-		
+
 		// For "defined" keyword, use existing logic
-		result += "defined";  // Add the keyword itself
-		
+		result += "defined";	 // Add the keyword itself
+
 		// Skip past "defined"
 		pos = keyword_pos + 7; // length of "defined"
-		
+
 		// Skip whitespace
 		while (pos < input.size() && std::isspace(input[pos])) {
 			result += input[pos++];
 		}
-		
+
 		// Check if there's a '('
 		bool has_paren = (pos < input.size() && input[pos] == '(');
 		if (has_paren) {
@@ -837,29 +818,29 @@ std::string FileReader::expandMacrosForConditional(const std::string& input) {
 				result += input[pos++];
 			}
 		}
-		
+
 		// Extract the identifier (don't expand it!)
 		size_t ident_start = pos;
 		while (pos < input.size() && (std::isalnum(input[pos]) || input[pos] == '_')) {
 			pos++;
 		}
 		result += input.substr(ident_start, pos - ident_start);
-		
+
 		// Skip whitespace
 		while (pos < input.size() && std::isspace(input[pos])) {
 			result += input[pos++];
 		}
-		
+
 		// If there was a '(', expect a ')'
 		if (has_paren && pos < input.size() && input[pos] == ')') {
 			result += ")";
 			pos++;
 		}
 	}
-	
+
 	if (settings_.isVerboseMode()) {
 		FLASH_LOG(Lexer, Trace, "expandMacrosForConditional output: '", result, "'");
 	}
-	
+
 	return result;
 }

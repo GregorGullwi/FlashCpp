@@ -4,11 +4,11 @@
 // This tests that ADL correctly resolves the struct's namespace_handle
 // when the struct is not in the global namespace.
 namespace ns {
-	struct S {
-		int x;
-		friend int get_value(S& s) { return s.x; }
-	};
-}
+struct S {
+	int x;
+	friend int get_value(S& s) { return s.x; }
+};
+} // namespace ns
 int main() {
 	ns::S s;
 	s.x = 42;

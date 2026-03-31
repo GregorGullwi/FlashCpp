@@ -10,10 +10,12 @@ struct Widget {
 
 int main() {
 	Widget a(10);
-	Widget b(a);  // copy: was_copied == true, id == 10
+	Widget b(a);	 // copy: was_copied == true, id == 10
 
 	int result = 0;
-	if (!b.was_copied) result += 1;  // should be 0 (was_copied is true)
-	if (b.id != 10) result += 2;
+	if (!b.was_copied)
+		result += 1;	 // should be 0 (was_copied is true)
+	if (b.id != 10)
+		result += 2;
 	return result;  // 0
 }

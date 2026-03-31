@@ -1,7 +1,7 @@
 struct MyStruct {
-    static const int value = 42;
+	static const int value = 42;
 };
 
 int main() {
-    return MyStruct::value;
+	return MyStruct::value;
 }

@@ -1,2 +1,2 @@
 int return2() { return 4; }
-int main() { return return2(); } 
+int main() { return return2(); }

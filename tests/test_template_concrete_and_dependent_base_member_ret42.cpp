@@ -4,17 +4,17 @@
 // lazy resolver from eagerly binding to the concrete base; the Unresolved codegen
 // fallback resolves it correctly at instantiation time.
 struct ConcreteBase {
-    int x = 42;
+	int x = 42;
 };
 
-template<typename DepBase>
+template <typename DepBase>
 struct D : ConcreteBase, DepBase {
-    int get_x() { return x; }  // x lives in ConcreteBase, not in DepBase
+	int get_x() { return x; }  // x lives in ConcreteBase, not in DepBase
 };
 
 struct Empty {};
 
 int main() {
-    D<Empty> d;
-    return d.get_x();  // returns 42
+	D<Empty> d;
+	return d.get_x();  // returns 42
 }

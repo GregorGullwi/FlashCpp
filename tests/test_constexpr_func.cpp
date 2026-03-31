@@ -1,15 +1,15 @@
 // Test constexpr functions
 
 constexpr int add(int a, int b) {
-    return a + b;
+	return a + b;
 }
 
 constexpr int square(int x) {
-    return x * x;
+	return x * x;
 }
 
 constexpr int factorial(int n) {
-    return n <= 1 ? 1 : n * factorial(n - 1);
+	return n <= 1 ? 1 : n * factorial(n - 1);
 }
 
 // Test usage in static_assert

@@ -2,19 +2,19 @@
 // This pattern is used in <ratio> header
 
 struct TestStruct {
-    static const int value = 42;
-    static_assert(value == 42, "value should be 42");
+	static const int value = 42;
+	static_assert(value == 42, "value should be 42");
 };
 
-template<int N>
+template <int N>
 struct TemplateStruct {
-    static constexpr int computed = N * 2;
-    static_assert(computed > 0, "computed should be positive");
+	static constexpr int computed = N * 2;
+	static_assert(computed > 0, "computed should be positive");
 };
 
 int main() {
-    // Force template instantiation
-    TemplateStruct<5> ts;
-    (void)ts;  // Suppress unused warning
-    return TestStruct::value - 42;
+	// Force template instantiation
+	TemplateStruct<5> ts;
+	(void)ts;  // Suppress unused warning
+	return TestStruct::value - 42;
 }

@@ -2,7 +2,7 @@
 struct Bitfields {
 	int a : 5;
 	int b : 3;
-	int : 24;      // unnamed padding bitfield
+	int : 24;	  // unnamed padding bitfield
 	int c : 8;
 	int d : 16;
 };

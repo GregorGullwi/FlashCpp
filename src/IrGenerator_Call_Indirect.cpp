@@ -116,15 +116,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 					} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 						arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-						                                      static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
+															  static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 					} else {
 						// For complex expressions, evaluate and get type
 						ExprResult operand_result = visitExpressionNode(arg_expr);
 						arg_types.push_back(TypeSpecifierNode(
-						    operand_result.typeEnum(),
-						    TypeQualifier::None,
-						    static_cast<unsigned char>(operand_result.size_in_bits.value),
-						    Token{}, CVQualifier::None));
+							operand_result.typeEnum(),
+							TypeQualifier::None,
+							static_cast<unsigned char>(operand_result.size_in_bits.value),
+							Token{}, CVQualifier::None));
 					}
 				});
 
@@ -153,12 +153,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				std::string instantiation_key = std::to_string(lambda.lambda_id());
 				for (const auto& deduced : deduced_param_types) {
 					instantiation_key += "_" + std::to_string(static_cast<int>(deduced.type())) +
-					                     "_" + std::to_string(deduced.size_in_bits());
+										 "_" + std::to_string(deduced.size_in_bits());
 				}
 
 				// Check if we've already scheduled this instantiation
 				if (generated_generic_lambda_instantiations_.find(instantiation_key) ==
-				    generated_generic_lambda_instantiations_.end()) {
+					generated_generic_lambda_instantiations_.end()) {
 					// Schedule this instantiation
 					GenericLambdaInstantiation inst;
 					inst.lambda_id = lambda.lambda_id();
@@ -176,8 +176,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 							// Store deduced types (full TypeSpecifierNode to preserve struct info and reference flags)
 							for (size_t i = 0; i < auto_param_indices.size() && i < deduced_param_types.size(); ++i) {
 								lambda_info.setDeducedType(
-								    auto_param_indices[i],
-								    deduced_param_types[i]);
+									auto_param_indices[i],
+									deduced_param_types[i]);
 							}
 							break;
 						}
@@ -196,13 +196,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 			// Generate mangled name for __invoke (matching how it's defined in generateLambdaInvokeFunction)
 			std::string_view mangled = generateMangledNameForCall(
-			    StringTable::getStringView(invoke_name),
-			    return_type_node,
-			    param_types,
-			    false, // not variadic
-			    "", // not a member function
-			    {}, // namespace_path
-			    false // free function, never const
+				StringTable::getStringView(invoke_name),
+				return_type_node,
+				param_types,
+				false, // not variadic
+				"", // not a member function
+				{}, // namespace_path
+				false // free function, never const
 			);
 
 			call_op.function_name = StringTable::getOrInternStringHandle(mangled);
@@ -249,11 +249,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 		immediate_lambda_object_name = std::get<StringHandle>(lambda_result.value);
 		immediate_lambda_object_type = TypeSpecifierNode(
-		    lambda_result.type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(lambda_result.size_in_bits.value),
-		    memberFunctionCallNode.called_from(),
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			lambda_result.type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(lambda_result.size_in_bits.value),
+			memberFunctionCallNode.called_from(),
+			CVQualifier::None,
+			ReferenceQualifier::None);
 
 		// For capturing lambdas, continue into the regular member function call path
 		// using the generated closure variable as the object.
@@ -306,14 +306,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* closure_type = type_it->second;
 							int closure_size = closure_type->getStructInfo()
-							                       ? closure_type->getStructInfo()->total_size * 8
-							                       : 64;
+												   ? closure_type->getStructInfo()->total_size * 8
+												   : 64;
 							object_type = TypeSpecifierNode(
-							    closure_type->type_index_.withCategory(TypeCategory::Struct),
-							    closure_size,
-							    object_decl->identifier_token(),
-							    CVQualifier::None,
-							    ReferenceQualifier::None);
+								closure_type->type_index_.withCategory(TypeCategory::Struct),
+								closure_size,
+								object_decl->identifier_token(),
+								CVQualifier::None,
+								ReferenceQualifier::None);
 							// Preserve rvalue reference flag
 							object_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 						}
@@ -421,9 +421,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				});
 
 				IndirectCallOp op{
-				    .result = ret_var,
-				    .function_pointer = std::move(function_pointer),
-				    .arguments = std::move(arguments)};
+					.result = ret_var,
+					.function_pointer = std::move(function_pointer),
+					.arguments = std::move(arguments)};
 				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 
 				if (!resolved_member->function_signature) {
@@ -479,9 +479,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 								});
 
 								IndirectCallOp op{
-								    .result = ret_var,
-								    .function_pointer = func_ptr_temp,
-								    .arguments = std::move(arguments)};
+									.result = ret_var,
+									.function_pointer = func_ptr_temp,
+									.arguments = std::move(arguments)};
 								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 
 								// Use the function pointer's stored return type
@@ -496,7 +496,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 						// Not a function pointer member - set object_type for regular member function lookup
 						object_type = TypeSpecifierNode(resolved_member->type_index.withCategory(TypeCategory::Struct),
-						                                resolved_member->size * 8, Token(), CVQualifier::None, ReferenceQualifier::None); // size in bits
+														resolved_member->size * 8, Token(), CVQualifier::None, ReferenceQualifier::None); // size in bits
 						resolved_member_object_type = true;
 					}
 				}
@@ -569,11 +569,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		}
 		if (!eval_result.success()) {
 			throw CompileError("call to consteval function '" + std::string(func_name_sv) +
-			                   "' cannot be used in a non-constant context: " + eval_result.error_message);
+							   "' cannot be used in a non-constant context: " + eval_result.error_message);
 		}
 		// Materialize the constant result — reuse the same scalar/struct helpers as the direct path.
 		const TypeSpecifierNode& ret_spec =
-		    func_decl_node.type_node().as<TypeSpecifierNode>();
+			func_decl_node.type_node().as<TypeSpecifierNode>();
 		const TypeCategory ret_type = ret_spec.type();
 		const int ret_bits_raw = static_cast<int>(ret_spec.size_in_bits());
 		const SizeInBits ret_size{ret_bits_raw != 0 ? ret_bits_raw : static_cast<int>(get_type_size_bits(ret_type))};
@@ -592,8 +592,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		}
 		if (!eval_result.object_member_bindings.empty()) {
 			auto agg = materializeConstevalAggregateResult(
-			    eval_result, ret_spec, ret_type, ret_size,
-			    memberFunctionCallNode.called_from());
+				eval_result, ret_spec, ret_type, ret_size,
+				memberFunctionCallNode.called_from());
 			if (agg.category() != TypeCategory::Void)
 				return agg;
 		}
@@ -683,8 +683,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 			for (const auto& member_func : struct_info->member_functions) {
 				if (member_func.getName() == func_name_handle &&
-				    member_func.function_decl.is<FunctionDeclarationNode>() &&
-				    matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
+					member_func.function_decl.is<FunctionDeclarationNode>() &&
+					matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
 					called_member_func = &member_func;
 					if (member_func.is_virtual) {
 						is_virtual_call = true;
@@ -696,8 +696,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			if (!called_member_func) {
 				for (const auto& member_func : struct_info->member_functions) {
 					if (member_func.getName() == func_name_handle &&
-					    member_func.function_decl.is<FunctionDeclarationNode>() &&
-					    isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
+						member_func.function_decl.is<FunctionDeclarationNode>() &&
+						isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
 						called_member_func = &member_func;
 						if (member_func.is_virtual) {
 							is_virtual_call = true;
@@ -720,8 +720,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 									// Check member functions in base class
 									for (const auto& member_func : base_struct_info->member_functions) {
 										if (member_func.getName() == func_name_handle &&
-										    member_func.function_decl.is<FunctionDeclarationNode>() &&
-										    matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
+											member_func.function_decl.is<FunctionDeclarationNode>() &&
+											matchesSelectedMemberDecl(member_func.function_decl.as<FunctionDeclarationNode>())) {
 											called_member_func = &member_func;
 											declaring_struct = base_struct_info; // Update to use base class name
 											if (member_func.is_virtual) {
@@ -733,8 +733,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 									}
 									for (const auto& member_func : base_struct_info->member_functions) {
 										if (member_func.getName() == func_name_handle &&
-										    member_func.function_decl.is<FunctionDeclarationNode>() &&
-										    isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
+											member_func.function_decl.is<FunctionDeclarationNode>() &&
+											isViableMemberOverload(member_func.function_decl.as<FunctionDeclarationNode>())) {
 											called_member_func = &member_func;
 											declaring_struct = base_struct_info;
 											if (member_func.is_virtual) {
@@ -797,9 +797,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
 					member_load.struct_type_info = nullptr; // Not used downstream; consistent with all other MemberLoadOp sites
 					member_load.is_pointer_to_member = object_decl &&
-					                                   (object_decl->type_node().as<TypeSpecifierNode>().pointer_depth() > 0 ||
-					                                    object_decl->type_node().as<TypeSpecifierNode>().is_reference() ||
-					                                    object_decl->type_node().as<TypeSpecifierNode>().is_rvalue_reference());
+													   (object_decl->type_node().as<TypeSpecifierNode>().pointer_depth() > 0 ||
+														object_decl->type_node().as<TypeSpecifierNode>().is_reference() ||
+														object_decl->type_node().as<TypeSpecifierNode>().is_rvalue_reference());
 
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
@@ -814,9 +814,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					});
 
 					IndirectCallOp op{
-					    .result = ret_var,
-					    .function_pointer = func_ptr_temp,
-					    .arguments = std::move(arguments)};
+						.result = ret_var,
+						.function_pointer = func_ptr_temp,
+						.arguments = std::move(arguments)};
 					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
 
 					// Use the function pointer's stored return type
@@ -906,7 +906,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						bool should_instantiate = true;
 						if (template_func.has_requires_clause()) {
 							const RequiresClauseNode& requires_clause =
-							    template_func.requires_clause()->as<RequiresClauseNode>();
+								template_func.requires_clause()->as<RequiresClauseNode>();
 
 							// Get template parameter names for evaluation
 							InlineVector<std::string_view, 4> eval_param_names;
@@ -924,7 +924,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 							// Evaluate the constraint with the template arguments
 							auto constraint_result = evaluateConstraint(
-							    requires_clause.constraint_expr(), type_args, eval_param_names);
+								requires_clause.constraint_expr(), type_args, eval_param_names);
 
 							if (!constraint_result.satisfied) {
 								// Constraint not satisfied - report detailed error
@@ -1009,7 +1009,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			std::string_view access_str = (called_member_func->access == AccessSpecifier::Private) ? "private"sv : "protected"sv;
 			std::string context_str = current_context ? (std::string(" from '") + std::string(StringTable::getStringView(current_context->getName())) + "'") : "";
 			FLASH_LOG(Codegen, Error, "Cannot access ", access_str, " member function '", called_member_func->getName(),
-			          "' of '", struct_info->getName(), "'", context_str);
+					  "' of '", struct_info->getName(), "'", context_str);
 			throw CompileError("Access control violation");
 		}
 	}
@@ -1022,17 +1022,17 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// Get return type from the actual member function (if found) instead of the placeholder declaration
 		// The placeholder may not have correct pointer depth information for the return type
 		const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-		                              ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
-		                              : func_decl_node.type_node().as<TypeSpecifierNode>();
+									  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
+									  : func_decl_node.type_node().as<TypeSpecifierNode>();
 		vcall_op.result.setType(return_type.category());
 		vcall_op.result.ir_type = toIrType(return_type.type());
 		// For pointer return types, use 64 bits (pointer size), otherwise use the type's size
 		// Also handle reference return types as pointers (64 bits)
 		FLASH_LOG(Codegen, Debug, "VirtualCall return_type: ptr_depth=", return_type.pointer_depth(),
-		          " is_ptr=", return_type.is_pointer(),
-		          " is_ref=", return_type.is_reference(),
-		          " is_rref=", return_type.is_rvalue_reference(),
-		          " size_bits=", return_type.size_in_bits());
+				  " is_ptr=", return_type.is_pointer(),
+				  " is_ref=", return_type.is_reference(),
+				  " is_rref=", return_type.is_rvalue_reference(),
+				  " size_bits=", return_type.size_in_bits());
 		if (return_type.pointer_depth() > 0 || return_type.is_pointer() || return_type.is_reference() || return_type.is_rvalue_reference()) {
 			vcall_op.result.size_in_bits = SizeInBits{64};
 		} else {
@@ -1150,7 +1150,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				// const reference that cannot be rebound during template substitution.
 				const FunctionDeclarationNode* func_for_mangling = &func_decl;
 				if (called_member_func &&
-				    called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+					called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 					func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 				}
 
@@ -1186,14 +1186,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 											if (type_it != getTypesByNameMap().end()) {
 												const TypeInfo* closure_type = type_it->second;
 												int closure_size = closure_type->getStructInfo()
-												                       ? closure_type->getStructInfo()->total_size * 8
-												                       : 64;
+																	   ? closure_type->getStructInfo()->total_size * 8
+																	   : 64;
 												type_node = TypeSpecifierNode(
-												    closure_type->type_index_.withCategory(TypeCategory::Struct),
-												    closure_size,
-												    decl->identifier_token(),
-												    CVQualifier::None,
-												    ReferenceQualifier::None);
+													closure_type->type_index_.withCategory(TypeCategory::Struct),
+													closure_size,
+													decl->identifier_token(),
+													CVQualifier::None,
+													ReferenceQualifier::None);
 												// Preserve rvalue reference flag
 												type_node.set_reference_qualifier(ReferenceQualifier::RValueReference);
 											}
@@ -1210,7 +1210,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 							arg_types.push_back(TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None));
 						} else if (const auto* literal = std::get_if<NumericLiteralNode>(&arg_expr)) {
 							arg_types.push_back(TypeSpecifierNode(literal->type(), TypeQualifier::None,
-							                                      static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
+																  static_cast<unsigned char>(literal->sizeInBits()), Token{}, CVQualifier::None));
 						} else {
 							// Default to int for complex expressions
 							arg_types.push_back(TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, 32, Token{}, CVQualifier::None));
@@ -1251,11 +1251,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						sema_->normalizeInstantiatedLambdaBody(*matched_lambda_info);
 						if (!isPlaceholderAutoType(matched_lambda_info->return_type_index.category())) {
 							resolved_generic_return_type.emplace(
-							    matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
-							    matched_lambda_info->return_size,
-							    matched_lambda_info->lambda_token,
-							    CVQualifier::None,
-							    ReferenceQualifier::None);
+								matched_lambda_info->return_type_index.withCategory(matched_lambda_info->returnType()),
+								matched_lambda_info->return_size,
+								matched_lambda_info->lambda_token,
+								CVQualifier::None,
+								ReferenceQualifier::None);
 							if (matched_lambda_info->returns_reference) {
 								resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
 								resolved_generic_return_type->set_size_in_bits(64);
@@ -1287,13 +1287,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 				// Generate proper mangled name including parameter types
 				std::string_view mangled = generateMangledNameForCall(
-				    func_name,
-				    *mangling_return_type,
-				    param_types,
-				    func_for_mangling->is_variadic(),
-				    struct_name_view,
-				    namespace_for_mangling,
-				    func_for_mangling->is_const_member_function());
+					func_name,
+					*mangling_return_type,
+					param_types,
+					func_for_mangling->is_variadic(),
+					struct_name_view,
+					namespace_for_mangling,
+					func_for_mangling->is_const_member_function());
 				function_name = StringTable::getOrInternStringHandle(mangled);
 			}
 		} else {
@@ -1327,7 +1327,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// Get the actual function declaration to check if it's variadic
 		const FunctionDeclarationNode* actual_func_decl_for_variadic = &func_decl;
 		if (called_member_func &&
-		    called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl_for_variadic = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
 		call_op.is_variadic = actual_func_decl_for_variadic->is_variadic();
@@ -1337,20 +1337,20 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		bool needs_hidden_return_param = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), return_type.size_in_bits(), context_->isLLP64());
 
 		FLASH_LOG_FORMAT(Codegen, Debug,
-		                 "Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
-		                 returns_struct_by_value, return_type.size_in_bits(), getStructReturnThreshold(context_->isLLP64()), needs_hidden_return_param);
+						 "Member function call check: returns_struct={}, size={}, threshold={}, needs_hidden={}",
+						 returns_struct_by_value, return_type.size_in_bits(), getStructReturnThreshold(context_->isLLP64()), needs_hidden_return_param);
 
 		if (needs_hidden_return_param) {
 			call_op.return_slot = ret_var; // The result temp var serves as the return slot
 
 			FLASH_LOG_FORMAT(Codegen, Debug,
-			                 "Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
-			                 StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
+							 "Member function call {} returns struct by value (size={} bits) - using return slot (temp_{})",
+							 StringTable::getStringView(function_name), return_type.size_in_bits(), ret_var.var_number);
 		} else if (returns_struct_by_value) {
 			// Small struct return - no return slot needed
 			FLASH_LOG_FORMAT(Codegen, Debug,
-			                 "Member function call {} returns small struct by value (size={} bits) - will return in RAX",
-			                 StringTable::getStringView(function_name), return_type.size_in_bits());
+							 "Member function call {} returns small struct by value (size={} bits) - will return in RAX",
+							 StringTable::getStringView(function_name), return_type.size_in_bits());
 		}
 
 		// Add the object as the first argument (this pointer)
@@ -1411,7 +1411,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// template declaration.
 		const FunctionDeclarationNode* actual_func_decl = &func_decl;
 		if (called_member_func &&
-		    called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
 
@@ -1446,11 +1446,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			bool sema_ref_binding_applied = false;
 			if (param_type && sema_ref_binding && sema_ref_binding->is_valid()) {
 				ExpressionContext arg_context = sema_ref_binding->binds_directly()
-				                                    ? ExpressionContext::LValueAddress
-				                                    : ExpressionContext::Load;
+													? ExpressionContext::LValueAddress
+													: ExpressionContext::Load;
 				sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
-				        *sema_evaluated_arg, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
+						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
 					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
 					typed_arg.cv_qualifier = param_type->cv_qualifier();
 					typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
@@ -1458,8 +1458,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						typed_arg.type_index = param_type->type_index();
 					}
 					typed_arg.ref_qualifier = param_type->is_rvalue_reference()
-					                              ? ReferenceQualifier::RValueReference
-					                              : ReferenceQualifier::LValueReference;
+												  ? ReferenceQualifier::RValueReference
+												  : ReferenceQualifier::LValueReference;
 					call_op.args.push_back(std::move(typed_arg));
 					arg_index++;
 					sema_ref_binding_applied = true;
@@ -1483,29 +1483,29 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
-					    param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference - pass the address of the argument
 						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 							// Argument is already a reference - just pass it through
 							// Use 64-bit pointer size since references are passed as pointers
 							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-							                                      IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
+																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 						} else {
 							// Argument is a value - take its address
 							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 							// Pass the address with pointer size
 							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-							                                      IrValue(addr_var), ReferenceQualifier::LValueReference));
+																  IrValue(addr_var), ReferenceQualifier::LValueReference));
 						}
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
 						ExprResult arg_result = sema_evaluated_arg
-						                            ? *sema_evaluated_arg
-						                            : visitExpressionNode(argument.as<ExpressionNode>());
+													? *sema_evaluated_arg
+													: visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
 							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-							        arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
 								arg_result = *materialized;
 							} else {
 								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
@@ -1521,29 +1521,29 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 					// Check if parameter expects a reference
 					if (!sema_ref_binding_applied &&
-					    param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+						param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 						// Parameter expects a reference - pass the address of the argument
 						if (type_node.is_reference() || type_node.is_rvalue_reference()) {
 							// Argument is already a reference - just pass it through
 							// Use 64-bit pointer size since references are passed as pointers
 							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-							                                      IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
+																  IrValue(StringTable::getOrInternStringHandle(identifier.name())), ReferenceQualifier::LValueReference));
 						} else {
 							// Argument is a value - take its address
 							TempVar addr_var = emitAddressOf(type_node.category(), static_cast<int>(type_node.size_in_bits()), IrValue(StringTable::getOrInternStringHandle(identifier.name())));
 
 							// Pass the address with pointer size
 							call_op.args.push_back(makeTypedValue(type_node.type(), SizeInBits{64},
-							                                      IrValue(addr_var), ReferenceQualifier::LValueReference));
+																  IrValue(addr_var), ReferenceQualifier::LValueReference));
 						}
 					} else {
 						// Regular pass by value; reuse already-evaluated result to avoid double evaluation.
 						ExprResult arg_result = sema_evaluated_arg
-						                            ? *sema_evaluated_arg
-						                            : visitExpressionNode(argument.as<ExpressionNode>());
+													? *sema_evaluated_arg
+													: visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
 							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-							        arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
 								arg_result = *materialized;
 							} else {
 								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
@@ -1554,11 +1554,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				} else {
 					// Unknown symbol type - fall back to visitExpressionNode
 					ExprResult argument_result = sema_evaluated_arg
-					                                 ? *sema_evaluated_arg
-					                                 : visitExpressionNode(argument.as<ExpressionNode>());
+													 ? *sema_evaluated_arg
+													 : visitExpressionNode(argument.as<ExpressionNode>());
 					if (param_type) {
 						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-						        argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
 							argument_result = *materialized;
 						} else {
 							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
@@ -1570,19 +1570,19 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				// Not an identifier - reuse the already-evaluated result when sema
 				// ref-binding ran but returned nullopt to avoid double expression evaluation.
 				ExprResult argument_result = sema_evaluated_arg
-				                                 ? *sema_evaluated_arg
-				                                 : visitExpressionNode(argument.as<ExpressionNode>());
+												 ? *sema_evaluated_arg
+												 : visitExpressionNode(argument.as<ExpressionNode>());
 
 				// Check if parameter expects a reference and argument is a literal
 				if (!sema_ref_binding_applied &&
-				    param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+					param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
 					// Parameter expects a reference, but argument is not an identifier
 					// We need to materialize the value into a temporary and pass its address
 
 					// Check if this is a literal value
 					bool is_literal =
-					    std::holds_alternative<unsigned long long>(argument_result.value) ||
-					    std::holds_alternative<double>(argument_result.value);
+						std::holds_alternative<unsigned long long>(argument_result.value) ||
+						std::holds_alternative<double>(argument_result.value);
 
 					if (is_literal) {
 						// Materialize the literal into a temporary variable
@@ -1615,7 +1615,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 						// Pass the address
 						call_op.args.push_back(makeTypedValue(literal_type, SizeInBits{64},
-						                                      IrValue(addr_var), ReferenceQualifier::LValueReference));
+															  IrValue(addr_var), ReferenceQualifier::LValueReference));
 					} else {
 						// Not a literal (expression result in a TempVar) - take its address
 						if (std::holds_alternative<TempVar>(argument_result.value)) {
@@ -1626,7 +1626,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 							TempVar addr_var = emitAddressOf(expr_type, expr_size, IrValue(expr_var));
 
 							call_op.args.push_back(makeTypedValue(expr_type, SizeInBits{64},
-							                                      IrValue(addr_var), ReferenceQualifier::LValueReference));
+																  IrValue(addr_var), ReferenceQualifier::LValueReference));
 						} else {
 							// Fallback - just pass through
 							call_op.args.push_back(toTypedValue(argument_result));
@@ -1636,7 +1636,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					// Parameter doesn't expect a reference - pass through as-is
 					if (param_type) {
 						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-						        argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
 							argument_result = *materialized;
 						} else {
 							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
@@ -1662,8 +1662,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// If we found the actual member function from the struct, use its return type
 	// Otherwise fall back to the placeholder function declaration
 	const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
-	                              ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
-	                              : func_decl_node.type_node().as<TypeSpecifierNode>();
+								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
+								  : func_decl_node.type_node().as<TypeSpecifierNode>();
 	if (return_type.is_reference() || return_type.is_rvalue_reference()) {
 		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 		int referenced_size_bits = getTypeSpecSizeBits(return_type);
@@ -1677,16 +1677,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// For pointer/reference return types, use 64 bits (pointer size on x64)
 	// Otherwise, use the type's natural size
 	int return_size_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-	                           ? 64
-	                           : static_cast<int>(return_type.size_in_bits());
+							   ? 64
+							   : static_cast<int>(return_type.size_in_bits());
 
 	TypeIndex ret_type_index = isIrStructType(toIrType(return_type.type()))
-	                               ? return_type.type_index()
-	                               : TypeIndex{};
+								   ? return_type.type_index()
+								   : TypeIndex{};
 	{
 		ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
-		                      ? ValueStorage::ContainsAddress
-		                      : ValueStorage::ContainsData;
+							  ? ValueStorage::ContainsAddress
+							  : ValueStorage::ContainsData;
 		return makeExprResult(ret_type_index.withCategory(return_type.type()), SizeInBits{return_size_bits}, IrOperand{ret_var}, PointerDepth{}, st);
 	}
 }

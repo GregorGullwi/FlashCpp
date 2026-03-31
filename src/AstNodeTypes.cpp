@@ -23,7 +23,7 @@ private:
 public:
 	// Constructor: check for cycles and register this type
 	explicit RecursionGuard(const StructTypeInfo* type)
-	    : type_(type), is_active_(false) {
+		: type_(type), is_active_(false) {
 		// Check if we're already resolving this type (cycle detection)
 		if (resolution_stack_.contains(type_)) {
 			return; // Cycle detected, leave is_active_ as false
@@ -693,8 +693,8 @@ const StructMemberFunction* StructTypeInfo::findDefaultConstructor() const {
 }
 
 InlineVector<const StructMemberFunction*, 4> StructTypeInfo::getConstructorsByParameterCount(
-    size_t parameter_count,
-    bool skip_implicit) const {
+	size_t parameter_count,
+	bool skip_implicit) const {
 	InlineVector<const StructMemberFunction*, 4> matches;
 	bool hasNonImplicitMatch = false;
 	for (const auto& func : member_functions) {
@@ -818,8 +818,8 @@ bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 //   2. None of the finders accepted ctors with default arguments
 //      (e.g. Foo(const Foo&, int = 0)).
 const StructMemberFunction* StructTypeInfo::findSameTypeConstructorCore(
-    bool want_move,
-    bool include_implicit) const {
+	bool want_move,
+	bool include_implicit) const {
 	for (const auto& func : member_functions) {
 		if (!func.is_constructor || !func.function_decl.is<ConstructorDeclarationNode>()) {
 			continue;
@@ -875,18 +875,18 @@ const StructMemberFunction* StructTypeInfo::findMoveConstructor(bool include_imp
 // Preferred same-type constructor: try move (if not deleted) then copy (if not
 // deleted), with optional implicit-ctor participation.
 const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
-    bool prefer_move,
-    bool include_implicit) const {
+	bool prefer_move,
+	bool include_implicit) const {
 	if (prefer_move && !isMoveConstructorDeleted()) {
 		if (const StructMemberFunction* move_ctor =
-		        findSameTypeConstructorCore(true, include_implicit)) {
+				findSameTypeConstructorCore(true, include_implicit)) {
 			return move_ctor;
 		}
 	}
 
 	if (!isCopyConstructorDeleted()) {
 		if (const StructMemberFunction* copy_ctor =
-		        findSameTypeConstructorCore(false, include_implicit)) {
+				findSameTypeConstructorCore(false, include_implicit)) {
 			return copy_ctor;
 		}
 	}
@@ -896,9 +896,9 @@ const StructMemberFunction* StructTypeInfo::findPreferredSameTypeConstructor(
 
 namespace {
 bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
-                                          const StructMemberFunction& func,
-                                          bool want_move,
-                                          bool include_implicit) {
+										  const StructMemberFunction& func,
+										  bool want_move,
+										  bool include_implicit) {
 	if (!isAssignOperator(func.operator_kind)) {
 		return false;
 	}
@@ -912,7 +912,7 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 	}
 
 	const OverloadableOperator expected_kind =
-	    want_move ? OverloadableOperator::MoveAssign : OverloadableOperator::CopyAssign;
+		want_move ? OverloadableOperator::MoveAssign : OverloadableOperator::CopyAssign;
 	if (func.operator_kind == expected_kind) {
 		return true;
 	}
@@ -936,8 +936,8 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 
 	const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 	const bool matches_reference = want_move
-	                                   ? param_type.is_rvalue_reference()
-	                                   : param_type.is_lvalue_reference();
+									   ? param_type.is_rvalue_reference()
+									   : param_type.is_lvalue_reference();
 	return matches_reference && param_type.category() == TypeCategory::Struct && struct_info.isOwnTypeIndex(param_type.type_index());
 }
 } // namespace
@@ -1202,8 +1202,8 @@ bool StructTypeInfo::buildVTable() {
 			if (base_func_ptr && base_func_ptr->is_final) {
 				// Error: attempting to override a final function
 				std::string error_msg = "cannot override final function '" +
-				                        std::string(StringTable::getStringView(func_name)) + "' in class '" +
-				                        std::string(StringTable::getStringView(getName())) + "'";
+										std::string(StringTable::getStringView(func_name)) + "' in class '" +
+										std::string(StringTable::getStringView(getName())) + "'";
 				FLASH_LOG(Parser, Error, error_msg);
 				finalization_error_ = error_msg;
 				success = false;
@@ -1227,9 +1227,9 @@ bool StructTypeInfo::buildVTable() {
 				// Error: 'override' specified but no base function to override
 				// Enforces [class.virtual]/4: ill-formed if override doesn't match
 				std::string error_msg = "function '" +
-				                        std::string(StringTable::getStringView(func_name)) +
-				                        "' marked 'override' but does not override any base class function in class '" +
-				                        std::string(StringTable::getStringView(getName())) + "'";
+										std::string(StringTable::getStringView(func_name)) +
+										"' marked 'override' but does not override any base class function in class '" +
+										std::string(StringTable::getStringView(getName())) + "'";
 				FLASH_LOG(Parser, Error, error_msg);
 				finalization_error_ = error_msg;
 				success = false;
@@ -1477,7 +1477,7 @@ void StructTypeInfo::buildRTTI() {
 	// Build ??_R2 - Base Class Array
 	// Note: Memory is allocated in static storage and persists for program lifetime (RTTI data)
 	MSVCBaseClassArray* bca = (MSVCBaseClassArray*)malloc(
-	    sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*));
+		sizeof(MSVCBaseClassArray) + (rtti_info->base_descriptors.size() - 1) * sizeof(void*));
 	if (!bca) {
 		// Allocation failed - skip Base Class Array for this class
 		rtti_info->bca = nullptr;
@@ -1537,9 +1537,9 @@ void StructTypeInfo::buildRTTI() {
 
 	// Write length prefix and name directly to buffer
 	int written = snprintf(itanium_name, itanium_total_size, "%zu%.*s",
-	                       name_sv.length(),
-	                       static_cast<int>(name_sv.length()),
-	                       name_sv.data());
+						   name_sv.length(),
+						   static_cast<int>(name_sv.length()),
+						   name_sv.data());
 	if (written < 0 || static_cast<size_t>(written) >= itanium_total_size) {
 		free(itanium_name);
 		return;
@@ -1579,7 +1579,7 @@ void StructTypeInfo::buildRTTI() {
 	} else {
 		// __vmi_class_type_info - Multiple or virtual base classes
 		size_t vmi_size = sizeof(ItaniumVMIClassTypeInfo) +
-		                  (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
+						  (base_classes.size() - 1) * sizeof(ItaniumBaseClassTypeInfo);
 		// Allocate permanent storage (persists for program lifetime - RTTI data)
 		ItaniumVMIClassTypeInfo* vmi_ti = (ItaniumVMIClassTypeInfo*)malloc(vmi_size);
 		if (!vmi_ti) {

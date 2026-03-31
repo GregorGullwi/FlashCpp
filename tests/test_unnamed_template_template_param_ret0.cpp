@@ -10,6 +10,6 @@ template <class T>
 struct MyVec {};
 
 int main() {
-Wrapper<MyVec> w;
-return 0;
+	Wrapper<MyVec> w;
+	return 0;
 }

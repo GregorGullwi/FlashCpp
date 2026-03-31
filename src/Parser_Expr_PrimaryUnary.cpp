@@ -4,33 +4,31 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
-ParseResult Parser::parse_return_statement()
-{
+ParseResult Parser::parse_return_statement() {
 	auto current_token_opt = peek_info();
 	if (current_token_opt.type() != Token::Type::Keyword ||
 		current_token_opt.value() != "return") {
 		return ParseResult::error(ParserError::UnexpectedToken,
-			current_token_opt);
+								  current_token_opt);
 	}
 	Token return_token = current_token_opt;
-	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}", 
-		std::string(current_token_.value()),
-		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to consume 'return'. current_token={}, peek={}",
+					 std::string(current_token_.value()),
+					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	advance(); // Consume the 'return' keyword
 
-	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: Consumed 'return'. current_token={}, peek={}", 
-		std::string(current_token_.value()),
-		!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+	FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: Consumed 'return'. current_token={}, peek={}",
+					 std::string(current_token_.value()),
+					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 
 	// Parse the return expression (if any)
 	ParseResult return_expr_result;
 	auto next_token_opt = peek_info();
 	if ((next_token_opt.type() != Token::Type::Punctuator ||
-			next_token_opt.value() != ";")) {
-		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}", 
-			std::string(current_token_.value()),
-			!peek().is_eof() ? std::string(peek_info().value()) : "N/A");
+		 next_token_opt.value() != ";")) {
+		FLASH_LOG_FORMAT(Parser, Debug, "parse_return_statement: About to parse_expression. current_token={}, peek={}",
+						 std::string(current_token_.value()),
+						 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 		return_expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (return_expr_result.is_error()) {
 			return return_expr_result;
@@ -40,22 +38,20 @@ ParseResult Parser::parse_return_statement()
 	// Consume the semicolon
 	if (!consume(";"_tok)) {
 		return ParseResult::error(ParserError::MissingSemicolon,
-			peek_info());
+								  peek_info());
 	}
 
 	if (return_expr_result.has_value()) {
 		return ParseResult::success(
 			emplace_node<ReturnStatementNode>(return_expr_result.node(), return_token));
-	}
-	else {
+	} else {
 		return ParseResult::success(emplace_node<ReturnStatementNode>(std::nullopt, return_token));
 	}
 }
 
 // Helper function for parsing C++ cast operators: static_cast, dynamic_cast, const_cast, reinterpret_cast
 // Consolidates the duplicated parsing logic for all four cast types
-ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token)
-{
+ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token) {
 	// Expect '<'
 	if (peek() != "<"_tok) {
 		return ParseResult::error(std::string(StringBuilder().append("Expected '<' after '").append(cast_name).append("'").commit()), current_token_);
@@ -97,31 +93,30 @@ ParseResult Parser::parse_cpp_cast_expression(CppCastKind kind, std::string_view
 	// Create the appropriate cast node based on the kind
 	ASTNode cast_expr;
 	switch (kind) {
-		case CppCastKind::Static:
-			cast_expr = emplace_node<ExpressionNode>(
-				StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-			break;
-		case CppCastKind::Dynamic:
-			cast_expr = emplace_node<ExpressionNode>(
-				DynamicCastNode(*type_result.node(), *expr_result.node(), cast_token));
-			break;
-		case CppCastKind::Const:
-			cast_expr = emplace_node<ExpressionNode>(
-				ConstCastNode(*type_result.node(), *expr_result.node(), cast_token));
-			break;
-		case CppCastKind::Reinterpret:
-			cast_expr = emplace_node<ExpressionNode>(
-				ReinterpretCastNode(*type_result.node(), *expr_result.node(), cast_token));
-			break;
+	case CppCastKind::Static:
+		cast_expr = emplace_node<ExpressionNode>(
+			StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		break;
+	case CppCastKind::Dynamic:
+		cast_expr = emplace_node<ExpressionNode>(
+			DynamicCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		break;
+	case CppCastKind::Const:
+		cast_expr = emplace_node<ExpressionNode>(
+			ConstCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		break;
+	case CppCastKind::Reinterpret:
+		cast_expr = emplace_node<ExpressionNode>(
+			ReinterpretCastNode(*type_result.node(), *expr_result.node(), cast_token));
+		break;
 	}
 
 	// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
 	return apply_postfix_operators(cast_expr);
 }
 
-ParseResult Parser::parse_unary_expression(ExpressionContext context)
-{
-	
+ParseResult Parser::parse_unary_expression(ExpressionContext context) {
+
 	// Check for 'static_cast' keyword
 	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "static_cast") {
 		Token cast_token = current_token_;
@@ -162,7 +157,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// like std::__detail::__class_or_enum but only return the last component in the token
 		SaveHandle pre_type_pos = save_token_position();
 		StringBuilder qualified_type_name;
-		
+
 		// Build qualified name by collecting identifiers and :: tokens
 		while (!peek().is_eof()) {
 			if (peek().is_identifier()) {
@@ -180,7 +175,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			}
 		}
 		std::string_view qualified_name_view = qualified_type_name.commit();
-		
+
 		// Restore position to parse the type properly
 		restore_token_position(pre_type_pos);
 
@@ -189,7 +184,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		if (!type_result.is_error() && type_result.node().has_value()) {
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
-			
+
 			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			consume_pointer_ref_modifiers(type_spec);
 
@@ -209,7 +204,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						is_valid_type = false;
 					}
 				}
-				
+
 				// Check if this "type" is actually a concept - concepts evaluate to boolean
 				// and should not be treated as C-style casts.
 				// Example: (std::same_as<T, int>) && other_constraint
@@ -224,16 +219,16 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					if (concept_opt.has_value()) {
 						// This is a concept, not a type - don't treat as C-style cast
 						is_valid_type = false;
-						FLASH_LOG_FORMAT(Parser, Debug, "Parenthesized expression is a concept '{}', not a C-style cast", 
-						                 qualified_name_view.empty() ? type_name : qualified_name_view);
+						FLASH_LOG_FORMAT(Parser, Debug, "Parenthesized expression is a concept '{}', not a C-style cast",
+										 qualified_name_view.empty() ? type_name : qualified_name_view);
 					}
 				}
-				
+
 				if (is_valid_type) {
 					// This is a C-style cast: (Type)expression
 					Token cast_token = Token(Token::Type::Punctuator, "cast"sv,
-											current_token_.line(), current_token_.column(),
-											current_token_.file_index());
+											 current_token_.line(), current_token_.column(),
+											 current_token_.file_index());
 
 					// Parse the expression to cast
 					ParseResult expr_result = parse_unary_expression(ExpressionContext::Normal);
@@ -246,7 +241,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						// Create a StaticCastNode (C-style casts behave like static_cast in most cases)
 						auto cast_expr = emplace_node<ExpressionNode>(
 							StaticCastNode(*type_result.node(), *expr_result.node(), cast_token));
-						
+
 						// Apply postfix operators (e.g., .operator<=>(), .member, etc.)
 						return apply_postfix_operators(cast_expr);
 					}
@@ -254,7 +249,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// If not a valid type, fall through to restore position and try as expression
 			}
 		}
-		
+
 		// Not a cast, restore position and continue to parse_primary_expression
 		restore_token_position(saved_pos);
 	}
@@ -278,24 +273,24 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	if (current_token_.type() == Token::Type::Keyword && current_token_.value() == "throw") {
 		Token throw_token = current_token_;
 		advance(); // consume 'throw'
-		
+
 		// Check if this is a rethrow (throw followed by non-expression punctuator)
 		// Rethrow: throw; or throw ) or throw : etc.
 		auto next = peek_info();
-		if ((next.type() == Token::Type::Punctuator && 
-		     (next.value() == ";" || next.value() == ")" || next.value() == ":" || next.value() == ","))) {
+		if ((next.type() == Token::Type::Punctuator &&
+			 (next.value() == ";" || next.value() == ")" || next.value() == ":" || next.value() == ","))) {
 			// Rethrow expression - no operand
 			return ParseResult::success(emplace_node<ExpressionNode>(
 				ThrowExpressionNode(throw_token)));
 		}
-		
+
 		// Parse the expression to throw
 		// Use assignment precedence (2) since throw is a unary operator
 		ParseResult expr_result = parse_expression(2, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
 			return expr_result;
 		}
-		
+
 		return ParseResult::success(emplace_node<ExpressionNode>(
 			ThrowExpressionNode(*expr_result.node(), throw_token)));
 	}
@@ -325,7 +320,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Parse placement arguments (comma-separated expressions)
 			ChunkedVector<ASTNode, 128, 256> placement_args;
 			bool parse_error = false;
-			
+
 			if (peek() != ")"_tok) {
 				while (true) {
 					ParseResult arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -333,11 +328,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						parse_error = true;
 						break;
 					}
-					
+
 					if (auto arg_node = arg_result.node()) {
 						placement_args.push_back(*arg_node);
 					}
-					
+
 					if (peek() == ","_tok) {
 						advance(); // consume ','
 					} else {
@@ -345,16 +340,16 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					}
 				}
 			}
-			
+
 			// Check for closing ')' and then a type
 			if (!parse_error &&
-			    peek() == ")"_tok) {
+				peek() == ")"_tok) {
 				advance(); // consume ')'
 
 				// Check if next token looks like a type (not end of expression)
 				if (!peek().is_eof() &&
-				    (peek().is_keyword() ||
-				     peek().is_identifier())) {
+					(peek().is_keyword() ||
+					 peek().is_identifier())) {
 					// This is placement new – store all placement arguments
 					for (const auto& arg : placement_args) {
 						all_placement_args.push_back(arg);
@@ -364,8 +359,8 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					// Emit warning if <new> header was not included
 					if (!context_.hasIncludedHeader("new")) {
 						FLASH_LOG(Parser, Warning, "placement new used without '#include <new>'. ",
-						          "This is a compiler extension. ",
-						          "Standard C++ requires: void* operator new(std::size_t, void*);");
+								  "This is a compiler extension. ",
+								  "Standard C++ requires: void* operator new(std::size_t, void*);");
 					}
 				}
 				// If not a type, the destructor will restore the position
@@ -403,7 +398,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			ChunkedVector<ASTNode, 128, 256> array_initializers;
 			if (peek() == "{"_tok) {
 				advance(); // consume '{'
-				
+
 				// Parse initializer list (comma-separated expressions or nested braces)
 				if (peek() != "}"_tok) {
 					while (true) {
@@ -427,7 +422,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 								array_initializers.push_back(*init_node);
 							}
 						}
-						
+
 						if (peek() == ","_tok) {
 							advance(); // consume ','
 						} else {
@@ -435,7 +430,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						}
 					}
 				}
-				
+
 				if (!consume("}"_tok)) {
 					return ParseResult::error("Expected '}' after array initializer list", current_token_);
 				}
@@ -466,7 +461,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						if (peek() == "..."_tok) {
 							Token ellipsis_token = peek_info();
 							advance(); // consume '...'
-							
+
 							// Wrap the argument in a PackExpansionExprNode
 							auto pack_expr = emplace_node<ExpressionNode>(
 								PackExpansionExprNode(*arg_node, ellipsis_token));
@@ -536,9 +531,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		// Check for ellipsis to determine if this is sizeof... (parameter pack)
 		bool is_sizeof_pack = false;
-		if (!peek().is_eof() && 
-		    (peek().is_operator() || peek().is_punctuator()) &&
-		    peek() == "..."_tok) {
+		if (!peek().is_eof() &&
+			(peek().is_operator() || peek().is_punctuator()) &&
+			peek() == "..."_tok) {
 			advance(); // consume '...'
 			is_sizeof_pack = true;
 		}
@@ -552,19 +547,18 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			if (!peek().is_identifier()) {
 				return ParseResult::error("Expected parameter pack name after 'sizeof...('", current_token_);
 			}
-			
+
 			Token pack_name_token = peek_info();
 			std::string_view pack_name = pack_name_token.value();
 			advance(); // consume pack name
-			
+
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after sizeof... pack name", current_token_);
 			}
-			
+
 			auto sizeof_pack_expr = emplace_node<ExpressionNode>(SizeofPackNode(pack_name, sizeof_token));
 			return ParseResult::success(sizeof_pack_expr);
-		}
-		else {
+		} else {
 			// Try to parse as a type first
 			SaveHandle saved_pos = save_token_position();
 			ParseResult type_result = parse_type_specifier();
@@ -576,11 +570,11 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 				// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 				TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 				consume_pointer_ref_modifiers(type_spec);
-				
+
 				// Now check if ')' follows
 				if (peek() == ")"_tok) {
 					is_complete_type = true;
-					
+
 					// Reject unresolved qualified names (e.g., Foo::val) that the type parser
 					// consumed as a qualified type name placeholder (UserDefined, size 0).
 					// When the token is a known struct name but the result is UserDefined (not Struct),
@@ -588,7 +582,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					// resolve it as a type.  Fall through to expression parsing so sizeof can
 					// look up the struct member via QualifiedIdentifierNode.
 					if (type_spec.category() == TypeCategory::UserDefined && type_spec.size_in_bits() == 0 &&
-					    type_spec.token().type() == Token::Type::Identifier) {
+						type_spec.token().type() == Token::Type::Identifier) {
 						StringHandle tok_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
 						auto struct_it = getTypesByNameMap().find(tok_handle);
 						if (struct_it != getTypesByNameMap().end() && struct_it->second->isStruct()) {
@@ -605,14 +599,14 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					}
 				}
 			}
-			
+
 			if (is_complete_type) {
 				// Successfully parsed as type with declarators and ')' follows
 				if (!consume(")"_tok)) {
 					return ParseResult::error("Expected ')' after sizeof type", current_token_);
 				}
 				discard_saved_token(saved_pos);
-				
+
 				// Phase 2: Ensure the type is instantiated to Layout phase for sizeof
 				// This ensures size/alignment are computed for lazily instantiated classes
 				const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
@@ -622,11 +616,10 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 						instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 					}
 				}
-				
+
 				auto sizeof_expr = emplace_node<ExpressionNode>(SizeofExprNode(*type_result.node(), sizeof_token));
 				return ParseResult::success(sizeof_expr);
-			}
-			else {
+			} else {
 				// Not a type (or doesn't look like one), try parsing as expression
 				restore_token_position(saved_pos);
 				ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -649,7 +642,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Check for 'alignof' keyword or '__alignof__' identifier (GCC/Clang extension)
 	bool is_alignof_keyword = current_token_.type() == Token::Type::Keyword && current_token_.value() == "alignof"sv;
 	bool is_alignof_extension = current_token_.type() == Token::Type::Identifier && current_token_.value() == "__alignof__"sv;
-	
+
 	if (is_alignof_keyword || is_alignof_extension) {
 		// Handle alignof/alignof operator: alignof(type) or alignof(expression)
 		Token alignof_token = current_token_;
@@ -671,20 +664,20 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			// Parse pointer/reference declarators (ptr-operator in C++20 grammar)
 			TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
 			consume_pointer_ref_modifiers(type_spec);
-			
+
 			// Now check if ')' follows
 			if (peek() == ")"_tok) {
 				is_complete_type = true;
 			}
 		}
-		
+
 		if (is_complete_type) {
 			// Successfully parsed as type with declarators and ')' follows
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after " + std::string(alignof_name) + " type", current_token_);
 			}
 			discard_saved_token(saved_pos);
-			
+
 			// Phase 2: Ensure the type is instantiated to Layout phase for alignof
 			// This ensures size/alignment are computed for lazily instantiated classes
 			const TypeSpecifierNode& type_spec = type_result.node()->as<TypeSpecifierNode>();
@@ -694,11 +687,10 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 					instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Layout);
 				}
 			}
-			
+
 			auto alignof_expr = emplace_node<ExpressionNode>(AlignofExprNode(*type_result.node(), alignof_token));
 			return ParseResult::success(alignof_expr);
-		}
-		else {
+		} else {
 			// Not a type (or doesn't look like one), try parsing as expression
 			restore_token_position(saved_pos);
 			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -759,9 +751,9 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// Check if this is really a type by seeing if ')' follows
 		// This disambiguates between "typeid(int)" and "typeid(x + 1)" where x might be
 		// incorrectly parsed as a user-defined type
-		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() && 
-		                                 peek() == ")"_tok;
-		
+		bool is_type_followed_by_paren = !type_result.is_error() && type_result.node().has_value() &&
+										 peek() == ")"_tok;
+
 		if (is_type_followed_by_paren) {
 			// Successfully parsed as type and ')' follows
 			if (!consume(")"_tok)) {
@@ -770,8 +762,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 			discard_saved_token(saved_pos);
 			auto typeid_expr = emplace_node<ExpressionNode>(TypeidNode(*type_result.node(), true, typeid_token));
 			return ParseResult::success(typeid_expr);
-		}
-		else {
+		} else {
 			// Not a type (or doesn't look like one), try parsing as expression
 			restore_token_position(saved_pos);
 			ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -793,7 +784,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 	// Returns 1 if the argument can be evaluated at compile time, 0 otherwise
 	// Syntax: __builtin_constant_p(expr)
 	if (NameMangling::g_mangling_style != NameMangling::ManglingStyle::MSVC &&
-	    current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_constant_p"sv) {
+		current_token_.type() == Token::Type::Identifier && current_token_.value() == "__builtin_constant_p"sv) {
 		Token builtin_token = current_token_;
 		advance(); // consume '__builtin_constant_p'
 
@@ -870,22 +861,22 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// The symbol contains a FunctionDeclarationNode, get its underlying DeclarationNode
 		const FunctionDeclarationNode& func_decl_node = builtin_symbol->as<FunctionDeclarationNode>();
 		const DeclarationNode& func_decl = func_decl_node.decl_node();
-		
+
 		// Create arguments vector with both the va_list expression and the type
 		ChunkedVector<ASTNode> args;
 		args.push_back(*first_arg_result.node());
-		args.push_back(*type_result.node());  // Pass type node as second argument
-		
+		args.push_back(*type_result.node());	 // Pass type node as second argument
+
 		auto builtin_call = emplace_node<ExpressionNode>(
 			FunctionCallNode(func_decl, std::move(args), builtin_token));
-		
+
 		return ParseResult::success(builtin_call);
 	}
 
 	// Check for '__builtin_addressof' intrinsic
 	// Returns the actual address of an object, bypassing any overloaded operator&
 	// Syntax: __builtin_addressof(obj)
-	// 
+	//
 	// Implementation note: We create a UnaryOperatorNode with the & operator.
 	// In FlashCpp's current implementation, unary & operators are not subject to
 	// overload resolution (overloaded operators would require a separate overload
@@ -940,13 +931,13 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 		// The true parameter indicates this is a prefix operator
 		// The fourth parameter (is_builtin_addressof=true) marks this to bypass operator overload resolution
 		// Note: __builtin_addressof always gets the true address, bypassing any overloaded operator&
-		Token addressof_token = Token(Token::Type::Operator, "&"sv, 
-		                               builtin_token.line(), builtin_token.column(), 
-		                               builtin_token.file_index());
-		
+		Token addressof_token = Token(Token::Type::Operator, "&"sv,
+									  builtin_token.line(), builtin_token.column(),
+									  builtin_token.file_index());
+
 		auto addressof_expr = emplace_node<ExpressionNode>(
 			UnaryOperatorNode(addressof_token, *arg_result.node(), true, true));
-		
+
 		return ParseResult::success(addressof_expr);
 	}
 
@@ -982,7 +973,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context)
 
 		// Check for unary operators: !, ~, +, -, ++, --, * (dereference), & (address-of)
 		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--" ||
-		    op == "*" || op == "&") {
+			op == "*" || op == "&") {
 			Token operator_token = current_token_;
 			advance();
 

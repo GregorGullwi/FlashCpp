@@ -30,7 +30,7 @@ namespace FlashCpp {
  * @tparam T The element type
  * @tparam N The inline capacity (default: 4)
  */
-template<typename T, size_t N = 4>
+template <typename T, size_t N = 4>
 class InlineVector {
 public:
 	InlineVector() = default;
@@ -41,7 +41,7 @@ public:
 			push_back(item);
 		}
 	}
-	
+
 	// Construct from std::vector (enables seamless migration)
 	InlineVector(const std::vector<T>& vec) {
 		reserve(vec.size());
@@ -49,7 +49,7 @@ public:
 			push_back(item);
 		}
 	}
-	
+
 	// Move-construct from std::vector
 	InlineVector(std::vector<T>&& vec) {
 		reserve(vec.size());
@@ -57,7 +57,7 @@ public:
 			push_back(std::move(item));
 		}
 	}
-	
+
 	// Assignment from std::vector
 	InlineVector& operator=(const std::vector<T>& vec) {
 		clear();
@@ -67,7 +67,7 @@ public:
 		}
 		return *this;
 	}
-	
+
 	// Move-assignment from std::vector
 	InlineVector& operator=(std::vector<T>&& vec) {
 		clear();
@@ -86,7 +86,7 @@ public:
 		}
 		return *this;
 	}
-	
+
 	// Implicit conversion to std::vector (enables seamless migration)
 	operator std::vector<T>() const {
 		std::vector<T> result;
@@ -96,15 +96,15 @@ public:
 		}
 		return result;
 	}
-	
+
 	// Copy constructor
-	InlineVector(const InlineVector& other) 
+	InlineVector(const InlineVector& other)
 		: inline_count_(other.inline_count_), overflow_(other.overflow_) {
 		for (size_t i = 0; i < inline_count_; ++i) {
 			inline_data_[i] = other.inline_data_[i];
 		}
 	}
-	
+
 	// Move constructor
 	InlineVector(InlineVector&& other) noexcept
 		: inline_count_(other.inline_count_), overflow_(std::move(other.overflow_)) {
@@ -113,7 +113,7 @@ public:
 		}
 		other.inline_count_ = 0;
 	}
-	
+
 	// Copy assignment
 	InlineVector& operator=(const InlineVector& other) {
 		if (this != &other) {
@@ -125,7 +125,7 @@ public:
 		}
 		return *this;
 	}
-	
+
 	// Move assignment
 	InlineVector& operator=(InlineVector&& other) noexcept {
 		if (this != &other) {
@@ -138,7 +138,7 @@ public:
 		}
 		return *this;
 	}
-	
+
 	void push_back(const T& value) {
 		if (inline_count_ < N) {
 			inline_data_[inline_count_++] = value;
@@ -146,7 +146,7 @@ public:
 			overflow_.push_back(value);
 		}
 	}
-	
+
 	void push_back(T&& value) {
 		if (inline_count_ < N) {
 			inline_data_[inline_count_++] = std::move(value);
@@ -154,8 +154,8 @@ public:
 			overflow_.push_back(std::move(value));
 		}
 	}
-	
-	template<typename... Args>
+
+	template <typename... Args>
 	void emplace_back(Args&&... args) {
 		if (inline_count_ < N) {
 			inline_data_[inline_count_++] = T(std::forward<Args>(args)...);
@@ -163,11 +163,11 @@ public:
 			overflow_.emplace_back(std::forward<Args>(args)...);
 		}
 	}
-	
+
 	[[nodiscard]] size_t size() const noexcept {
 		return inline_count_ + overflow_.size();
 	}
-	
+
 	[[nodiscard]] bool empty() const noexcept {
 		return inline_count_ == 0 && overflow_.empty();
 	}
@@ -180,12 +180,12 @@ public:
 		}
 		--inline_count_;
 	}
-	
+
 	void clear() noexcept {
 		inline_count_ = 0;
 		overflow_.clear();
 	}
-	
+
 	void reserve(size_t capacity) {
 		if (capacity > N) {
 			overflow_.reserve(capacity - N);
@@ -198,7 +198,7 @@ public:
 		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
 		return i < N ? inline_data_[i] : overflow_[i - N];
 	}
-	
+
 	const T& operator[](size_t i) const {
 		assert(i < size() && "Index out of bounds in InlineVector::operator[]");
 		return i < N ? inline_data_[i] : overflow_[i - N];
@@ -213,7 +213,7 @@ public:
 		assert(!empty() && "Cannot call front() on an empty InlineVector");
 		return inline_data_[0];
 	}
-	
+
 	T& back() {
 		// Precondition: container must not be empty
 		// Note: Calling back() on empty container is undefined behavior (matches std::vector)
@@ -223,29 +223,31 @@ public:
 		// inline_count_ > 0 is guaranteed if overflow_ is empty and container is non-empty
 		return inline_data_[inline_count_ - 1];
 	}
-	
+
 	const T& back() const {
 		if (!overflow_.empty()) {
 			return overflow_.back();
 		}
 		return inline_data_[inline_count_ - 1];
 	}
-	
+
 	bool operator==(const InlineVector& other) const {
-		if (size() != other.size()) return false;
+		if (size() != other.size())
+			return false;
 		for (size_t i = 0; i < size(); ++i) {
-			if (!((*this)[i] == other[i])) return false;
+			if (!((*this)[i] == other[i]))
+				return false;
 		}
 		return true;
 	}
-	
+
 	bool operator!=(const InlineVector& other) const {
 		return !(*this == other);
 	}
-	
+
 	// Iterator support for range-based for loops
 	// Unified iterator implementation using template parameter for const/non-const
-	template<bool IsConst>
+	template <bool IsConst>
 	class iterator_impl {
 	public:
 		using iterator_category = std::random_access_iterator_tag;
@@ -254,40 +256,60 @@ public:
 		using vec_type = std::conditional_t<IsConst, const InlineVector*, InlineVector*>;
 		using pointer = std::conditional_t<IsConst, const T*, T*>;
 		using reference = std::conditional_t<IsConst, const T&, T&>;
-		
+
 		iterator_impl(vec_type vec, size_t idx) : vec_(vec), idx_(idx) {}
-		
+
 		reference operator*() const { return (*vec_)[idx_]; }
 		pointer operator->() const { return &(*vec_)[idx_]; }
-		
-		iterator_impl& operator++() { ++idx_; return *this; }
-		iterator_impl operator++(int) { iterator_impl tmp = *this; ++idx_; return tmp; }
-		iterator_impl& operator--() { --idx_; return *this; }
-		iterator_impl operator--(int) { iterator_impl tmp = *this; --idx_; return tmp; }
-		
+
+		iterator_impl& operator++() {
+			++idx_;
+			return *this;
+		}
+		iterator_impl operator++(int) {
+			iterator_impl tmp = *this;
+			++idx_;
+			return tmp;
+		}
+		iterator_impl& operator--() {
+			--idx_;
+			return *this;
+		}
+		iterator_impl operator--(int) {
+			iterator_impl tmp = *this;
+			--idx_;
+			return tmp;
+		}
+
 		iterator_impl operator+(difference_type n) const { return iterator_impl(vec_, idx_ + n); }
 		friend iterator_impl operator+(difference_type n, const iterator_impl& it) { return iterator_impl(it.vec_, it.idx_ + n); }
 		iterator_impl operator-(difference_type n) const { return iterator_impl(vec_, idx_ - n); }
 		difference_type operator-(const iterator_impl& other) const { return static_cast<difference_type>(idx_) - static_cast<difference_type>(other.idx_); }
-		iterator_impl& operator+=(difference_type n) { idx_ += n; return *this; }
-		iterator_impl& operator-=(difference_type n) { idx_ -= n; return *this; }
+		iterator_impl& operator+=(difference_type n) {
+			idx_ += n;
+			return *this;
+		}
+		iterator_impl& operator-=(difference_type n) {
+			idx_ -= n;
+			return *this;
+		}
 		reference operator[](difference_type n) const { return (*vec_)[idx_ + n]; }
-		
+
 		bool operator==(const iterator_impl& other) const { return vec_ == other.vec_ && idx_ == other.idx_; }
 		bool operator!=(const iterator_impl& other) const { return vec_ != other.vec_ || idx_ != other.idx_; }
 		bool operator<(const iterator_impl& other) const { return idx_ < other.idx_; }
 		bool operator>(const iterator_impl& other) const { return idx_ > other.idx_; }
 		bool operator<=(const iterator_impl& other) const { return idx_ <= other.idx_; }
 		bool operator>=(const iterator_impl& other) const { return idx_ >= other.idx_; }
-		
+
 	private:
 		vec_type vec_;
 		size_t idx_;
 	};
-	
+
 	using iterator = iterator_impl<false>;
 	using const_iterator = iterator_impl<true>;
-	
+
 	iterator begin() { return iterator(this, 0); }
 	iterator end() { return iterator(this, size()); }
 	const_iterator begin() const { return const_iterator(this, 0); }
@@ -334,9 +356,10 @@ public:
 	// Internal helper: insert a range of `count` elements at logical index `idx`.
 	// Materialises elements into a temporary buffer first so that self-referencing
 	// iterators (pointing into *this) are safe.
-	template<typename Iter>
+	template <typename Iter>
 	iterator insert_range_at(size_t idx, Iter first, Iter last) {
-		if (first == last) return iterator(this, idx);
+		if (first == last)
+			return iterator(this, idx);
 
 		// Materialise into a temporary buffer so we don't invalidate source
 		// iterators if they point into *this.

@@ -31,8 +31,9 @@ int main() {
 	} catch (int) {
 	}
 
-	// Correct: inner_guard dtor (1) + outer_guard dtor (100) = 101
-	// min_element bug: inner_guard (1) + outer_guard (100) + outer_guard again (100) = 201
-	if (g_dtor_count != 101) return 1;
+ // Correct: inner_guard dtor (1) + outer_guard dtor (100) = 101
+ // min_element bug: inner_guard (1) + outer_guard (100) + outer_guard again (100) = 201
+	if (g_dtor_count != 101)
+		return 1;
 	return 0;
 }

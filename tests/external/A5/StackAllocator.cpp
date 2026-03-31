@@ -3,19 +3,16 @@
 #include <memory>
 
 A5::StackAllocator::StackAllocator(const std::size_t size)
-	: Allocator(size), m_Offset(0)
-{
+	: Allocator(size), m_Offset(0) {
 	m_StartAddress = ::operator new(size);
 }
 
-A5::StackAllocator::~StackAllocator()
-{
+A5::StackAllocator::~StackAllocator() {
 	::operator delete(m_StartAddress);
 	m_StartAddress = nullptr;
 }
 
-void* A5::StackAllocator::Allocate(const std::size_t size, const std::size_t alignment)
-{
+void* A5::StackAllocator::Allocate(const std::size_t size, const std::size_t alignment) {
 	void* currentAddress = reinterpret_cast<char*>(m_StartAddress) + m_Offset;
 	void* nextAddress = reinterpret_cast<void*>(reinterpret_cast<char*>(currentAddress) + sizeof(Header));
 	std::size_t space = m_Size - m_Offset - sizeof(Header);
@@ -34,15 +31,13 @@ void* A5::StackAllocator::Allocate(const std::size_t size, const std::size_t ali
 	return nextAddress;
 }
 
-void A5::StackAllocator::Deallocate(void* ptr)
-{
+void A5::StackAllocator::Deallocate(void* ptr) {
 	const std::size_t currentAddress = (std::size_t)ptr;
 	Header* header = reinterpret_cast<Header*>(currentAddress - sizeof(Header));
 
 	m_Offset = currentAddress - (std::size_t)m_StartAddress - *header;
 }
 
-void A5::StackAllocator::Reset()
-{
+void A5::StackAllocator::Reset() {
 	m_Offset = 0;
 }

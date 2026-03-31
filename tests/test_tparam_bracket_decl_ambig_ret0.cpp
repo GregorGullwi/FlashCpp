@@ -1,7 +1,8 @@
-template<typename T>
+template <typename T>
 struct Test {
 	static int run() {
-		T(x)[3];
+		T(x)
+		[3];
 		T(y);
 		x[0] = 1;
 		x[1] = 2;

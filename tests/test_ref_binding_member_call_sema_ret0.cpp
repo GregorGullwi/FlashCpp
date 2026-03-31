@@ -21,19 +21,25 @@ struct Checker {
 int main() {
 	Checker checker;
 	int x = 5;
-	if (checker.takeLRef(x) != 1) return 1;
-	if (checker.takeRRef((int&&)x) != 2) return 2;
+	if (checker.takeLRef(x) != 1)
+		return 1;
+	if (checker.takeRRef((int&&)x) != 2)
+		return 2;
 
 	int&& rr = (int&&)x;
-	if (checker.takeLRef(rr) != 1) return 3;
+	if (checker.takeLRef(rr) != 1)
+		return 3;
 
 	short s = 7;
-	if (checker.takeValue(s) != 4) return 4;
+	if (checker.takeValue(s) != 4)
+		return 4;
 
-	if (checker.takeConstDouble(3) != 3) return 5;
+	if (checker.takeConstDouble(3) != 3)
+		return 5;
 
 	int y = 3;
-	if (checker.takeConstDouble(y) != 3) return 6;
+	if (checker.takeConstDouble(y) != 3)
+		return 6;
 
 	return 0;
 }

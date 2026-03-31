@@ -1,7 +1,6 @@
 #pragma once
 #include "AstNodeTypes_Expr.h"
 
-
 class LoopStatementNode {
 public:
 	size_t start_pos;
@@ -11,7 +10,7 @@ public:
 class WhileLoopNode : public LoopStatementNode {
 public:
 	explicit WhileLoopNode(size_t start_pos, size_t end_pos, size_t condition,
-		size_t body)
+						   size_t body)
 		: condition_(condition), body_(body) {
 		this->start_pos = start_pos;
 		this->end_pos = end_pos;
@@ -28,7 +27,7 @@ private:
 class DoWhileLoopNode : public LoopStatementNode {
 public:
 	explicit DoWhileLoopNode(size_t start_pos, size_t end_pos, size_t body,
-		size_t condition)
+							 size_t condition)
 		: condition_(condition), body_(body) {
 		this->start_pos = start_pos;
 		this->end_pos = end_pos;
@@ -66,7 +65,7 @@ public:
 	void add_initializer(ASTNode init_expr) {
 		initializers_.push_back(init_expr);
 		is_designated_.push_back(false);
-		member_names_.push_back(StringHandle());  // Invalid StringHandle for positional initializers
+		member_names_.push_back(StringHandle());	 // Invalid StringHandle for positional initializers
 	}
 
 	void add_designated_initializer(StringHandle member_name, ASTNode init_expr) {
@@ -96,7 +95,8 @@ public:
 
 	bool has_any_designated() const {
 		for (bool is_des : is_designated_) {
-			if (is_des) return true;
+			if (is_des)
+				return true;
 		}
 		return false;
 	}
@@ -110,9 +110,9 @@ private:
 class IfStatementNode {
 public:
 	explicit IfStatementNode(ASTNode condition, ASTNode then_statement,
-		std::optional<ASTNode> else_statement = std::nullopt,
-		std::optional<ASTNode> init_statement = std::nullopt,
-		bool is_constexpr = false)
+							 std::optional<ASTNode> else_statement = std::nullopt,
+							 std::optional<ASTNode> init_statement = std::nullopt,
+							 bool is_constexpr = false)
 		: condition_(condition), then_statement_(then_statement),
 		  else_statement_(else_statement), init_statement_(init_statement),
 		  is_constexpr_(is_constexpr) {}
@@ -136,9 +136,9 @@ private:
 class ForStatementNode {
 public:
 	explicit ForStatementNode(std::optional<ASTNode> init_statement,
-		std::optional<ASTNode> condition,
-		std::optional<ASTNode> update_expression,
-		ASTNode body_statement)
+							  std::optional<ASTNode> condition,
+							  std::optional<ASTNode> update_expression,
+							  ASTNode body_statement)
 		: init_statement_(init_statement), condition_(condition),
 		  update_expression_(update_expression), body_statement_(body_statement) {}
 
@@ -151,7 +151,7 @@ public:
 	bool has_update() const { return update_expression_.has_value(); }
 
 private:
-	std::optional<ASTNode> init_statement_;    // for (init; condition; update)
+	std::optional<ASTNode> init_statement_;	// for (init; condition; update)
 	std::optional<ASTNode> condition_;
 	std::optional<ASTNode> update_expression_;
 	ASTNode body_statement_;
@@ -186,9 +186,9 @@ private:
 class RangedForStatementNode {
 public:
 	explicit RangedForStatementNode(ASTNode loop_variable_decl,
-		ASTNode range_expression,
-		ASTNode body_statement,
-		std::optional<ASTNode> init_statement = std::nullopt)
+									ASTNode range_expression,
+									ASTNode body_statement,
+									std::optional<ASTNode> init_statement = std::nullopt)
 		: loop_variable_decl_(loop_variable_decl),
 		  range_expression_(range_expression),
 		  body_statement_(body_statement),
@@ -205,10 +205,10 @@ public:
 	}
 
 private:
-	ASTNode loop_variable_decl_;  // for (int x : range)
-	ASTNode range_expression_;     // the array or container to iterate over
+	ASTNode loop_variable_decl_;	 // for (int x : range)
+	ASTNode range_expression_;	   // the array or container to iterate over
 	ASTNode body_statement_;
-	std::optional<ASTNode> init_statement_;  // C++20: for (init; decl : range)
+	std::optional<ASTNode> init_statement_;	// C++20: for (init; decl : range)
 	const FunctionDeclarationNode* resolved_dereference_function_ = nullptr;
 };
 
@@ -245,7 +245,7 @@ public:
 	bool has_statement() const { return statement_.has_value(); }
 
 private:
-	ASTNode case_value_;  // Constant expression for case value
+	ASTNode case_value_;	 // Constant expression for case value
 	std::optional<ASTNode> statement_;  // Optional statement (for fall-through cases)
 };
 
@@ -272,8 +272,8 @@ public:
 	auto get_body() const { return body_; }
 
 private:
-	ASTNode condition_;  // Expression to switch on
-	ASTNode body_;       // Body (typically a BlockNode containing case/default labels)
+	ASTNode condition_;	// Expression to switch on
+	ASTNode body_;	   // Body (typically a BlockNode containing case/default labels)
 };
 
 // Label statement node (for goto targets)
@@ -286,7 +286,7 @@ public:
 	const Token& label_token() const { return label_token_; }
 
 private:
-	Token label_token_;  // The label identifier
+	Token label_token_;	// The label identifier
 };
 
 // Goto statement node
@@ -300,7 +300,7 @@ public:
 	const Token& goto_token() const { return goto_token_; }
 
 private:
-	Token label_token_;  // The target label identifier
+	Token label_token_;	// The target label identifier
 	Token goto_token_;   // The goto keyword token (for error reporting)
 };
 
@@ -315,7 +315,7 @@ public:
 	const Token& alias_token() const { return alias_name_; }
 
 private:
-	ASTNode type_node_;  // The underlying type (TypeSpecifierNode)
+	ASTNode type_node_;	// The underlying type (TypeSpecifierNode)
 	Token alias_name_;   // The new type alias name
 };
 
@@ -339,9 +339,9 @@ public:
 	const Token& throw_token() const { return throw_token_; }
 
 private:
-	std::optional<ASTNode> expression_;  // The expression to throw (nullopt for rethrow)
-	Token throw_token_;                   // For error reporting
-	bool is_rethrow_;                     // True if this is a rethrow (throw;)
+	std::optional<ASTNode> expression_;	// The expression to throw (nullopt for rethrow)
+	Token throw_token_;					// For error reporting
+	bool is_rethrow_;					  // True if this is a rethrow (throw;)
 };
 
 // Catch clause node: catch (type identifier) { block }
@@ -374,9 +374,9 @@ public:
 
 private:
 	std::optional<ASTNode> exception_declaration_;  // DeclarationNode for the caught exception, nullopt for catch(...)
-	ASTNode body_;                                  // BlockNode for the catch block body
-	Token catch_token_;                             // For error reporting
-	bool is_catch_all_;                             // True for catch(...)
+	ASTNode body_;								  // BlockNode for the catch block body
+	Token catch_token_;							 // For error reporting
+	bool is_catch_all_;							 // True for catch(...)
 };
 
 // Try statement node: try { block } catch (...) { block }
@@ -400,10 +400,10 @@ public:
 	bool is_ctor_dtor_function_try() const { return is_ctor_dtor_function_try_; }
 
 private:
-	ASTNode try_block_;                   // BlockNode for the try block
-	std::vector<ASTNode> catch_clauses_;  // Vector of CatchClauseNode
-	Token try_token_;                     // For error reporting
-	bool is_ctor_dtor_function_try_ = false;  // True for ctor/dtor function-try-blocks
+	ASTNode try_block_;					// BlockNode for the try block
+	std::vector<ASTNode> catch_clauses_;	 // Vector of CatchClauseNode
+	Token try_token_;					  // For error reporting
+	bool is_ctor_dtor_function_try_ = false;	 // True for ctor/dtor function-try-blocks
 };
 
 // ============================================================================
@@ -415,7 +415,7 @@ class SehExceptClauseNode {
 public:
 	explicit SehExceptClauseNode(
 		ASTNode filter_expression,  // SehFilterExpressionNode
-		ASTNode body,               // BlockNode
+		ASTNode body,				  // BlockNode
 		Token except_token = Token())
 		: filter_expression_(filter_expression),
 		  body_(body),
@@ -426,9 +426,9 @@ public:
 	const Token& except_token() const { return except_token_; }
 
 private:
-	ASTNode filter_expression_;  // SehFilterExpressionNode for the filter
-	ASTNode body_;               // BlockNode for the __except block body
-	Token except_token_;         // For error reporting
+	ASTNode filter_expression_;	// SehFilterExpressionNode for the filter
+	ASTNode body_;			   // BlockNode for the __except block body
+	Token except_token_;		 // For error reporting
 };
 
 // SEH __finally clause node: __finally { block }
@@ -444,8 +444,8 @@ public:
 	const Token& finally_token() const { return finally_token_; }
 
 private:
-	ASTNode body_;           // BlockNode for the __finally block body
-	Token finally_token_;    // For error reporting
+	ASTNode body_;		   // BlockNode for the __finally block body
+	Token finally_token_;	  // For error reporting
 };
 
 // SEH try-except statement node: __try { block } __except(filter) { block }
@@ -464,9 +464,9 @@ public:
 	const Token& try_token() const { return try_token_; }
 
 private:
-	ASTNode try_block_;      // BlockNode for the __try block
-	ASTNode except_clause_;  // SehExceptClauseNode
-	Token try_token_;        // For error reporting
+	ASTNode try_block_;		// BlockNode for the __try block
+	ASTNode except_clause_;	// SehExceptClauseNode
+	Token try_token_;		  // For error reporting
 };
 
 // SEH try-finally statement node: __try { block } __finally { block }
@@ -474,7 +474,7 @@ class SehTryFinallyStatementNode {
 public:
 	explicit SehTryFinallyStatementNode(
 		ASTNode try_block,
-		ASTNode finally_clause,  // SehFinallyClauseNode
+		ASTNode finally_clause,	// SehFinallyClauseNode
 		Token try_token = Token())
 		: try_block_(try_block),
 		  finally_clause_(finally_clause),
@@ -485,9 +485,9 @@ public:
 	const Token& try_token() const { return try_token_; }
 
 private:
-	ASTNode try_block_;        // BlockNode for the __try block
-	ASTNode finally_clause_;   // SehFinallyClauseNode
-	Token try_token_;          // For error reporting
+	ASTNode try_block_;		// BlockNode for the __try block
+	ASTNode finally_clause_;	 // SehFinallyClauseNode
+	Token try_token_;		  // For error reporting
 };
 
 // SEH __leave statement node: __leave;
@@ -500,7 +500,7 @@ public:
 	const Token& leave_token() const { return leave_token_; }
 
 private:
-	Token leave_token_;  // For error reporting
+	Token leave_token_;	// For error reporting
 };
 
 // ============================================================================
@@ -528,10 +528,10 @@ public:
 	const Token& lbrace_token() const { return lbrace_token_; }
 
 private:
-	ASTNode expression_;                          // The expression inside { }
-	std::optional<ASTNode> return_type_constraint_;  // Optional -> ConceptName or -> Type
-	bool is_noexcept_;                            // Whether noexcept specifier was present
-	Token lbrace_token_;                          // For error reporting
+	ASTNode expression_;						  // The expression inside { }
+	std::optional<ASTNode> return_type_constraint_;	// Optional -> ConceptName or -> Type
+	bool is_noexcept_;							// Whether noexcept specifier was present
+	Token lbrace_token_;						  // For error reporting
 };
 
 // Requires clause node: requires constraint
@@ -549,7 +549,7 @@ public:
 
 private:
 	ASTNode constraint_expr_;  // The constraint expression (can be a concept name or requires expression)
-	Token requires_token_;     // For error reporting
+	Token requires_token_;	   // For error reporting
 };
 
 // Concept declaration node: concept Name = constraint;
@@ -573,10 +573,10 @@ public:
 	const Token& concept_token() const { return concept_token_; }
 
 private:
-	Token name_;                                     // Concept name
-	std::vector<TemplateParameterNode> template_params_;  // Template parameters for the concept
-	ASTNode constraint_expr_;                        // The constraint expression
-	Token concept_token_;                            // For error reporting
+	Token name_;									 // Concept name
+	std::vector<TemplateParameterNode> template_params_;	 // Template parameters for the concept
+	ASTNode constraint_expr_;						  // The constraint expression
+	Token concept_token_;							// For error reporting
 };
 
 // Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode

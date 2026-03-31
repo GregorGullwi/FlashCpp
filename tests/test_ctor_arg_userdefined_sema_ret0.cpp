@@ -23,12 +23,16 @@ int main() {
 	BoxedInt zero(0);
 
 	Pair local(twenty_one, zero);
-	if (local.first != 21) return 1;
-	if (local.second) return 2;
+	if (local.first != 21)
+		return 1;
+	if (local.second)
+		return 2;
 
 	Pair temporary = make_pair(BoxedInt(7), BoxedInt(3));
-	if (temporary.first != 7) return 3;
-	if (!temporary.second) return 4;
+	if (temporary.first != 7)
+		return 3;
+	if (!temporary.second)
+		return 4;
 
 	return 0;
 }

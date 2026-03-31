@@ -10,6 +10,7 @@ int operator+(int lhs, const Box& rhs) {
 
 int main() {
 	Box box(5);
-	if ((1 + box) != 6) return 1;
+	if ((1 + box) != 6)
+		return 1;
 	return 0;
 }

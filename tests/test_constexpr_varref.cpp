@@ -8,5 +8,5 @@ constexpr int y = x + 10;
 static_assert(y == 52, "y should be 52");
 
 void test() {
-    // Test passed if this compiles
+	// Test passed if this compiles
 }

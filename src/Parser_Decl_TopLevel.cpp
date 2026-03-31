@@ -4,16 +4,13 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
-ParseResult Parser::parse_top_level_node()
-{
+ParseResult Parser::parse_top_level_node() {
 	// Save the current token's position to restore later in case of a parsing
 	// error
 	ScopedTokenPosition saved_position(*this);
 
 #if WITH_DEBUG_INFO
-	if (break_at_line_.has_value() && peek_info().line() == break_at_line_)
-	{
+	if (break_at_line_.has_value() && peek_info().line() == break_at_line_) {
 		DEBUG_BREAK();
 	}
 #endif
@@ -31,21 +28,21 @@ ParseResult Parser::parse_top_level_node()
 		if (!consume("("_tok)) {
 			return ParseResult::error("Expected '(' after '__pragma'", current_token_);
 		}
-		
+
 		// Now parse what's inside - it could be pack(...) or something else
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-		    peek_info().value() == "pack") {
+			peek_info().value() == "pack") {
 			advance(); // consume 'pack'
 			if (!consume("("_tok)) {
 				return ParseResult::error("Expected '(' after '__pragma(pack'", current_token_);
 			}
-			
+
 			// Reuse the pack parsing logic by calling parse_pragma_pack_inner
 			auto pack_result = parse_pragma_pack_inner();
 			if (pack_result.is_error()) {
 				return pack_result;
 			}
-			
+
 			// Consume the outer closing ')'
 			if (!consume(")"_tok)) {
 				return ParseResult::error("Expected ')' after '__pragma(...)'", current_token_);
@@ -70,10 +67,10 @@ ParseResult Parser::parse_top_level_node()
 	if (peek() == "#"_tok) {
 		advance(); // consume '#'
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-		    peek_info().value() == "pragma") {
+			peek_info().value() == "pragma") {
 			advance(); // consume 'pragma'
 			if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-			    peek_info().value() == "pack") {
+				peek_info().value() == "pack") {
 				advance(); // consume 'pack'
 
 				if (!consume("("_tok)) {
@@ -294,14 +291,13 @@ ParseResult Parser::parse_top_level_node()
 	// If we failed to parse any top-level construct, restore the token position
 	// and report an error
 	FLASH_LOG(Parser, Debug, "parse_top_level_node: parse_declaration_or_function_definition failed, current token: ", !peek().is_eof() ? std::string(peek_info().value()) : "N/A", ", error: ", result.error_message());
-	
+
 	// Preserve the original error token instead of creating a new error with the saved token
 	// This ensures error messages point to the actual error location, not the start of the construct
 	return saved_position.propagate(std::move(result));
 }
 
-ParseResult Parser::parse_static_assert()
-{
+ParseResult Parser::parse_static_assert() {
 	ScopedTokenPosition saved_position(*this);
 
 	// Consume 'static_assert' keyword
@@ -327,9 +323,9 @@ ParseResult Parser::parse_static_assert()
 		// Parse the message string literal(s) - C++ allows adjacent string literals to be concatenated
 		while (peek().is_string_literal()) {
 			auto message_token = advance();
-			if (message_token.value().size() >= 2 && 
-			    message_token.value().front() == '"' && 
-			    message_token.value().back() == '"') {
+			if (message_token.value().size() >= 2 &&
+				message_token.value().front() == '"' &&
+				message_token.value().back() == '"') {
 				// Extract the message content (remove quotes) and append
 				message += std::string(message_token.value().substr(1, message_token.value().size() - 2));
 			}
@@ -354,52 +350,52 @@ ParseResult Parser::parse_static_assert()
 	// However, if we can evaluate it now (non-dependent expression), we should do so to catch errors early.
 	// The expression may depend on template parameters that are not yet known
 	bool is_in_template_definition = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
-	
+
 	// Also consider struct parsing context - if we're inside a template struct body,
 	// member function bodies may be parsed later but still contain template-dependent expressions
-	bool is_in_template_struct = !struct_parsing_context_stack_.empty() && 
-		(parsing_template_depth_ > 0 || !current_template_param_names_.empty());
-	
+	bool is_in_template_struct = !struct_parsing_context_stack_.empty() &&
+								 (parsing_template_depth_ > 0 || !current_template_param_names_.empty());
+
 	// Try to evaluate the constant expression using ConstExprEvaluator
 	ConstExpr::EvaluationContext ctx(gSymbolTable);
 	ctx.parser = this;  // Enable template function instantiation
-	
+
 	// Pass struct context for static member lookup in static_assert within struct body
 	if (!struct_parsing_context_stack_.empty()) {
 		const auto& struct_ctx = struct_parsing_context_stack_.back();
 		ctx.struct_node = struct_ctx.struct_node;
 		ctx.struct_info = struct_ctx.local_struct_info;
 	}
-	
+
 	auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
-	
+
 	// If evaluation failed with a template-dependent expression error, defer only in template context.
 	// In non-template code, fall through to error handling (e.g. sizeof returning 0 for incomplete types).
 	if (!eval_result.success() && eval_result.error_type == ConstExpr::EvalErrorType::TemplateDependentExpression) {
 		if (is_in_template_definition || is_in_template_struct) {
 			FLASH_LOG(Templates, Debug, "Deferring static_assert with template-dependent expression: ", eval_result.error_message);
-			
+
 			// Store the deferred static_assert in the current struct/class for later evaluation
 			if (!struct_parsing_context_stack_.empty()) {
 				const auto& struct_ctx = struct_parsing_context_stack_.back();
 				if (struct_ctx.struct_node) {
 					StringHandle message_handle = StringTable::getOrInternStringHandle(message);
 					struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
-					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '", 
-					          struct_ctx.struct_node->name(), "' for later evaluation");
+					FLASH_LOG(Templates, Debug, "Stored deferred static_assert in struct '",
+							  struct_ctx.struct_node->name(), "' for later evaluation");
 				}
 			}
-			
+
 			return saved_position.success();
 		}
 		// Not in template context - fall through to error handling below
 	}
-	
+
 	// If we're in a template definition and evaluation failed for other reasons,
 	// that's okay - skip it and it will be checked during instantiation
 	if ((is_in_template_definition || is_in_template_struct) && !eval_result.success()) {
 		FLASH_LOG(Templates, Debug, "static_assert evaluation failed in template body: ", eval_result.error_message);
-		
+
 		// Store the deferred static_assert in the current struct/class for later evaluation
 		if (!struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
@@ -408,10 +404,10 @@ ParseResult Parser::parse_static_assert()
 				struct_ctx.struct_node->add_deferred_static_assert(*condition_result.node(), message_handle);
 			}
 		}
-		
+
 		return saved_position.success();
 	}
-	
+
 	if (!eval_result.success()) {
 		// If we're inside a struct body, defer - our constexpr evaluator is incomplete
 		// and many standard library static_asserts use complex constexpr functions
@@ -426,8 +422,7 @@ ParseResult Parser::parse_static_assert()
 		}
 		return ParseResult::error(
 			"static_assert condition is not a constant expression: " + eval_result.error_message,
-			static_assert_keyword
-		);
+			static_assert_keyword);
 	}
 
 	// Check if the assertion failed
@@ -476,7 +471,7 @@ ParseResult Parser::parse_namespace() {
 	// Check if this is an anonymous namespace (namespace { ... })
 	std::string_view namespace_name = "";
 	bool is_anonymous = false;
-	
+
 	// C++17 nested namespace declarations: namespace A::B::C { }
 	// This vector holds all namespace names for nested declarations
 	std::vector<std::string_view> nested_names;
@@ -496,25 +491,25 @@ ParseResult Parser::parse_namespace() {
 			return ParseResult::error("Expected namespace name or '{'", name_token);
 		}
 		namespace_name = name_token.value();
-		
+
 		// Collect all namespace names (including the first one for nested namespaces)
 		// The first namespace gets the is_inline_namespace flag from 'inline namespace' prefix
 		nested_names.push_back(namespace_name);
 		nested_inline_flags.push_back(is_inline_namespace);
-		
+
 		// C++17 nested namespace declarations: namespace A::B::C { }
 		// Also supports C++20: namespace A::inline B::C { }
 		// Continue collecting nested namespace names if present
 		while (peek() == "::"_tok) {
 			advance(); // consume '::'
-			
+
 			// Check for inline keyword in nested namespace: namespace A::inline B { }
 			bool nested_is_inline = false;
 			if (peek() == "inline"_tok) {
 				advance(); // consume 'inline'
 				nested_is_inline = true;
 			}
-			
+
 			auto nested_name_token = advance();
 			if (!nested_name_token.kind().is_identifier()) {
 				return ParseResult::error("Expected namespace name after '::'", nested_name_token);
@@ -588,19 +583,19 @@ ParseResult Parser::parse_namespace() {
 	// For nested namespaces (A::B::C), enter each scope in order
 	if (!is_anonymous) {
 		NamespaceHandle current_handle = gSymbolTable.get_current_namespace_handle();
-		
+
 		for (size_t i = 0; i < nested_names.size(); ++i) {
 			const auto& ns_name = nested_names[i];
 			bool this_ns_is_inline = nested_inline_flags.size() > i && nested_inline_flags[i];
 			StringHandle name_handle = StringTable::getOrInternStringHandle(ns_name);
 			NamespaceHandle next_handle = gNamespaceRegistry.getOrCreateNamespace(current_handle, name_handle);
-			
+
 			// If this namespace is inline, add a using directive BEFORE entering
 			// This makes members visible in the current (parent) scope
 			if (this_ns_is_inline && next_handle.isValid()) {
 				gSymbolTable.add_using_directive(next_handle);
 			}
-			
+
 			if (next_handle.isValid()) {
 				gSymbolTable.enter_namespace(next_handle);
 				current_handle = next_handle;
@@ -836,7 +831,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
 					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
-					
+
 					// Check for pointer-to-member type syntax: Type Class::*
 					// This is used in <type_traits> for result_of patterns
 					// Pattern: using _MemPtr = _Res _Class::*;
@@ -845,14 +840,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						auto saved_pos = save_token_position();
 						Token class_token = peek_info();
 						advance(); // consume potential class name
-						
+
 						if (peek() == "::"_tok) {
 							advance(); // consume '::'
 							if (peek() == "*"_tok) {
 								advance(); // consume '*'
 								// This is a pointer-to-member type: Type Class::*
 								// Mark the type as a pointer-to-member
-								type_spec.add_pointer_level(CVQualifier::None);  // Add pointer level
+								type_spec.add_pointer_level(CVQualifier::None);	// Add pointer level
 								type_spec.set_member_class_name(class_token.handle());
 								FLASH_LOG(Parser, Debug, "Parsed pointer-to-member type: ", type_spec.token().value(), " ", class_token.value(), "::*");
 								discard_saved_token(saved_pos);
@@ -865,18 +860,18 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							restore_token_position(saved_pos);
 						}
 					}
-					
+
 					// Parse pointer declarators: * [const] [volatile] *...
 					while (peek() == "*"_tok) {
 						advance(); // consume '*'
-						
+
 						// Check for CV-qualifiers after the *
 						CVQualifier ptr_cv = parse_cv_qualifiers();
-						
+
 						type_spec.add_pointer_level(ptr_cv);
 					}
-					
-					// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...) 
+
+					// Check for function pointer/reference type syntax: ReturnType (&)(...) or ReturnType (*)(...)
 					// Pattern: Type (&)() = lvalue reference to function returning Type
 					// Pattern: Type (&&)() = rvalue reference to function returning Type
 					// Pattern: Type (*)() = pointer to function returning Type
@@ -884,12 +879,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					if (peek() == "("_tok) {
 						auto func_type_saved_pos = save_token_position();
 						advance(); // consume '('
-						
+
 						// Check what's inside the parentheses: &, &&, or *
 						bool is_function_ref = false;
 						bool is_rvalue_function_ref = false;
 						bool is_function_ptr = false;
-						
+
 						if (!peek().is_eof()) {
 							if (peek() == "&&"_tok) {
 								is_rvalue_function_ref = true;
@@ -902,16 +897,16 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 								advance(); // consume '*'
 							}
 						}
-						
+
 						// After &, &&, or *, expect ')'
 						if ((is_function_ref || is_rvalue_function_ref || is_function_ptr) &&
-						    peek() == ")"_tok) {
+							peek() == ")"_tok) {
 							advance(); // consume ')'
-							
+
 							// Now expect '(' for the parameter list
 							if (peek() == "("_tok) {
 								advance(); // consume '('
-								
+
 								// Parse parameter list (can be empty or have parameters)
 								std::vector<TypeIndex> param_types;
 								while (!peek().is_eof() && peek() != ")"_tok) {
@@ -921,7 +916,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 										const TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
 										param_types.push_back(param_type.type_index());
 									}
-									
+
 									// Check for comma
 									if (peek() == ","_tok) {
 										advance(); // consume ','
@@ -929,30 +924,30 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 										break;
 									}
 								}
-								
+
 								if (peek() == ")"_tok) {
 									advance(); // consume ')'
-									
+
 									// Successfully parsed function reference/pointer type!
 									FunctionSignature func_sig;
 									func_sig.return_type_index = type_spec.type_index();
 									func_sig.parameter_type_indices = std::move(param_types);
-									
+
 									if (is_function_ptr) {
 										type_spec.add_pointer_level(CVQualifier::None);
 									}
 									type_spec.set_function_signature(func_sig);
-									
+
 									if (is_function_ref) {
-										type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);  // lvalue reference
+										type_spec.set_reference_qualifier(ReferenceQualifier::LValueReference);	// lvalue reference
 									} else if (is_rvalue_function_ref) {
-										type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);   // rvalue reference
+										type_spec.set_reference_qualifier(ReferenceQualifier::RValueReference);	// rvalue reference
 									}
-									
-									FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type in global alias: ", 
-									          is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
-									          " to function");
-									
+
+									FLASH_LOG(Parser, Debug, "Parsed function reference/pointer type in global alias: ",
+											  is_function_ptr ? "pointer" : (is_rvalue_function_ref ? "rvalue ref" : "lvalue ref"),
+											  " to function");
+
 									// Discard saved position - we successfully parsed
 									discard_saved_token(func_type_saved_pos);
 								} else {
@@ -968,13 +963,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							restore_token_position(func_type_saved_pos);
 						}
 					}
-					
+
 					// Parse reference declarators: & or &&
 					ReferenceQualifier ref_qual = parse_reference_qualifier();
 					if (ref_qual != ReferenceQualifier::None) {
 						type_spec.set_reference_qualifier(ref_qual);
 					}
-					
+
 					// Parse array dimensions: using _Type = _Tp[_Nm];
 					while (peek() == "["_tok) {
 						advance(); // consume '['
@@ -994,7 +989,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 							}
 						}
 					}
-					
+
 					// This is a type alias
 					if (!consume(";"_tok)) {
 						return ParseResult::error("Expected ';' after type alias", current_token_);
@@ -1003,7 +998,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					// Register the type alias in getTypesByNameMap()
 					// Create a TypeInfo for the alias that points to the underlying type
 					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
-					
+
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();
 					if (!namespace_handle.isGlobal()) {
@@ -1012,14 +1007,14 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 						if (getTypesByNameMap().find(full_qualified_name) == getTypesByNameMap().end()) {
 							getTypesByNameMap().emplace(full_qualified_name, &alias_type_info);
 							FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias '{}' with namespace-qualified name '{}'",
-							                 alias_token.value(), StringTable::getStringView(full_qualified_name));
+											 alias_token.value(), StringTable::getStringView(full_qualified_name));
 						}
 					}
 
 					// Return success (no AST node needed for type aliases)
 					return saved_position.success();
 				}
-				
+
 				// If we didn't get a node from parse_type_specifier, just check for semicolon
 				if (!consume(";"_tok)) {
 					return ParseResult::error("Expected ';' after type alias", current_token_);
@@ -1031,8 +1026,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// Skip to semicolon and continue (template aliases with dependent types can't be fully resolved now).
 				// For function-local type aliases (like in template instantiations), they're often not needed
 				// for code generation as the actual type is already known from the return type.
-				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ", 
-				          parsing_template_depth_ > 0 ? "template body" : "function body");
+				FLASH_LOG(Parser, Debug, "Skipping unparseable using declaration in ",
+						  parsing_template_depth_ > 0 ? "template body" : "function body");
 				while (!peek().is_eof() && peek() != ";"_tok) {
 					advance();
 				}
@@ -1144,36 +1139,36 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		// Create the using enum node - CodeGen will also handle this for its local scope
 		StringHandle enum_name_handle = enum_type_token.handle();
 		auto using_enum_node = emplace_node<UsingEnumNode>(enum_name_handle, using_token);
-		
+
 		// Add enumerators to gSymbolTable NOW so they're available during parsing
 		// This is needed because the parser needs to resolve identifiers like 'Red' when
 		// parsing subsequent expressions (e.g., static_cast<int>(Red))
 		auto type_it = getTypesByNameMap().find(enum_name_handle);
 		if (type_it != getTypesByNameMap().end() && type_it->second->getEnumInfo()) {
 			const EnumTypeInfo* enum_info = type_it->second->getEnumInfo();
-			
+
 			for (const auto& enumerator : enum_info->enumerators) {
 				// Create a type node for the enum type
 				auto enum_type_node = emplace_node<TypeSpecifierNode>(
 					type_it->second->type_index_.withCategory(TypeCategory::Enum), enum_info->underlying_size, enum_type_token,
 					CVQualifier::None, ReferenceQualifier::None);
-				
+
 				// Create a declaration node for the enumerator
-				Token enumerator_token(Token::Type::Identifier, 
-					StringTable::getStringView(enumerator.getName()), 0, 0, 0);
+				Token enumerator_token(Token::Type::Identifier,
+									   StringTable::getStringView(enumerator.getName()), 0, 0, 0);
 				auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_token);
-				
+
 				// Insert into gSymbolTable so it's available during parsing
 				gSymbolTable.insert(StringTable::getStringView(enumerator.getName()), enumerator_decl);
 			}
-			
-			FLASH_LOG(Parser, Debug, "Using enum '", enum_type_token.value(), 
-				"' - added ", enum_info->enumerators.size(), " enumerators to parser scope");
+
+			FLASH_LOG(Parser, Debug, "Using enum '", enum_type_token.value(),
+					  "' - added ", enum_info->enumerators.size(), " enumerators to parser scope");
 		} else {
-			FLASH_LOG(General, Error, "Enum type '", enum_type_token.value(), 
-				"' not found for 'using enum' declaration");
+			FLASH_LOG(General, Error, "Enum type '", enum_type_token.value(),
+					  "' not found for 'using enum' declaration");
 		}
-		
+
 		return saved_position.success(using_enum_node);
 	}
 
@@ -1234,8 +1229,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	gSymbolTable.add_using_declaration(
 		std::string_view(identifier_token.value()),
 		namespace_handle,
-		std::string_view(identifier_token.value())
-	);
+		std::string_view(identifier_token.value()));
 
 	// Check if the identifier refers to an existing type in the source namespace
 	// Build the source type name (either global or qualified with namespace_path)
@@ -1247,13 +1241,13 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		// using ns1::ns2::identifier; - build qualified name
 		StringHandle identifier_handle = identifier_token.handle();
 		source_type_name = namespace_handle.isValid()
-			? gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle)
-			: identifier_handle;
+							   ? gNamespaceRegistry.buildQualifiedIdentifier(namespace_handle, identifier_handle)
+							   : identifier_handle;
 	}
-	
+
 	// Look up the type in getTypesByNameMap()
 	auto existing_type_it = getTypesByNameMap().find(source_type_name);
-	
+
 	// If not found with qualified name, try the unqualified name
 	// This handles cases like: using ::__gnu_cxx::lldiv_t; where __gnu_cxx::lldiv_t
 	// might itself be an alias to ::lldiv_t
@@ -1264,11 +1258,11 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		if (unqualified_it != getTypesByNameMap().end()) {
 			existing_type_it = unqualified_it;
 			source_type_name = unqualified_source;  // Update to use the unqualified name that was found
-			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}", 
-			                 StringTable::getStringView(qualified_source), StringTable::getStringView(unqualified_source));
+			FLASH_LOG_FORMAT(Parser, Debug, "Using declaration: qualified name {} not found, using unqualified name {}",
+							 StringTable::getStringView(qualified_source), StringTable::getStringView(unqualified_source));
 		}
 	}
-	
+
 	// If we're inside a namespace, we need to register the type with a qualified name
 	// so that "std::lldiv_t" can be recognized as a type
 	NamespaceHandle current_namespace_handle = gSymbolTable.get_current_namespace_handle();
@@ -1276,7 +1270,7 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 		// Build qualified name for the target: std::identifier
 		StringHandle identifier_handle = identifier_token.handle();
 		StringHandle target_type_name = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace_handle, identifier_handle);
-		
+
 		// Check if target name is already registered (avoid duplicates)
 		if (getTypesByNameMap().find(target_type_name) == getTypesByNameMap().end()) {
 			if (existing_type_it != getTypesByNameMap().end()) {
@@ -1284,21 +1278,21 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				const TypeInfo* source_type = existing_type_it->second;
 				auto& alias_type_info = add_type_alias_copy(target_type_name, source_type->type_index_, source_type->type_size_);
 				alias_type_info.pointer_depth_ = source_type->pointer_depth_;
-				
+
 				// If the source type has StructInfo, we don't copy it - we rely on type_index_ to point to it
 				// This is the same pattern used for typedef resolution
-				
-				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}", 
-				                 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
-				
+
+				FLASH_LOG_FORMAT(Parser, Debug, "Registered type alias from using declaration: {} -> {}",
+								 StringTable::getStringView(target_type_name), StringTable::getStringView(source_type_name));
+
 				// Also register with the unqualified name within the current namespace scope
 				// This allows code inside the namespace to use the type without qualification
 				// e.g., inside namespace std, both "std::lldiv_t" and "lldiv_t" should work
 				StringHandle unqualified_name = identifier_token.handle();
 				if (getTypesByNameMap().find(unqualified_name) == getTypesByNameMap().end()) {
 					getTypesByNameMap().emplace(unqualified_name, &alias_type_info);
-					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}", 
-					                 StringTable::getStringView(unqualified_name));
+					FLASH_LOG_FORMAT(Parser, Debug, "Also registered unqualified type name: {}",
+									 StringTable::getStringView(unqualified_name));
 				}
 			}
 		}
@@ -1307,4 +1301,3 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 	auto decl_node = emplace_node<UsingDeclarationNode>(namespace_handle, identifier_token, using_token);
 	return saved_position.success(decl_node);
 }
-

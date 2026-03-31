@@ -2,9 +2,9 @@
 // f2 namespace does not exist, so f2::func() should be an error.
 
 namespace f {
-    int func() { return 42; }
-}
+int func() { return 42; }
+} // namespace f
 
 int main() {
-    return f2::func();
+	return f2::func();
 }

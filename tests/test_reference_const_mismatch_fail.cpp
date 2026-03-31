@@ -1,9 +1,9 @@
-// Reference const DOES matter - should error  
+// Reference const DOES matter - should error
 struct Foo {
-	void process(int& ref);  // declaration: non-const reference
+	void process(int& ref);	// declaration: non-const reference
 };
 
-void Foo::process(const int& ref) {  // definition: const reference - MISMATCH
+void Foo::process(const int& ref) {	// definition: const reference - MISMATCH
 }
 
 int main() {

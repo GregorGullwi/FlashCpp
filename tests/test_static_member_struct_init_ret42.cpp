@@ -18,16 +18,19 @@ int main() {
 
 	Ordering r1 = Ordering::less;
 	int v1 = r1.val;
-	if (v1 < 0) result += 1;
+	if (v1 < 0)
+		result += 1;
 
 	Ordering r2 = Ordering::equal;
 	int v2 = r2.val;
-	if (v2 == 0) result += 2;
+	if (v2 == 0)
+		result += 2;
 
 	Ordering r3 = Ordering::greater;
 	int v3 = r3.val;
-	if (v3 > 0) result += 4;
+	if (v3 > 0)
+		result += 4;
 
-	// result should be 1+2+4 = 7
+ // result should be 1+2+4 = 7
 	return result == 7 ? 42 : 0;
 }

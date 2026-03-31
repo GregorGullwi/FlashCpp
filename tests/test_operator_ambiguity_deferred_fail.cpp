@@ -16,7 +16,7 @@ int operator+(int lhs, Box rhs) {
 	return lhs + rhs.value;
 }
 
-template<typename T>
+template <typename T>
 int addTwice(T value) {
 	return value + value;
 }

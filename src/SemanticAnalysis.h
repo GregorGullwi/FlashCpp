@@ -82,7 +82,8 @@ public:
 	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
 	std::optional<SemanticSlot> getCompoundAssignBackConv(const void* binop_key) const {
 		auto it = compound_assign_back_conv_.find(binop_key);
-		if (it == compound_assign_back_conv_.end()) return {};
+		if (it == compound_assign_back_conv_.end())
+			return {};
 		return it->second;
 	}
 
@@ -98,11 +99,11 @@ public:
 		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
-		const TypeSpecifierNode& deduced_type) const;
+									   const TypeSpecifierNode& deduced_type) const;
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
-		const TypeSpecifierNode& range_type,
-		const TypeSpecifierNode& begin_return_type,
-		const FunctionDeclarationNode* dereference_func) const;
+									   const TypeSpecifierNode& range_type,
+									   const TypeSpecifierNode& begin_return_type,
+									   const FunctionDeclarationNode* dereference_func) const;
 	ASTNode normalizeRangedForLoopDecl(const RangedForStatementNode& stmt);
 	const FunctionDeclarationNode* resolveRangedForIteratorDereference(
 		const TypeSpecifierNode& iterator_type,
@@ -152,8 +153,8 @@ private:
 	// Allocate a new ImplicitCastInfo entry and return its 1-based index.
 	CastInfoIndex allocateCastInfo(const ImplicitCastInfo& info);
 	CastInfoIndex allocateNonUserDefinedCastInfo(CanonicalTypeId source_type_id,
-		CanonicalTypeId target_type_id,
-		StandardConversionKind cast_kind);
+												 CanonicalTypeId target_type_id,
+												 StandardConversionKind cast_kind);
 
 	// Store a semantic slot for the given expression node pointer.
 	void setSlot(const void* key, const SemanticSlot& slot);
@@ -163,12 +164,12 @@ private:
 	// ImplicitCastInfo and fill the expression's SemanticSlot.
 	// Returns true when a slot was filled.
 	bool tryAnnotateConversion(const ASTNode& expr_node,
-		CanonicalTypeId target_type_id,
-		CanonicalTypeId expr_type_id = {});
+							   CanonicalTypeId target_type_id,
+							   CanonicalTypeId expr_type_id = {});
 	bool tryAnnotateCopyInitConvertingConstructor(const ASTNode& expr_node,
-		CanonicalTypeId target_type_id,
-		const char* context_description,
-		CanonicalTypeId expr_type_id = {});
+												  CanonicalTypeId target_type_id,
+												  const char* context_description,
+												  CanonicalTypeId expr_type_id = {});
 
 	// Try to annotate a return expression with implicit cast info when the
 	// expression type differs from the declared function return type.
@@ -177,26 +178,25 @@ private:
 	// Annotate binary arithmetic/comparison operands with their common-type conversions.
 	// The caller may pass precomputed operand type IDs to avoid re-running inference on hot paths.
 	void tryAnnotateBinaryOperandConversions(const BinaryOperatorNode& bin_op,
-		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+											 CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// C++20 [expr.ass]/7: for compound assignment E1 op= E2, the result of the
 	// arithmetic is converted back from the common type to the LHS type
 	// (equivalent to static_cast<T1>(E1 op E2)).  Annotate this on the
 	// BinaryOperatorNode so codegen can verify sema ownership.
 	void tryAnnotateCompoundAssignBackConversion(const BinaryOperatorNode& bin_op,
-		CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
+												 CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id);
 
 	// Shared helper: build a back-conversion SemanticSlot from source_type → target_type
 	// and store it in compound_assign_back_conv_ keyed on &bin_op.
 	void storeCompoundAssignBackConvSlot(const BinaryOperatorNode& bin_op,
-		CanonicalTypeId source_type_id, CanonicalTypeId target_type_id);
+										 CanonicalTypeId source_type_id, CanonicalTypeId target_type_id);
 
 	// C++20 [expr.shift]: shift operands undergo independent integral promotions,
 	// NOT the usual arithmetic conversions.  Each operand is promoted separately
 	// (bool/char/short → int); the result type is the promoted LHS type.
 	void tryAnnotateShiftOperandPromotions(const BinaryOperatorNode& bin_op,
-		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
-
+										   CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// C++20 [expr.unary.op]: the operand of unary +, -, and ~ undergoes integral
 	// promotion.  Types with conversion rank less than int (bool, char, short, etc.)
@@ -214,8 +214,8 @@ private:
 	// Annotate member-function-call arguments with their parameter-type conversions.
 	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
-		const TypeSpecifierNode& param_type,
-		const char* context_description);
+																			const TypeSpecifierNode& param_type,
+																			const char* context_description);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -244,22 +244,22 @@ private:
 	// C++11+: scoped enums do not allow implicit conversion to other types.
 	// Throws CompileError if expr_node is a scoped enum and target type differs.
 	void diagnoseScopedEnumConversion(const ASTNode& expr_node,
-		CanonicalTypeId target_type_id,
-		const char* context_description,
-		CanonicalTypeId expr_type_id = {});
+									  CanonicalTypeId target_type_id,
+									  const char* context_description,
+									  CanonicalTypeId expr_type_id = {});
 
 	// Diagnose scoped enum used as operand in binary arithmetic/comparison with a
 	// different type.  Per C++20, scoped enums only support relational/equality
 	// operators between values of the same scoped enum type.
 	void diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
-		CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
+										  CanonicalTypeId lhs_type_id = {}, CanonicalTypeId rhs_type_id = {});
 
 	// State
 	Parser& parser_;
 	CompileContext& context_;
 	SymbolTable& symbols_;
 	TypeContext type_context_;
-	CanonicalTypeId bool_type_id_{};  // Cached canonical type for bool (interned once in constructor).
+	CanonicalTypeId bool_type_id_{};	 // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;
 	SemanticPassStats stats_;
 

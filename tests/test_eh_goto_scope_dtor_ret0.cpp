@@ -33,24 +33,27 @@ int test_backward_goto_exits_inner_block() {
 	{
 		Guard outer(10);
 	retry:
-		if (count >= 2) goto done;
+		if (count >= 2)
+			goto done;
 		{
 			Guard inner(1);
 			count++;
-			goto retry;  // inner Guard must be destroyed before jumping back
+			goto retry;	// inner Guard must be destroyed before jumping back
 		}
 	done:;
 	}
-	// outer (10) + 2 × inner (1 each) = 12
+ // outer (10) + 2 × inner (1 each) = 12
 	return (g_dtor_count - prev) == 12 ? 0 : (g_dtor_count - prev);
 }
 
 int main() {
 	g_dtor_count = 0;
-	if (test_forward_goto_exits_block() != 0) return 1;
+	if (test_forward_goto_exits_block() != 0)
+		return 1;
 
 	g_dtor_count = 0;
-	if (test_backward_goto_exits_inner_block() != 0) return 2;
+	if (test_backward_goto_exits_inner_block() != 0)
+		return 2;
 
 	return 0;
 }

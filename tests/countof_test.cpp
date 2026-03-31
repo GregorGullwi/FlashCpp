@@ -12,7 +12,7 @@
 
 // Template function declaration with complex declarator:
 // - Return type: char (*)[_SizeOfArray] (pointer to char array of _SizeOfArray elements)
-// - Function name: __countof_helper  
+// - Function name: __countof_helper
 // - Parameter: reference to array of _CountofType with _SizeOfArray elements
 template <typename _CountofType, size_t _SizeOfArray>
 char (*__countof_helper(_UNALIGNED _CountofType (&_Array)[_SizeOfArray]))[_SizeOfArray];
@@ -22,7 +22,7 @@ char (*__countof_helper(_UNALIGNED _CountofType (&_Array)[_SizeOfArray]))[_SizeO
 #define __crt_countof(_Array) (sizeof(*__countof_helper(_Array)) + 0)
 
 int main() {
-    // This demonstrates that the template declaration parses correctly
-    // The actual usage (with template argument deduction) is a separate feature
-    return 0;
+	// This demonstrates that the template declaration parses correctly
+	// The actual usage (with template argument deduction) is a separate feature
+	return 0;
 }

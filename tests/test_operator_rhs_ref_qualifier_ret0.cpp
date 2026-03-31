@@ -15,7 +15,9 @@ struct Box {
 int main() {
 	Box box(5);
 	int value = 7;
-	if ((box + value) != 12) return 1;
-	if ((box + 3) != 108) return 2;
+	if ((box + value) != 12)
+		return 1;
+	if ((box + 3) != 108)
+		return 2;
 	return 0;
 }

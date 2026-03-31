@@ -10,5 +10,5 @@ struct Point {
 int main() {
 	Point* arr = new Point[2];
 	delete[] arr;
-	return g == 60 ? 0 : 1;  // 2 * (10 + 20) = 60
+	return g == 60 ? 0 : 1;	// 2 * (10 + 20) = 60
 }

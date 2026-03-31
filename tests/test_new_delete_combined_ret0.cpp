@@ -7,22 +7,22 @@ int helper3(int a, int b) { return a + b; }
 
 class Dummy {
 public:
-    int x;
-    Dummy() : x(0) {}
+	int x;
+	Dummy() : x(0) {}
 };
 
 int main() {
-    int* p = new int(42);
-    int val = *p;
-    delete p;
+	int* p = new int(42);
+	int val = *p;
+	delete p;
 
-    int* arr = new int[5];
-    arr[0] = 10;
-    arr[1] = 20;
-    int sum = arr[0] + arr[1];
-    delete[] arr;
+	int* arr = new int[5];
+	arr[0] = 10;
+	arr[1] = 20;
+	int sum = arr[0] + arr[1];
+	delete[] arr;
 
-    Dummy d;
-    int r = helper1() + helper2() + helper3(1, 2) + d.x;
-    return (val == 42) && (sum == 30) && (r == 145) ? 0 : 1;
+	Dummy d;
+	int r = helper1() + helper2() + helper3(1, 2) + d.x;
+	return (val == 42) && (sum == 30) && (r == 145) ? 0 : 1;
 }

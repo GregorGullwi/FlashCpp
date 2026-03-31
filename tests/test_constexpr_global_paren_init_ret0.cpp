@@ -25,10 +25,15 @@ static_assert(gcol.g == 128);
 static_assert(gcol.b == 0);
 
 int main() {
-	if (gp.x != 10) return 1;
-	if (gp.y != 20) return 2;
-	if (gcol.r != 255) return 3;
-	if (gcol.g != 128) return 4;
-	if (gcol.b != 0) return 5;
+	if (gp.x != 10)
+		return 1;
+	if (gp.y != 20)
+		return 2;
+	if (gcol.r != 255)
+		return 3;
+	if (gcol.g != 128)
+		return 4;
+	if (gcol.b != 0)
+		return 5;
 	return 0;
 }

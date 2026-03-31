@@ -4,28 +4,28 @@
 // DestructorDeclarationNode is created for the specialization — the noexcept
 // flag and expression must be copied from the original.
 
-template<typename T>
+template <typename T>
 struct Wrapper {
 	T value;
 	~Wrapper() {}  // implicitly noexcept(true)
 };
 
 // Full specialization with noexcept(false) destructor
-template<>
+template <>
 struct Wrapper<int> {
 	int value;
 	~Wrapper() noexcept(false) {}  // explicitly may throw
 };
 
 // Full specialization with default (implicit noexcept(true)) destructor
-template<>
+template <>
 struct Wrapper<double> {
 	double value;
 	~Wrapper() {}  // implicitly noexcept(true)
 };
 
 // Full specialization with explicit noexcept(true) destructor
-template<>
+template <>
 struct Wrapper<char> {
 	char value;
 	~Wrapper() noexcept {}  // explicitly noexcept(true)
@@ -34,23 +34,23 @@ struct Wrapper<char> {
 int main() {
 	int result = 0;
 
-	// Wrapper<int> has noexcept(false) — should NOT be nothrow destructible
+ // Wrapper<int> has noexcept(false) — should NOT be nothrow destructible
 	if (__is_nothrow_destructible(Wrapper<int>))
 		result |= 1;
 
-	// Wrapper<double> has implicit noexcept(true) — should be nothrow destructible
+ // Wrapper<double> has implicit noexcept(true) — should be nothrow destructible
 	if (!__is_nothrow_destructible(Wrapper<double>))
 		result |= 2;
 
-	// Wrapper<char> has explicit noexcept(true) — should be nothrow destructible
+ // Wrapper<char> has explicit noexcept(true) — should be nothrow destructible
 	if (!__is_nothrow_destructible(Wrapper<char>))
 		result |= 4;
 
-	// Wrapper<float> uses the primary template — should be nothrow destructible
+ // Wrapper<float> uses the primary template — should be nothrow destructible
 	if (!__is_nothrow_destructible(Wrapper<float>))
 		result |= 8;
 
-	// Also verify via the noexcept operator on pseudo-destructor calls
+ // Also verify via the noexcept operator on pseudo-destructor calls
 	Wrapper<int> wi{42};
 	if (noexcept(wi.~Wrapper()))
 		result |= 16;

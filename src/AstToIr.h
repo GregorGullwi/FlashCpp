@@ -7,7 +7,7 @@ class SemanticAnalysis;
 
 class AstToIr {
 public:
-	AstToIr() = delete;  // Require valid references
+	AstToIr() = delete;	// Require valid references
 	AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser);
 
 	void visit(const ASTNode& node);
@@ -53,12 +53,12 @@ private:
 	};
 
 	struct AddressComponents {
-		std::variant<StringHandle, TempVar> base;           // Base variable or temp
-		std::vector<ComputeAddressOp::ArrayIndex> array_indices;  // Array indices
-		int total_member_offset = 0;                        // Accumulated member offsets
-		TypeIndex final_type_index {};                      // Type identity of final result (TypeCategory embedded)
-		SizeInBits final_size_bits;                         // Size in bits
-		PointerDepth pointer_depth;                         // Pointer depth of final result
+		std::variant<StringHandle, TempVar> base;			  // Base variable or temp
+		std::vector<ComputeAddressOp::ArrayIndex> array_indices;	 // Array indices
+		int total_member_offset = 0;						 // Accumulated member offsets
+		TypeIndex final_type_index{};					  // Type identity of final result (TypeCategory embedded)
+		SizeInBits final_size_bits;							// Size in bits
+		PointerDepth pointer_depth;							// Pointer depth of final result
 	};
 
 	struct ScopeVariableInfo {
@@ -83,11 +83,9 @@ private:
 		TypeCategory bindingType() const { return type_index.category(); }
 	};
 
-
 	// Generate aggregate initialization of a struct from an InitializerListNode as a default argument.
 	// Emits ConstructorCallOp + MemberStoreOps for the struct, returns a TypedValue for the temporary.
 	std::optional<TypedValue> generateDefaultStructArg(const InitializerListNode& init_list, const TypeSpecifierNode& param_type);
-
 
 	// Fill in default arguments for parameters that weren't explicitly provided.
 	// Iterates from arg_idx to the end of param_nodes, evaluating each parameter's
@@ -129,8 +127,8 @@ private:
 
 	void registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name);
 	void registerFullExpressionTempDestructor(StringHandle struct_name,
-		std::variant<StringHandle, TempVar> object,
-		bool object_is_pointer = false);
+											  std::variant<StringHandle, TempVar> object,
+											  bool object_is_pointer = false);
 	void emitAndClearFullExpressionTempDestructors();
 
 	struct CatchScopeContext {
@@ -172,13 +170,13 @@ private:
 	void visitSwitchStatementNode(const SwitchStatementNode& node);
 	void visitRangedForStatementNode(const RangedForStatementNode& node);
 	void visitRangedForArray(const RangedForStatementNode& node, std::string_view array_name,
-	const DeclarationNode& array_decl, StringHandle loop_start_label,
-	StringHandle loop_body_label, StringHandle loop_increment_label,
-	StringHandle loop_end_label, size_t counter);
+							 const DeclarationNode& array_decl, StringHandle loop_start_label,
+							 StringHandle loop_body_label, StringHandle loop_increment_label,
+							 StringHandle loop_end_label, size_t counter);
 	void visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode range_object_expr,
-	const TypeSpecifierNode& range_type, StringHandle loop_start_label,
-	StringHandle loop_body_label, StringHandle loop_increment_label,
-	StringHandle loop_end_label, size_t counter);
+								const TypeSpecifierNode& range_type, StringHandle loop_start_label,
+								StringHandle loop_body_label, StringHandle loop_increment_label,
+								StringHandle loop_end_label, size_t counter);
 	void visitBreakStatementNode(const BreakStatementNode& node);
 	void visitContinueStatementNode(const ContinueStatementNode& node);
 	void visitGotoStatementNode(const GotoStatementNode& node);
@@ -191,13 +189,13 @@ private:
 	void visitVariableDeclarationNode(const ASTNode& ast_node);
 	void visitStructuredBindingNode(const ASTNode& ast_node);
 	ExprResult visitExpressionNode(const ExpressionNode& exprNode,
-		ExpressionContext context = ExpressionContext::Load);
+								   ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
-		ExpressionContext context = ExpressionContext::Load);
+									ExpressionContext context = ExpressionContext::Load);
 	std::optional<ExprResult> decayLambdaStructToFunctionPointer(const StructTypeInfo& struct_info, const Token& source_token);
 	ExprResult generateQualifiedIdentifierIr(const QualifiedIdentifierNode& qualifiedIdNode);
 	ExprResult generateNumericLiteralIr(const NumericLiteralNode& numericLiteralNode);
@@ -212,7 +210,7 @@ private:
 	// can_convert_type for plain primitive scalars. Returns the (possibly converted)
 	// ExprResult. param_type must not be null.
 	ExprResult applyConstructorArgConversion(ExprResult arg_result, const ASTNode& arg_expr,
-		const TypeSpecifierNode& param_type, const Token& source_token);
+											 const TypeSpecifierNode& param_type, const Token& source_token);
 	std::optional<ExprResult> materializeSelectedConvertingConstructor(
 		ExprResult source_result,
 		const ASTNode& source_expr,
@@ -242,7 +240,7 @@ private:
 		const ExpressionNode& expr,
 		int accumulated_offset = 0);
 	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
-		ExpressionContext context = ExpressionContext::Load);
+									   ExpressionContext context = ExpressionContext::Load);
 	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
@@ -266,7 +264,7 @@ private:
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
-	ExpressionContext context = ExpressionContext::Load);
+										ExpressionContext context = ExpressionContext::Load);
 	bool validateAndSetupIdentifierMemberAccess(
 		std::string_view object_name,
 		std::variant<StringHandle, TempVar>& base_object,
@@ -285,7 +283,7 @@ private:
 		TypeIndex& base_type_index,
 		bool& is_pointer_dereference);
 	ExprResult generateMemberAccessIr(const MemberAccessNode& memberAccessNode,
-		ExpressionContext context = ExpressionContext::Load);
+									  ExpressionContext context = ExpressionContext::Load);
 	std::optional<size_t> calculateArraySize(const DeclarationNode& decl);
 	ExprResult generateSizeofIr(const SizeofExprNode& sizeofNode);
 	ExprResult generateAlignofIr(const AlignofExprNode& alignofNode);
@@ -337,7 +335,7 @@ private:
 	void generateLambdaOperatorCallFunction(LambdaInfo& lambda_info);
 	void generateLambdaInvokeFunction(LambdaInfo& lambda_info);
 	void addCapturedVariablesToSymbolTable(const std::vector<LambdaCaptureNode>& captures,
-		const std::vector<ASTNode>& captured_var_decls);
+										   const std::vector<ASTNode>& captured_var_decls);
 
 	// ── inline private helpers (IrGenerator_Visitors_TypeInit.cpp) ──
 	// Helper: resolve self-referential struct types in template instantiations.
@@ -355,8 +353,7 @@ private:
 		OverloadableOperator op_kind,  // Increment or Decrement
 		TypeCategory operandType,
 		const ExprResult& operandIrResult,
-		bool is_prefix
-	);
+		bool is_prefix);
 
 	// Helper: generate built-in pointer or integer increment/decrement IR.
 	// Handles pointer arithmetic (add/subtract element_size) and integer pre/post inc/dec.
@@ -368,8 +365,7 @@ private:
 		const UnaryOperatorNode& unaryOperatorNode,
 		const ExprResult& operandIrResult,
 		TypeCategory operandType,
-		TempVar result_var
-	);
+		TempVar result_var);
 
 	// Helper function to resolve template parameter size from struct name
 	// This is used by both ConstExpr evaluator and IR generation for sizeof(T)
@@ -378,7 +374,7 @@ private:
 
 	// Helper function to try evaluating sizeof/alignof using ConstExprEvaluator
 	// Returns the evaluated operands if successful, empty vector otherwise
-	template<typename NodeType>
+	template <typename NodeType>
 	ExprResult tryEvaluateAsConstExpr(const NodeType& node) {
 		// Try to evaluate as a constant expression first
 		ConstExpr::EvaluationContext ctx(symbol_table);
@@ -423,15 +419,14 @@ private:
 	// Pack a struct aggregate initializer into raw bytes for static/global storage.
 	// Callers provide the scalar evaluator so the same member walk can be reused for
 	// globals, inline static members, and template-instantiated static members.
-	template<typename EvalFn>
+	template <typename EvalFn>
 	void fillAggregateInitData(
 		std::vector<char>& init_data,
 		const StructTypeInfo& struct_info,
 		const InitializerListNode& init_list,
 		EvalFn& eval_to_value,
 		size_t base_offset = 0,
-		size_t depth = 0)
-	{
+		size_t depth = 0) {
 		constexpr size_t kFillStructMaxDepth = 64;
 		if (depth >= kFillStructMaxDepth) {
 			FLASH_LOG(Codegen, Warning, "fillAggregateInitData: maximum nesting depth (", kFillStructMaxDepth, ") exceeded, skipping remaining members");
@@ -503,18 +498,18 @@ private:
 
 	// Implementation of recursive nested member store generation
 	bool tryEmitArrayMemberStores(
-	const StructMember& member,
-	const InitializerListNode& init_list,
-	StringHandle base_object,
-	int base_offset,
-	const Token& token);
+		const StructMember& member,
+		const InitializerListNode& init_list,
+		StringHandle base_object,
+		int base_offset,
+		const Token& token);
 
 	void generateNestedMemberStores(
-	const StructTypeInfo& struct_info,
-	const InitializerListNode& init_list,
-	StringHandle base_object,
-	int base_offset,
-	const Token& token);
+		const StructTypeInfo& struct_info,
+		const InitializerListNode& init_list,
+		StringHandle base_object,
+		int base_offset,
+		const Token& token);
 
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
@@ -541,10 +536,10 @@ private:
 	// Helper function to check if access to a member is allowed
 	// Returns true if access is allowed, false otherwise
 	bool checkMemberAccess(const StructMember* member,
-	const StructTypeInfo* member_owner_struct,
-	const StructTypeInfo* accessing_struct,
-	[[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
-	const std::string_view& accessing_function = "") const;
+						   const StructTypeInfo* member_owner_struct,
+						   const StructTypeInfo* accessing_struct,
+						   [[maybe_unused]] const BaseClassSpecifier* inheritance_path = nullptr,
+						   const std::string_view& accessing_function = "") const;
 
 	// Helper: check if accessing_struct is a declared friend class of member_owner_struct.
 	//
@@ -566,7 +561,7 @@ private:
 	//      strip the "$pattern" separator to recover the base template name,
 	//      preserving the namespace prefix for correct matching.
 	bool checkFriendClassAccess(const StructTypeInfo* member_owner_struct,
-	                             const StructTypeInfo* accessing_struct) const;
+								const StructTypeInfo* accessing_struct) const;
 
 	// Helper: check if two structs are the same class, including template instantiations.
 	// Template instantiations use a '$hash' suffix (e.g., basic_string_view$291eceb35e7234a9)
@@ -575,11 +570,11 @@ private:
 
 	// Helper to check if accessing_struct is nested within member_owner_struct
 	bool isNestedWithin(const StructTypeInfo* accessing_struct,
-	const StructTypeInfo* member_owner_struct) const;
+						const StructTypeInfo* member_owner_struct) const;
 
 	// Helper to check if derived_struct can access protected members of base_struct
 	bool isAccessibleThroughInheritance(const StructTypeInfo* derived_struct,
-	const StructTypeInfo* base_struct) const;
+										const StructTypeInfo* base_struct) const;
 
 	// Get the current struct context (which class we're currently in)
 	const StructTypeInfo* getCurrentStructContext() const;
@@ -591,9 +586,9 @@ private:
 
 	// Helper function to check if access to a member function is allowed
 	bool checkMemberFunctionAccess(const StructMemberFunction* member_func,
-	const StructTypeInfo* member_owner_struct,
-	const StructTypeInfo* accessing_struct,
-	std::string_view accessing_function = "") const;
+								   const StructTypeInfo* member_owner_struct,
+								   const StructTypeInfo* accessing_struct,
+								   std::string_view accessing_function = "") const;
 
 	// Helper function to check if a variable is a reference by looking it up in the symbol table
 	// Returns true if the variable is declared as a reference (&  or &&)
@@ -603,8 +598,8 @@ private:
 	// Handles nested member access like o.inner.callback by recursively resolving types
 	// Returns true if successfully resolved, with the struct_info and member populated
 	bool resolveMemberAccessType(const MemberAccessNode& member_access,
-	const StructTypeInfo*& out_struct_info,
-	const StructMember*& out_member) const;
+								 const StructTypeInfo*& out_struct_info,
+								 const StructMember*& out_member) const;
 	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
 	std::optional<bool> getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const;
 	bool isSameTypeXValueSource(const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) const;
@@ -622,41 +617,41 @@ private:
 	// - Only Indirect (dereference) case is fully implemented
 	// - Future work: Extend LValueInfo or pass additional context to handle all cases
 	bool handleLValueAssignment(const ExprResult& lhs_operands,
-		const ExprResult& rhs_operands,
-		const Token& token);
+								const ExprResult& rhs_operands,
+								const Token& token);
 
 	// Handle compound assignment to lvalues (e.g., v.x += 5, arr[i] += 5)
 	// Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 	// This is similar to handleLValueAssignment but also performs the arithmetic operation
 	bool handleLValueCompoundAssignment(const ExprResult& lhs_operands,
-		const ExprResult& rhs_operands,
-		const Token& token,
-		std::string_view op);
+										const ExprResult& rhs_operands,
+										const Token& token,
+										std::string_view op);
 
 	// Helper functions to emit store instructions
 	// These can be used by both the unified handler and special-case code
 
 	// Emit ArrayStore instruction
 	void emitArrayStore(TypeCategory element_type, int element_size_bits,
-		std::variant<StringHandle, TempVar> array,
-		const TypedValue& index, const TypedValue& value,
-		int64_t member_offset, bool is_pointer_to_array,
-		const Token& token);
+						std::variant<StringHandle, TempVar> array,
+						const TypedValue& index, const TypedValue& value,
+						int64_t member_offset, bool is_pointer_to_array,
+						const Token& token);
 
 	// Emit MemberStore instruction
 	void emitMemberStore(const TypedValue& value,
-		std::variant<StringHandle, TempVar> object,
-		StringHandle member_name, int offset,
-		CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None,
-		bool is_pointer_to_member = false,
-		const Token& token = Token(),
-		std::optional<size_t> bitfield_width = std::nullopt,
-		size_t bitfield_bit_offset = 0);
+						 std::variant<StringHandle, TempVar> object,
+						 StringHandle member_name, int offset,
+						 CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None,
+						 bool is_pointer_to_member = false,
+						 const Token& token = Token(),
+						 std::optional<size_t> bitfield_width = std::nullopt,
+						 size_t bitfield_bit_offset = 0);
 
 	// Emit DereferenceStore instruction
 	void emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
-	std::variant<StringHandle, TempVar> pointer,
-	const Token& token);
+							  std::variant<StringHandle, TempVar> pointer,
+							  const Token& token);
 
 	const DeclarationNode& requireDeclarationNode(const ASTNode& node, std::string_view context) const;
 
@@ -707,10 +702,10 @@ private:
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const TypeSpecifierNode& type_node, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryMakeEnumeratorConstantExpr(const EnumTypeInfo& enum_info, StringHandle identifier_handle) const;
 	std::optional<ExprResult> tryApplySemaCallArgReferenceBinding(ExprResult arg_result,
-		const ASTNode& arg_expr,
-		const TypeSpecifierNode& param_type,
-		const CallArgReferenceBindingInfo* binding_info,
-		const Token& source_token);
+																  const ASTNode& arg_expr,
+																  const TypeSpecifierNode& param_type,
+																  const CallArgReferenceBindingInfo* binding_info,
+																  const Token& source_token);
 
 	// ========== Lambda Capture Helper Functions ==========
 
@@ -754,8 +749,7 @@ private:
 	// initialized with a lambda, returns the TypeSpecifierNode for the closure struct.
 	// Returns std::nullopt if type cannot be deduced.
 	std::optional<TypeSpecifierNode> deduceLambdaClosureType(const ASTNode& symbol,
-	const Token& fallback_token) const;
-
+															 const Token& fallback_token) const;
 
 	// ── inline private helpers (IrGenerator_Lambdas.cpp) ──
 	/// Unified symbol lookup: searches local scope first, then falls back to global scope
@@ -791,14 +785,14 @@ private:
 	}
 
 	Ir ir_;
-	TempVar var_counter{ 0 };
+	TempVar var_counter{0};
 	uint32_t string_literal_counter_ = 0;  // Counter for unique .str.N global names
 	SymbolTable symbol_table;
 	SymbolTable* global_symbol_table_;  // Reference to the global symbol table for function overload lookup
 	CompileContext* context_;  // Reference to compile context for flags
-	Parser* parser_;  // Reference to parser for template instantiation
+	Parser* parser_;	 // Reference to parser for template instantiation
 	SemanticAnalysis* sema_ = nullptr;  // Optional semantic-analysis results (Phase 2+)
-	bool sema_normalized_current_function_ = false;  // Phase 15: true when sema visited the current function body
+	bool sema_normalized_current_function_ = false;	// Phase 15: true when sema visited the current function body
 
 	// Current function name (plain, used for friend access checks and diagnostics)
 	StringHandle current_function_name_;
@@ -806,7 +800,7 @@ private:
 	StringHandle current_function_mangled_name_;
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	int current_function_return_size_;   // Current function's return size in bits
-	TypeIndex current_function_return_type_index_ {0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
+	TypeIndex current_function_return_type_index_{0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
 
 	TypeCategory currentFunctionReturnType() const {
 		return current_function_return_type_index_.category();
@@ -814,9 +808,9 @@ private:
 	TypeIndex currentFunctionReturnTypeIndex() const {
 		return current_function_return_type_index_;
 	}
-	bool current_function_has_hidden_return_param_ = false;  // True if function uses hidden return parameter
+	bool current_function_has_hidden_return_param_ = false;	// True if function uses hidden return parameter
 	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
-	bool in_return_statement_with_rvo_ = false;  // True when evaluating return expr that should use RVO
+	bool in_return_statement_with_rvo_ = false;	// True when evaluating return expr that should use RVO
 
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
 	std::vector<std::string> current_namespace_stack_;
@@ -825,7 +819,7 @@ private:
 	struct StaticLocalInfo {
 		StringHandle mangled_name;  // Phase 4: Using StringHandle
 		SizeInBits size_in_bits;
-		TypeIndex type_index {};  // TypeCategory embedded; replaces Type type
+		TypeIndex type_index{};	// TypeCategory embedded; replaces Type type
 		TypeCategory type() const { return type_index.category(); }
 	};
 
@@ -862,9 +856,9 @@ private:
 	std::unordered_map<StringHandle, std::vector<CachedParamInfo>> function_param_cache_;
 	void applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& type_node);
 	TypedValue buildConstructorArgumentValue(const ExprResult& argument_result,
-		const ASTNode& argument,
-		const TypeSpecifierNode* param_type,
-		const Token& token);
+											 const ASTNode& argument,
+											 const TypeSpecifierNode* param_type,
+											 const Token& token);
 	void fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx);
 
 	// Collected lambdas for deferred generation
@@ -881,8 +875,8 @@ private:
 	// Value: The deduced parameter types for that instantiation
 	struct GenericLambdaInstantiation {
 		size_t lambda_id;
-		std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;  // param_index -> deduced type
-		StringHandle instantiation_key;  // Unique key for this instantiation
+		std::vector<std::pair<size_t, TypeSpecifierNode>> deduced_types;	 // param_index -> deduced type
+		StringHandle instantiation_key;	// Unique key for this instantiation
 	};
 	std::vector<GenericLambdaInstantiation> pending_generic_lambda_instantiations_;
 	std::unordered_set<std::string> generated_generic_lambda_instantiations_;  // Track already generated ones
@@ -912,10 +906,10 @@ private:
 	struct TemplateInstantiationInfo {
 		StringHandle qualified_template_name;  // e.g., "Container::insert"
 		StringHandle mangled_name;  // e.g., "insert_int"
-		StringHandle struct_name;   // e.g., "Container"
-		std::vector<TypeCategory> template_args;  // Concrete types
+		StringHandle struct_name;	  // e.g., "Container"
+		std::vector<TypeCategory> template_args;	 // Concrete types
 		SaveHandle body_position;  // Handle to saved position where the template body starts
-		std::vector<std::string_view> template_param_names;  // e.g., ["U"]
+		std::vector<std::string_view> template_param_names;	// e.g., ["U"]
 		const TemplateFunctionDeclarationNode* template_node_ptr;  // Pointer to the template
 	};
 
@@ -936,10 +930,10 @@ private:
 		std::unordered_set<StringHandle> captures;
 		std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind> capture_kinds;
 		std::unordered_map<StringHandle, TypeSpecifierNode> capture_types;
-		TypeIndex enclosing_struct_type_index {};  // For [this] capture type resolution
+		TypeIndex enclosing_struct_type_index{};	 // For [this] capture type resolution
 		bool has_copy_this = false;
 		bool has_this_pointer = false;
-		bool is_mutable = false;  // Whether the lambda is mutable (allows modifying captures)
+		bool is_mutable = false;	 // Whether the lambda is mutable (allows modifying captures)
 		bool isActive() const { return closure_type.isValid(); }
 	};
 	LambdaContext current_lambda_context_;
@@ -948,24 +942,24 @@ private:
 	// SEH (Structured Exception Handling) context tracking
 	// Tracks the current __try block context for __leave statement resolution
 	struct SehContext {
-		std::string_view try_end_label;      // Label at the end of the __try block (where __leave jumps to)
-		std::string_view finally_label;      // Label for __finally handler (empty if no __finally)
-		bool has_finally;                    // True if this __try has a __finally clause
+		std::string_view try_end_label;		// Label at the end of the __try block (where __leave jumps to)
+		std::string_view finally_label;		// Label for __finally handler (empty if no __finally)
+		bool has_finally;					  // True if this __try has a __finally clause
 	};
-	std::vector<SehContext> seh_context_stack_;  // Stack of active SEH contexts
+	std::vector<SehContext> seh_context_stack_;	// Stack of active SEH contexts
 
 	// Paired loop-entry snapshot: SEH and scope depths are always pushed/popped
 	// together, so they are kept in one vector of structs to enforce the invariant.
 	struct LoopDepthEntry {
-		size_t seh_depth;    // seh_context_stack_.size() at loop entry
-		size_t scope_depth;  // scope_stack_.size() at loop entry
+		size_t seh_depth;	  // seh_context_stack_.size() at loop entry
+		size_t scope_depth;	// scope_stack_.size() at loop entry
 	};
 	std::vector<LoopDepthEntry> loop_depth_stack_;
 
 	// SEH filter/except body context tracking for GetExceptionCode() disambiguation
-	bool seh_in_filter_funclet_ = false;       // True while visiting the filter expression inside a filter funclet
+	bool seh_in_filter_funclet_ = false;		 // True while visiting the filter expression inside a filter funclet
 	bool seh_has_saved_exception_code_ = false; // True when a saved exception code var is available
-	TempVar seh_saved_exception_code_var_;     // Temp var holding exception code saved during filter, usable in except body
+	TempVar seh_saved_exception_code_var_;	   // Temp var holding exception code saved during filter, usable in except body
 
 	// SEH context helper methods
 	void pushSehContext(std::string_view end_label, std::string_view finally_label, bool has_finally);
@@ -1022,5 +1016,4 @@ private:
 	ExprResult generateInitializerListConstructionIr(const InitializerListConstructionNode& init_list);
 
 	ExprResult generateConstructorCallIr(const ConstructorCallNode& constructorCallNode);
-
 };

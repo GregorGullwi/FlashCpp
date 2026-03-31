@@ -9,8 +9,7 @@ int test_return_from_try() {
 	__try {
 		g_finally_ran = 0;
 		return 10;
-	}
-	__finally {
+	} __finally {
 		g_finally_ran = 20;
 	}
 	return 0;  // Should never reach here
@@ -18,7 +17,7 @@ int test_return_from_try() {
 
 int main() {
 	int result = test_return_from_try();
-	// result should be 10 (the return value from __try)
-	// g_finally_ran should be 20 (set by __finally before the return completed)
+ // result should be 10 (the return value from __try)
+ // g_finally_ran should be 20 (set by __finally before the return completed)
 	return result + g_finally_ran;  // 10 + 20 = 30
 }

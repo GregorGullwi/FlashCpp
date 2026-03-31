@@ -9,7 +9,7 @@ struct Point {
 constexpr int bad_arrow_uaf() {
 	Point* p = new Point(1, 2);
 	delete p;
-	return p->x;  // use after free - must be a compile error
+	return p->x;	 // use after free - must be a compile error
 }
 
 static_assert(bad_arrow_uaf() == 1);

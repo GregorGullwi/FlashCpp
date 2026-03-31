@@ -7,9 +7,9 @@ int main() {
 	int b = 0;
 	int c = 3;
 
-	// && with int operands
+ // && with int operands
 	if (a && c) {
-		// both nonzero → true
+	// both nonzero → true
 	} else {
 		return 1;
 	}
@@ -18,9 +18,9 @@ int main() {
 		return 2; // b is zero → false
 	}
 
-	// || with int operands
+ // || with int operands
 	if (a || b) {
-		// a nonzero → true
+	// a nonzero → true
 	} else {
 		return 3;
 	}
@@ -29,9 +29,9 @@ int main() {
 		return 4; // both zero → false
 	}
 
-	// ! with int operand
+ // ! with int operand
 	if (!b) {
-		// b is zero → !0 is true
+	// b is zero → !0 is true
 	} else {
 		return 5;
 	}
@@ -40,11 +40,11 @@ int main() {
 		return 6; // a is nonzero → !nonzero is false
 	}
 
-	// Mixed types in logical operators
+ // Mixed types in logical operators
 	double d = 1.5;
 	float f = 0.0f;
 	if (d && a) {
-		// both nonzero → true
+	// both nonzero → true
 	} else {
 		return 7;
 	}
@@ -53,9 +53,9 @@ int main() {
 		return 8; // f is zero → false
 	}
 
-	// Nested logical with mixed types
+ // Nested logical with mixed types
 	if ((a || b) && (c || b)) {
-		// (5||0)=true && (3||0)=true → true
+	// (5||0)=true && (3||0)=true → true
 	} else {
 		return 9;
 	}

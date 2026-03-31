@@ -9,15 +9,19 @@
 // main() returns foo() + bar() - 109 == 0 on success.
 
 int foo() {
-	enum class Priority { Low = 1, Medium = 5, High = 10 };
+	enum class Priority { Low = 1,
+						  Medium = 5,
+						  High = 10 };
 	Priority p = Priority::High;
-	return static_cast<int>(p);  // expect 10
+	return static_cast<int>(p);	// expect 10
 }
 
 int bar() {
-	enum class Priority { Low = 50, Medium = 75, High = 99 };
+	enum class Priority { Low = 50,
+						  Medium = 75,
+						  High = 99 };
 	Priority p = Priority::High;
-	return static_cast<int>(p);  // expect 99
+	return static_cast<int>(p);	// expect 99
 }
 
 int main() {

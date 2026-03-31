@@ -17,9 +17,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Consume 'struct', 'class', or 'union' keyword
 	auto struct_keyword = advance();
 	if (struct_keyword.kind() != "struct"_tok &&
-	    struct_keyword.kind() != "class"_tok && struct_keyword.kind() != "union"_tok) {
+		struct_keyword.kind() != "class"_tok && struct_keyword.kind() != "union"_tok) {
 		return ParseResult::error("Expected 'struct', 'class', or 'union' keyword",
-		                          struct_keyword);
+								  struct_keyword);
 	}
 
 	bool is_class = (struct_keyword.kind() == "class"_tok);
@@ -113,7 +113,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (!qualified_namespace.empty()) {
 			// Namespace + struct chain: "ns::A::B::C"
 			full_qualified_name = gNamespaceRegistry.buildQualifiedIdentifier(
-			    current_namespace_handle, struct_chain);
+				current_namespace_handle, struct_chain);
 			qualified_struct_name = full_qualified_name;
 			type_name = full_qualified_name;
 			// Also register the struct-chain-relative name ("A::B::C") so that
@@ -176,7 +176,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	if (!qualified_namespace.empty() && !is_nested_class) {
 		// full_qualified_name already computed above, just log if needed
 		FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name),
-		          "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
+				  "' with namespace-qualified name '", StringTable::getStringView(full_qualified_name), "'");
 
 		// Also register intermediate names (e.g., "inner::Base" for "ns::inner::Base")
 		// This allows sibling namespace access patterns like:
@@ -190,7 +190,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			if (getTypesByNameMap().find(partial_handle) == getTypesByNameMap().end()) {
 				getTypesByNameMap().emplace(partial_handle, &struct_type_info);
 				FLASH_LOG(Parser, Debug, "Registered struct '", StringTable::getStringView(struct_name),
-				          "' with partial qualified name '", partial_view, "'");
+						  "' with partial qualified name '", partial_view, "'");
 			}
 		}
 	}
@@ -205,10 +205,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Push struct parsing context for nested class support
 	struct_parsing_context_stack_.push_back({StringTable::getStringView(struct_name),
-	                                         &struct_ref,
-	                                         nullptr,
-	                                         gSymbolTable.get_current_namespace_handle(),
-	                                         {}});
+											 &struct_ref,
+											 nullptr,
+											 gSymbolTable.get_current_namespace_handle(),
+											 {}});
 
 	// RAII guard to ensure stack is always popped, even on early returns
 	auto pop_stack_guard = [this](void*) {
@@ -305,7 +305,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				auto type_spec_opt = get_expression_type(*expr_result.node());
 
 				if (type_spec_opt.has_value() &&
-				    type_spec_opt->category() == TypeCategory::Struct) {
+					type_spec_opt->category() == TypeCategory::Struct) {
 					// Successfully evaluated - add as regular base class
 					const TypeInfo* base_type_info = tryGetTypeInfo(type_spec_opt->type_index());
 					if (!base_type_info) {
@@ -413,11 +413,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									info.node = emplace_node<ExpressionNode>(tparam_ref);
 								} else {
 									TypeSpecifierNode type_node(
-									    targ.type_index.withCategory(targ.typeEnum()),
-									    64,
-									    Token{},
-									    targ.cv_qualifier,
-									    ReferenceQualifier::None);
+										targ.type_index.withCategory(targ.typeEnum()),
+										64,
+										Token{},
+										targ.cv_qualifier,
+										ReferenceQualifier::None);
 
 									for (size_t i = 0; i < targ.pointer_depth; ++i) {
 										type_node.add_pointer_level();
@@ -511,8 +511,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							if (is_mangled_name && pos > 0 && type_name[pos - 1] == '_' && param_sv[0] == '_') {
 								// Check end boundary (must be end of string or followed by underscore/non-alnum)
 								bool relaxed_end_ok = (pos + param_sv.size() >= type_name.size()) ||
-								                      (type_name[pos + param_sv.size()] == '_') ||
-								                      (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])));
+													  (type_name[pos + param_sv.size()] == '_') ||
+													  (!std::isalnum(static_cast<unsigned char>(type_name[pos + param_sv.size()])));
 								if (relaxed_end_ok) {
 									return true;
 								}
@@ -535,7 +535,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 							StringHandle type_name_handle = type_info->name();
 							FLASH_LOG_FORMAT(Templates, Debug, "Checking base class arg: type={}, type_index={}, name='{}'",
-							                 static_cast<int>(arg.category()), arg.type_index, StringTable::getStringView(type_name_handle));
+											 static_cast<int>(arg.category()), arg.type_index, StringTable::getStringView(type_name_handle));
 							if (contains_template_param(type_name_handle)) {
 								FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' contains template parameter - marking as dependent", StringTable::getStringView(type_name_handle));
 								has_dependent_args = true;
@@ -551,7 +551,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							// also has isTemplateInstantiation() == true).
 							if (parsing_template_depth_ > 0) {
 								auto [is_dep_placeholder, dep_base_name] = isDependentTemplatePlaceholder(
-								    StringTable::getStringView(type_name_handle));
+									StringTable::getStringView(type_name_handle));
 								if (is_dep_placeholder) {
 									bool confirmed_dependent = false;
 									auto type_it = getTypesByNameMap().find(type_name_handle);
@@ -565,7 +565,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 											// Also check if the type_index name matches any template param
 											if (!t_arg.is_value) {
 												if (const TypeInfo* t_arg_type_info = tryGetTypeInfo(t_arg.type_index);
-												    t_arg_type_info && contains_template_param(t_arg_type_info->name())) {
+													t_arg_type_info && contains_template_param(t_arg_type_info->name())) {
 													confirmed_dependent = true;
 													break;
 												}
@@ -574,7 +574,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									}
 									if (confirmed_dependent) {
 										FLASH_LOG_FORMAT(Templates, Debug, "Base class arg '{}' is a dependent template placeholder (base='{}') - marking as dependent",
-										                 StringTable::getStringView(type_name_handle), dep_base_name);
+														 StringTable::getStringView(type_name_handle), dep_base_name);
 										has_dependent_args = true;
 										break;
 									}
@@ -664,9 +664,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							break;
 
 						FLASH_LOG_FORMAT(Templates, Debug, "Resolving type alias '{}' -> underlying type_index={}, type={}",
-						                 StringTable::getStringView(resolved_type->name()),
-						                 resolved_type->type_index_,
-						                 static_cast<int>(underlying->category()));
+										 StringTable::getStringView(resolved_type->name()),
+										 resolved_type->type_index_,
+										 static_cast<int>(underlying->category()));
 
 						resolved_type = underlying;
 						// If we've reached a concrete struct type, we're done
@@ -809,7 +809,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						}
 						struct_chain_builder.append(enum_decl.name());
 						StringHandle struct_relative_handle = StringTable::getOrInternStringHandle(
-						    struct_chain_builder.commit());
+							struct_chain_builder.commit());
 						// Register struct-relative name ("A::B::C::E", "Container::Status")
 						getTypesByNameMap().emplace(struct_relative_handle, enum_it->second);
 
@@ -817,7 +817,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// ("ns::A::B::C::E", "ns::Container::Status")
 						if (!qualified_namespace.empty()) {
 							StringHandle ns_qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(
-							    current_namespace_handle, struct_relative_handle);
+								current_namespace_handle, struct_relative_handle);
 							if (ns_qualified_handle != struct_relative_handle) {
 								getTypesByNameMap().emplace(ns_qualified_handle, enum_it->second);
 							}
@@ -889,10 +889,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// Generate a unique name for the anonymous struct/union type
 						static int anonymous_type_counter = 0;
 						std::string_view anon_type_name = StringBuilder()
-						                                      .append("__anonymous_")
-						                                      .append(is_union_keyword ? "union_" : "struct_")
-						                                      .append(static_cast<int64_t>(anonymous_type_counter++))
-						                                      .commit();
+															  .append("__anonymous_")
+															  .append(is_union_keyword ? "union_" : "struct_")
+															  .append(static_cast<int64_t>(anonymous_type_counter++))
+															  .commit();
 						StringHandle anon_type_name_handle = StringTable::getOrInternStringHandle(anon_type_name);
 
 						// Create the anonymous struct/union type
@@ -942,19 +942,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							// Add member to the anonymous type
 							StringHandle member_name_handle = member_name_token.handle();
 							anon_struct_info->members.push_back(StructMember{
-							    member_name_handle,
-							    member_type_spec.type_index(),
-							    0, // offset will be calculated below
-							    member_size,
-							    member_alignment,
-							    AccessSpecifier::Public,
-							    std::nullopt, // no default initializer
-							    ReferenceQualifier::None,
-							    0, // referenced_size_bits
-							    false, // is_array
-							    {}, // array_dimensions
-							    0, // pointer_depth
-							    std::nullopt // bitfield_width
+								member_name_handle,
+								member_type_spec.type_index(),
+								0, // offset will be calculated below
+								member_size,
+								member_alignment,
+								AccessSpecifier::Public,
+								std::nullopt, // no default initializer
+								ReferenceQualifier::None,
+								0, // referenced_size_bits
+								false, // is_array
+								{}, // array_dimensions
+								0, // pointer_depth
+								std::nullopt // bitfield_width
 							});
 							if (member_type_spec.has_function_signature()) {
 								anon_struct_info->members.back().function_signature = member_type_spec.function_signature();
@@ -1023,11 +1023,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							// Create a TypeSpecifierNode for the anonymous type
 							TypeSpecifierNode anon_type_spec(
-							    anon_type_info.type_index_.withCategory(TypeCategory::Struct),
-							    static_cast<unsigned char>(anon_struct_info->total_size),
-							    Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0),
-							    CVQualifier::None,
-							    ReferenceQualifier::None);
+								anon_type_info.type_index_.withCategory(TypeCategory::Struct),
+								static_cast<unsigned char>(anon_struct_info->total_size),
+								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0),
+								CVQualifier::None,
+								ReferenceQualifier::None);
 
 							// Create a member with the anonymous type
 							auto anon_type_spec_node = emplace_node<TypeSpecifierNode>(anon_type_spec);
@@ -1059,7 +1059,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					while (!peek().is_eof() && peek() != "}"_tok) {
 						// Check for nested anonymous union
 						if (peek().is_keyword() &&
-						    (peek() == "union"_tok || peek() == "struct"_tok)) {
+							(peek() == "union"_tok || peek() == "struct"_tok)) {
 							SaveHandle nested_saved_pos = save_token_position();
 							advance(); // consume 'union' or 'struct'
 
@@ -1108,7 +1108,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 										// Expect closing ']'
 										if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-										    peek() != "]"_tok) {
+											peek() != "]"_tok) {
 											return ParseResult::error("Expected ']' after array size", current_token_);
 										}
 										advance(); // consume ']'
@@ -1172,11 +1172,11 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							advance(); // consume the member name
 						} else if (peek() == ":"_tok) {
 							anon_member_name_token = Token(
-							    Token::Type::Identifier,
-							    ""sv,
-							    current_token_.line(),
-							    current_token_.column(),
-							    current_token_.file_index());
+								Token::Type::Identifier,
+								""sv,
+								current_token_.line(),
+								current_token_.column(),
+								current_token_.file_index());
 						} else {
 							return ParseResult::error("Expected member name in anonymous union", anon_member_name_token);
 						}
@@ -1195,7 +1195,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							// Expect closing ']'
 							if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-							    peek() != "]"_tok) {
+								peek() != "]"_tok) {
 								return ParseResult::error("Expected ']' after array size", current_token_);
 							}
 							advance(); // consume ']'
@@ -1220,7 +1220,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 						// Calculate member size and alignment
 						auto [member_size, member_alignment] = calculateResolvedMemberSizeAndAlignment(
-						    anon_member_type_spec, anon_member_type_spec.type_index());
+							anon_member_type_spec, anon_member_type_spec.type_index());
 						size_t referenced_size_bits = anon_member_type_spec.size_in_bits();
 						if (bitfield_width.has_value() && *bitfield_width == 0) {
 							// Zero-width bitfields in anonymous unions are layout directives:
@@ -1263,16 +1263,16 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 						StringHandle member_name_handle = anon_member_name_token.handle();
 						struct_ref.add_anonymous_union_member(
-						    member_name_handle,
-						    anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
-						    member_size,
-						    member_alignment,
-						    bitfield_width,
-						    referenced_size_bits,
-						    ref_qual,
-						    is_array,
-						    static_cast<int>(anon_member_type_spec.pointer_depth()),
-						    std::move(array_dimensions));
+							member_name_handle,
+							anon_member_type_spec.type_index().withCategory(anon_member_type_spec.type()),
+							member_size,
+							member_alignment,
+							bitfield_width,
+							referenced_size_bits,
+							ref_qual,
+							is_array,
+							static_cast<int>(anon_member_type_spec.pointer_depth()),
+							std::move(array_dimensions));
 
 						// Add DeclarationNode to struct_ref for symbol table and AST purposes
 						// During layout phase, these will be skipped (already processed as union members)
@@ -1309,8 +1309,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Pattern 2: Nested struct declaration
 					// Check for '{' (body), ';' (forward declaration), or ':' (base class)
 					if (!peek().is_eof() && (peek() == "{"_tok ||
-					                         peek() == ";"_tok ||
-					                         peek() == ":"_tok)) {
+											 peek() == ";"_tok ||
+											 peek() == ":"_tok)) {
 						// Pattern 2: Nested struct declaration (with or without base class)
 						restore_token_position(saved_pos);
 
@@ -1340,10 +1340,10 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 							// Update type info - use qualified name to avoid ambiguity
 							std::string_view qualified_nested_name = StringBuilder()
-							                                             .append(qualified_struct_name)
-							                                             .append("::")
-							                                             .append(nested_struct.name())
-							                                             .commit();
+																		 .append(qualified_struct_name)
+																		 .append("::")
+																		 .append(nested_struct.name())
+																		 .commit();
 							auto nested_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_nested_name));
 							if (nested_type_it != getTypesByNameMap().end()) {
 								StructTypeInfo* nested_info = nested_type_it->second->getStructInfo();
@@ -1436,15 +1436,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check if this is a static member function (has '(')
 			// Pass false for add_to_struct_info: the finalization loop below will register it
 			if (parse_static_member_function(
-			        type_and_name_result,
-			        is_static_constexpr,
-			        qualified_struct_name,
-			        struct_ref,
-			        struct_info.get(),
-			        current_access,
-			        current_template_param_names_,
-			        /*add_to_struct_info=*/false,
-			        /*add_to_ast_nodes=*/false)) {
+					type_and_name_result,
+					is_static_constexpr,
+					qualified_struct_name,
+					struct_ref,
+					struct_info.get(),
+					current_access,
+					current_template_param_names_,
+					/*add_to_struct_info=*/false,
+					/*add_to_ast_nodes=*/false)) {
 				// Function was handled (or error occurred)
 				if (type_and_name_result.is_error()) {
 					return type_and_name_result;
@@ -1511,15 +1511,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Add to struct's static members
 			StringHandle static_member_name_handle = decl.identifier_token().handle();
 			struct_info->addStaticMember(
-			    static_member_name_handle,
-			    type_spec.type_index(),
-			    static_member_size,
-			    static_member_alignment,
-			    current_access,
-			    init_expr_opt, // initializer
-			    cv_qual,
-			    ref_qual,
-			    ptr_depth);
+				static_member_name_handle,
+				type_spec.type_index(),
+				static_member_size,
+				static_member_alignment,
+				current_access,
+				init_expr_opt, // initializer
+				cv_qual,
+				ref_qual,
+				ptr_depth);
 
 			continue;
 		}
@@ -1528,7 +1528,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Save position BEFORE checking to allow restoration if not a constructor
 		SaveHandle saved_pos = save_token_position();
 		if (!peek().is_eof() && peek_info().type() == Token::Type::Identifier &&
-		    peek_info().value() == struct_name) {
+			peek_info().value() == struct_name) {
 			// Look ahead to see if this is a constructor (next token is '(')
 			// We need to consume the struct name token and check the next token
 			auto name_token_opt = advance();
@@ -1637,8 +1637,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// Skip initializers until we hit '{' or ';' by counting parentheses/braces
 					while (!peek().is_eof() &&
-					       peek() != "{"_tok &&
-					       peek() != ";"_tok) {
+						   peek() != "{"_tok &&
+						   peek() != ";"_tok) {
 						// Skip initializer name (may be namespace-qualified: std::optional<_Tp>{...})
 						advance();
 
@@ -1730,7 +1730,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 											const auto& type_spec = type_node.as<TypeSpecifierNode>();
 											std::string_view param_type_name = type_spec.token().value();
 											if (param_type_name == struct_name ||
-											    param_type_name == qualified_struct_name.view()) {
+												param_type_name == qualified_struct_name.view()) {
 												// It's a reference to this type
 												if (type_spec.is_rvalue_reference()) {
 													is_move_ctor = true;
@@ -1785,21 +1785,21 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// Record this for delayed parsing
 					delayed_function_bodies_.push_back({
-					    nullptr, // func_node (not used for constructors)
-					    body_start,
-					    initializer_list_start, // Save position of initializer list
-					    struct_name,
-					    struct_type_index,
-					    &struct_ref,
-					    has_initializer_list, // Flag if initializer list exists
-					    true, // is_constructor
-					    false, // is_destructor
-					    &ctor_ref, // ctor_node
-					    nullptr, // dtor_node
-					    {}, // template_param_names (empty for non-template constructors)
-					    false, // is_member_function_template
-					    false, // is_free_function
-					    has_function_try, // has_function_try
+						nullptr, // func_node (not used for constructors)
+						body_start,
+						initializer_list_start, // Save position of initializer list
+						struct_name,
+						struct_type_index,
+						&struct_ref,
+						has_initializer_list, // Flag if initializer list exists
+						true, // is_constructor
+						false, // is_destructor
+						&ctor_ref, // ctor_node
+						nullptr, // dtor_node
+						{}, // template_param_names (empty for non-template constructors)
+						false, // is_member_function_template
+						false, // is_free_function
+						has_function_try, // has_function_try
 					});
 				} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 					// No constructor body - ctor_scope automatically exits scope on return
@@ -1829,7 +1829,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			auto name_token_opt = advance();
 			if (!name_token_opt.kind().is_identifier() ||
-			    name_token_opt.value() != struct_name) {
+				name_token_opt.value() != struct_name) {
 				return ParseResult::error("Expected struct name after '~' in destructor", name_token_opt);
 			}
 			Token dtor_name_token = name_token_opt; // Copy the token to keep it alive
@@ -1941,18 +1941,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
-				    nullptr, // func_node (not used for destructors)
-				    body_start,
-				    {}, // initializer_list_start (not used)
-				    struct_name,
-				    struct_type_index,
-				    &struct_ref,
-				    false, // has_initializer_list
-				    false, // is_constructor
-				    true, // is_destructor
-				    nullptr, // ctor_node
-				    &dtor_ref, // dtor_node
-				    current_template_param_names_ // template parameter names
+					nullptr, // func_node (not used for destructors)
+					body_start,
+					{}, // initializer_list_start (not used)
+					struct_name,
+					struct_type_index,
+					&struct_ref,
+					false, // has_initializer_list
+					false, // is_constructor
+					true, // is_destructor
+					nullptr, // ctor_node
+					&dtor_ref, // dtor_node
+					current_template_param_names_ // template parameter names
 				});
 			} else if (!is_defaulted && !is_deleted && !consume(";"_tok)) {
 				return ParseResult::error("Expected '{', ';', '= default', or '= delete' after destructor declaration", peek_info());
@@ -1998,15 +1998,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Create a synthetic identifier token for the operator
 			Token identifier_token = Token(Token::Type::Identifier, operator_name,
-			                               operator_keyword_token.line(), operator_keyword_token.column(),
-			                               operator_keyword_token.file_index());
+										   operator_keyword_token.line(), operator_keyword_token.column(),
+										   operator_keyword_token.file_index());
 
 			// Conversion operators implicitly return the target type
 			// Use the parsed target type as the return type
 			// Create declaration node with target type as return type and operator name
 			ASTNode decl_node = emplace_node<DeclarationNode>(
-			    type_result.node().value(),
-			    identifier_token);
+				type_result.node().value(),
+				identifier_token);
 
 			member_result = ParseResult::success(decl_node);
 		} else {
@@ -2084,7 +2084,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Pass string_view directly - FunctionDeclarationNode stores it as string_view
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [member_func_node, member_func_ref] =
-			    emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
+				emplace_node_ref<FunctionDeclarationNode>(decl_node, qualified_struct_name);
 
 			// Set namespace handle from the current struct context
 			if (!struct_parsing_context_stack_.empty()) {
@@ -2164,7 +2164,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 								const auto& type_spec = type_node.as<TypeSpecifierNode>();
 								std::string_view param_type_name = type_spec.token().value();
 								if (param_type_name == struct_name ||
-								    param_type_name == qualified_struct_name.view()) {
+									param_type_name == qualified_struct_name.view()) {
 									// It's a reference to this type
 									if (type_spec.is_rvalue_reference()) {
 										is_move_assign = true;
@@ -2203,18 +2203,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Record this for delayed parsing
 				delayed_function_bodies_.push_back({
-				    &member_func_ref,
-				    body_start,
-				    {}, // initializer_list_start (not used)
-				    struct_name,
-				    struct_type_index,
-				    &struct_ref,
-				    false, // has_initializer_list
-				    false, // is_constructor
-				    false, // is_destructor
-				    nullptr, // ctor_node
-				    nullptr, // dtor_node
-				    current_template_param_names_ // template parameter names
+					&member_func_ref,
+					body_start,
+					{}, // initializer_list_start (not used)
+					struct_name,
+					struct_type_index,
+					&struct_ref,
+					false, // has_initializer_list
+					false, // is_constructor
+					false, // is_destructor
+					nullptr, // ctor_node
+					nullptr, // dtor_node
+					current_template_param_names_ // template parameter names
 				});
 				// Inline function body consumed, no semicolon needed
 			} else if (!is_defaulted && !is_deleted) {
@@ -2238,19 +2238,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				if (op_kind != OverloadableOperator::None) {
 					// Built-in operator overload (=, +, ==, etc.)
 					struct_ref.add_operator_overload(op_kind, member_func_node, current_access,
-					                                 is_virtual, is_pure_virtual, is_override, is_final,
-					                                 member_quals.cv_qualifier);
+													 is_virtual, is_pure_virtual, is_override, is_final,
+													 member_quals.cv_qualifier);
 				} else {
 					// Conversion operator (e.g., "operator int", "operator bool") — add as regular member function
 					struct_ref.add_member_function(member_func_node, current_access,
-					                               is_virtual, is_pure_virtual, is_override, is_final,
-					                               member_quals.cv_qualifier);
+												   is_virtual, is_pure_virtual, is_override, is_final,
+												   member_quals.cv_qualifier);
 				}
 			} else {
 				// Add regular member function to struct
 				struct_ref.add_member_function(member_func_node, current_access,
-				                               is_virtual, is_pure_virtual, is_override, is_final,
-				                               member_quals.cv_qualifier);
+											   is_virtual, is_pure_virtual, is_override, is_final,
+											   member_quals.cv_qualifier);
 			}
 		} else {
 			// This is a data member
@@ -2318,7 +2318,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					// Try to parse as type specifier
 					ParseResult type_result = parse_type_specifier();
 					if (!type_result.is_error() && type_result.node().has_value() &&
-					    !peek().is_eof() && (peek() == "{"_tok || peek() == "("_tok)) {
+						!peek().is_eof() && (peek() == "{"_tok || peek() == "("_tok)) {
 						// This is a type name followed by initializer: B{...} or B(...)
 						const TypeSpecifierNode& init_type_spec = type_result.node()->as<TypeSpecifierNode>();
 
@@ -2405,8 +2405,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Create a new DeclarationNode with the same type
 				ASTNode new_decl = emplace_node<DeclarationNode>(
-				    emplace_node<TypeSpecifierNode>(type_spec),
-				    identifier_token);
+					emplace_node<TypeSpecifierNode>(type_spec),
+					identifier_token);
 
 				std::optional<size_t> additional_bitfield_width;
 				std::optional<ASTNode> additional_bitfield_width_expr;
@@ -2512,17 +2512,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	(void)has_inline; // Mark as used
 
 	if (!peek().is_eof() &&
-	    (peek().is_identifier() ||
-	     (peek() == "*"_tok))) {
+		(peek().is_identifier() ||
+		 (peek() == "*"_tok))) {
 		// Parse variable declarators
 		do {
 			// Handle pointer declarators
 			TypeSpecifierNode var_type_spec(
-			    struct_type_info.type_index_.withCategory(TypeCategory::Struct),
-			    static_cast<unsigned char>(0), // Size will be set later
-			    Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0),
-			    CVQualifier::None,
-			    ReferenceQualifier::None);
+				struct_type_info.type_index_.withCategory(TypeCategory::Struct),
+				static_cast<unsigned char>(0), // Size will be set later
+				Token(Token::Type::Identifier, StringTable::getStringView(struct_name), 0, 0, 0),
+				CVQualifier::None,
+				ReferenceQualifier::None);
 
 			// Parse any pointer levels
 			while (peek() == "*"_tok) {
@@ -2625,19 +2625,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Manually add member to struct_info at the aligned offset
 				struct_info->members.emplace_back(
-				    union_member.member_name,
-				    union_member.type_index,
-				    aligned_union_start, // Same offset for all union members
-				    union_member.member_size,
-				    effective_alignment,
-				    AccessSpecifier::Public, // Anonymous union members are always public
-				    std::nullopt, // No default initializer
-				    union_member.reference_qualifier,
-				    union_member.referenced_size_bits,
-				    union_member.is_array,
-				    union_member.array_dimensions,
-				    union_member.pointer_depth,
-				    union_member.bitfield_width);
+					union_member.member_name,
+					union_member.type_index,
+					aligned_union_start, // Same offset for all union members
+					union_member.member_size,
+					effective_alignment,
+					AccessSpecifier::Public, // Anonymous union members are always public
+					std::nullopt, // No default initializer
+					union_member.reference_qualifier,
+					union_member.referenced_size_bits,
+					union_member.is_array,
+					union_member.array_dimensions,
+					union_member.pointer_depth,
+					union_member.bitfield_width);
 
 				// Update struct alignment
 				struct_info->alignment = std::max(struct_info->alignment, effective_alignment);
@@ -2706,19 +2706,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Phase 7B: Intern member name and use StringHandle overload
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
-		    member_name_handle,
-		    type_spec.type_index(),
-		    member_size,
-		    member_alignment,
-		    member_decl.access,
-		    member_decl.default_initializer,
-		    ref_qual,
-		    referenced_size_bits,
-		    is_array,
-		    array_dimensions,
-		    static_cast<int>(type_spec.pointer_depth()),
-		    member_decl.bitfield_width,
-		    type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
+			member_name_handle,
+			type_spec.type_index(),
+			member_size,
+			member_alignment,
+			member_decl.access,
+			member_decl.default_initializer,
+			ref_qual,
+			referenced_size_bits,
+			is_array,
+			array_dimensions,
+			static_cast<int>(type_spec.pointer_depth()),
+			member_decl.bitfield_width,
+			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
 
 		member_index++;
 	}
@@ -2736,8 +2736,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (func_decl.is_constructor) {
 			// Add constructor to struct type info
 			struct_info->addConstructor(
-			    func_decl.function_declaration,
-			    func_decl.access);
+				func_decl.function_declaration,
+				func_decl.access);
 			has_user_defined_constructor = true;
 
 			// Check if this is a copy or move constructor.
@@ -2763,9 +2763,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		} else if (func_decl.is_destructor) {
 			// Add destructor to struct type info
 			struct_info->addDestructor(
-			    func_decl.function_declaration,
-			    func_decl.access,
-			    func_decl.is_virtual);
+				func_decl.function_declaration,
+				func_decl.access,
+				func_decl.is_virtual);
 			has_user_defined_destructor = true;
 		} else if (func_decl.is_operator_overload()) {
 			// Refine generic Assign into CopyAssign or MoveAssign based on parameter type
@@ -2775,8 +2775,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					const auto& func_node = func_decl.function_declaration.as<FunctionDeclarationNode>();
 					const auto& params = func_node.parameter_nodes();
 					if (!params.empty() &&
-					    computeMinRequiredArgs(params) <= 1 &&
-					    params[0].is<DeclarationNode>()) {
+						computeMinRequiredArgs(params) <= 1 &&
+						params[0].is<DeclarationNode>()) {
 						const auto& param_type = params[0].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 						if (param_type.is_lvalue_reference() && param_type.category() == TypeCategory::Struct) {
 							refined_kind = OverloadableOperator::CopyAssign;
@@ -2798,13 +2798,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 			// Operator overload
 			struct_info->addOperatorOverload(
-			    refined_kind,
-			    func_decl.function_declaration,
-			    func_decl.access,
-			    func_decl.is_virtual,
-			    func_decl.is_pure_virtual,
-			    func_decl.is_override,
-			    func_decl.is_final);
+				refined_kind,
+				func_decl.function_declaration,
+				func_decl.access,
+				func_decl.is_virtual,
+				func_decl.is_pure_virtual,
+				func_decl.is_override,
+				func_decl.is_final);
 
 			// Check if this is a spaceship operator
 			if (refined_kind == OverloadableOperator::Spaceship) {
@@ -2848,13 +2848,13 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 			// Add member function to struct type info
 			struct_info->addMemberFunction(
-			    func_name_handle,
-			    func_decl.function_declaration,
-			    func_decl.access,
-			    func_decl.is_virtual,
-			    func_decl.is_pure_virtual,
-			    func_decl.is_override,
-			    func_decl.is_final);
+				func_name_handle,
+				func_decl.function_declaration,
+				func_decl.access,
+				func_decl.is_virtual,
+				func_decl.is_pure_virtual,
+				func_decl.is_override,
+				func_decl.is_final);
 			// cv_qualifier and is_noexcept are now auto-derived by propagateAstProperties
 		}
 	}
@@ -2862,8 +2862,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Generate inherited constructors if "using Base::Base;" was encountered
 	// This must happen before implicit constructor generation
 	if (!struct_parsing_context_stack_.empty() &&
-	    struct_parsing_context_stack_.back().has_inherited_constructors &&
-	    !parsing_template_class_) {
+		struct_parsing_context_stack_.back().has_inherited_constructors &&
+		!parsing_template_class_) {
 		// Iterate through base classes and generate forwarding constructors
 		for (const auto& base_class : struct_info->base_classes) {
 			const TypeInfo* base_type_info = tryGetTypeInfo(base_class.type_index);
@@ -2884,7 +2884,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				const ConstructorDeclarationNode& base_ctor =
-				    base_ctor_info.function_decl.as<ConstructorDeclarationNode>();
+					base_ctor_info.function_decl.as<ConstructorDeclarationNode>();
 
 				// Skip copy and move constructors (they are not inherited per C++20 [class.inhctor]/1).
 				// A copy/move ctor has a first param that is a reference to the *base class's own* type,
@@ -2898,8 +2898,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						const auto& param_decl = base_params[0].as<DeclarationNode>();
 						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						if ((param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) &&
-						    param_type.category() == TypeCategory::Struct &&
-						    base_struct_info->isOwnTypeIndex(param_type.type_index())) {
+							param_type.category() == TypeCategory::Struct &&
+							base_struct_info->isOwnTypeIndex(param_type.type_index())) {
 							// This is a copy or move constructor of the base class - skip it
 							continue;
 						}
@@ -2908,8 +2908,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Create a forwarding constructor for the derived class
 				auto [derived_ctor_node, derived_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-				    qualified_struct_name,
-				    qualified_struct_name);
+					qualified_struct_name,
+					qualified_struct_name);
 
 				// Copy parameters from base constructor to derived constructor
 				for (const auto& base_param : base_params) {
@@ -2918,18 +2918,18 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 					// Create a copy of the parameter for the derived constructor
 					auto param_type_node = emplace_node<TypeSpecifierNode>(
-					    base_param_type.type_index().withCategory(base_param_type.type()),
-					    base_param_type.size_in_bits(),
-					    base_param_decl.identifier_token(),
-					    base_param_type.cv_qualifier(),
-					    ReferenceQualifier::None);
+						base_param_type.type_index().withCategory(base_param_type.type()),
+						base_param_type.size_in_bits(),
+						base_param_decl.identifier_token(),
+						base_param_type.cv_qualifier(),
+						ReferenceQualifier::None);
 
 					// Copy reference qualifiers
 					param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(base_param_type.reference_qualifier());
 
 					auto param_decl_node = emplace_node<DeclarationNode>(
-					    param_type_node,
-					    base_param_decl.identifier_token());
+						param_type_node,
+						base_param_decl.identifier_token());
 
 					derived_ctor_ref.add_parameter_node(param_decl_node);
 				}
@@ -2947,8 +2947,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Add base initializer to constructor
 				derived_ctor_ref.add_base_initializer(
-				    StringTable::getOrInternStringHandle(base_class.name),
-				    std::move(base_init_args));
+					StringTable::getOrInternStringHandle(base_class.name),
+					std::move(base_init_args));
 
 				// Create an empty block for the constructor body
 				auto [block_node, block_ref] = create_node_ref(BlockNode());
@@ -2959,8 +2959,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Add the inherited constructor to the struct type info
 				struct_info->addConstructor(
-				    derived_ctor_node,
-				    AccessSpecifier::Public);
+					derived_ctor_node,
+					AccessSpecifier::Public);
 
 				// Add the inherited constructor to the struct node
 				struct_ref.add_constructor(derived_ctor_node, AccessSpecifier::Public);
@@ -2969,8 +2969,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				has_user_defined_constructor = true;
 
 				FLASH_LOG(Parser, Debug, "Generated inherited constructor for '",
-				          StringTable::getStringView(qualified_struct_name), "' with ",
-				          base_params.size(), " parameter(s)");
+						  StringTable::getStringView(qualified_struct_name), "' with ",
+						  base_params.size(), " parameter(s)");
 			}
 		}
 	}
@@ -2981,8 +2981,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create a default constructor node
 		// Use qualified_struct_name to include namespace for proper mangling
 		auto [default_ctor_node, default_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-		    qualified_struct_name,
-		    qualified_struct_name);
+			qualified_struct_name,
+			qualified_struct_name);
 
 		// Create an empty block for the constructor body
 		auto [block_node, block_ref] = create_node_ref(BlockNode());
@@ -2993,8 +2993,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the default constructor to the struct type info
 		struct_info->addConstructor(
-		    default_ctor_node,
-		    AccessSpecifier::Public // Default constructors are always public
+			default_ctor_node,
+			AccessSpecifier::Public // Default constructors are always public
 		);
 
 		// Add the default constructor to the struct node
@@ -3010,17 +3010,17 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create a copy constructor node: Type(const Type& other)
 		// Use qualified_struct_name to include namespace for proper mangling
 		auto [copy_ctor_node, copy_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-		    qualified_struct_name,
-		    qualified_struct_name);
+			qualified_struct_name,
+			qualified_struct_name);
 
 		// Create parameter: const Type& other
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::Const, // const qualifier
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::Const, // const qualifier
+			ReferenceQualifier::None);
 
 		// Make it a reference type
 		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
@@ -3041,8 +3041,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the copy constructor to the struct type info
 		struct_info->addConstructor(
-		    copy_ctor_node,
-		    AccessSpecifier::Public);
+			copy_ctor_node,
+			AccessSpecifier::Public);
 
 		// Add the copy constructor to the struct node
 		struct_ref.add_constructor(copy_ctor_node, AccessSpecifier::Public);
@@ -3059,32 +3059,32 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
 
 		// Create declaration node for operator=
 		Token operator_name_token(Token::Type::Identifier, "operator="sv,
-		                          name_token.line(), name_token.column(),
-		                          name_token.file_index());
+								  name_token.line(), name_token.column(),
+								  name_token.file_index());
 
 		auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
 
 		// Create function declaration node
 		// Use qualified_struct_name for nested classes so the member function references the correct type
 		auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-		    operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+			operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::Const, // const qualifier
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::Const, // const qualifier
+			ReferenceQualifier::None);
 		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
 
 		// Create parameter declaration
@@ -3104,9 +3104,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the operator= to the struct type info
 		struct_info->addOperatorOverload(
-		    OverloadableOperator::CopyAssign,
-		    func_node,
-		    AccessSpecifier::Public);
+			OverloadableOperator::CopyAssign,
+			func_node,
+			AccessSpecifier::Public);
 
 		// Add the operator= to the struct node
 		struct_ref.add_operator_overload(OverloadableOperator::CopyAssign, func_node, AccessSpecifier::Public);
@@ -3117,21 +3117,21 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// - User declared a copy constructor, copy assignment, move assignment, or destructor
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
-	    !has_user_defined_move_assignment && !has_user_defined_destructor && !parsing_template_class_) {
+		!has_user_defined_move_assignment && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move constructor node: Type(Type&& other)
 		// Use qualified_struct_name to include namespace for proper mangling
 		auto [move_ctor_node, move_ctor_ref] = emplace_node_ref<ConstructorDeclarationNode>(
-		    qualified_struct_name,
-		    qualified_struct_name);
+			qualified_struct_name,
+			qualified_struct_name);
 
 		// Create parameter: Type&& other (rvalue reference)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
 
 		// Make it an rvalue reference type
 		param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference); // true = rvalue reference
@@ -3162,38 +3162,38 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// - User declared a copy constructor, copy assignment, move constructor, or destructor
 	// Skip implicit function generation for template classes (they'll be generated during instantiation)
 	if (!has_user_defined_copy_constructor && !has_user_defined_copy_assignment &&
-	    !has_user_defined_move_constructor && !has_user_defined_destructor && !parsing_template_class_) {
+		!has_user_defined_move_constructor && !has_user_defined_destructor && !parsing_template_class_) {
 		// Create a move assignment operator node: Type& operator=(Type&& other)
 
 		// Create return type: Type& (reference to struct type)
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
 		return_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
 
 		// Create declaration node for operator=
 		Token move_operator_name_token(Token::Type::Identifier, "operator="sv,
-		                               name_token.line(), name_token.column(),
-		                               name_token.file_index());
+									   name_token.line(), name_token.column(),
+									   name_token.file_index());
 
 		auto move_operator_decl_node = emplace_node<DeclarationNode>(return_type_node, move_operator_name_token);
 
 		// Create function declaration node
 		// Use qualified_struct_name for nested classes so the member function references the correct type
 		auto [move_func_node, move_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-		    move_operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+			move_operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
-		    struct_type_index.withCategory(TypeCategory::Struct),
-		    static_cast<int>(struct_info->total_size * 8), // size in bits
-		    name_token,
-		    CVQualifier::None,
-		    ReferenceQualifier::None);
+			struct_type_index.withCategory(TypeCategory::Struct),
+			static_cast<int>(struct_info->total_size * 8), // size in bits
+			name_token,
+			CVQualifier::None,
+			ReferenceQualifier::None);
 		move_param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference); // true = rvalue reference
 
 		// Create parameter declaration
@@ -3213,9 +3213,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Add the move assignment operator to the struct type info
 		struct_info->addOperatorOverload(
-		    OverloadableOperator::MoveAssign,
-		    move_func_node,
-		    AccessSpecifier::Public);
+			OverloadableOperator::MoveAssign,
+			move_func_node,
+			AccessSpecifier::Public);
 
 		// Add the move assignment operator to the struct node
 		struct_ref.add_operator_overload(OverloadableOperator::MoveAssign, move_func_node, AccessSpecifier::Public);
@@ -3230,40 +3230,40 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 		// Array of comparison operators to synthesize
 		static const std::array<std::pair<OverloadableOperator, std::string_view>, 6> comparison_ops = {{{OverloadableOperator::Equal, "operator=="},
-		                                                                                                 {OverloadableOperator::NotEqual, "operator!="},
-		                                                                                                 {OverloadableOperator::Less, "operator<"},
-		                                                                                                 {OverloadableOperator::Greater, "operator>"},
-		                                                                                                 {OverloadableOperator::LessEqual, "operator<="},
-		                                                                                                 {OverloadableOperator::GreaterEqual, "operator>="}}};
+																										 {OverloadableOperator::NotEqual, "operator!="},
+																										 {OverloadableOperator::Less, "operator<"},
+																										 {OverloadableOperator::Greater, "operator>"},
+																										 {OverloadableOperator::LessEqual, "operator<="},
+																										 {OverloadableOperator::GreaterEqual, "operator>="}}};
 
 		for (const auto& [op_kind, op_name] : comparison_ops) {
 			// Create return type: bool
 			auto return_type_node = emplace_node<TypeSpecifierNode>(
-			    TypeIndex{}.withCategory(TypeCategory::Bool),
-			    8, // size in bits
-			    name_token,
-			    CVQualifier::None,
-			    ReferenceQualifier::None);
+				TypeIndex{}.withCategory(TypeCategory::Bool),
+				8, // size in bits
+				name_token,
+				CVQualifier::None,
+				ReferenceQualifier::None);
 
 			// Create declaration node for the operator
 			Token operator_name_token(Token::Type::Identifier, op_name,
-			                          name_token.line(), name_token.column(),
-			                          name_token.file_index());
+									  name_token.line(), name_token.column(),
+									  name_token.file_index());
 
 			auto operator_decl_node = emplace_node<DeclarationNode>(return_type_node, operator_name_token);
 
 			// Create function declaration node
 			// Use qualified_struct_name for nested classes so the member function references the correct type
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(
-			    operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
+				operator_decl_node.as<DeclarationNode>(), qualified_struct_name);
 
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
-			    struct_type_index.withCategory(TypeCategory::Struct),
-			    static_cast<int>(struct_info->total_size * 8), // size in bits
-			    name_token,
-			    CVQualifier::Const, // const qualifier
-			    ReferenceQualifier::None);
+				struct_type_index.withCategory(TypeCategory::Struct),
+				static_cast<int>(struct_info->total_size * 8), // size in bits
+				name_token,
+				CVQualifier::Const, // const qualifier
+				ReferenceQualifier::None);
 			param_type_node.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference); // lvalue reference
 
 			// Create parameter declaration
@@ -3297,14 +3297,14 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Create "this" identifier
 			Token this_token(Token::Type::Keyword, "this"sv,
-			                 name_token.line(), name_token.column(),
-			                 name_token.file_index());
+							 name_token.line(), name_token.column(),
+							 name_token.file_index());
 			auto this_node = emplace_node<ExpressionNode>(IdentifierNode(this_token));
 
 			// Create "other" identifier reference
 			Token other_token(Token::Type::Identifier, "other"sv,
-			                  name_token.line(), name_token.column(),
-			                  name_token.file_index());
+							  name_token.line(), name_token.column(),
+							  name_token.file_index());
 			auto other_node = emplace_node<ExpressionNode>(IdentifierNode(other_token));
 
 			// Create arguments vector for the spaceship operator call
@@ -3313,27 +3313,27 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Create member function call: this->operator<=>(other)
 			auto spaceship_call = emplace_node<ExpressionNode>(
-			    MemberFunctionCallNode(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
+				MemberFunctionCallNode(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
 
 			// Create numeric literal for 0
 			Token zero_token(Token::Type::Literal, "0"sv,
-			                 name_token.line(), name_token.column(),
-			                 name_token.file_index());
+							 name_token.line(), name_token.column(),
+							 name_token.file_index());
 			auto zero_node = emplace_node<ExpressionNode>(
-			    NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
+				NumericLiteralNode(zero_token, 0ULL, TypeCategory::Int, TypeQualifier::None, 32));
 
 			// Create comparison operator token for comparing result with 0
 			Token comparison_token(Token::Type::Operator, overloadableOperatorToString(op_kind),
-			                       name_token.line(), name_token.column(),
-			                       name_token.file_index());
+								   name_token.line(), name_token.column(),
+								   name_token.file_index());
 
 			// Create binary operator node: (spaceship_call) <op> 0
 			auto comparison_expr = emplace_node<ExpressionNode>(
-			    BinaryOperatorNode(comparison_token, spaceship_call, zero_node));
+				BinaryOperatorNode(comparison_token, spaceship_call, zero_node));
 
 			// Create return statement
 			auto return_stmt = emplace_node<ReturnStatementNode>(
-			    std::optional<ASTNode>(comparison_expr), operator_name_token);
+				std::optional<ASTNode>(comparison_expr), operator_name_token);
 
 			// Add return statement to block
 			op_block_ref.add_statement_node(return_stmt);
@@ -3345,9 +3345,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Add the operator to the struct type info
 			struct_info->addOperatorOverload(
-			    op_kind,
-			    func_node,
-			    AccessSpecifier::Public);
+				op_kind,
+				func_node,
+				AccessSpecifier::Public);
 
 			// Add the operator to the struct node
 			struct_ref.add_operator_overload(op_kind, func_node, AccessSpecifier::Public);
@@ -3509,7 +3509,7 @@ ParseResult Parser::parse_enum_declaration() {
 	// Check for 'class' or 'struct' keyword (enum class / enum struct)
 	bool is_scoped = false;
 	if (peek().is_keyword() &&
-	    (peek() == "class"_tok || peek() == "struct"_tok)) {
+		(peek() == "class"_tok || peek() == "struct"_tok)) {
 		is_scoped = true;
 		advance(); // consume 'class' or 'struct'
 	}
@@ -3523,7 +3523,7 @@ ParseResult Parser::parse_enum_declaration() {
 		auto name_token = advance();
 		enum_name = name_token.handle();
 	} else if (!peek().is_eof() &&
-	           (peek() == ":"_tok || peek() == "{"_tok)) {
+			   (peek() == ":"_tok || peek() == "{"_tok)) {
 		// Anonymous enum - generate a unique name
 		static int anonymous_enum_counter = 0;
 		enum_name = StringTable::getOrInternStringHandle(StringBuilder().append("__anonymous_enum_").append(std::to_string(anonymous_enum_counter++)));
@@ -3562,7 +3562,7 @@ ParseResult Parser::parse_enum_declaration() {
 	// C++11: enum class Name : underlying_type;
 	// This is a forward declaration, not a definition
 	FLASH_LOG(Parser, Debug, "Checking for enum forward declaration, peek_token has_value=", !peek().is_eof(),
-	          !peek().is_eof() ? (std::string(" value='") + std::string(peek_info().value()) + "'") : "");
+			  !peek().is_eof() ? (std::string(" value='") + std::string(peek_info().value()) + "'") : "");
 	if (peek() == ";"_tok) {
 		// This is a forward declaration
 		advance(); // Consume the semicolon
@@ -3681,7 +3681,7 @@ ParseResult Parser::parse_enum_declaration() {
 		// ConstExprEvaluator (via gTypeInfo enum lookup) can both find it
 		{
 			auto enum_type_node = emplace_node<TypeSpecifierNode>(
-			    enum_type_info.type_index_.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token, CVQualifier::None, ReferenceQualifier::None);
+				enum_type_info.type_index_.withCategory(TypeCategory::Enum), underlying_size, enumerator_name_token, CVQualifier::None, ReferenceQualifier::None);
 			auto enumerator_decl = emplace_node<DeclarationNode>(enum_type_node, enumerator_name_token);
 			gSymbolTable.insert(enumerator_name, enumerator_decl);
 		}
@@ -3777,19 +3777,19 @@ std::optional<StructMember> Parser::try_parse_function_pointer_member(TypeSpecif
 	StringHandle funcptr_name_handle = decl.identifier_token().handle();
 
 	StructMember member{
-	    funcptr_name_handle,
-	    nativeTypeIndex(TypeCategory::FunctionPointer), // type_index for function pointers
-	    0, // offset will be calculated later
-	    pointer_size,
-	    pointer_alignment,
-	    AccessSpecifier::Public,
-	    std::nullopt, // no default initializer
-	    ReferenceQualifier::None,
-	    0, // referenced_size_bits
-	    false, // is_array
-	    {}, // array_dimensions
-	    0, // pointer_depth
-	    std::nullopt // bitfield_width
+		funcptr_name_handle,
+		nativeTypeIndex(TypeCategory::FunctionPointer), // type_index for function pointers
+		0, // offset will be calculated later
+		pointer_size,
+		pointer_alignment,
+		AccessSpecifier::Public,
+		std::nullopt, // no default initializer
+		ReferenceQualifier::None,
+		0, // referenced_size_bits
+		false, // is_array
+		{}, // array_dimensions
+		0, // pointer_depth
+		std::nullopt // bitfield_width
 	};
 	// Copy the COMPLETE function signature (return type + parameter types) from parse_declarator
 	if (fp_type.has_function_signature()) {
@@ -3807,7 +3807,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 	while (!peek().is_eof() && peek() != "}"_tok) {
 		// Check for nested named anonymous struct/union: struct { ... } member_name;
 		if (peek().is_keyword() &&
-		    (peek() == "union"_tok || peek() == "struct"_tok)) {
+			(peek() == "union"_tok || peek() == "struct"_tok)) {
 			SaveHandle nested_saved_pos = save_token_position();
 			bool nested_is_union = (peek() == "union"_tok);
 			advance(); // consume 'union' or 'struct'
@@ -3818,11 +3818,11 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 
 				// Generate a unique name for the nested anonymous type
 				std::string_view nested_anon_type_name = StringBuilder()
-				                                             .append(parent_name_prefix)
-				                                             .append("_")
-				                                             .append(nested_is_union ? "union_" : "struct_")
-				                                             .append(static_cast<int64_t>(recursive_anonymous_counter++))
-				                                             .commit();
+															 .append(parent_name_prefix)
+															 .append("_")
+															 .append(nested_is_union ? "union_" : "struct_")
+															 .append(static_cast<int64_t>(recursive_anonymous_counter++))
+															 .commit();
 				StringHandle nested_anon_type_name_handle = StringTable::getOrInternStringHandle(nested_anon_type_name);
 
 				// Create the nested anonymous struct/union type
@@ -3899,19 +3899,19 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				// Add member to the outer anonymous type
 				StringHandle outer_member_name_handle = outer_member_name_token.handle();
 				out_struct_info->members.push_back(StructMember{
-				    outer_member_name_handle,
-				    nested_anon_type_info.type_index_,
-				    0, // offset will be calculated later
-				    nested_type_size,
-				    nested_type_alignment,
-				    AccessSpecifier::Public,
-				    std::nullopt, // no default initializer
-				    ReferenceQualifier::None,
-				    0, // referenced_size_bits
-				    false, // is_array
-				    {}, // array_dimensions
-				    0, // pointer_depth
-				    std::nullopt // bitfield_width
+					outer_member_name_handle,
+					nested_anon_type_info.type_index_,
+					0, // offset will be calculated later
+					nested_type_size,
+					nested_type_alignment,
+					AccessSpecifier::Public,
+					std::nullopt, // no default initializer
+					ReferenceQualifier::None,
+					0, // referenced_size_bits
+					false, // is_array
+					{}, // array_dimensions
+					0, // pointer_depth
+					std::nullopt // bitfield_width
 				});
 
 				// Expect semicolon
@@ -3973,7 +3973,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 
 			// Expect closing ']'
 			if (peek().is_eof() || peek_info().type() != Token::Type::Punctuator ||
-			    peek() != "]"_tok) {
+				peek() != "]"_tok) {
 				return ParseResult::error("Expected ']' after array size", current_token_);
 			}
 			advance(); // consume ']'
@@ -3997,19 +3997,19 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 		// Add member to the anonymous type
 		StringHandle member_name_handle = member_name_token.handle();
 		out_struct_info->members.push_back(StructMember{
-		    member_name_handle,
-		    member_type_spec.type_index(),
-		    0, // offset will be calculated later
-		    member_size,
-		    member_alignment,
-		    AccessSpecifier::Public,
-		    std::nullopt, // no default initializer
-		    ReferenceQualifier::None,
-		    referenced_size_bits,
-		    !resolved_array_dimensions.empty(), // is_array
-		    std::move(resolved_array_dimensions), // array_dimensions
-		    0, // pointer_depth
-		    std::nullopt // bitfield_width
+			member_name_handle,
+			member_type_spec.type_index(),
+			0, // offset will be calculated later
+			member_size,
+			member_alignment,
+			AccessSpecifier::Public,
+			std::nullopt, // no default initializer
+			ReferenceQualifier::None,
+			referenced_size_bits,
+			!resolved_array_dimensions.empty(), // is_array
+			std::move(resolved_array_dimensions), // array_dimensions
+			0, // pointer_depth
+			std::nullopt // bitfield_width
 		});
 		if (member_type_spec.has_function_signature()) {
 			out_struct_info->members.back().function_signature = member_type_spec.function_signature();
@@ -4077,7 +4077,7 @@ ParseResult Parser::parse_friend_declaration() {
 	while (!peek().is_eof()) {
 		auto k = peek();
 		if (k == "*"_tok || k == "&"_tok || k == "&&"_tok ||
-		    k == "const"_tok || k == "volatile"_tok) {
+			k == "const"_tok || k == "volatile"_tok) {
 			advance();
 		} else {
 			break;
@@ -4120,8 +4120,8 @@ ParseResult Parser::parse_friend_declaration() {
 		std::string_view op_name = op_name_builder.commit();
 		function_name = op_name;
 		function_name_token = Token(Token::Type::Identifier, op_name,
-		                            operator_keyword_token.line(), operator_keyword_token.column(),
-		                            operator_keyword_token.file_index());
+									operator_keyword_token.line(), operator_keyword_token.column(),
+									operator_keyword_token.file_index());
 	} else {
 		while (!peek().is_eof()) {
 			auto name_token = advance();
@@ -4227,20 +4227,20 @@ ParseResult Parser::parse_friend_declaration() {
 
 			// Queue for delayed parsing (is_free_function = true: no 'this', no member context)
 			delayed_function_bodies_.push_back({
-			    &func_ref,
-			    body_start,
-			    {}, // initializer_list_start (not used)
-			    {}, // struct_name (not needed for free function)
-			    TypeIndex{}, // struct_type_index (not needed for free function)
-			    nullptr, // struct_node (not needed for free function)
-			    false, // has_initializer_list
-			    false, // is_constructor
-			    false, // is_destructor
-			    nullptr, // ctor_node
-			    nullptr, // dtor_node
-			    {}, // template_param_names
-			    false, // is_member_function_template
-			    true, // is_free_function
+				&func_ref,
+				body_start,
+				{}, // initializer_list_start (not used)
+				{}, // struct_name (not needed for free function)
+				TypeIndex{}, // struct_type_index (not needed for free function)
+				nullptr, // struct_node (not needed for free function)
+				false, // has_initializer_list
+				false, // is_constructor
+				false, // is_destructor
+				nullptr, // ctor_node
+				nullptr, // dtor_node
+				{}, // template_param_names
+				false, // is_member_function_template
+				true, // is_free_function
 			});
 
 			// Register directly into adl_only_symbols_ so lookup_adl() can find it
@@ -4378,7 +4378,7 @@ ParseResult Parser::parse_template_friend_declaration(StructDeclarationNode& str
 		// so it can be found and instantiated at call sites.
 		ASTNode template_func_node;
 		auto func_result = parse_template_function_declaration_body(
-		    template_params, requires_clause, template_func_node);
+			template_params, requires_clause, template_func_node);
 		if (func_result.is_error()) {
 			// Fall back: skip remainder and return a minimal friend node
 			while (!peek().is_eof() && peek() != ";"_tok) {
@@ -4452,7 +4452,7 @@ void Parser::registerFriendInStructInfo(const FriendDeclarationNode& friend_decl
 			std::string_view ns_name = gNamespaceRegistry.getQualifiedName(gSymbolTable.get_current_namespace_handle());
 			if (!ns_name.empty()) {
 				struct_info->addFriendClass(StringTable::getOrInternStringHandle(
-				    StringBuilder().append(ns_name).append("::").append(sv).commit()));
+					StringBuilder().append(ns_name).append("::").append(sv).commit()));
 			}
 		}
 	} else if (friend_decl.kind() == FriendKind::Function) {

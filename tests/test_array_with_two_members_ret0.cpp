@@ -1,9 +1,9 @@
 struct Array {
-    int data[5];
-    int x;
+	int data[5];
+	int x;
 };
 
 int main() {
-    Array arr;
-    return 0;
+	Array arr;
+	return 0;
 }

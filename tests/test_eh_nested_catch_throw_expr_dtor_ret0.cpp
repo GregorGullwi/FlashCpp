@@ -51,14 +51,21 @@ int main() {
 			}
 		}
 	} catch (Payload& caught) {
-		if (caught.value != 42) catch_result = 1;
-		if (g_inner_guard_dtor != 1) catch_result = 2;
-		if (g_payload_dtor != 1) catch_result = 3;
-		if (g_copy_ctor != 1) catch_result = 4;
-		if (g_outer_guard_dtor != 1) catch_result = 5;
+		if (caught.value != 42)
+			catch_result = 1;
+		if (g_inner_guard_dtor != 1)
+			catch_result = 2;
+		if (g_payload_dtor != 1)
+			catch_result = 3;
+		if (g_copy_ctor != 1)
+			catch_result = 4;
+		if (g_outer_guard_dtor != 1)
+			catch_result = 5;
 	}
 
-	if (catch_result != 0) return catch_result;
-	if (g_payload_dtor != 2) return 6;
+	if (catch_result != 0)
+		return catch_result;
+	if (g_payload_dtor != 2)
+		return 6;
 	return 0;
 }

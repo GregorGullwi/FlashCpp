@@ -1,4 +1,4 @@
-template<typename T>
+template <typename T>
 struct AliasChain {
 	typedef T base_type;
 	using mid_type = base_type;
@@ -29,10 +29,14 @@ int main() {
 	AliasChain<int>::final_type scalar = 4;
 	AliasChain<Payload>::final_type payload{9};
 
-	if (bindConstRef(scalar) != 4) return 1;
-	if (bindMutableRef(scalar) != 14) return 2;
-	if (bindStructRef(payload) != 29) return 3;
-	if (bindConstStructRef(payload) != 209) return 4;
+	if (bindConstRef(scalar) != 4)
+		return 1;
+	if (bindMutableRef(scalar) != 14)
+		return 2;
+	if (bindStructRef(payload) != 29)
+		return 3;
+	if (bindConstStructRef(payload) != 209)
+		return 4;
 
 	return 0;
 }

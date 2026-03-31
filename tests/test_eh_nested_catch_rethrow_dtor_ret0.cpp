@@ -32,7 +32,9 @@ int main() {
 	} catch (int) {
 	}
 
-	if (g_inner_dtor != 1) return 1;
-	if (g_outer_dtor != 1) return 2;
+	if (g_inner_dtor != 1)
+		return 1;
+	if (g_outer_dtor != 1)
+		return 2;
 	return 0;
 }

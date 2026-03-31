@@ -2,19 +2,19 @@
 // Outer struct with three Inner members initialized positionally; all three must be accessible.
 
 struct Inner {
-    int val;
+	int val;
 };
 
 struct Outer {
-    Inner a;
-    Inner b;
-    Inner c;
+	Inner a;
+	Inner b;
+	Inner c;
 };
 
 constexpr Outer o = {{10}, {12}, {20}};
 
-constexpr int sum = o.a.val + o.b.val + o.c.val;  // 10 + 12 + 20 = 42
+constexpr int sum = o.a.val + o.b.val + o.c.val;	 // 10 + 12 + 20 = 42
 
 int main() {
-    return sum;
+	return sum;
 }

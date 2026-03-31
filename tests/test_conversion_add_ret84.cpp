@@ -1,17 +1,17 @@
 // Test addition with converted values
 struct MyInt {
-    int value;
+	int value;
 
-    MyInt(int v) : value(v) {}
+	MyInt(int v) : value(v) {}
 
-    operator int() const {
-        return value;
-    }
+	operator int() const {
+		return value;
+	}
 };
 
 int main() {
-    MyInt mi(42);
-    int i = mi;
-    int j = 42;
-    return i + j;  // Should return 84
+	MyInt mi(42);
+	int i = mi;
+	int j = 42;
+	return i + j;  // Should return 84
 }

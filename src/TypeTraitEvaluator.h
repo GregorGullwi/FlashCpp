@@ -56,11 +56,9 @@ TypeTraitResult evaluateTypeTrait(
 	CVQualifier cv_qualifier,
 	bool is_array,
 	std::optional<size_t> array_size,
-	const StructTypeInfo* struct_info
-);
+	const StructTypeInfo* struct_info);
 
 TypeTraitResult evaluateTypeTrait(
 	TypeTraitKind kind,
 	const TypeSpecifierNode& type_spec,
-	const StructTypeInfo* struct_info
-);
+	const StructTypeInfo* struct_info);

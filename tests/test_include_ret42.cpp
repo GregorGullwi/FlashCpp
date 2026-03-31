@@ -2,6 +2,6 @@
 #include "test_header.h"
 
 int main() {
-    my_int_t value = MY_CONSTANT;
-    return value;
+	my_int_t value = MY_CONSTANT;
+	return value;
 }

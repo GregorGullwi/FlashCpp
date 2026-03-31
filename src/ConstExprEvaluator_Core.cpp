@@ -88,8 +88,8 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 		}
 	}
 	EvalResult result = is_unsigned_integer_type(effective_category)
-	                        ? EvalResult::from_uint(expr_result.as_uint_raw())
-	                        : EvalResult::from_int(expr_result.as_int());
+							? EvalResult::from_uint(expr_result.as_uint_raw())
+							: EvalResult::from_int(expr_result.as_int());
 	result.set_exact_type(target_type);
 	return result;
 }
@@ -99,8 +99,8 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
 	const TypeCategory category = target_type.category();
 	if (isIntegralType(category) ||
-	    isFloatingPointType(category) ||
-	    category == TypeCategory::Enum) {
+		isFloatingPointType(category) ||
+		category == TypeCategory::Enum) {
 		return makeConvertedEvalResult(target_type, expr_result);
 	}
 
@@ -207,8 +207,8 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		// Template parameters cannot be evaluated at template definition time
 		// This is a template-dependent expression that needs to be deferred
 		return EvalResult::error("Template parameter in constant expression: " +
-		                             std::string(StringTable::getStringView(template_param.param_name())),
-		                         EvalErrorType::TemplateDependentExpression);
+									 std::string(StringTable::getStringView(template_param.param_name())),
+								 EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For TernaryOperatorNode (condition ? true_expr : false_expr)
@@ -268,7 +268,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// where fold expressions may legitimately appear; this error-return path serves that dual use.
 	if (std::holds_alternative<FoldExpressionNode>(expr)) {
 		return EvalResult::error("Fold expression requires template instantiation context",
-		                         EvalErrorType::TemplateDependentExpression);
+								 EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For PackExpansionExprNode (e.g., args...)
@@ -276,7 +276,7 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// Phase 4 note: same dual-context rationale as FoldExpressionNode above.
 	if (std::holds_alternative<PackExpansionExprNode>(expr)) {
 		return EvalResult::error("Pack expansion requires template instantiation context",
-		                         EvalErrorType::TemplateDependentExpression);
+								 EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For StringLiteralNode: produce an array of char EvalResults so that pointer/subscript
@@ -286,8 +286,8 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		std::string_view raw = str_literal->value();
 		// Strip surrounding double-quotes that the lexer keeps in the token value.
 		std::string_view str_content = (raw.size() >= 2 && raw.front() == '"' && raw.back() == '"')
-		                                   ? std::string_view(raw.data() + 1, raw.size() - 2)
-		                                   : raw;
+										   ? std::string_view(raw.data() + 1, raw.size() - 2)
+										   : raw;
 		// Build an is_array result whose elements are the individual characters.
 		// The null terminator is appended so that str[n] == '\0' comparisons work.
 		const TypeSpecifierNode char_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
@@ -363,8 +363,8 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 	if (std::holds_alternative<unsigned long long>(value)) {
 		unsigned long long val = std::get<unsigned long long>(value);
 		EvalResult result = is_unsigned_integer_type(literal.type())
-		                        ? EvalResult::from_uint(val)
-		                        : EvalResult::from_int(static_cast<long long>(val));
+								? EvalResult::from_uint(val)
+								: EvalResult::from_int(static_cast<long long>(val));
 		result.set_exact_type(literal_type);
 		return result;
 	} else if (const auto* d_val = std::get_if<double>(&value)) {
@@ -378,7 +378,7 @@ EvalResult Evaluator::evaluate_numeric_literal(const NumericLiteralNode& literal
 }
 
 EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const ASTNode& rhs_node,
-                                               std::string_view op, EvaluationContext& context) {
+											   std::string_view op, EvaluationContext& context) {
 	// Short-circuit && and || per C++ semantics when not in speculative mode.
 	// In speculative mode (template-argument disambiguation), both sides are evaluated
 	// eagerly so that a truthy LHS of `||` does not give a false-positive constant-
@@ -414,7 +414,7 @@ EvalResult Evaluator::evaluate_binary_operator(const ASTNode& lhs_node, const AS
 }
 
 EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::string_view op,
-                                              EvaluationContext& context) {
+											  EvaluationContext& context) {
 	// Handle address-of (&) without evaluating the operand: the result is a pointer to the named variable.
 	if (op == "&") {
 		if (operand_node.is<ExpressionNode>()) {
@@ -447,8 +447,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 	if (op == "*") {
 		if (operand_result.pointer_to_var.isValid()) {
 			return dereference_constexpr_pointer(
-			    StringTable::getStringView(operand_result.pointer_to_var),
-			    context, operand_result.pointer_offset);
+				StringTable::getStringView(operand_result.pointer_to_var),
+				context, operand_result.pointer_offset);
 		}
 		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}
@@ -468,7 +468,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-				                         std::string(var_name) + "' has already been deleted");
+										 std::string(var_name) + "' has already been deleted");
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -526,8 +526,8 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			const auto& elements = init_list.initializers();
 			if (static_cast<size_t>(offset) >= elements.size()) {
 				return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-				                             " out of bounds (size " + std::to_string(elements.size()) + ")",
-				                         EvalErrorType::NotConstantExpression);
+											 " out of bounds (size " + std::to_string(elements.size()) + ")",
+										 EvalErrorType::NotConstantExpression);
 			}
 			return evaluate(elements[static_cast<size_t>(offset)], context);
 		}
@@ -540,16 +540,16 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			if (!arr_result.array_elements.empty()) {
 				if (static_cast<size_t>(offset) >= arr_result.array_elements.size()) {
 					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-					                             " out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")",
-					                         EvalErrorType::NotConstantExpression);
+												 " out of bounds (array size " + std::to_string(arr_result.array_elements.size()) + ")",
+											 EvalErrorType::NotConstantExpression);
 				}
 				return arr_result.array_elements[static_cast<size_t>(offset)];
 			}
 			if (!arr_result.array_values.empty()) {
 				if (static_cast<size_t>(offset) >= arr_result.array_values.size()) {
 					return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-					                             " out of bounds (array size " + std::to_string(arr_result.array_values.size()) + ")",
-					                         EvalErrorType::NotConstantExpression);
+												 " out of bounds (array size " + std::to_string(arr_result.array_values.size()) + ")",
+											 EvalErrorType::NotConstantExpression);
 				}
 				return EvalResult::from_int(arr_result.array_values[static_cast<size_t>(offset)]);
 			}
@@ -573,9 +573,9 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 // then the symbol table.  Handles scalars (offset == 0) and arrays (any offset).
 // This is the preferred deref helper for all bindings-aware evaluation paths.
 EvalResult Evaluator::deref_pointer_with_bindings(
-    const EvalResult& ptr,
-    const std::unordered_map<std::string_view, EvalResult>& bindings,
-    EvaluationContext& context) {
+	const EvalResult& ptr,
+	const std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
 	std::string_view var_name = StringTable::getStringView(ptr.pointer_to_var);
 	int64_t offset = ptr.pointer_offset;
 
@@ -588,7 +588,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-				                         std::string(var_name) + "' has already been deleted");
+										 std::string(var_name) + "' has already been deleted");
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -907,8 +907,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 			}
 			if (size_in_bytes == 0) {
 				return EvalResult::error(
-				    "sizeof evaluated to 0 for type '" + std::string(type_spec.token().value()) + "' (incomplete or dependent type)",
-				    EvalErrorType::TemplateDependentExpression);
+					"sizeof evaluated to 0 for type '" + std::string(type_spec.token().value()) + "' (incomplete or dependent type)",
+					EvalErrorType::TemplateDependentExpression);
 			}
 			return EvalResult::from_int(static_cast<long long>(size_in_bytes));
 		}
@@ -1183,12 +1183,12 @@ bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_de
 const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context) {
 	StringHandle function_name_handle = func_call.function_declaration().identifier_token().handle();
 	auto current_match = find_current_struct_member_function_candidate(
-	    function_name_handle,
-	    func_call.arguments().size(),
-	    context,
-	    MemberFunctionLookupMode::LookupOnly,
-	    false,
-	    true);
+		function_name_handle,
+		func_call.arguments().size(),
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false,
+		true);
 	if (current_match.function) {
 		return current_match.function;
 	}
@@ -1212,8 +1212,8 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const Funct
 
 	if (func_call.has_qualified_name()) {
 		if (const FunctionDeclarationNode* qualified_decl = lookup_function(
-		        context.symbols,
-		        StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+				context.symbols,
+				StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
 			return qualified_decl;
 		}
 	}
@@ -1225,8 +1225,8 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const Funct
 	if (context.global_symbols && context.global_symbols != context.symbols) {
 		if (func_call.has_qualified_name()) {
 			if (const FunctionDeclarationNode* qualified_decl = lookup_function(
-			        context.global_symbols,
-			        StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+					context.global_symbols,
+					StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
 				return qualified_decl;
 			}
 		}
@@ -1248,7 +1248,7 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		EvaluationContext& context;
 
 		explicit NoexceptDepthGuard(EvaluationContext& eval_context)
-		    : context(eval_context) {
+			: context(eval_context) {
 			++context.current_depth;
 		}
 
@@ -1258,22 +1258,22 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 	} depth_guard(context);
 
 	if (std::holds_alternative<BoolLiteralNode>(expr) ||
-	    std::holds_alternative<NumericLiteralNode>(expr) ||
-	    std::holds_alternative<StringLiteralNode>(expr)) {
+		std::holds_alternative<NumericLiteralNode>(expr) ||
+		std::holds_alternative<StringLiteralNode>(expr)) {
 		return true;
 	}
 
 	if (std::holds_alternative<IdentifierNode>(expr) ||
-	    std::holds_alternative<QualifiedIdentifierNode>(expr) ||
-	    std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
-	    std::holds_alternative<MemberAccessNode>(expr) ||
-	    std::holds_alternative<TypeTraitExprNode>(expr) ||
-	    std::holds_alternative<LambdaExpressionNode>(expr) ||
-	    std::holds_alternative<NoexceptExprNode>(expr) ||
-	    std::holds_alternative<SizeofExprNode>(expr) ||
-	    std::holds_alternative<SizeofPackNode>(expr) ||
-	    std::holds_alternative<AlignofExprNode>(expr) ||
-	    std::holds_alternative<OffsetofExprNode>(expr)) {
+		std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+		std::holds_alternative<TemplateParameterReferenceNode>(expr) ||
+		std::holds_alternative<MemberAccessNode>(expr) ||
+		std::holds_alternative<TypeTraitExprNode>(expr) ||
+		std::holds_alternative<LambdaExpressionNode>(expr) ||
+		std::holds_alternative<NoexceptExprNode>(expr) ||
+		std::holds_alternative<SizeofExprNode>(expr) ||
+		std::holds_alternative<SizeofPackNode>(expr) ||
+		std::holds_alternative<AlignofExprNode>(expr) ||
+		std::holds_alternative<OffsetofExprNode>(expr)) {
 		return true;
 	}
 
@@ -1288,25 +1288,25 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
 		const auto& binop = std::get<BinaryOperatorNode>(expr);
 		bool lhs_noexcept = !binop.get_lhs().is<ExpressionNode>() ||
-		                    is_expression_noexcept(binop.get_lhs().as<ExpressionNode>(), context);
+							is_expression_noexcept(binop.get_lhs().as<ExpressionNode>(), context);
 		bool rhs_noexcept = !binop.get_rhs().is<ExpressionNode>() ||
-		                    is_expression_noexcept(binop.get_rhs().as<ExpressionNode>(), context);
+							is_expression_noexcept(binop.get_rhs().as<ExpressionNode>(), context);
 		return lhs_noexcept && rhs_noexcept;
 	}
 
 	if (const auto* unary = std::get_if<UnaryOperatorNode>(&expr)) {
 		return !unary->get_operand().is<ExpressionNode>() ||
-		       is_expression_noexcept(unary->get_operand().as<ExpressionNode>(), context);
+			   is_expression_noexcept(unary->get_operand().as<ExpressionNode>(), context);
 	}
 
 	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
 		const auto& ternary = std::get<TernaryOperatorNode>(expr);
 		bool cond_noexcept = !ternary.condition().is<ExpressionNode>() ||
-		                     is_expression_noexcept(ternary.condition().as<ExpressionNode>(), context);
+							 is_expression_noexcept(ternary.condition().as<ExpressionNode>(), context);
 		bool true_noexcept = !ternary.true_expr().is<ExpressionNode>() ||
-		                     is_expression_noexcept(ternary.true_expr().as<ExpressionNode>(), context);
+							 is_expression_noexcept(ternary.true_expr().as<ExpressionNode>(), context);
 		bool false_noexcept = !ternary.false_expr().is<ExpressionNode>() ||
-		                      is_expression_noexcept(ternary.false_expr().as<ExpressionNode>(), context);
+							  is_expression_noexcept(ternary.false_expr().as<ExpressionNode>(), context);
 		return cond_noexcept && true_noexcept && false_noexcept;
 	}
 
@@ -1321,31 +1321,31 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 
 	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
 		return !subscript->index_expr().is<ExpressionNode>() ||
-		       is_expression_noexcept(subscript->index_expr().as<ExpressionNode>(), context);
+			   is_expression_noexcept(subscript->index_expr().as<ExpressionNode>(), context);
 	}
 
 	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
 		return !cast->expr().is<ExpressionNode>() ||
-		       is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
+			   is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
 	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
 		return !cast->expr().is<ExpressionNode>() ||
-		       is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
+			   is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
 	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
 		return !cast->expr().is<ExpressionNode>() ||
-		       is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
+			   is_expression_noexcept(cast->expr().as<ExpressionNode>(), context);
 	}
 
 	if (std::holds_alternative<DynamicCastNode>(expr) ||
-	    std::holds_alternative<TypeidNode>(expr) ||
-	    std::holds_alternative<NewExpressionNode>(expr) ||
-	    std::holds_alternative<DeleteExpressionNode>(expr) ||
-	    std::holds_alternative<FoldExpressionNode>(expr) ||
-	    std::holds_alternative<ThrowExpressionNode>(expr) ||
-	    std::holds_alternative<ConstructorCallNode>(expr)) {
+		std::holds_alternative<TypeidNode>(expr) ||
+		std::holds_alternative<NewExpressionNode>(expr) ||
+		std::holds_alternative<DeleteExpressionNode>(expr) ||
+		std::holds_alternative<FoldExpressionNode>(expr) ||
+		std::holds_alternative<ThrowExpressionNode>(expr) ||
+		std::holds_alternative<ConstructorCallNode>(expr)) {
 		return false;
 	}
 
@@ -1405,8 +1405,8 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		case TypeCategory::WChar: {
 			// wchar_t is signed on LP64, unsigned on LLP64
 			EvalResult result = (g_target_data_model == TargetDataModel::LLP64)
-			                        ? EvalResult::from_uint(0)
-			                        : EvalResult::from_int(0);
+									? EvalResult::from_uint(0)
+									: EvalResult::from_int(0);
 			result.set_exact_type(type_spec);
 			return result;
 		}
@@ -1480,11 +1480,11 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 
 bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {
 	if (lhs.type() != rhs.type() ||
-	    lhs.type_index() != rhs.type_index() ||
-	    lhs.pointer_depth() != rhs.pointer_depth() ||
-	    lhs.array_dimensions() != rhs.array_dimensions() ||
-	    lhs.has_member_class() != rhs.has_member_class() ||
-	    lhs.has_function_signature() != rhs.has_function_signature()) {
+		lhs.type_index() != rhs.type_index() ||
+		lhs.pointer_depth() != rhs.pointer_depth() ||
+		lhs.array_dimensions() != rhs.array_dimensions() ||
+		lhs.has_member_class() != rhs.has_member_class() ||
+		lhs.has_function_signature() != rhs.has_function_signature()) {
 		return false;
 	}
 
@@ -1496,17 +1496,17 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 		const FunctionSignature& lhs_sig = lhs.function_signature();
 		const FunctionSignature& rhs_sig = rhs.function_signature();
 		if (lhs_sig.returnType() != rhs_sig.returnType() ||
-		    lhs_sig.return_type_index != rhs_sig.return_type_index ||
-		    lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
-		    lhs_sig.linkage != rhs_sig.linkage ||
-		    lhs_sig.class_name != rhs_sig.class_name ||
-		    lhs_sig.is_const != rhs_sig.is_const ||
-		    lhs_sig.is_volatile != rhs_sig.is_volatile) {
+			lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
+			lhs_sig.linkage != rhs_sig.linkage ||
+			lhs_sig.class_name != rhs_sig.class_name ||
+			lhs_sig.is_const != rhs_sig.is_const ||
+			lhs_sig.is_volatile != rhs_sig.is_volatile) {
 			return false;
 		}
 		for (size_t i = 0; i < lhs_sig.parameter_type_indices.size(); ++i) {
 			if (lhs_sig.parameter_type_indices[i].category() != rhs_sig.parameter_type_indices[i].category() ||
-			    lhs_sig.parameter_type_indices[i] != rhs_sig.parameter_type_indices[i]) {
+				lhs_sig.parameter_type_indices[i] != rhs_sig.parameter_type_indices[i]) {
 				return false;
 			}
 		}
@@ -1516,9 +1516,9 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 }
 
 std::optional<TypeSpecifierNode> Evaluator::tryGetExpressionType(
-    const EvalResult& result,
-    const ASTNode& expr,
-    EvaluationContext& context) {
+	const EvalResult& result,
+	const ASTNode& expr,
+	EvaluationContext& context) {
 	if (result.exact_type.has_value()) {
 		return result.exact_type;
 	}
@@ -1545,8 +1545,8 @@ EvalResult Evaluator::evaluate_static_cast(const StaticCastNode& cast_node, Eval
 	}
 
 	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
-	    source_type.has_value() &&
-	    typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
+		source_type.has_value() &&
+		typesMatchIgnoringCvAndRef(type_spec, *source_type)) {
 		maybe_set_exact_type(result, type_spec);
 		return result;
 	}
@@ -1570,11 +1570,11 @@ EvalResult Evaluator::evaluate_const_cast(const ConstCastNode& cast_node, Evalua
 	}
 
 	if (auto source_type = tryGetExpressionType(result, cast_node.expr(), context);
-	    source_type.has_value() &&
-	    !typesMatchIgnoringCvAndRef(target_type, *source_type)) {
+		source_type.has_value() &&
+		!typesMatchIgnoringCvAndRef(target_type, *source_type)) {
 		return EvalResult::error(
-		    "const_cast in constant expression may only change cv-qualification",
-		    EvalErrorType::NotConstantExpression);
+			"const_cast in constant expression may only change cv-qualification",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	maybe_set_exact_type(result, target_type);
@@ -1594,7 +1594,7 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 		return r;
 	}
 	if (type_spec.category() == TypeCategory::Float || type_spec.category() == TypeCategory::Double ||
-	    type_spec.category() == TypeCategory::LongDouble) {
+		type_spec.category() == TypeCategory::LongDouble) {
 		EvalResult r = EvalResult::from_double(0.0);
 		r.set_exact_type(type_spec);
 		return r;
@@ -1608,9 +1608,9 @@ static EvalResult make_default_init(const TypeSpecifierNode& type_spec) {
 // `bindings` may be non-null when evaluating inside a constexpr function body (for
 // evaluating constructor arguments that reference local variables).
 EvalResult Evaluator::evaluate_new_expression(
-    const NewExpressionNode& new_expr,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	const NewExpressionNode& new_expr,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
 
 	if (!new_expr.type_node().is<TypeSpecifierNode>()) {
 		return EvalResult::error("new-expression: expected TypeSpecifierNode for allocated type");
@@ -1674,7 +1674,7 @@ EvalResult Evaluator::evaluate_new_expression(
 				args_copy.push_back(arg);
 			}
 			auto ctor_result = try_materialize_struct_from_ctor_args(
-			    struct_info, type_index, args_copy, context, bindings);
+				struct_info, type_index, args_copy, context, bindings);
 			if (!ctor_result.has_value()) {
 				return EvalResult::error("new-expression: no matching constructor found for struct type");
 			}
@@ -1691,7 +1691,7 @@ EvalResult Evaluator::evaluate_new_expression(
 			if (has_user_defined_ctor) {
 				ChunkedVector<ASTNode> empty_args;
 				auto ctor_result = try_materialize_struct_from_ctor_args(
-				    struct_info, type_index, empty_args, context, bindings);
+					struct_info, type_index, empty_args, context, bindings);
 				if (ctor_result.has_value()) {
 					if (!ctor_result->success()) {
 						return *ctor_result;
@@ -1699,9 +1699,9 @@ EvalResult Evaluator::evaluate_new_expression(
 					object_result = std::move(*ctor_result);
 				} else {
 					return EvalResult::error(
-					    "new-expression: no matching default constructor for '" +
-					    std::string(StringTable::getStringView(struct_info->getName())) +
-					    "' (type has user-defined constructors and is not an aggregate)");
+						"new-expression: no matching default constructor for '" +
+						std::string(StringTable::getStringView(struct_info->getName())) +
+						"' (type has user-defined constructors and is not an aggregate)");
 				}
 			} else {
 				// True aggregate or implicit-only constructors: apply default member initializers.
@@ -1710,7 +1710,7 @@ EvalResult Evaluator::evaluate_new_expression(
 					if (member.default_initializer.has_value()) {
 						auto def_result = evaluate(*member.default_initializer, context);
 						object_result.object_member_bindings[mname] =
-						    def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
+							def_result.success() ? std::move(def_result) : EvalResult::from_int(0LL);
 					} else {
 						object_result.object_member_bindings[mname] = EvalResult::from_int(0LL);
 					}
@@ -1755,8 +1755,8 @@ EvalResult Evaluator::evaluate_new_expression(
 			break;
 		case TypeCategory::WChar:
 			init_val = (g_target_data_model == TargetDataModel::LLP64)
-			               ? EvalResult::from_uint(arg_result.as_uint_raw())
-			               : EvalResult::from_int(arg_result.as_int());
+						   ? EvalResult::from_uint(arg_result.as_uint_raw())
+						   : EvalResult::from_int(arg_result.as_int());
 			break;
 		case TypeCategory::Float:
 		case TypeCategory::Double:
@@ -1780,9 +1780,9 @@ EvalResult Evaluator::evaluate_new_expression(
 // Evaluates the pointer expression (with local bindings when available) and removes
 // the corresponding entry from the constexpr heap.
 EvalResult Evaluator::evaluate_delete_expression(
-    const DeleteExpressionNode& del_expr,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	const DeleteExpressionNode& del_expr,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* bindings) {
 
 	// Evaluate the pointer expression.
 	EvalResult ptr_result;
@@ -1801,23 +1801,23 @@ EvalResult Evaluator::evaluate_delete_expression(
 	StringHandle heap_key = ptr_result.pointer_to_var;
 	if (ptr_result.pointer_offset != 0) {
 		return EvalResult::error("delete-expression: pointer is not the original allocation "
-		                         "(has non-zero offset " +
-		                         std::to_string(ptr_result.pointer_offset) + "); "
-		                                                                     "only the pointer returned by 'new' can be deleted in a constant expression");
+								 "(has non-zero offset " +
+								 std::to_string(ptr_result.pointer_offset) + "); "
+																			 "only the pointer returned by 'new' can be deleted in a constant expression");
 	}
 	auto heap_it = context.constexpr_heap.find(heap_key);
 	if (heap_it == context.constexpr_heap.end()) {
 		return EvalResult::error("delete-expression: pointer does not refer to a constexpr heap allocation "
-		                         "(only memory allocated with `new` in a constexpr context can be deleted at compile time)");
+								 "(only memory allocated with `new` in a constexpr context can be deleted at compile time)");
 	}
 	if (heap_it->second.freed) {
 		return EvalResult::error("delete-expression: double-free in constant expression: '" +
-		                         std::string(StringTable::getStringView(heap_key)) + "'");
+								 std::string(StringTable::getStringView(heap_key)) + "'");
 	}
 	if (del_expr.is_array() != heap_it->second.is_array) {
 		return EvalResult::error(del_expr.is_array()
-		                             ? "delete[]: non-array pointer (use plain `delete`)"
-		                             : "delete: array pointer (use `delete[]`)");
+									 ? "delete[]: non-array pointer (use plain `delete`)"
+									 : "delete: array pointer (use `delete[]`)");
 	}
 	heap_it->second.freed = true;
 	// delete-expression yields void; return a sentinel success value.
@@ -1848,9 +1848,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	std::optional<ASTNode> symbol_opt;
 	if (identifier.binding() == IdentifierBinding::StaticMember) {
 		auto bound_static_initializer = resolve_current_struct_static_initializer(
-		    &identifier,
-		    context,
-		    CurrentStructStaticLookupMode::BoundOnly);
+			&identifier,
+			context,
+			CurrentStructStaticLookupMode::BoundOnly);
 		bool found_bound_static_member = bound_static_initializer.found;
 		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
 			return evaluate(bound_static_initializer.initializer->value(), context);
@@ -1873,9 +1873,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	// If not found in symbol table, check for static members in the current struct
 	if (!symbol_opt.has_value()) {
 		auto preferred_static_initializer = resolve_current_struct_static_initializer(
-		    &identifier,
-		    context,
-		    CurrentStructStaticLookupMode::PreferCurrentStruct);
+			&identifier,
+			context,
+			CurrentStructStaticLookupMode::PreferCurrentStruct);
 		if (preferred_static_initializer.found) {
 			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {
 				return evaluate(preferred_static_initializer.initializer->value(), context);
@@ -1890,7 +1890,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if (context.parser != nullptr || var_name.length() <= 2) {
 			// Likely a template parameter - return template-dependent error
 			return EvalResult::error("Template parameter or undefined variable in constant expression: " + std::string(var_name),
-			                         EvalErrorType::TemplateDependentExpression);
+									 EvalErrorType::TemplateDependentExpression);
 		}
 
 		return EvalResult::error("Undefined variable in constant expression: " + std::string(var_name));
@@ -1903,7 +1903,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		// Variable template references with template arguments are template-dependent
 		// They need to be evaluated during template instantiation
 		return EvalResult::error("Variable template in constant expression - instantiation required: " + std::string(var_name),
-		                         EvalErrorType::TemplateDependentExpression);
+								 EvalErrorType::TemplateDependentExpression);
 	}
 
 	// Check if it's a DeclarationNode for an enum constant
@@ -1974,16 +1974,16 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		}
 
 		if (initializer->is<InitializerListNode>() &&
-		    var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+			var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
 			if (is_struct_type(type_spec.category())) {
 				const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 				if (const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
 					return materialize_aggregate_object_value(
-					    struct_info,
-					    type_spec.type_index(),
-					    initializer->as<InitializerListNode>(),
-					    context);
+						struct_info,
+						type_spec.type_index(),
+						initializer->as<InitializerListNode>(),
+						context);
 				}
 			}
 		}
@@ -2047,9 +2047,9 @@ std::optional<Evaluator::ExtractedIdentifier> Evaluator::extract_identifier_from
 }
 
 EvalResult Evaluator::materialize_lambda_value(
-    const LambdaExpressionNode& lambda,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
+	const LambdaExpressionNode& lambda,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings) {
 	EvalResult callable_result = EvalResult::from_lambda(lambda);
 	auto capture_result = evaluate_lambda_captures(lambda.captures(), callable_result.callable_bindings, context, outer_bindings);
 	if (!capture_result.success()) {
@@ -2072,11 +2072,11 @@ const ConstructorCallNode* Evaluator::extract_constructor_call(const std::option
 }
 
 EvalResult Evaluator::evaluate_lambda_captures(
-    const std::vector<LambdaCaptureNode>& captures,
-    std::unordered_map<std::string_view, EvalResult>& bindings,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-    const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings) {
+	const std::vector<LambdaCaptureNode>& captures,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings) {
 
 	for (const auto& capture : captures) {
 		using CaptureKind = LambdaCaptureNode::CaptureKind;
@@ -2097,11 +2097,11 @@ EvalResult Evaluator::evaluate_lambda_captures(
 			// Check for init-capture: [x = expr]
 			if (capture.has_initializer()) {
 				auto init_result = (outer_bindings && capture.initializer().value().is<ExpressionNode>())
-				                       ? evaluate_expression_with_bindings_const(capture.initializer().value(), *outer_bindings, context)
-				                       : evaluate(capture.initializer().value(), context);
+									   ? evaluate_expression_with_bindings_const(capture.initializer().value(), *outer_bindings, context)
+									   : evaluate(capture.initializer().value(), context);
 				if (!init_result.success()) {
 					return EvalResult::error("Failed to evaluate init-capture '" +
-					                         std::string(var_name) + "': " + init_result.error_message);
+											 std::string(var_name) + "': " + init_result.error_message);
 				}
 				bindings[var_name] = init_result;
 			} else {
@@ -2133,19 +2133,19 @@ EvalResult Evaluator::evaluate_lambda_captures(
 				// For constexpr evaluation, the captured variable must be constexpr
 				if (!var_decl.is_constexpr()) {
 					return EvalResult::error("Captured variable must be constexpr in constant expression: " +
-					                         std::string(var_name));
+											 std::string(var_name));
 				}
 
 				// Evaluate the variable's initializer
 				if (!var_decl.initializer().has_value()) {
 					return EvalResult::error("Captured constexpr variable has no initializer: " +
-					                         std::string(var_name));
+											 std::string(var_name));
 				}
 
 				auto var_result = evaluate(var_decl.initializer().value(), context);
 				if (!var_result.success()) {
 					return EvalResult::error("Failed to evaluate captured variable '" +
-					                         std::string(var_name) + "': " + var_result.error_message);
+											 std::string(var_name) + "': " + var_result.error_message);
 				}
 				bindings[var_name] = var_result;
 			}
@@ -2202,12 +2202,12 @@ EvalResult Evaluator::evaluate_lambda_captures(
 
 // Evaluate a callable object (lambda or user-defined functor with operator())
 EvalResult Evaluator::evaluate_callable_object(
-    const VariableDeclarationNode& var_decl,
-    const ChunkedVector<ASTNode>& arguments,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-    std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
-    EvalResult* callable_state) {
+	const VariableDeclarationNode& var_decl,
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
+	EvalResult* callable_state) {
 
 	// Check for lambda
 	const LambdaExpressionNode* lambda = extract_lambda_from_initializer(var_decl.initializer());
@@ -2215,7 +2215,7 @@ EvalResult Evaluator::evaluate_callable_object(
 		const auto* stored_capture_bindings = callable_state ? &callable_state->callable_bindings : nullptr;
 		auto* mutable_stored_capture_bindings = callable_state ? &callable_state->callable_bindings : nullptr;
 		return evaluate_lambda_call(*lambda, arguments, context, outer_bindings, mutable_outer_bindings,
-		                            stored_capture_bindings, mutable_stored_capture_bindings);
+									stored_capture_bindings, mutable_stored_capture_bindings);
 	}
 
 	// Check for ConstructorCallNode (user-defined functor), handling both direct storage
@@ -2270,37 +2270,37 @@ EvalResult Evaluator::evaluate_callable_object(
 		std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 		const auto& ctor_params = matching_ctor->parameter_nodes();
 		auto ctor_bind_result = bind_evaluated_arguments(
-		    ctor_params,
-		    ctor_args,
-		    ctor_param_bindings,
-		    context,
-		    "Invalid parameter node in callable object constructor",
-		    outer_bindings,
-		    true);
+			ctor_params,
+			ctor_args,
+			ctor_param_bindings,
+			context,
+			"Invalid parameter node in callable object constructor",
+			outer_bindings,
+			true);
 		if (!ctor_bind_result.success()) {
 			return ctor_bind_result;
 		}
 
 		auto member_bind_result = materialize_members_from_constructor(
-		    struct_info,
-		    *matching_ctor,
-		    ctor_param_bindings,
-		    evaluation_bindings,
-		    context,
-		    false);
+			struct_info,
+			*matching_ctor,
+			ctor_param_bindings,
+			evaluation_bindings,
+			context,
+			false);
 		if (!member_bind_result.success()) {
 			return member_bind_result;
 		}
 
 		const auto& parameters = call_operator->parameter_nodes();
 		auto call_bind_result = bind_evaluated_arguments(
-		    parameters,
-		    arguments,
-		    evaluation_bindings,
-		    context,
-		    "Invalid parameter node in callable object operator()",
-		    outer_bindings,
-		    false);
+			parameters,
+			arguments,
+			evaluation_bindings,
+			context,
+			"Invalid parameter node in callable object operator()",
+			outer_bindings,
+			false);
 		if (!call_bind_result.success()) {
 			return call_bind_result;
 		}
@@ -2314,11 +2314,11 @@ EvalResult Evaluator::evaluate_callable_object(
 		context.struct_type_index = type_spec.type_index();
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
-		    definition.value(),
-		    evaluation_bindings,
-		    context,
-		    "Callable object operator() body is not a block",
-		    "Constexpr callable object operator() did not return a value");
+			definition.value(),
+			evaluation_bindings,
+			context,
+			"Callable object operator() body is not a block",
+			"Constexpr callable object operator() did not return a value");
 		context.current_depth--;
 		context.struct_info = saved_struct_info;
 		context.struct_type_index = saved_struct_type_index;
@@ -2361,13 +2361,13 @@ EvalResult Evaluator::evaluate_callable_object(
 		// Bind call arguments to operator() parameters.
 		const auto& parameters = call_operator->parameter_nodes();
 		auto bind_result = bind_evaluated_arguments(
-		    parameters,
-		    arguments,
-		    evaluation_bindings,
-		    context,
-		    "Invalid parameter node in brace-initialized callable object operator()",
-		    outer_bindings,
-		    true);
+			parameters,
+			arguments,
+			evaluation_bindings,
+			context,
+			"Invalid parameter node in brace-initialized callable object operator()",
+			outer_bindings,
+			true);
 		if (!bind_result.success())
 			return bind_result;
 
@@ -2380,11 +2380,11 @@ EvalResult Evaluator::evaluate_callable_object(
 		context.struct_type_index = type_spec.type_index();
 		context.current_depth++;
 		auto result = evaluate_block_with_bindings(
-		    definition.value(),
-		    evaluation_bindings,
-		    context,
-		    "operator() body in brace-initialized callable is not a block",
-		    "Constexpr operator() in brace-initialized callable did not return a value");
+			definition.value(),
+			evaluation_bindings,
+			context,
+			"operator() body in brace-initialized callable is not a block",
+			"Constexpr operator() in brace-initialized callable did not return a value");
 		context.current_depth--;
 		context.struct_info = saved_struct_info;
 		context.struct_type_index = saved_struct_type_index;
@@ -2396,13 +2396,13 @@ EvalResult Evaluator::evaluate_callable_object(
 
 // Evaluate a lambda call
 EvalResult Evaluator::evaluate_lambda_call(
-    const LambdaExpressionNode& lambda,
-    const ChunkedVector<ASTNode>& arguments,
-    EvaluationContext& context,
-    const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-    std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
-    const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings,
-    std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings) {
+	const LambdaExpressionNode& lambda,
+	const ChunkedVector<ASTNode>& arguments,
+	EvaluationContext& context,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_outer_bindings,
+	const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings,
+	std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings) {
 
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -2419,12 +2419,12 @@ EvalResult Evaluator::evaluate_lambda_call(
 	// Build parameter bindings
 	std::unordered_map<std::string_view, EvalResult> bindings;
 	auto bind_result = bind_evaluated_arguments(
-	    parameters,
-	    arguments,
-	    bindings,
-	    context,
-	    "Invalid parameter node in constexpr lambda",
-	    outer_bindings);
+		parameters,
+		arguments,
+		bindings,
+		context,
+		"Invalid parameter node in constexpr lambda",
+		outer_bindings);
 	if (!bind_result.success()) {
 		return bind_result;
 	}
@@ -2475,11 +2475,11 @@ EvalResult Evaluator::evaluate_lambda_call(
 	EvalResult result;
 	if (body_node.is<BlockNode>()) {
 		result = evaluate_block_with_bindings(
-		    body_node,
-		    bindings,
-		    context,
-		    "Constexpr lambda body is not a block",
-		    "Constexpr lambda did not return a value");
+			body_node,
+			bindings,
+			context,
+			"Constexpr lambda body is not a block",
+			"Constexpr lambda did not return a value");
 	} else if (body_node.is<ExpressionNode>()) {
 		// Expression body (implicit return)
 		result = evaluate_expression_with_bindings(body_node, bindings, context);
@@ -2902,12 +2902,12 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto current_match = find_current_struct_member_function_candidate(
-		    func_name_handle,
-		    arguments.size(),
-		    context,
-		    MemberFunctionLookupMode::ConstexprEvaluable,
-		    false,
-		    true);
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::ConstexprEvaluable,
+			false,
+			true);
 		if (current_match.ambiguous) {
 			return EvalResult::error("Ambiguous static member function overload in constant expression");
 		}
@@ -2920,12 +2920,12 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 
 		std::unordered_map<std::string_view, EvalResult> empty_bindings;
 		return evaluate_function_call_with_template_context(
-		    *matched_function,
-		    arguments,
-		    empty_bindings,
-		    context,
-		    nullptr,
-		    FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
+			*matched_function,
+			arguments,
+			empty_bindings,
+			context,
+			nullptr,
+			FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
 	};
 
 	if (auto current_struct_result = tryEvaluateCurrentStructStaticMemberFunction()) {
@@ -3065,7 +3065,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 						// For static storage duration, also try non-constexpr functions with simple bodies
 						// (static initializers can call any function whose body is available)
 						bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
-						                    (context.storage_duration == ConstExpr::StorageDuration::Static);
+											(context.storage_duration == ConstExpr::StorageDuration::Static);
 						if (can_evaluate) {
 							// Get the function body
 							const auto& definition = func_decl.get_definition();
@@ -3079,11 +3079,11 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 								if (arguments.size() == parameters.size()) {
 									std::unordered_map<std::string_view, EvalResult> empty_bindings;
 									return evaluate_function_call_with_template_context(
-									    func_decl,
-									    arguments,
-									    empty_bindings,
-									    context,
-									    &type_info);
+										func_decl,
+										arguments,
+										empty_bindings,
+										context,
+										&type_info);
 								}
 							}
 						}
@@ -3153,10 +3153,10 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// Pass empty bindings for top-level function calls
 		std::unordered_map<std::string_view, EvalResult> empty_bindings;
 		return evaluate_function_call_with_template_context(
-		    func_decl,
-		    arguments,
-		    empty_bindings,
-		    context);
+			func_decl,
+			arguments,
+			empty_bindings,
+			context);
 	}
 
 	// Check if it's a TemplateFunctionDeclarationNode (template function)
@@ -3176,7 +3176,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			if (overload.is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& candidate = overload.as<FunctionDeclarationNode>();
 				if ((candidate.is_constexpr() || candidate.is_consteval()) &&
-				    candidate.parameter_nodes().size() == arguments.size()) {
+					candidate.parameter_nodes().size() == arguments.size()) {
 					// Found a potential match - try to evaluate it
 					std::unordered_map<std::string_view, EvalResult> empty_bindings;
 					return evaluate_function_call_with_bindings(candidate, arguments, empty_bindings, context);
@@ -3194,7 +3194,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 			if (!deduced_args.empty()) {
 				// Use shared helper to try instantiation with various name variations
 				auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
-				    *context.parser, qualified_name, func_name, deduced_args);
+					*context.parser, qualified_name, func_name, deduced_args);
 
 				if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
@@ -3214,7 +3214,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// No pre-instantiated version found and couldn't instantiate on-demand
 		// Return a specific error indicating this is a template function issue
 		return EvalResult::error("Template function in constant expression - instantiation required: " + std::string(qualified_name),
-		                         EvalErrorType::TemplateDependentExpression);
+								 EvalErrorType::TemplateDependentExpression);
 	}
 
 	// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
@@ -3262,7 +3262,7 @@ bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& con
 	}
 
 	if (const LazyClassInstantiationInfo* lazy_class_info =
-	        LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
+			LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(context.struct_info->name)) {
 		context.template_param_names.clear();
 		context.template_args = lazy_class_info->template_args;
 		context.template_param_names.reserve(lazy_class_info->template_params.size());
@@ -3284,12 +3284,12 @@ bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& con
 }
 
 EvalResult Evaluator::evaluate_function_call_with_template_context(
-    const FunctionDeclarationNode& func_decl,
-    const ChunkedVector<ASTNode>& arguments,
-    const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
-    EvaluationContext& context,
-    const TypeInfo* fallback_template_type,
-    FunctionCallTemplateBindingLoadMode binding_load_mode) {
+	const FunctionDeclarationNode& func_decl,
+	const ChunkedVector<ASTNode>& arguments,
+	const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+	EvaluationContext& context,
+	const TypeInfo* fallback_template_type,
+	FunctionCallTemplateBindingLoadMode binding_load_mode) {
 	auto saved_template_param_names = context.template_param_names;
 	auto saved_template_args = context.template_args;
 	auto restore_template_bindings = [&]() {
@@ -3312,10 +3312,10 @@ EvalResult Evaluator::evaluate_function_call_with_template_context(
 }
 
 EvalResult Evaluator::evaluate_function_call_with_bindings(
-    const FunctionDeclarationNode& func_decl,
-    const ChunkedVector<ASTNode>& arguments,
-    const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
-    EvaluationContext& context) {
+	const FunctionDeclarationNode& func_decl,
+	const ChunkedVector<ASTNode>& arguments,
+	const std::unordered_map<std::string_view, EvalResult>& outer_bindings,
+	EvaluationContext& context) {
 
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
@@ -3339,12 +3339,12 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// We'll use a simple map to bind parameters to their evaluated values
 	std::unordered_map<std::string_view, EvalResult> param_bindings;
 	auto bind_result = bind_evaluated_arguments(
-	    parameters,
-	    arguments,
-	    param_bindings,
-	    context,
-	    "Invalid parameter node",
-	    &outer_bindings);
+		parameters,
+		arguments,
+		param_bindings,
+		context,
+		"Invalid parameter node",
+		&outer_bindings);
 	if (!bind_result.success()) {
 		return bind_result;
 	}
@@ -3378,7 +3378,7 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	context.return_type_info = nullptr;
 	if (func_decl.decl_node().type_node().is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& ret_spec =
-		    func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 		TypeIndex ret_idx = ret_spec.type_index();
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(ret_idx))
 			context.return_type_info = return_type_info;
@@ -3386,11 +3386,11 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 
 	std::unordered_map<std::string_view, EvalResult> local_bindings = param_bindings;
 	auto result = evaluate_block_with_bindings(
-	    definition.value(),
-	    local_bindings,
-	    context,
-	    "Function body is not a block",
-	    "Constexpr function did not return a value");
+		definition.value(),
+		local_bindings,
+		context,
+		"Function body is not a block",
+		"Constexpr function did not return a value");
 
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
@@ -3400,19 +3400,19 @@ EvalResult Evaluator::evaluate_function_call_with_bindings(
 	// Check this at the outermost function call (depth returning to 0).
 	if (result.success() && context.current_depth == 0 && context.has_unfreed_heap_allocations()) {
 		return EvalResult::error("constexpr evaluation: memory allocated with 'new' was not freed "
-		                         "before the end of the constant expression (C++20 [expr.const]/p5)");
+								 "before the end of the constant expression (C++20 [expr.const]/p5)");
 	}
 	return result;
 }
 
 EvalResult Evaluator::bind_evaluated_arguments(
-    const std::vector<ASTNode>& parameters,
-    const ChunkedVector<ASTNode>& arguments,
-    std::unordered_map<std::string_view, EvalResult>& bindings,
-    EvaluationContext& context,
-    std::string_view invalid_parameter_error,
-    const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
-    bool skip_invalid_params) {
+	const std::vector<ASTNode>& parameters,
+	const ChunkedVector<ASTNode>& arguments,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view invalid_parameter_error,
+	const std::unordered_map<std::string_view, EvalResult>* outer_bindings,
+	bool skip_invalid_params) {
 	for (size_t i = 0; i < parameters.size() && i < arguments.size(); ++i) {
 		const ASTNode& param_node = parameters[i];
 		if (!param_node.is<DeclarationNode>()) {
@@ -3423,8 +3423,8 @@ EvalResult Evaluator::bind_evaluated_arguments(
 		}
 
 		EvalResult arg_result = outer_bindings
-		                            ? evaluate_expression_with_bindings_const(arguments[i], *outer_bindings, context)
-		                            : evaluate(arguments[i], context);
+									? evaluate_expression_with_bindings_const(arguments[i], *outer_bindings, context)
+									: evaluate(arguments[i], context);
 		if (!arg_result.success()) {
 			return arg_result;
 		}
@@ -3471,11 +3471,11 @@ EvalResult Evaluator::bind_evaluated_arguments(
 // To fix: add an EvaluationContext& parameter, add a second loop mirroring
 // bind_evaluated_arguments lines 3304-3322, and update all call sites.
 EvalResult Evaluator::bind_pre_evaluated_arguments(
-    const std::vector<ASTNode>& parameters,
-    const std::vector<EvalResult>& evaluated_arguments,
-    std::unordered_map<std::string_view, EvalResult>& bindings,
-    std::string_view invalid_parameter_error,
-    bool skip_invalid_params) {
+	const std::vector<ASTNode>& parameters,
+	const std::vector<EvalResult>& evaluated_arguments,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	std::string_view invalid_parameter_error,
+	bool skip_invalid_params) {
 	for (size_t i = 0; i < parameters.size() && i < evaluated_arguments.size(); ++i) {
 		const ASTNode& param_node = parameters[i];
 		if (!param_node.is<DeclarationNode>()) {
@@ -3495,11 +3495,11 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 }
 
 EvalResult Evaluator::evaluate_block_with_bindings(
-    const ASTNode& body_node,
-    std::unordered_map<std::string_view, EvalResult>& bindings,
-    EvaluationContext& context,
-    std::string_view non_block_error,
-    std::string_view no_return_error) {
+	const ASTNode& body_node,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
+	std::string_view non_block_error,
+	std::string_view no_return_error) {
 	if (!body_node.is<BlockNode>()) {
 		return EvalResult::error(std::string(non_block_error));
 	}
@@ -3530,9 +3530,9 @@ EvalResult Evaluator::evaluate_block_with_bindings(
 }
 
 EvalResult Evaluator::evaluate_statement_with_bindings(
-    const ASTNode& stmt_node,
-    std::unordered_map<std::string_view, EvalResult>& bindings,
-    EvaluationContext& context) {
+	const ASTNode& stmt_node,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
 
 	// Check if it's a return statement
 	if (stmt_node.is<ReturnStatementNode>()) {
@@ -3564,16 +3564,16 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 					}
 
 					auto ctor_result = try_materialize_struct_from_ctor_args(
-					    si, return_type_index, ctor_args, context, &bindings);
+						si, return_type_index, ctor_args, context, &bindings);
 					if (ctor_result.has_value()) {
 						return *ctor_result;
 					}
 
 					return EvalResult::error(
-					    "No matching constructor for '" +
-					    std::string(StringTable::getStringView(si->getName())) +
-					    "' with " + std::to_string(init_list.size()) +
-					    " argument(s) in constexpr evaluation");
+						"No matching constructor for '" +
+						std::string(StringTable::getStringView(si->getName())) +
+						"' with " + std::to_string(init_list.size()) +
+						" argument(s) in constexpr evaluation");
 				}
 
 				EvalResult result = EvalResult::from_int(0LL); // struct result; value is a placeholder
@@ -3581,11 +3581,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				// Use bind_members_from_initializer_list so that nested InitializerListNodes
 				// (e.g., return {{1,2,3,4}} for an array member) are handled correctly.
 				auto bind_result = bind_members_from_initializer_list(
-				    si,
-				    init_list,
-				    result.object_member_bindings,
-				    context,
-				    &bindings);
+					si,
+					init_list,
+					result.object_member_bindings,
+					context,
+					&bindings);
 				if (!bind_result.success()) {
 					return bind_result;
 				}
@@ -3678,7 +3678,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 									ctor_args.push_back(arg);
 								}
 								auto ctor_result = try_materialize_struct_from_ctor_args(
-								    struct_info, type_spec.type_index(), ctor_args, context, &bindings);
+									struct_info, type_spec.type_index(), ctor_args, context, &bindings);
 								if (ctor_result.has_value()) {
 									if (!ctor_result->success()) {
 										return *ctor_result;
@@ -3695,10 +3695,10 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 								// aggregate, so aggregate init is ill-formed regardless of
 								// whether the init list is empty or not.
 								return EvalResult::error(
-								    "No matching constructor for '" +
-								    std::string(StringTable::getStringView(struct_info->getName())) +
-								    "' with " + std::to_string(init_list.size()) +
-								    " argument(s) in constexpr evaluation");
+									"No matching constructor for '" +
+									std::string(StringTable::getStringView(struct_info->getName())) +
+									"' with " + std::to_string(init_list.size()) +
+									" argument(s) in constexpr evaluation");
 							}
 							auto object_result = materialize_aggregate_object_value(struct_info, type_spec.type_index(), init_list, context, &bindings);
 							if (!object_result.success()) {
@@ -3760,13 +3760,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 
 					ChunkedVector<ASTNode> empty_args;
 					const ConstructorDeclarationNode* default_ctor =
-					    find_matching_constructor(struct_info, empty_args, context, nullptr);
+						find_matching_constructor(struct_info, empty_args, context, nullptr);
 
 					if (default_ctor) {
 						std::unordered_map<std::string_view, EvalResult> empty_bindings;
 						auto materialize_result = materialize_members_from_constructor(
-						    struct_info, *default_ctor, empty_bindings,
-						    object_result.object_member_bindings, context, false);
+							struct_info, *default_ctor, empty_bindings,
+							object_result.object_member_bindings, context, false);
 						if (!materialize_result.success()) {
 							return materialize_result;
 						}
@@ -3970,11 +3970,11 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			return EvalResult::error(std::string(kStatementExecutedWithoutReturn));
 		}
 		return evaluate_block_with_bindings(
-		    stmt_node,
-		    bindings,
-		    context,
-		    "Constexpr block is not a block",
-		    kStatementExecutedWithoutReturn);
+			stmt_node,
+			bindings,
+			context,
+			"Constexpr block is not a block",
+			kStatementExecutedWithoutReturn);
 	}
 
 	// Handle break statements
@@ -4071,8 +4071,8 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 				size_t end_count = begin_result.array_elements.size();
 				auto end_result = call_constexpr_member_fn_on_object(range_result, "end", context);
 				if (end_result.success() && end_result.pointer_to_var.isValid() &&
-				    end_result.pointer_offset >= 0 &&
-				    static_cast<size_t>(end_result.pointer_offset) <= begin_result.array_elements.size()) {
+					end_result.pointer_offset >= 0 &&
+					static_cast<size_t>(end_result.pointer_offset) <= begin_result.array_elements.size()) {
 					// end() returned a pointer into the same array — honour its offset as count.
 					// (begin() returned the whole array starting from element 0, so the count is end_offset.)
 					end_count = static_cast<size_t>(end_result.pointer_offset);
@@ -4214,13 +4214,13 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			// handle bare statements (e.g. a single ReturnStatementNode)
 			// gracefully in case the AST representation ever changes.
 			EvalResult block_result = block_to_exec.is<BlockNode>()
-			                              ? evaluate_block_with_bindings(
-			                                    block_to_exec,
-			                                    bindings,
-			                                    context,
-			                                    "Switch case body is not a block",
-			                                    kStatementExecutedWithoutReturn)
-			                              : evaluate_statement_with_bindings(block_to_exec, bindings, context);
+										  ? evaluate_block_with_bindings(
+												block_to_exec,
+												bindings,
+												context,
+												"Switch case body is not a block",
+												kStatementExecutedWithoutReturn)
+										  : evaluate_statement_with_bindings(block_to_exec, bindings, context);
 
 			if (block_result.success()) {
 				return block_result; // Propagate return value

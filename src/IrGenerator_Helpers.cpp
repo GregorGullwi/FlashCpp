@@ -1,8 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-
-
 void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {
 		// If try-cleanup capture is active and this is the target scope depth,
@@ -24,8 +22,6 @@ void AstToIr::exitScope() {
 		scope_stack_.pop_back();
 	}
 }
-
-
 
 void AstToIr::emitActiveCatchScopeDestructors() {
 	if (catch_scope_stack_.empty()) {
@@ -66,25 +62,20 @@ void AstToIr::emitActiveCatchScopeDestructors() {
 	}
 }
 
-
-
 void AstToIr::exitFunctionScope() {
-	if (scope_stack_.empty()) return;
+	if (scope_stack_.empty())
+		return;
 
 	// Capture vars in LIFO order for the cleanup LP, but only those with destructors
 	pending_function_cleanup_vars_.clear();
 	for (auto it = scope_stack_.back().rbegin(); it != scope_stack_.back().rend(); ++it) {
-		pending_function_cleanup_vars_.push_back({
-			StringTable::getOrInternStringHandle(it->struct_name),
-			StringTable::getOrInternStringHandle(it->variable_name)
-		});
+		pending_function_cleanup_vars_.push_back({StringTable::getOrInternStringHandle(it->struct_name),
+												  StringTable::getOrInternStringHandle(it->variable_name)});
 	}
 
 	// Call normal exitScope to emit destructor IR instructions
 	exitScope();
 }
-
-
 
 void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 	// Always emit FunctionCleanupLP when either:
@@ -94,15 +85,14 @@ void AstToIr::emitPendingFunctionCleanupLP(const Token& token) {
 	//     that must be resolved by handleFunctionCleanupLP().  On Windows, the
 	//     ElfCatchNoMatch handler is a no-op, but emitting an extra FunctionCleanupLP
 	//     with empty cleanup_vars is also a no-op there (early return in the handler).
-	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_) return;
+	if (pending_function_cleanup_vars_.empty() && !function_has_typed_catch_)
+		return;
 
 	FunctionCleanupLPOp cleanup_op;
 	cleanup_op.cleanup_vars = std::move(pending_function_cleanup_vars_);
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCleanupLP, std::move(cleanup_op), token));
 	function_has_typed_catch_ = false;
 }
-
-
 
 void AstToIr::registerVariableWithDestructor(const std::string& var_name, const std::string& struct_name) {
 	if (!scope_stack_.empty()) {
@@ -111,19 +101,18 @@ void AstToIr::registerVariableWithDestructor(const std::string& var_name, const 
 }
 
 void AstToIr::registerFullExpressionTempDestructor(StringHandle struct_name,
-	std::variant<StringHandle, TempVar> object,
-	bool object_is_pointer) {
+												   std::variant<StringHandle, TempVar> object,
+												   bool object_is_pointer) {
 	pending_full_expression_temp_dtors_.push_back(FullExpressionTempDestructorInfo{
 		struct_name,
 		std::move(object),
-		object_is_pointer
-	});
+		object_is_pointer});
 }
 
 void AstToIr::emitAndClearFullExpressionTempDestructors() {
 	for (auto it = pending_full_expression_temp_dtors_.rbegin();
-		it != pending_full_expression_temp_dtors_.rend();
-		++it) {
+		 it != pending_full_expression_temp_dtors_.rend();
+		 ++it) {
 		DestructorCallOp dtor_op;
 		dtor_op.struct_name = it->struct_name;
 		dtor_op.object = it->object;
@@ -132,8 +121,6 @@ void AstToIr::emitAndClearFullExpressionTempDestructors() {
 	}
 	pending_full_expression_temp_dtors_.clear();
 }
-
-
 
 void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
 	// Emit destructor calls for all variables in scopes from the current innermost scope
@@ -150,8 +137,6 @@ void AstToIr::emitDestructorsForNonLocalExit(size_t target_depth) {
 		}
 	}
 }
-
-
 
 // Pre-scan a statement subtree to populate label_scope_depth_map_ before the main IR
 // generation pass.  This mirrors the scope-creation rules in the main visitor so that
@@ -171,8 +156,10 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 		size_t var_decl_count = 0;
 		// Single pass: gather the scope-creation predicate AND recurse into children.
 		block.get_statements().visit([&](const ASTNode& stmt) {
-			if (stmt.is<VariableDeclarationNode>()) var_decl_count++;
-			else only_var_decls = false;
+			if (stmt.is<VariableDeclarationNode>())
+				var_decl_count++;
+			else
+				only_var_decls = false;
 		});
 		bool enter_scope = !(only_var_decls && var_decl_count > 1);
 		size_t new_depth = enter_scope ? depth + 1 : depth;
@@ -248,17 +235,15 @@ void AstToIr::prescanLabels(const ASTNode& node, size_t depth) {
 	// goto, case values, etc.) cannot contain LabelStatementNodes — no recursion needed.
 }
 
-
-
 // Helper functions to emit store instructions
 // These can be used by both the unified handler and special-case code
 
 // Emit ArrayStore instruction
 void AstToIr::emitArrayStore(TypeCategory element_type, int element_size_bits,
-std::variant<StringHandle, TempVar> array,
-const TypedValue& index, const TypedValue& value,
-int64_t member_offset, bool is_pointer_to_array,
-const Token& token) {
+							 std::variant<StringHandle, TempVar> array,
+							 const TypedValue& index, const TypedValue& value,
+							 int64_t member_offset, bool is_pointer_to_array,
+							 const Token& token) {
 	ArrayStoreOp payload;
 	payload.element_type_index = TypeIndex{0, element_type};
 	payload.element_size_in_bits = element_size_bits;
@@ -271,17 +256,15 @@ const Token& token) {
 	ir_.addInstruction(IrInstruction(IrOpcode::ArrayStore, std::move(payload), token));
 }
 
-
-
 // Emit MemberStore instruction
 void AstToIr::emitMemberStore(const TypedValue& value,
-std::variant<StringHandle, TempVar> object,
-StringHandle member_name, int offset,
-CVReferenceQualifier ref_qualifier,
-bool is_pointer_to_member,
-const Token& token,
-std::optional<size_t> bitfield_width,
-size_t bitfield_bit_offset) {
+							  std::variant<StringHandle, TempVar> object,
+							  StringHandle member_name, int offset,
+							  CVReferenceQualifier ref_qualifier,
+							  bool is_pointer_to_member,
+							  const Token& token,
+							  std::optional<size_t> bitfield_width,
+							  size_t bitfield_bit_offset) {
 	MemberStoreOp member_store;
 	member_store.value = value;
 	member_store.object = object;
@@ -297,19 +280,17 @@ size_t bitfield_bit_offset) {
 	ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), token));
 }
 
-
-
 // Emit DereferenceStore instruction
 void AstToIr::emitDereferenceStore(const TypedValue& value, TypeCategory pointee_type, [[maybe_unused]] int pointee_size_bits,
-std::variant<StringHandle, TempVar> pointer,
-const Token& token) {
+								   std::variant<StringHandle, TempVar> pointer,
+								   const Token& token) {
 	DereferenceStoreOp store_op;
 	store_op.value = value;
 
 	// Populate pointer TypedValue
 	store_op.pointer.setType(pointee_type);
 	store_op.pointer.type_index = TypeIndex{0, pointee_type};
-	store_op.pointer.size_in_bits = SizeInBits{64};  // Pointer is always 64 bits
+	store_op.pointer.size_in_bits = SizeInBits{64};	// Pointer is always 64 bits
 	store_op.pointer.pointer_depth = PointerDepth{1};  // Single pointer dereference
 	// Convert std::variant<StringHandle, TempVar> to IrValue
 	if (const auto* string = std::get_if<StringHandle>(&pointer)) {
@@ -321,20 +302,16 @@ const Token& token) {
 	ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_op), token));
 }
 
-
-
 const DeclarationNode& AstToIr::requireDeclarationNode(const ASTNode& node, std::string_view context) const {
 	try {
 		return node.as<DeclarationNode>();
 	} catch (...) {
 		FLASH_LOG(Codegen, Error, "BAD DeclarationNode cast in ", context,
-		": type_name=", node.type_name(),
-		" has_value=", node.has_value());
+				  ": type_name=", node.type_name(),
+				  " has_value=", node.has_value());
 		throw;
 	}
 }
-
-
 
 // Helper to get the size of a type in bytes
 // Reuses the same logic as sizeof() operator
@@ -443,9 +420,6 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 	return makeExprResult(nativeTypeIndex(enum_info.underlying_type), SizeInBits{static_cast<int>(enum_info.underlying_size)}, static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
 }
 
-
-
-
 // ── inline private helpers (IrGenerator_Lambdas.cpp) ──
 /// Unified symbol lookup: searches local scope first, then falls back to global scope
 std::optional<ASTNode> AstToIr::lookupSymbol(StringHandle handle) const {
@@ -456,8 +430,6 @@ std::optional<ASTNode> AstToIr::lookupSymbol(StringHandle handle) const {
 	return symbol;
 }
 
-
-
 std::optional<ASTNode> AstToIr::lookupSymbol(std::string_view name) const {
 	auto symbol = symbol_table.lookup(name);
 	if (!symbol.has_value() && global_symbol_table_) {
@@ -465,7 +437,6 @@ std::optional<ASTNode> AstToIr::lookupSymbol(std::string_view name) const {
 	}
 	return symbol;
 }
-
 
 /// Emit an AddressOf IR instruction and return the result TempVar holding the address.
 TempVar AstToIr::emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token) {
@@ -480,7 +451,6 @@ TempVar AstToIr::emitAddressOf(TypeCategory type, int size_in_bits, IrValue sour
 	return addr_var;
 }
 
-
 /// Emit a Dereference IR instruction and return the result TempVar holding the loaded value.
 TempVar AstToIr::emitDereference(TypeCategory pointee_type, int pointer_size_bits, int pointer_depth, IrValue pointer_value, Token token) {
 	TempVar result_var = var_counter.next();
@@ -494,8 +464,6 @@ TempVar AstToIr::emitDereference(TypeCategory pointee_type, int pointer_size_bit
 	ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), token));
 	return result_var;
 }
-
-
 
 // ============================================================================
 // Return IR helper

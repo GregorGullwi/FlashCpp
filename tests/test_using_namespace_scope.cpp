@@ -5,12 +5,12 @@ struct flashcpp_file_tag;
 typedef flashcpp_file_tag FILE;
 
 namespace std {
-    using ::size_t;
-    using ::FILE;
-}
+using ::FILE;
+using ::size_t;
+} // namespace std
 
 int main() {
-    FILE* f = nullptr;
-    size_t n = 0;
-    return (f == nullptr && n == 0) ? 0 : 1;
+	FILE* f = nullptr;
+	size_t n = 0;
+	return (f == nullptr && n == 0) ? 0 : 1;
 }

@@ -10,7 +10,7 @@ struct LambdaStructSignature {
 
 inline bool isLambdaClosureStruct(const StructTypeInfo& struct_info) {
 	return struct_info.members.empty() &&
-		StringTable::getStringView(struct_info.getName()).starts_with("__lambda_");
+		   StringTable::getStringView(struct_info.getName()).starts_with("__lambda_");
 }
 
 inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct(const StructTypeInfo& struct_info) {
@@ -27,7 +27,7 @@ inline std::optional<LambdaStructSignature> getFunctionSignatureFromLambdaStruct
 				return_type = TypeSpecifierNode(TypeCategory::Void, TypeQualifier::None, get_type_size_bits(TypeCategory::Void), func_decl.decl_node().identifier_token(), CVQualifier::None);
 			}
 
-			LambdaStructSignature sig{ return_type, {} };
+			LambdaStructSignature sig{return_type, {}};
 			for (const auto& param_node : func_decl.parameter_nodes()) {
 				if (param_node.is<DeclarationNode>()) {
 					sig.param_types.push_back(param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>());

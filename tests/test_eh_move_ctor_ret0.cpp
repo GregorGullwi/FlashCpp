@@ -32,8 +32,10 @@ int main() {
 	try {
 		throw asRValue(payload);
 	} catch (Payload caught) {
-		if (g_move_count != 1) return 1;
-		if (g_copy_count != 1) return 2;
+		if (g_move_count != 1)
+			return 1;
+		if (g_copy_count != 1)
+			return 2;
 		return caught.value == 117 ? 0 : caught.value;
 	}
 

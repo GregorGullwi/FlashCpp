@@ -19,7 +19,9 @@
 //    The ExprResult metadata path must preserve pointer_depth and pointee-size
 //    information so generateBuiltinIncDec emits pointer-stride arithmetic.
 
-enum Color { Red = 0, Green = 10, Blue = 20 };
+enum Color { Red = 0,
+			 Green = 10,
+			 Blue = 20 };
 
 int main() {
 	Color arr[3];
@@ -27,25 +29,25 @@ int main() {
 	arr[1] = Green;
 	arr[2] = Blue;
 
-	// --- Scenario 1: simple identifier (masked by symbol-table fallback) ---
+ // --- Scenario 1: simple identifier (masked by symbol-table fallback) ---
 	Color* p = &arr[0];
 	++p;
 	int val1 = *p;  // Expected: 10 (Green)
 
-	// --- Scenario 2: non-identifier via Color** dereference ---
-	// Reset p to start of array
+ // --- Scenario 2: non-identifier via Color** dereference ---
+ // Reset p to start of array
 	p = &arr[0];
 	Color** pp = &p;
 
-	// ++(*pp) should increment the Color* that pp points to,
-	// advancing it by sizeof(Color) = 4 bytes to point to arr[1].
-	// The operand *pp is a TempVar-backed non-identifier, so this checks that
-	// the fixed ExprResult metadata flow still drives pointer-stride arithmetic.
+ // ++(*pp) should increment the Color* that pp points to,
+ // advancing it by sizeof(Color) = 4 bytes to point to arr[1].
+ // The operand *pp is a TempVar-backed non-identifier, so this checks that
+ // the fixed ExprResult metadata flow still drives pointer-stride arithmetic.
 	++(*pp);
 	int val2 = *p;  // Expected: 10 (Green) — p was modified via *pp
 
-	// val1 + val2 + 10 = 10 + 10 + 10 = 30
-	// If the regression returns, *pp will not advance by sizeof(Color),
-	// *p will not read Green, and the return value won't be 30.
+ // val1 + val2 + 10 = 10 + 10 + 10 = 30
+ // If the regression returns, *pp will not advance by sizeof(Color),
+ // *p will not read Green, and the return value won't be 30.
 	return val1 + val2 + 10;
 }

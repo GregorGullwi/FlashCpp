@@ -1,14 +1,14 @@
-template<typename T>
+template <typename T>
 struct Base {
-    int value = 0;
+	int value = 0;
 };
 
-template<typename T>
+template <typename T>
 struct Derived : Base<T> {
-    int f() { return this->value; }
+	int f() { return this->value; }
 };
 
 int main() {
-    Derived<int> d;
-    return d.f();
+	Derived<int> d;
+	return d.f();
 }

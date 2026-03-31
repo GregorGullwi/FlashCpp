@@ -44,20 +44,20 @@
  */
 #pragma pack(push, 1)
 struct StringMetadata {
-	uint64_t hash;    // Pre-computed FNV-1a hash (8 bytes)
-	uint32_t length;  // String length in bytes (4 bytes)
-	                  // Total: 12 bytes
-	
+	uint64_t hash;	   // Pre-computed FNV-1a hash (8 bytes)
+	uint32_t length;	 // String length in bytes (4 bytes)
+					  // Total: 12 bytes
+
 	// Convenience methods
 	const char* getContent() const {
 		return reinterpret_cast<const char*>(this + 1);
 	}
-	
+
 	char* getContent() {
 		return reinterpret_cast<char*>(this + 1);
 	}
-	
-	static constexpr size_t SIZE = sizeof(uint64_t) + sizeof(uint32_t);  // 12 bytes
+
+	static constexpr size_t SIZE = sizeof(uint64_t) + sizeof(uint32_t);	// 12 bytes
 };
 #pragma pack(pop)
 
@@ -75,14 +75,14 @@ struct StringHandle {
 	static constexpr uint32_t CHUNK_INDEX_BITS = 6;
 	static constexpr uint32_t OFFSET_BITS = 26;
 	static constexpr uint32_t MAX_CHUNK_INDEX = (1u << CHUNK_INDEX_BITS) - 1;  // 63
-	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;  // 67108863 bytes (64MB)
+	static constexpr uint32_t MAX_OFFSET = (1u << OFFSET_BITS) - 1;	// 67108863 bytes (64MB)
 	static constexpr uint32_t OFFSET_MASK = MAX_OFFSET;
-	
+
 	// Note: We add 1 to offset in constructor to reserve handle 0 as invalid,
 	// which means the actual usable offset range is [0, MAX_OFFSET - 1]
 	static constexpr uint32_t MAX_USABLE_OFFSET = MAX_OFFSET - 1;  // 67108862 bytes
-	
-	uint32_t handle = 0;  // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
+
+	uint32_t handle = 0;	 // Packed: chunk_index (high 8 bits) + offset (low 24 bits)
 
 	// Default constructor creates invalid handle
 	StringHandle() = default;
@@ -182,11 +182,11 @@ public:
 	static StringHandle createStringHandle(std::string_view str) {
 		// Allocate using safe placement new
 		StringMetadata* metadata = gChunkedStringAllocator.allocateWithMetadata<StringMetadata>(str.size() + 1);
-		
+
 		// Find which chunk contains the allocated pointer (safe from race conditions)
 		char* ptr = reinterpret_cast<char*>(metadata);
 		assert(gChunkedStringAllocator.findChunkIndex(ptr) == gChunkedStringAllocator.getChunkIndex() && "Allocated pointer must be in a valid chunk");
-		
+
 		// Calculate offset within that chunk
 		size_t chunk_idx = gChunkedStringAllocator.getChunkIndex();
 		char* chunk_start = gChunkedStringAllocator.getChunkPointer(chunk_idx, 0);
@@ -195,11 +195,11 @@ public:
 		// Initialize metadata
 		metadata->hash = hashString(str);
 		metadata->length = static_cast<uint32_t>(str.size());
-		
+
 		// Write string content after metadata
 		char* content = metadata->getContent();
 		std::memcpy(content, str.data(), str.size());
-		content[str.size()] = '\0';  // Null terminator
+		content[str.size()] = '\0';	// Null terminator
 
 		StringHandle handle(static_cast<uint32_t>(chunk_idx), static_cast<uint32_t>(offset));
 		// Store in intern map (key is string_view pointing to the interned data)
@@ -208,9 +208,8 @@ public:
 	}
 
 	static StringHandle createStringHandle(StringBuilder& sb) {
-		return createStringHandle(sb.commit());	// Just do a commit() for now, optimize later
+		return createStringHandle(sb.commit()); // Just do a commit() for now, optimize later
 	}
-
 
 	/**
 	 * @brief Get or create an interned string handle
@@ -247,11 +246,10 @@ public:
 		if (!handle.isValid()) {
 			return std::string_view{};
 		}
-		
+
 		char* ptr = gChunkedStringAllocator.getChunkPointer(
-			handle.chunkIndex(), 
-			handle.offset()
-		);
+			handle.chunkIndex(),
+			handle.offset());
 
 		// Access metadata using struct
 		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
@@ -266,11 +264,10 @@ public:
 		if (!handle.isValid()) {
 			return 0;
 		}
-		
+
 		char* ptr = gChunkedStringAllocator.getChunkPointer(
-			handle.chunkIndex(), 
-			handle.offset()
-		);
+			handle.chunkIndex(),
+			handle.offset());
 
 		// Access hash from metadata using struct
 		const StringMetadata* metadata = reinterpret_cast<const StringMetadata*>(ptr);
@@ -310,13 +307,13 @@ inline std::ostream& operator<<(std::ostream& os, const StringHandle& handle) {
 
 // Hash specialization for StringHandle (for use in unordered_map/set)
 namespace std {
-	template<>
-	struct hash<StringHandle> {
-		size_t operator()(const StringHandle& handle) const noexcept {
-			return handle.hash();
-		}
-	};
-}
+template <>
+struct hash<StringHandle> {
+	size_t operator()(const StringHandle& handle) const noexcept {
+		return handle.hash();
+	}
+};
+} // namespace std
 
 // StringBuilder extension for StringHandle support (defined here to avoid circular dependency)
 inline StringBuilder& StringBuilder::append(StringHandle sh) {

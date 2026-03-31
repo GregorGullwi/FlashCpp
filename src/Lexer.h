@@ -11,7 +11,7 @@
 #include <algorithm>
 
 #include "Token.h"
-#include "FileReader.h"  // For SourceLineMapping definition
+#include "FileReader.h"	// For SourceLineMapping definition
 
 struct TokenPosition {
 	size_t cursor_;
@@ -22,30 +22,31 @@ struct TokenPosition {
 
 class Lexer {
 public:
-	explicit Lexer(std::string_view source, 
-	               const std::vector<SourceLineMapping>& line_map = {},
-	               const std::deque<std::string>& file_paths = {})
+	explicit Lexer(std::string_view source,
+				   const std::vector<SourceLineMapping>& line_map = {},
+				   const std::deque<std::string>& file_paths = {})
 		: source_(source), source_size_(source.size()), cursor_(0), line_(1),
-		column_(1), file_paths_(file_paths), line_map_(line_map) {
+		  column_(1), file_paths_(file_paths), line_map_(line_map) {
 		if (file_paths_.empty()) {
 			file_paths_.push_back("<unknown>");
 		}
 		update_file_index_from_line();
 	}
-	
+
 	const std::deque<std::string>& file_paths() const {
 		return file_paths_;
 	}
-	
+
 	void setMsvcSehKeywords(bool enable) { msvc_seh_keywords_ = enable; }
-	
+
 	// Get the text of a specific line from the preprocessed source
 	std::string get_line_text(size_t line_num) const {
-		if (line_num == 0) return "";
-		
+		if (line_num == 0)
+			return "";
+
 		size_t current_line = 1;
 		size_t line_start = 0;
-		
+
 		// Find the start of the requested line
 		for (size_t i = 0; i < source_size_; ++i) {
 			if (current_line == line_num) {
@@ -56,15 +57,16 @@ public:
 				current_line++;
 			}
 		}
-		
-		if (current_line != line_num) return "";
-		
+
+		if (current_line != line_num)
+			return "";
+
 		// Find the end of the line
 		size_t line_end = line_start;
 		while (line_end < source_size_ && source_[line_end] != '\n') {
 			line_end++;
 		}
-		
+
 		return std::string(source_.substr(line_start, line_end - line_start));
 	}
 
@@ -75,26 +77,21 @@ public:
 
 			if (std::isspace(c)) {
 				consume_whitespace();
-			}
-			else if (c == '#' && cursor_ + 1 < source_size_ && std::isdigit(source_[cursor_ + 1])) {
+			} else if (c == '#' && cursor_ + 1 < source_size_ && std::isdigit(source_[cursor_ + 1])) {
 				// Only consume as file info if # is followed by a digit (line directive)
 				consume_file_info();
-			}
-			else if (c == '/' && num_characters_left >= 2) {
+			} else if (c == '/' && num_characters_left >= 2) {
 				if (source_[cursor_ + 1] == '/') {
 					consume_single_line_comment();
 					continue;
-				}
-				else if (source_[cursor_ + 1] == '*') {
+				} else if (source_[cursor_ + 1] == '*') {
 					consume_multi_line_comment();
 					continue;
-				}
-				else {
+				} else {
 					// Handle division operator
 					return consume_operator();
 				}
-			}
-			else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
+			} else if (c == 'L' && cursor_ + 1 < source_size_ && (source_[cursor_ + 1] == '\"' || source_[cursor_ + 1] == '\'')) {
 				// Wide string/character literals (L"..." or L'...')
 				size_t start = cursor_;
 				++cursor_;
@@ -104,43 +101,34 @@ public:
 				} else {
 					return consume_prefixed_character_literal(start);
 				}
-			}
-			else if (std::isalpha(c) || c == '_') {
+			} else if (std::isalpha(c) || c == '_') {
 				return consume_identifier_or_keyword();
-			}
-			else if (std::isdigit(c)) {
-				return consume_literal();	// Positive number
-			}
-			else if (c == '-' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
-				return consume_literal();	// Negative number
-			}
-			else if (c == '.' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
-				return consume_literal();	// Floating-point literal starting with decimal point (e.g., .5f)
-			}
-			else if (c == '\"') {
+			} else if (std::isdigit(c)) {
+				return consume_literal(); // Positive number
+			} else if (c == '-' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
+				return consume_literal(); // Negative number
+			} else if (c == '.' && num_characters_left >= 1 && std::isdigit(source_[cursor_ + 1])) {
+				return consume_literal(); // Floating-point literal starting with decimal point (e.g., .5f)
+			} else if (c == '\"') {
 				return consume_string_literal();
-			}
-			else if (c == '\'') {
+			} else if (c == '\'') {
 				return consume_character_literal();
-			}
-			else if (is_operator(c)) {
+			} else if (is_operator(c)) {
 				return consume_operator();
-			}
-			else if (is_punctuator(c)) {
+			} else if (is_punctuator(c)) {
 				return consume_punctuator();
-			}
-			else {
+			} else {
 				++cursor_;
 				++column_;
 			}
 		}
 
 		return Token(Token::Type::EndOfFile, ""sv, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	TokenPosition save_token_position() {
-		return { cursor_, line_, column_, current_file_index_ };
+		return {cursor_, line_, column_, current_file_index_};
 	}
 	void restore_token_position(const TokenPosition& token_position) {
 		cursor_ = token_position.cursor_;
@@ -150,12 +138,12 @@ public:
 	}
 
 	std::string_view get_source() const { return source_; }
-	
+
 	// Get current position for later restoration
 	TokenPosition getCurrentPosition() const {
 		return TokenPosition{cursor_, line_, column_, current_file_index_};
 	}
-	
+
 	// Restore lexer to a previously saved position
 	void restorePosition(const TokenPosition& pos) {
 		cursor_ = pos.cursor_;
@@ -172,16 +160,16 @@ private:
 	size_t column_;
 	size_t current_file_index_ = 0;
 	bool msvc_seh_keywords_ = true;
-	mutable std::deque<std::string> file_paths_;  // Mutable to allow adding "<unknown>" in constructor; deque for stable references
+	mutable std::deque<std::string> file_paths_;	 // Mutable to allow adding "<unknown>" in constructor; deque for stable references
 	std::vector<SourceLineMapping> line_map_;  // Changed from reference to value to avoid dangling reference
-	
+
 	// Update current_file_index_ based on current line_
 	void update_file_index_from_line() {
 		if (line_map_.empty() || file_paths_.empty()) {
 			current_file_index_ = 0;
 			return;
 		}
-		
+
 		// Vector index IS the line number (0-based, so line_ - 1)
 		if (line_ > 0 && line_ <= line_map_.size()) {
 			current_file_index_ = line_map_[line_ - 1].source_file_index;
@@ -211,13 +199,11 @@ private:
 				++line_;
 				column_ = 1;
 				update_file_index_from_line();
-			}
-			else if (source_[cursor_] == '*' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '/') {
+			} else if (source_[cursor_] == '*' && cursor_ + 1 < source_size_ && source_[cursor_ + 1] == '/') {
 				cursor_ += 2;  // Skip the '*/'
 				column_ += 2;
 				return;
-			}
-			else {
+			} else {
 				++column_;
 			}
 			++cursor_;
@@ -230,8 +216,7 @@ private:
 				++line_;
 				column_ = 1;
 				update_file_index_from_line();
-			}
-			else {
+			} else {
 				++column_;
 			}
 			++cursor_;
@@ -264,8 +249,7 @@ private:
 		if (it == file_paths_.end()) {
 			file_paths_.push_back(std::string(file_path));
 			current_file_index_ = file_paths_.size() - 1;
-		}
-		else {
+		} else {
 			current_file_index_ = std::distance(file_paths_.begin(), it);
 		}
 
@@ -278,7 +262,7 @@ private:
 		++column_;
 
 		while (cursor_ < source_size_ &&
-			(std::isalnum(source_[cursor_]) || source_[cursor_] == '_')) {
+			   (std::isalnum(source_[cursor_]) || source_[cursor_] == '_')) {
 			++cursor_;
 			++column_;
 		}
@@ -291,16 +275,15 @@ private:
 		std::string_view alt_op = get_alternative_operator(value);
 		if (!alt_op.empty()) {
 			return Token(Token::Type::Operator, alt_op, line_, column_,
-				current_file_index_);
+						 current_file_index_);
 		}
 
 		if (is_keyword(value)) {
 			return Token(Token::Type::Keyword, value, line_, column_,
-				current_file_index_);
-		}
-		else {
+						 current_file_index_);
+		} else {
 			return Token(Token::Type::Identifier, value, line_, column_,
-				current_file_index_);
+						 current_file_index_);
 		}
 	}
 
@@ -329,8 +312,7 @@ private:
 				++cursor_;
 				++column_;
 			}
-		}
-		else if (source_[cursor_] == 'b' || source_[cursor_] == 'B') {
+		} else if (source_[cursor_] == 'b' || source_[cursor_] == 'B') {
 			// Binary literal (0b / 0B)
 			++cursor_;
 			++column_;
@@ -339,15 +321,13 @@ private:
 				++cursor_;
 				++column_;
 			}
-		}
-		else if (first_char == '0') {
+		} else if (first_char == '0') {
 			// Octal literal (starts with 0 followed by digits)
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
 				++column_;
 			}
-		}
-		else {
+		} else {
 			// Decimal literal
 			while (cursor_ < source_size_ && (std::isdigit(source_[cursor_]) || source_[cursor_] == '\'')) {
 				++cursor_;
@@ -433,15 +413,14 @@ private:
 		if (cursor_ < source_size_ && source_[cursor_] == '\"') {
 			++cursor_;
 			++column_;
-		}
-		else {
+		} else {
 			// Handle unterminated string literal error
 			// ...
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::StringLiteral, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	Token consume_character_literal() {
@@ -461,8 +440,7 @@ private:
 					++cursor_;
 					++column_;
 				}
-			}
-			else {
+			} else {
 				++cursor_;
 				++column_;
 			}
@@ -471,15 +449,14 @@ private:
 		if (cursor_ < source_size_ && source_[cursor_] == '\'') {
 			++cursor_;  // Skip closing '
 			++column_;
-		}
-		else {
+		} else {
 			// Handle unterminated character literal error
 			// ...
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::CharacterLiteral, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	Token consume_prefixed_string_literal(size_t start) {
@@ -496,8 +473,7 @@ private:
 					++cursor_;
 					++column_;
 				}
-			}
-			else {
+			} else {
 				++cursor_;
 				++column_;
 			}
@@ -510,7 +486,7 @@ private:
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::StringLiteral, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	Token consume_prefixed_character_literal(size_t start) {
@@ -526,8 +502,7 @@ private:
 					++cursor_;
 					++column_;
 				}
-			}
-			else {
+			} else {
 				++cursor_;
 				++column_;
 			}
@@ -540,54 +515,143 @@ private:
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::CharacterLiteral, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	bool is_keyword(std::string_view value) const {
 		static const std::unordered_set<std::string_view> keywords = {
-			"alignas",      "alignof",   "and",           "and_eq",
-			"asm",          "auto",      "bitand",        "bitor",
-			"bool",         "break",     "case",          "catch",
-			"char",         "char8_t",   "char16_t",      "char32_t",
-			"class",        "compl",     "concept",       "const",
-			"constexpr",    "consteval", "constinit",     "const_cast",
-			"continue",     "decltype",  "default",       "delete",
-			"do",           "double",    "dynamic_cast",  "else",
-			"enum",         "explicit",  "export",        "extern",
-			"false",        "final",     "float",         "for",
-			"friend",       "goto",      "if",            "inline",
-			"int",          "long",      "mutable",       "namespace",
-			"new",          "noexcept",  "not",           "not_eq",
-			"nullptr",      "operator",  "or",            "or_eq",
-			"override",     "private",   "protected",     "public",
-			"register",     "reinterpret_cast", "requires", "return",
-			"short",        "signed",    "sizeof",        "static",
-			"static_assert", "static_cast", "struct",     "switch",
-			"template",     "this",      "thread_local",  "throw",
-			"true",         "try",       "typedef",       "typeid",
-			"typename",     "union",     "unsigned",      "using",
-			"virtual",      "void",      "volatile",      "wchar_t",
-			"while",        "xor",       "xor_eq",
-			"template",     "this",      "thread_local",  "throw",
-			"true",         "try",       "typedef",       "typeid",
-			"typename",     "union",     "unsigned",      "using",
-			"virtual",      "void",      "volatile",      "wchar_t",
-			"while",        "xor",       "xor_eq",
+			"alignas",
+			"alignof",
+			"and",
+			"and_eq",
+			"asm",
+			"auto",
+			"bitand",
+			"bitor",
+			"bool",
+			"break",
+			"case",
+			"catch",
+			"char",
+			"char8_t",
+			"char16_t",
+			"char32_t",
+			"class",
+			"compl",
+			"concept",
+			"const",
+			"constexpr",
+			"consteval",
+			"constinit",
+			"const_cast",
+			"continue",
+			"decltype",
+			"default",
+			"delete",
+			"do",
+			"double",
+			"dynamic_cast",
+			"else",
+			"enum",
+			"explicit",
+			"export",
+			"extern",
+			"false",
+			"final",
+			"float",
+			"for",
+			"friend",
+			"goto",
+			"if",
+			"inline",
+			"int",
+			"long",
+			"mutable",
+			"namespace",
+			"new",
+			"noexcept",
+			"not",
+			"not_eq",
+			"nullptr",
+			"operator",
+			"or",
+			"or_eq",
+			"override",
+			"private",
+			"protected",
+			"public",
+			"register",
+			"reinterpret_cast",
+			"requires",
+			"return",
+			"short",
+			"signed",
+			"sizeof",
+			"static",
+			"static_assert",
+			"static_cast",
+			"struct",
+			"switch",
+			"template",
+			"this",
+			"thread_local",
+			"throw",
+			"true",
+			"try",
+			"typedef",
+			"typeid",
+			"typename",
+			"union",
+			"unsigned",
+			"using",
+			"virtual",
+			"void",
+			"volatile",
+			"wchar_t",
+			"while",
+			"xor",
+			"xor_eq",
+			"template",
+			"this",
+			"thread_local",
+			"throw",
+			"true",
+			"try",
+			"typedef",
+			"typeid",
+			"typename",
+			"union",
+			"unsigned",
+			"using",
+			"virtual",
+			"void",
+			"volatile",
+			"wchar_t",
+			"while",
+			"xor",
+			"xor_eq",
 			// Microsoft-specific type keywords
-			"__int8",       "__int16",   "__int32",       "__int64",
+			"__int8",
+			"__int16",
+			"__int32",
+			"__int64",
 			// Microsoft-specific type modifiers/qualifiers
-			"__ptr32",      "__ptr64",   "__w64",         "__unaligned",
-			"__uptr",       "__sptr",
+			"__ptr32",
+			"__ptr64",
+			"__w64",
+			"__unaligned",
+			"__uptr",
+			"__sptr",
 			// Microsoft-specific function specifiers
-			"__inline",     "__forceinline",
+			"__inline",
+			"__forceinline",
 			// Microsoft-specific attributes
 			"__declspec",
 		};
 
 		// Microsoft-specific SEH keywords - only in MSVC mode
 		static const std::unordered_set<std::string_view> seh_keywords = {
-			"__try",        "__except",  "__finally",     "__leave"
-		};
+			"__try", "__except", "__finally", "__leave"};
 
 		if (keywords.count(value) > 0)
 			return true;
@@ -601,19 +665,15 @@ private:
 	static std::string_view get_alternative_operator(std::string_view value) {
 		using namespace std::string_view_literals;
 		static const std::unordered_map<std::string_view, std::string_view> alt_ops = {
-			{"bitand"sv, "&"sv}, {"bitor"sv, "|"sv}, {"xor"sv, "^"sv}, {"compl"sv, "~"sv},
-			{"and"sv, "&&"sv}, {"or"sv, "||"sv}, {"not"sv, "!"sv},
-			{"and_eq"sv, "&="sv}, {"or_eq"sv, "|="sv}, {"xor_eq"sv, "^="sv},
-			{"not_eq"sv, "!="sv}
-		};
+			{"bitand"sv, "&"sv}, {"bitor"sv, "|"sv}, {"xor"sv, "^"sv}, {"compl"sv, "~"sv}, {"and"sv, "&&"sv}, {"or"sv, "||"sv}, {"not"sv, "!"sv}, {"and_eq"sv, "&="sv}, {"or_eq"sv, "|="sv}, {"xor_eq"sv, "^="sv}, {"not_eq"sv, "!="sv}};
 		auto it = alt_ops.find(value);
 		return it != alt_ops.end() ? it->second : std::string_view{};
 	}
 
 	bool is_operator(char c) const {
-		static const std::unordered_set<char> operators = { '+', '-', '*', '/', '%',
+		static const std::unordered_set<char> operators = {'+', '-', '*', '/', '%',
 														   '^', '&', '|', '~', '!',
-														   '=', '<', '>', '?' };
+														   '=', '<', '>', '?'};
 
 		return operators.count(c) > 0;
 	}
@@ -629,107 +689,107 @@ private:
 			char second_char = source_[cursor_];
 
 			switch (first_char) {
-				case '-': { // -> -- -=
-					int advance = (second_char == '>') | (second_char == '-') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '+': { // ++ +=
-					int advance = (second_char == '+') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '<': { // << <= <<= <=>
-					int advance = (second_char == '<') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
+			case '-': { // -> -- -=
+				int advance = (second_char == '>') | (second_char == '-') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '+': { // ++ +=
+				int advance = (second_char == '+') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '<': { // << <= <<= <=>
+				int advance = (second_char == '<') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
 					// Branchless check for three-character operators <<= and <=>
-					int has_third = (cursor_ < source_size_);
-					char third_char = has_third ? source_[cursor_] : '\0';
-					int is_shift = (second_char == '<');
-					int is_spaceship = (second_char == '=');
-					int advance3 = (is_shift & (third_char == '=')) | (is_spaceship & (third_char == '>'));
-					cursor_ += advance3;
-					column_ += advance3;
-					break;
-				}
-				case '>': { // >> >= >>=
-					int advance = (second_char == '>') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
+				int has_third = (cursor_ < source_size_);
+				char third_char = has_third ? source_[cursor_] : '\0';
+				int is_shift = (second_char == '<');
+				int is_spaceship = (second_char == '=');
+				int advance3 = (is_shift & (third_char == '=')) | (is_spaceship & (third_char == '>'));
+				cursor_ += advance3;
+				column_ += advance3;
+				break;
+			}
+			case '>': { // >> >= >>=
+				int advance = (second_char == '>') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
 					// Branchless check for three-character operator >>=
-					int is_shift = (second_char == '>');
-					int has_third = (cursor_ < source_size_);
-					char third_char = has_third ? source_[cursor_] : '\0';
-					int advance3 = is_shift & (third_char == '=');
-					cursor_ += advance3;
-					column_ += advance3;
-					break;
-				}
-				case '=': { // ==
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '!': { // !=
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '&': { // && &=
-					int advance = (second_char == '&') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '|': { // || |=
-					int advance = (second_char == '|') | (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '*': { // *=
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '/': { // /=
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '%': { // %=
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				case '^': { // ^=
-					int advance = (second_char == '=');
-					cursor_ += advance;
-					column_ += advance;
-					break;
-				}
-				default:
+				int is_shift = (second_char == '>');
+				int has_third = (cursor_ < source_size_);
+				char third_char = has_third ? source_[cursor_] : '\0';
+				int advance3 = is_shift & (third_char == '=');
+				cursor_ += advance3;
+				column_ += advance3;
+				break;
+			}
+			case '=': { // ==
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '!': { // !=
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '&': { // && &=
+				int advance = (second_char == '&') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '|': { // || |=
+				int advance = (second_char == '|') | (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '*': { // *=
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '/': { // /=
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '%': { // %=
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			case '^': { // ^=
+				int advance = (second_char == '=');
+				cursor_ += advance;
+				column_ += advance;
+				break;
+			}
+			default:
 					// Single-character operator, no action needed
-					break;
+				break;
 			}
 		}
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::Operator, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	bool is_punctuator(char c) const {
 		static const std::unordered_set<char> punctuators = {
-			'(', ')', '[', ']', '{', '}', '.', ',', ';', ':', '#' };
+			'(', ')', '[', ']', '{', '}', '.', ',', ';', ':', '#'};
 
 		return punctuators.count(c) > 0;
 	}
@@ -741,7 +801,7 @@ private:
 
 		std::string_view value = source_.substr(start, 2);
 		return Token(Token::Type::Punctuator, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 
 	Token consume_punctuator() {
@@ -754,7 +814,7 @@ private:
 			column_ += 2;
 			std::string_view value = source_.substr(start, 2);
 			return Token(Token::Type::Punctuator, value, line_, column_,
-				current_file_index_);
+						 current_file_index_);
 		}
 
 		// Check for ... (variadic parameter)
@@ -764,7 +824,7 @@ private:
 			column_ += 3;
 			std::string_view value = source_.substr(start, 3);
 			return Token(Token::Type::Punctuator, value, line_, column_,
-				current_file_index_);
+						 current_file_index_);
 		}
 
 		++cursor_;
@@ -772,6 +832,6 @@ private:
 
 		std::string_view value = source_.substr(start, cursor_ - start);
 		return Token(Token::Type::Punctuator, value, line_, column_,
-			current_file_index_);
+					 current_file_index_);
 	}
 };

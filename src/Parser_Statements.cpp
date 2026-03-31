@@ -18,16 +18,16 @@
 //   '(' → _Tp(x)(args) is a declaration (function declarator)
 //   '=' → _Tp(x) = expr is a declaration (parenthesized declarator with copy-init)
 static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
-    ".", "->",
-    "?", "++", "--",
-    "+", "-", "*", "/", "%",
-    "&", "|", "^",
-    "<<", ">>", "&&", "||",
-    "==", "!=",
-    "<", ">", "<=", ">=", "<=>",
-    "+=", "-=", "*=", "/=",
-    "%=", "&=", "|=", "^=",
-    "<<=", ">>="};
+	".", "->",
+	"?", "++", "--",
+	"+", "-", "*", "/", "%",
+	"&", "|", "^",
+	"<<", ">>", "&&", "||",
+	"==", "!=",
+	"<", ">", "<=", ">=", "<=>",
+	"+=", "-=", "*=", "/=",
+	"%=", "&=", "|=", "^=",
+	"<<=", ">>="};
 
 ParseResult Parser::parse_block() {
 	if (!consume("{"_tok)) {
@@ -38,18 +38,18 @@ ParseResult Parser::parse_block() {
 	FlashCpp::SymbolTableScope block_scope(ScopeType::Block);
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_block: Entered block. peek={}",
-	                 std::string(peek_info().value()));
+					 std::string(peek_info().value()));
 
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 
 	while (!consume("}"_tok)) {
 		// Parse statements or declarations
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: About to parse_statement_or_declaration. peek={}",
-		                 std::string(peek_info().value()));
+						 std::string(peek_info().value()));
 		ParseResult parse_result = parse_statement_or_declaration();
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_block: parse_statement_or_declaration returned. is_error={}, peek={}",
-		                 parse_result.is_error(),
-		                 std::string(peek_info().value()));
+						 parse_result.is_error(),
+						 std::string(peek_info().value()));
 		if (parse_result.is_error())
 			return parse_result;
 
@@ -79,14 +79,14 @@ ParseResult Parser::parse_statement_or_declaration() {
 
 	if (peek().is_eof()) {
 		return ParseResult::error("Expected a statement or declaration",
-		                          current_token_);
+								  current_token_);
 	}
 	const Token& current_token = peek_info();
 
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: current_token={}, type={}",
-	                 std::string(current_token.value()),
-	                 current_token.type() == Token::Type::Keyword ? "Keyword" : current_token.type() == Token::Type::Identifier ? "Identifier"
-	                                                                                                                            : "Other");
+					 std::string(current_token.value()),
+					 current_token.type() == Token::Type::Keyword ? "Keyword" : current_token.type() == Token::Type::Identifier ? "Identifier"
+																																: "Other");
 
 	// Handle nested blocks
 	if (peek() == "{"_tok) {
@@ -106,82 +106,82 @@ ParseResult Parser::parse_statement_or_declaration() {
 	if (current_token.type() == Token::Type::Keyword) {
 		// Keyword parsing function map - initialized once on first call
 		static const std::unordered_map<std::string_view, ParsingFunction> keyword_parsing_functions = {
-		    {"if", &Parser::parse_if_statement},
-		    {"for", &Parser::parse_for_loop},
-		    {"while", &Parser::parse_while_loop},
-		    {"do", &Parser::parse_do_while_loop},
-		    {"switch", &Parser::parse_switch_statement},
-		    {"return", &Parser::parse_return_statement},
-		    {"break", &Parser::parse_break_statement},
-		    {"continue", &Parser::parse_continue_statement},
-		    {"goto", &Parser::parse_goto_statement},
-		    {"try", &Parser::parse_try_statement},
-		    {"throw", &Parser::parse_throw_statement},
-		    {"__try", &Parser::parse_seh_try_statement},
-		    {"__leave", &Parser::parse_seh_leave_statement},
-		    {"using", &Parser::parse_using_directive_or_declaration},
-		    {"namespace", &Parser::parse_namespace},
-		    {"typedef", &Parser::parse_typedef_declaration},
-		    {"template", &Parser::parse_template_declaration},
-		    {"struct", &Parser::parse_struct_declaration},
-		    {"class", &Parser::parse_struct_declaration},
-		    {"union", &Parser::parse_struct_declaration},
-		    {"enum", &Parser::parse_enum_declaration},
-		    {"static", &Parser::parse_declaration_or_function_definition},
-		    {"extern", &Parser::parse_declaration_or_function_definition},
-		    {"register", &Parser::parse_declaration_or_function_definition},
-		    {"mutable", &Parser::parse_declaration_or_function_definition},
-		    {"constexpr", &Parser::parse_declaration_or_function_definition},
-		    {"constinit", &Parser::parse_declaration_or_function_definition},
-		    {"consteval", &Parser::parse_declaration_or_function_definition},
-		    {"int", &Parser::parse_declaration_or_function_definition},
-		    {"float", &Parser::parse_declaration_or_function_definition},
-		    {"double", &Parser::parse_declaration_or_function_definition},
-		    {"char", &Parser::parse_declaration_or_function_definition},
-		    {"wchar_t", &Parser::parse_declaration_or_function_definition},
-		    {"char8_t", &Parser::parse_declaration_or_function_definition},
-		    {"char16_t", &Parser::parse_declaration_or_function_definition},
-		    {"char32_t", &Parser::parse_declaration_or_function_definition},
-		    {"bool", &Parser::parse_declaration_or_function_definition},
-		    {"void", &Parser::parse_declaration_or_function_definition},
-		    {"short", &Parser::parse_declaration_or_function_definition},
-		    {"long", &Parser::parse_declaration_or_function_definition},
-		    {"signed", &Parser::parse_declaration_or_function_definition},
-		    {"unsigned", &Parser::parse_declaration_or_function_definition},
-		    {"const", &Parser::parse_declaration_or_function_definition},
-		    {"volatile", &Parser::parse_declaration_or_function_definition},
-		    {"alignas", &Parser::parse_declaration_or_function_definition},
-		    {"auto", &Parser::parse_declaration_or_function_definition},
-		    {"decltype", &Parser::parse_declaration_or_function_definition}, // C++11 decltype type specifier
-		    // Microsoft-specific type keywords
-		    {"__int8", &Parser::parse_declaration_or_function_definition},
-		    {"__int16", &Parser::parse_declaration_or_function_definition},
-		    {"__int32", &Parser::parse_declaration_or_function_definition},
-		    {"__int64", &Parser::parse_declaration_or_function_definition},
-		    {"new", &Parser::parse_expression_statement},
-		    {"delete", &Parser::parse_expression_statement},
-		    {"this", &Parser::parse_expression_statement},
-		    {"static_cast", &Parser::parse_expression_statement},
-		    {"dynamic_cast", &Parser::parse_expression_statement},
-		    {"const_cast", &Parser::parse_expression_statement},
-		    {"reinterpret_cast", &Parser::parse_expression_statement},
-		    {"typeid", &Parser::parse_expression_statement},
-		    {"typename", &Parser::parse_declaration_or_function_definition},
-		    {"static_assert", &Parser::parse_static_assert},
+			{"if", &Parser::parse_if_statement},
+			{"for", &Parser::parse_for_loop},
+			{"while", &Parser::parse_while_loop},
+			{"do", &Parser::parse_do_while_loop},
+			{"switch", &Parser::parse_switch_statement},
+			{"return", &Parser::parse_return_statement},
+			{"break", &Parser::parse_break_statement},
+			{"continue", &Parser::parse_continue_statement},
+			{"goto", &Parser::parse_goto_statement},
+			{"try", &Parser::parse_try_statement},
+			{"throw", &Parser::parse_throw_statement},
+			{"__try", &Parser::parse_seh_try_statement},
+			{"__leave", &Parser::parse_seh_leave_statement},
+			{"using", &Parser::parse_using_directive_or_declaration},
+			{"namespace", &Parser::parse_namespace},
+			{"typedef", &Parser::parse_typedef_declaration},
+			{"template", &Parser::parse_template_declaration},
+			{"struct", &Parser::parse_struct_declaration},
+			{"class", &Parser::parse_struct_declaration},
+			{"union", &Parser::parse_struct_declaration},
+			{"enum", &Parser::parse_enum_declaration},
+			{"static", &Parser::parse_declaration_or_function_definition},
+			{"extern", &Parser::parse_declaration_or_function_definition},
+			{"register", &Parser::parse_declaration_or_function_definition},
+			{"mutable", &Parser::parse_declaration_or_function_definition},
+			{"constexpr", &Parser::parse_declaration_or_function_definition},
+			{"constinit", &Parser::parse_declaration_or_function_definition},
+			{"consteval", &Parser::parse_declaration_or_function_definition},
+			{"int", &Parser::parse_declaration_or_function_definition},
+			{"float", &Parser::parse_declaration_or_function_definition},
+			{"double", &Parser::parse_declaration_or_function_definition},
+			{"char", &Parser::parse_declaration_or_function_definition},
+			{"wchar_t", &Parser::parse_declaration_or_function_definition},
+			{"char8_t", &Parser::parse_declaration_or_function_definition},
+			{"char16_t", &Parser::parse_declaration_or_function_definition},
+			{"char32_t", &Parser::parse_declaration_or_function_definition},
+			{"bool", &Parser::parse_declaration_or_function_definition},
+			{"void", &Parser::parse_declaration_or_function_definition},
+			{"short", &Parser::parse_declaration_or_function_definition},
+			{"long", &Parser::parse_declaration_or_function_definition},
+			{"signed", &Parser::parse_declaration_or_function_definition},
+			{"unsigned", &Parser::parse_declaration_or_function_definition},
+			{"const", &Parser::parse_declaration_or_function_definition},
+			{"volatile", &Parser::parse_declaration_or_function_definition},
+			{"alignas", &Parser::parse_declaration_or_function_definition},
+			{"auto", &Parser::parse_declaration_or_function_definition},
+			{"decltype", &Parser::parse_declaration_or_function_definition}, // C++11 decltype type specifier
+			// Microsoft-specific type keywords
+			{"__int8", &Parser::parse_declaration_or_function_definition},
+			{"__int16", &Parser::parse_declaration_or_function_definition},
+			{"__int32", &Parser::parse_declaration_or_function_definition},
+			{"__int64", &Parser::parse_declaration_or_function_definition},
+			{"new", &Parser::parse_expression_statement},
+			{"delete", &Parser::parse_expression_statement},
+			{"this", &Parser::parse_expression_statement},
+			{"static_cast", &Parser::parse_expression_statement},
+			{"dynamic_cast", &Parser::parse_expression_statement},
+			{"const_cast", &Parser::parse_expression_statement},
+			{"reinterpret_cast", &Parser::parse_expression_statement},
+			{"typeid", &Parser::parse_expression_statement},
+			{"typename", &Parser::parse_declaration_or_function_definition},
+			{"static_assert", &Parser::parse_static_assert},
 		};
 
 		auto keyword_iter = keyword_parsing_functions.find(current_token.value());
 		if (keyword_iter != keyword_parsing_functions.end()) {
 			// Call the appropriate parsing function
 			FLASH_LOG_FORMAT(Parser, Debug, "parse_statement_or_declaration: Found keyword '{}', calling handler",
-			                 std::string(current_token.value()));
+							 std::string(current_token.value()));
 			return (this->*(keyword_iter->second))();
 		}
 
 		// Unknown keyword - consume token to avoid infinite loop and return error
 		advance();
 		return ParseResult::error("Unknown keyword: " + std::string(current_token.value()),
-		                          current_token);
+								  current_token);
 	} else if (current_token.type() == Token::Type::Identifier) {
 		// Check if this is a label (identifier followed by ':')
 		// We need to look ahead to see if there's a colon
@@ -222,7 +222,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		if (!type_info_ctx && !struct_parsing_context_stack_.empty()) {
 			const auto& struct_ctx = struct_parsing_context_stack_.back();
 			FLASH_LOG(Parser, Debug, "Checking base class typedefs for '", current_token.value(),
-			          "', struct=", struct_ctx.struct_name, ", has_info=", (struct_ctx.local_struct_info != nullptr));
+					  "', struct=", struct_ctx.struct_name, ", has_info=", (struct_ctx.local_struct_info != nullptr));
 			if (struct_ctx.local_struct_info && !struct_ctx.local_struct_info->base_classes.empty()) {
 				StringHandle struct_name = struct_ctx.local_struct_info->getName();
 				const TypeInfo* inherited = lookup_inherited_type_alias(struct_name, type_name_handle);
@@ -249,7 +249,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 			// A typedef can be detected either by type_size_ > 0 (for primitive typedefs) or by isTypeAlias() flag
 			// The isTypeAlias() flag is set during template instantiation for typedefs like 'typedef T value_type'
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
-			                  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
 				// Need to check if this is a functional cast / temporary construction
 				// followed by a member access, like: TypeName(args).member()
@@ -485,7 +485,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Unknown operator - consume token to avoid infinite loop and return error
 		advance();
 		return ParseResult::error("Unexpected operator: " + std::string(current_token.value()),
-		                          current_token);
+								  current_token);
 	} else if (current_token.type() == Token::Type::Punctuator) {
 		// Handle lambda expressions and other expression statements starting with punctuators
 		std::string_view punct = current_token.value();
@@ -501,9 +501,9 @@ ParseResult Parser::parse_statement_or_declaration() {
 				// This is heuristic: if the semicolon is on the same line or very close,
 				// it's likely an accidental empty statement after a loop
 				FLASH_LOG(General, Warning, "Empty statement followed by a block. "
-				                            "Did you mean to include the block in the loop/if statement? "
-				                            "Location: line ",
-				          semi_token.line(), ", column ", semi_token.column());
+											"Did you mean to include the block in the loop/if statement? "
+											"Location: line ",
+						  semi_token.line(), ", column ", semi_token.column());
 			}
 
 			return ParseResult::success();
@@ -517,7 +517,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Unknown punctuator - consume token to avoid infinite loop and return error
 		advance();
 		return ParseResult::error("Unexpected punctuator: " + std::string(current_token.value()),
-		                          current_token);
+								  current_token);
 	} else if (current_token.type() == Token::Type::Literal) {
 		// Handle literal expression statements (e.g., "42;")
 		return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
@@ -525,7 +525,7 @@ ParseResult Parser::parse_statement_or_declaration() {
 		// Unknown token type - consume token to avoid infinite loop and return error
 		advance();
 		return ParseResult::error("Expected a statement or declaration",
-		                          current_token);
+								  current_token);
 	}
 }
 
@@ -586,9 +586,9 @@ ParseResult Parser::parse_variable_declaration() {
 		DeclarationNode& decl = decl_node.as<DeclarationNode>();
 
 		auto [var_decl_node, var_decl] = emplace_node_ref<VariableDeclarationNode>(
-		    decl_node,
-		    std::nullopt,
-		    storage_class);
+			decl_node,
+			std::nullopt,
+			storage_class);
 
 		// Set constexpr/constinit flags
 		var_decl.set_is_constexpr(is_constexpr);
@@ -600,7 +600,7 @@ ParseResult Parser::parse_variable_declaration() {
 		if (!gSymbolTable.insert(identifier_token.value(), var_decl_node)) {
 			// Duplicate variable declaration in the same scope
 			FLASH_LOG(Parser, Warning, "Variable '", identifier_token.value(),
-			          "' is being redeclared in the same scope");
+					  "' is being redeclared in the same scope");
 			return ParseResult::error(ParserError::RedefinedSymbolWithDifferentValue, identifier_token);
 		}
 
@@ -760,7 +760,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 	// Check for use of deleted default constructor: Struct s{} where default ctor is deleted
 	if (type_specifier.category() == TypeCategory::Struct && !type_specifier.is_pointer() &&
-	    first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
+		first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		const auto& init_list = first_init_expr->as<InitializerListNode>();
 		if (init_list.initializers().empty()) {
 			TypeIndex type_idx = type_specifier.type_index();
@@ -792,8 +792,8 @@ ParseResult Parser::parse_variable_declaration() {
 
 			// Create a new DeclarationNode with the same type
 			ASTNode new_decl_node = emplace_node<DeclarationNode>(
-			    emplace_node<TypeSpecifierNode>(type_specifier),
-			    identifier_tok);
+				emplace_node<TypeSpecifierNode>(type_specifier),
+				identifier_tok);
 			// Register before parsing initializer (point-of-declaration)
 			ParseResult decl_result = create_var_decl(new_decl_node);
 			if (decl_result.is_error()) {
@@ -960,7 +960,7 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 
 		// For unsized arrays, infer the size from the initializer list
 		if (decl_node.is_unsized_array() && initializer.has_value() &&
-		    initializer->is<InitializerListNode>()) {
+			initializer->is<InitializerListNode>()) {
 			const InitializerListNode& init_list = initializer->as<InitializerListNode>();
 			size_t inferred_size = init_list.initializers().size();
 			type_specifier.set_array(true, inferred_size);
@@ -1039,14 +1039,14 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 				// Use the full deduced type specifier (preserves struct type index, etc.)
 				type_specifier = *deduced_type_spec_opt;
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type from initializer: type=",
-				          (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
+						  (int)type_specifier.type(), " size=", (int)type_specifier.size_in_bits());
 			} else {
 				// Fallback: deduce basic type
 				TypeCategory deduced_type = deduce_type_from_expression(*initializer);
 				unsigned char deduced_size = get_type_size_bits(deduced_type);
 				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=",
-				          (int)type_specifier.type(), " size=", (int)deduced_size);
+						  (int)type_specifier.type(), " size=", (int)deduced_size);
 			}
 
 			// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
@@ -1059,14 +1059,14 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			auto deduced_type_spec_opt = get_expression_type(*initializer);
 			if (!deduced_type_spec_opt.has_value()) {
 				throw CompileError(std::string(StringBuilder()
-				                                   .append("Could not deduce decltype(auto) from initializer for '")
-				                                   .append(decl_node.identifier_token().value())
-				                                   .append("'; use an explicit type when the initializer's exact type cannot be inferred")
-				                                   .commit()));
+												   .append("Could not deduce decltype(auto) from initializer for '")
+												   .append(decl_node.identifier_token().value())
+												   .append("'; use an explicit type when the initializer's exact type cannot be inferred")
+												   .commit()));
 			}
 			type_specifier = *deduced_type_spec_opt;
 			if (type_specifier.size_in_bits() == 0 && type_specifier.pointer_depth() == 0 &&
-			    !type_specifier.is_reference()) {
+				!type_specifier.is_reference()) {
 				type_specifier.set_size_in_bits(get_type_size_bits(type_specifier.category()));
 			}
 		}
@@ -1097,7 +1097,7 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 			// Verify this template was declared in the std namespace via sourceNamespace()
 			NamespaceHandle ns = type_info->sourceNamespace();
 			if (ns.isValid() && !ns.isGlobal() &&
-			    gNamespaceRegistry.getQualifiedName(ns) == "std") {
+				gNamespaceRegistry.getQualifiedName(ns) == "std") {
 				FLASH_LOG(Parser, Debug, "is_initializer_list_type: detected as initializer_list type");
 				return type_index;
 			}
@@ -1112,8 +1112,8 @@ std::optional<TypeIndex> Parser::is_initializer_list_type(const TypeSpecifierNod
 std::optional<std::pair<const StructMemberFunction*, TypeIndex>>
 Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) const {
 	FLASH_LOG(Parser, Debug, "find_initializer_list_constructor: checking struct '",
-	          StringTable::getStringView(struct_info.getName()), "' with ",
-	          struct_info.member_functions.size(), " member functions");
+			  StringTable::getStringView(struct_info.getName()), "' with ",
+			  struct_info.member_functions.size(), " member functions");
 
 	for (const auto& member_func : struct_info.member_functions) {
 		if (!member_func.is_constructor)
@@ -1161,7 +1161,7 @@ Parser::find_initializer_list_constructor(const StructTypeInfo& struct_info) con
 
 		const TypeSpecifierNode& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 		FLASH_LOG(Parser, Debug, "    param type: ", (int)param_type.type(),
-		          " index: ", param_type.type_index());
+				  " index: ", param_type.type_index());
 
 		auto element_type_opt = is_initializer_list_type(param_type);
 
@@ -1215,8 +1215,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		if (type_specifier.array_dimension_count() > 1) {
 			// Multi-dimensional: element type has the remaining dimensions
 			std::vector<size_t> elem_dims(
-			    type_specifier.array_dimensions().begin() + 1,
-			    type_specifier.array_dimensions().end());
+				type_specifier.array_dimensions().begin() + 1,
+				type_specifier.array_dimensions().end());
 			element_type_spec.set_array_dimensions(elem_dims);
 		} else {
 			element_type_spec.set_array(false);
@@ -1242,8 +1242,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					saw_scalar = true;
 				}
 				size_t limit = (flat_total_size.has_value() && saw_scalar)
-				                   ? *flat_total_size
-				                   : *array_size;
+								   ? *flat_total_size
+								   : *array_size;
 				if (element_count >= limit) {
 					return ParseResult::error("Too many initializers for array", current_token_);
 				}
@@ -1308,7 +1308,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 	// struct_info_ yet but could resolve to structs at instantiation time. Treat them as struct-like
 	// to allow multi-element brace-init lists like: return { expr1, expr2 };
 	if (!is_struct_like_type && (type_specifier.category() == TypeCategory::UserDefined || type_specifier.category() == TypeCategory::TypeAlias || type_specifier.category() == TypeCategory::Template) &&
-	    ((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
+		((parsing_template_depth_ > 0) || !struct_parsing_context_stack_.empty())) {
 		is_struct_like_type = true;
 	}
 	if (!is_struct_like_type) {
@@ -1322,11 +1322,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			// Use 0.0 for floating point types, 0ULL for integral types
 			if (type_specifier.category() == TypeCategory::Double || type_specifier.category() == TypeCategory::Float) {
 				auto zero_expr = emplace_node<ExpressionNode>(
-				    NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category())));
+					NumericLiteralNode(zero_token, 0.0, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category())));
 				return ParseResult::success(zero_expr);
 			} else {
 				auto zero_expr = emplace_node<ExpressionNode>(
-				    NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category())));
+					NumericLiteralNode(zero_token, 0ULL, type_specifier.type(), TypeQualifier::None, get_type_size_bits(type_specifier.category())));
 				return ParseResult::success(zero_expr);
 			}
 		}
@@ -1362,8 +1362,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		const bool invalid_struct_type_index = !type_info;
 		if (!(parsing_template_depth_ > 0) && struct_parsing_context_stack_.empty()) {
 			return ParseResult::error(
-			    invalid_struct_type_index ? "Invalid struct type index" : "Type is not a struct",
-			    current_token_);
+				invalid_struct_type_index ? "Invalid struct type index" : "Type is not a struct",
+				current_token_);
 		}
 
 		// Dependent/unresolved types may not have struct_info_ yet.
@@ -1457,11 +1457,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					int elem_size = elem_info->type_size_ > 0 ? elem_info->type_size_ : get_type_size_bits(elem_type);
 
 					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
-					    elem_type,
-					    TypeQualifier::None,
-					    static_cast<unsigned char>(elem_size),
-					    brace_token,
-					    CVQualifier::None);
+						elem_type,
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token,
+						CVQualifier::None);
 					// If it's a struct type, preserve the type_index
 					if (elem_cat == TypeCategory::Struct) {
 						elem_type_spec.as<TypeSpecifierNode>().set_type_index(first_member.type_index);
@@ -1471,11 +1471,11 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					// Fall back to using the member's type directly (for primitive types)
 					int elem_size = get_type_size_bits(first_member.memberType());
 					element_type_node = emplace_node<TypeSpecifierNode>(
-					    first_member.memberType(),
-					    TypeQualifier::None,
-					    static_cast<unsigned char>(elem_size),
-					    brace_token,
-					    CVQualifier::None);
+						first_member.memberType(),
+						TypeQualifier::None,
+						static_cast<unsigned char>(elem_size),
+						brace_token,
+						CVQualifier::None);
 				}
 			}
 		}
@@ -1518,24 +1518,24 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		if (target_type_node.has_value()) {
 			// Create InitializerListConstructionNode
 			auto init_list_construction = emplace_node<ExpressionNode>(
-			    InitializerListConstructionNode(
-			        element_type_node,
-			        target_type_node,
-			        std::move(elements),
-			        brace_token));
+				InitializerListConstructionNode(
+					element_type_node,
+					target_type_node,
+					std::move(elements),
+					brace_token));
 
 			// Now wrap this in a ConstructorCallNode to call the actual constructor
 			ChunkedVector<ASTNode> ctor_args;
 			ctor_args.push_back(init_list_construction);
 
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-			    type_index.withCategory(TypeCategory::Struct),
-			    getStructTypeSizeBits(type_index),
-			    brace_token, CVQualifier::None, ReferenceQualifier::None);
+				type_index.withCategory(TypeCategory::Struct),
+				getStructTypeSizeBits(type_index),
+				brace_token, CVQualifier::None, ReferenceQualifier::None);
 
 			return ParseResult::success(
-			    emplace_node<ExpressionNode>(
-			        ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
+				emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 		}
 
 		// Fallback: if we couldn't get the target type, return an error
@@ -1593,9 +1593,9 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 
 		auto make_constructor_call = [&](std::vector<ASTNode>& parsed_elements) -> ParseResult {
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-			    type_index.withCategory(TypeCategory::Struct),
-			    getStructTypeSizeBits(type_index),
-			    brace_token, CVQualifier::None, ReferenceQualifier::None);
+				type_index.withCategory(TypeCategory::Struct),
+				getStructTypeSizeBits(type_index),
+				brace_token, CVQualifier::None, ReferenceQualifier::None);
 
 			ChunkedVector<ASTNode> ctor_args;
 			for (auto& elem : parsed_elements) {
@@ -1603,8 +1603,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			}
 
 			return ParseResult::success(
-			    emplace_node<ExpressionNode>(
-			        ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
+				emplace_node<ExpressionNode>(
+					ConstructorCallNode(type_spec_node, std::move(ctor_args), brace_token)));
 		};
 
 		if (struct_info.hasUserDefinedConstructor()) {
@@ -1707,8 +1707,8 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 					// Allow enum -> int conversions for scoped enums passed as their underlying type
 					bool compatible = false;
 					if (arg_type.category() == TypeCategory::Enum &&
-					    (param_type->category() == TypeCategory::Int || param_type->category() == TypeCategory::UnsignedInt ||
-					     param_type->category() == TypeCategory::Long || param_type->category() == TypeCategory::UnsignedLong)) {
+						(param_type->category() == TypeCategory::Int || param_type->category() == TypeCategory::UnsignedInt ||
+						 param_type->category() == TypeCategory::Long || param_type->category() == TypeCategory::UnsignedLong)) {
 						// Enum to integer conversion (for scoped enum underlying type)
 						compatible = true;
 					}
@@ -1759,28 +1759,28 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 		if (const TypeInfo* member_type_info = tryGetTypeInfo(target_member.type_index)) {
 			if (is_struct_type(target_member.type_index.category())) {
 				member_type_spec = TypeSpecifierNode(
-				    target_member.type_index.withCategory(member_type_info->resolvedType()),
-				    member_type_info->type_size_ * 8,
-				    Token(),
-				    CVQualifier::None,
-				    ReferenceQualifier::None);
+					target_member.type_index.withCategory(member_type_info->resolvedType()),
+					member_type_info->type_size_ * 8,
+					Token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
 			} else {
 				member_type_spec = TypeSpecifierNode(
-				    target_member.memberType(),
-				    TypeQualifier::None,
-				    member_type_info->type_size_ * 8,
-				    Token(),
-				    CVQualifier::None);
+					target_member.memberType(),
+					TypeQualifier::None,
+					member_type_info->type_size_ * 8,
+					Token(),
+					CVQualifier::None);
 				member_type_spec.set_type_index(target_member.type_index);
 			}
 			have_member_type_spec = true;
 		} else if (target_member.type_index.category() != TypeCategory::Invalid) {
 			member_type_spec = TypeSpecifierNode(
-			    target_member.memberType(),
-			    TypeQualifier::None,
-			    get_type_size_bits(target_member.memberType()),
-			    Token(),
-			    CVQualifier::None);
+				target_member.memberType(),
+				TypeQualifier::None,
+				get_type_size_bits(target_member.memberType()),
+				Token(),
+				CVQualifier::None);
 			have_member_type_spec = true;
 		}
 
@@ -1895,10 +1895,10 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (target_member.is_array && !target_member.array_dimensions.empty() && peek() != "{"_tok && !element_is_aggregate) {
 				auto [nested_init_list_node, nested_init_list_ref] = create_node_ref(InitializerListNode());
 				size_t element_limit = std::accumulate(
-				    target_member.array_dimensions.begin(),
-				    target_member.array_dimensions.end(),
-				    size_t{1},
-				    std::multiplies<size_t>());
+					target_member.array_dimensions.begin(),
+					target_member.array_dimensions.end(),
+					size_t{1},
+					std::multiplies<size_t>());
 				size_t element_count = 0;
 
 				while (element_count < element_limit && peek() != "}"_tok) {
@@ -2109,9 +2109,9 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		bool all_deduced = true;
 		for (size_t i = 0; i < template_params.size(); ++i) {
 			if (tparam_name_to_index.count(template_params[i].is<TemplateParameterNode>()
-			                                   ? template_params[i].as<TemplateParameterNode>().name()
-			                                   : "") > 0 &&
-			    !deduced[i]) {
+											   ? template_params[i].as<TemplateParameterNode>().name()
+											   : "") > 0 &&
+				!deduced[i]) {
 				all_deduced = false;
 				break;
 			}
@@ -2128,8 +2128,8 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 }
 
 bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
-                                                  const std::vector<TypeSpecifierNode>& argument_types,
-                                                  std::vector<TemplateTypeArg>& out_template_args) const {
+												  const std::vector<TypeSpecifierNode>& argument_types,
+												  std::vector<TemplateTypeArg>& out_template_args) const {
 	if (guide.guide_parameters().size() != argument_types.size()) {
 		return false;
 	}
@@ -2181,9 +2181,9 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 }
 
 bool Parser::match_template_parameter_type(TypeSpecifierNode param_type,
-                                           TypeSpecifierNode argument_type,
-                                           const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params,
-                                           std::unordered_map<std::string_view, TypeSpecifierNode>& bindings) const {
+										   TypeSpecifierNode argument_type,
+										   const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params,
+										   std::unordered_map<std::string_view, TypeSpecifierNode>& bindings) const {
 	auto bind_placeholder = [&](std::string_view name, const TypeSpecifierNode& deduced_type) {
 		auto [it, inserted] = bindings.emplace(name, deduced_type);
 		if (!inserted && !types_equivalent(it->second, deduced_type)) {
@@ -2225,7 +2225,7 @@ bool Parser::match_template_parameter_type(TypeSpecifierNode param_type,
 }
 
 std::optional<std::string_view> Parser::extract_template_param_name(const TypeSpecifierNode& type_spec,
-                                                                    const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const {
+																	const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const {
 	if (!template_params.empty()) {
 		std::string_view token_name = type_spec.token().value();
 		if (!token_name.empty()) {
@@ -2273,8 +2273,8 @@ bool Parser::types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierN
 }
 
 bool Parser::instantiate_deduced_template(std::string_view class_name,
-                                          const std::vector<TemplateTypeArg>& template_args,
-                                          TypeSpecifierNode& type_specifier) {
+										  const std::vector<TemplateTypeArg>& template_args,
+										  TypeSpecifierNode& type_specifier) {
 	if (template_args.empty()) {
 		return false;
 	}

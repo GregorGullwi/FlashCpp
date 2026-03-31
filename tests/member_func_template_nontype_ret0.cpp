@@ -3,12 +3,12 @@
 // the member-function-template path where the non-type param N must reach
 // the body re-parse via template_param_substitutions_.
 // Expected return: 4 + 6 - 10 = 0
-template<int N>
+template <int N>
 struct Box {
 	int get() { return N; }
 };
 struct Converter {
-	template<int N>
+	template <int N>
 	auto value() -> int { return N; }
 };
 int main() {

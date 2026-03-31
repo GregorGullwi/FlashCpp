@@ -5,8 +5,7 @@
 #include <string>
 
 A5::FreeListAllocator::FreeListAllocator(const std::size_t size, const SearchMethod searchMethod)
-	: Allocator(size)
-{
+	: Allocator(size) {
 	static std::string message = "Total size must be atleast " + std::to_string(sizeof(LinkedList::Node) + 1) + " bytes for an allocator with atleast 1 byte of free space";
 	assert(size >= sizeof(LinkedList::Node) + 1 && message.c_str());
 	m_SearchMethod = searchMethod;
@@ -14,14 +13,12 @@ A5::FreeListAllocator::FreeListAllocator(const std::size_t size, const SearchMet
 	Init();
 }
 
-A5::FreeListAllocator::~FreeListAllocator()
-{
+A5::FreeListAllocator::~FreeListAllocator() {
 	::operator delete(m_StartAddress);
 	m_StartAddress = nullptr;
 }
 
-void* A5::FreeListAllocator::Allocate(const std::size_t size, const std::size_t alignment)
-{
+void* A5::FreeListAllocator::Allocate(const std::size_t size, const std::size_t alignment) {
 	std::size_t padding;
 	void* currentAddress = (void*)(sizeof(Header) + size);
 	void* nextAddress = (void*)(sizeof(Header) + size);
@@ -32,8 +29,7 @@ void* A5::FreeListAllocator::Allocate(const std::size_t size, const std::size_t 
 	LinkedList::Node* prev;
 	LinkedList::Node* best;
 
-	switch (m_SearchMethod)
-	{
+	switch (m_SearchMethod) {
 	case SearchMethod::FIRST:
 		m_List.SearchFirst(size + padding, best, prev);
 		break;
@@ -42,29 +38,22 @@ void* A5::FreeListAllocator::Allocate(const std::size_t size, const std::size_t 
 		break;
 	}
 
-	if (best == nullptr)
-	{
+	if (best == nullptr) {
 		return nullptr;
 	}
 
-	if (best->m_Value >= size + padding + sizeof(LinkedList::Node*) + 1)
-	{
+	if (best->m_Value >= size + padding + sizeof(LinkedList::Node*) + 1) {
 		LinkedList::Node* splittedNode = reinterpret_cast<LinkedList::Node*>(reinterpret_cast<char*>(best) + sizeof(Header) + size + padding);
 		splittedNode->m_Value = best->m_Value - (size + padding + sizeof(Header));
 		splittedNode->m_Next = best->m_Next;
 		best->m_Next = splittedNode;
-	}
-	else
-	{
+	} else {
 		padding += best->m_Value - (size + padding);
 	}
 
-	if (prev == nullptr)
-	{
+	if (prev == nullptr) {
 		m_List.m_Head = best->m_Next;
-	}
-	else
-	{
+	} else {
 		prev->m_Next = best->m_Next;
 	}
 
@@ -74,8 +63,7 @@ void* A5::FreeListAllocator::Allocate(const std::size_t size, const std::size_t 
 	return reinterpret_cast<char*>(best) + sizeof(Header);
 }
 
-void A5::FreeListAllocator::Deallocate(void* ptr)
-{
+void A5::FreeListAllocator::Deallocate(void* ptr) {
 	Header* header = reinterpret_cast<Header*>(reinterpret_cast<char*>(ptr) - sizeof(Header));
 
 	LinkedList::Node* node = reinterpret_cast<LinkedList::Node*>(header);
@@ -83,17 +71,12 @@ void A5::FreeListAllocator::Deallocate(void* ptr)
 
 	LinkedList::Node* prevIt = nullptr;
 	LinkedList::Node* it = m_List.m_Head;
-	while (it != nullptr)
-	{
-		if (node < it)
-		{
+	while (it != nullptr) {
+		if (node < it) {
 			node->m_Next = it;
-			if (prevIt == nullptr)
-			{
+			if (prevIt == nullptr) {
 				m_List.m_Head = node;
-			}
-			else
-			{
+			} else {
 				prevIt->m_Next = node;
 			}
 			break;
@@ -105,29 +88,24 @@ void A5::FreeListAllocator::Deallocate(void* ptr)
 	Coalescence(prevIt, node);
 }
 
-void A5::FreeListAllocator::Reset()
-{
+void A5::FreeListAllocator::Reset() {
 	Init();
 }
 
-void A5::FreeListAllocator::Init()
-{
+void A5::FreeListAllocator::Init() {
 	LinkedList::Node* head = reinterpret_cast<LinkedList::Node*>(m_StartAddress);
 	head->m_Value = m_Size - sizeof(Header);
 	head->m_Next = nullptr;
 	m_List.m_Head = head;
 }
 
-void A5::FreeListAllocator::Coalescence(LinkedList::Node* prev, LinkedList::Node* curr)
-{
-	if (curr->m_Next != nullptr && (std::size_t)curr + curr->m_Value + sizeof(Header) == (std::size_t)curr->m_Next)
-	{
+void A5::FreeListAllocator::Coalescence(LinkedList::Node* prev, LinkedList::Node* curr) {
+	if (curr->m_Next != nullptr && (std::size_t)curr + curr->m_Value + sizeof(Header) == (std::size_t)curr->m_Next) {
 		curr->m_Value += curr->m_Next->m_Value + sizeof(Header);
 		curr->m_Next = curr->m_Next->m_Next;
 	}
 
-	if (prev != nullptr && (std::size_t)prev + prev->m_Value + sizeof(Header) == (std::size_t)curr)
-	{
+	if (prev != nullptr && (std::size_t)prev + prev->m_Value + sizeof(Header) == (std::size_t)curr) {
 		prev->m_Value += curr->m_Value + sizeof(Header);
 		prev->m_Next = curr->m_Next;
 	}

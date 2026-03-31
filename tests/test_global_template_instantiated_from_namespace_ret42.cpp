@@ -10,18 +10,18 @@
 // types (Container<T>::Inner) whose qualified names contain "::", bypassing the
 // affected code path.
 
-template<typename T>
+template <typename T>
 struct Foo {
 	T value;
 	T get() const { return value; }
 };
 
 namespace bar {
-	int f() {
-		Foo<int> x{42};
-		return x.get();
-	}
+int f() {
+	Foo<int> x{42};
+	return x.get();
 }
+} // namespace bar
 
 int main() {
 	return bar::f(); // Expected: 42

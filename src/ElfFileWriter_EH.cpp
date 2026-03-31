@@ -5,14 +5,15 @@
 // Part of ElfFileWriter class (unity build)
 
 void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, uint32_t function_start,
-                                 uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks,
-                                 [[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map,
-                                 const std::vector<ElfFileWriter::CFIInstruction>& cfi_instructions,
-                                 const std::vector<ElfFileWriter::CleanupBlockInfo>& cleanup_blocks) {
+												uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks,
+												[[maybe_unused]] const std::vector<UnwindMapEntryInfo>& unwind_map,
+												const std::vector<ElfFileWriter::CFIInstruction>& cfi_instructions,
+												const std::vector<ElfFileWriter::CleanupBlockInfo>& cleanup_blocks) {
 	// Check if exception info has already been added for this function (O(1) with unordered_set)
 	std::string mangled_name_str(mangled_name);
 	if (!added_exception_functions_.insert(mangled_name_str).second) {
-		if (g_enable_debug_output) std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << "Exception info already added for function: " << mangled_name << " - skipping" << std::endl;
 		return;
 	}
 
@@ -23,9 +24,9 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 	fde_info.function_symbol = std::move(mangled_name_str);
 	fde_info.has_exception_handling = !try_blocks.empty() || !cleanup_blocks.empty();
 	fde_info.cfi_instructions = cfi_instructions;  // Store CFI instructions
-	
+
 	functions_with_fdes_.push_back(fde_info);
-	
+
 	// Generate LSDA if function has exception handling or cleanup landing pads
 	if (fde_info.has_exception_handling) {
 		LSDAGenerator::FunctionLSDAInfo lsda_info;
@@ -43,7 +44,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		// Sort try blocks by start offset to process them in order
 		std::vector<ObjectFileWriter::TryBlockInfo> sorted_try_blocks = try_blocks;
 		std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(),
-		         [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
+				  [](const auto& a, const auto& b) { return a.try_start_offset < b.try_start_offset; });
 
 		// Determine function_end_offset for call site coverage.
 		// The ENTIRE function must be covered by call site entries.
@@ -64,7 +65,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 				if (!handler.is_catch_all && !handler.type_name.empty()) {
 					catch_info.typeinfo_symbol = get_typeinfo_symbol(handler.type_name);
 					if (std::find(lsda_info.type_table.begin(), lsda_info.type_table.end(),
-					             catch_info.typeinfo_symbol) == lsda_info.type_table.end()) {
+								  catch_info.typeinfo_symbol) == lsda_info.type_table.end()) {
 						lsda_info.type_table.push_back(catch_info.typeinfo_symbol);
 					}
 				}
@@ -77,7 +78,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		// For nested try blocks, the innermost block takes priority.
 		struct TryEvent {
 			uint32_t offset;
-			bool is_start;       // true = start of try block, false = end
+			bool is_start;	   // true = start of try block, false = end
 			size_t block_index;
 			uint32_t end_offset; // end offset of the try block (for sorting)
 		};
@@ -91,10 +92,13 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 		// Sort: by offset, then END events before START events at same offset,
 		// then for START events at same offset: larger range (outer) before smaller (inner)
 		std::sort(events.begin(), events.end(), [](const TryEvent& a, const TryEvent& b) {
-			if (a.offset != b.offset) return a.offset < b.offset;
-			if (a.is_start != b.is_start) return !a.is_start;  // END before START
-			if (a.is_start) return a.end_offset > b.end_offset;  // Larger range first for START
-			return a.end_offset < b.end_offset;  // Smaller range first for END
+			if (a.offset != b.offset)
+				return a.offset < b.offset;
+			if (a.is_start != b.is_start)
+				return !a.is_start;	// END before START
+			if (a.is_start)
+				return a.end_offset > b.end_offset;	// Larger range first for START
+			return a.end_offset < b.end_offset;	// Smaller range first for END
 		});
 
 		// Process events to build non-overlapping regions
@@ -129,7 +133,10 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 					if (!region.catch_handlers.empty()) {
 						bool has_catch_all = false;
 						for (const auto& h : region.catch_handlers) {
-							if (h.is_catch_all) { has_catch_all = true; break; }
+							if (h.is_catch_all) {
+								has_catch_all = true;
+								break;
+							}
 						}
 						region.has_cleanup = !has_catch_all;
 					}
@@ -225,7 +232,7 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 						// Portion inside cleanup range but before LP code: redirect
 						uint32_t cleanup_code_start = cb.cleanup_lp;
 						if (r_start < cleanup_code_start && r_end > r_start &&
-						    r_start < cb.region_end) {
+							r_start < cb.region_end) {
 							uint32_t redirect_end = std::min({r_end, cleanup_code_start, cb.region_end});
 							if (redirect_end > r_start) {
 								LSDAGenerator::TryRegionInfo redirected;
@@ -257,9 +264,9 @@ void ElfFileWriter::add_function_exception_info(std::string_view mangled_name, u
 
 		if (g_enable_debug_output) {
 			std::cerr << "[ELF] Function " << mangled_name << " (length=" << fde_info.function_length
-			         << ") has " << try_blocks.size()
-			         << " try blocks, generated " << lsda_info.try_regions.size()
-			         << " call site entries" << std::endl;
+					  << ") has " << try_blocks.size()
+					  << " try blocks, generated " << lsda_info.try_regions.size()
+					  << " call site entries" << std::endl;
 		}
 	}
 }
@@ -287,12 +294,12 @@ std::string ElfFileWriter::get_typeinfo_symbol(const std::string& type_name) con
 		{"char16_t", "_ZTIDs"},
 		{"char32_t", "_ZTIDi"},
 	};
-	
+
 	auto it = typeinfo_map.find(type_name);
 	if (it != typeinfo_map.end()) {
 		return it->second;
 	}
-	
+
 	// For class types, generate symbol: _ZTI + length + name (Itanium ABI)
 	// Example: class "MyClass" -> "_ZTI7MyClass"
 	return "_ZTI" + std::to_string(type_name.length()) + type_name;
@@ -327,20 +334,22 @@ void ElfFileWriter::add_debug_relocation([[maybe_unused]] uint32_t offset, [[may
 // Generate Common Information Entry (CIE) for .eh_frame
 void ElfFileWriter::generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data, bool has_exception_handlers) {
 	// CIE header structure (x86-64 System V ABI)
-	
+
 	size_t length_offset = eh_frame_data.size();
-	
+
 	// Length field (will be filled in at the end)
-	for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
-	
+	for (int i = 0; i < 4; ++i)
+		eh_frame_data.push_back(0);
+
 	size_t cie_start = eh_frame_data.size();
-	
+
 	// CIE ID (0 for CIE)
-	for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
-	
+	for (int i = 0; i < 4; ++i)
+		eh_frame_data.push_back(0);
+
 	// Version
 	eh_frame_data.push_back(1);
-	
+
 	if (has_exception_handlers) {
 		// Augmentation string "zPLR" (null-terminated)
 		// z = has augmentation data
@@ -360,22 +369,22 @@ void ElfFileWriter::generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data, b
 		eh_frame_data.push_back('R');
 		eh_frame_data.push_back(0);
 	}
-	
+
 	// Code alignment factor (1 for x86-64)
 	DwarfCFI::appendULEB128(eh_frame_data, 1);
-	
+
 	// Data alignment factor (-8 for x86-64)
 	DwarfCFI::appendSLEB128(eh_frame_data, -8);
-	
+
 	// Return address register (RIP = 16 on x86-64)
 	DwarfCFI::appendULEB128(eh_frame_data, 16);
-	
+
 	// Augmentation data length (will be calculated)
 	size_t aug_length_offset = eh_frame_data.size();
-	eh_frame_data.push_back(0);  // Placeholder, will be updated
-	
+	eh_frame_data.push_back(0);	// Placeholder, will be updated
+
 	size_t aug_data_start = eh_frame_data.size();
-	
+
 	if (has_exception_handlers) {
 		// P: Personality routine encoding and pointer
 		// Use indirect|pcrel|sdata4 (0x9b) - the indirect flag is required because the
@@ -385,36 +394,37 @@ void ElfFileWriter::generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data, b
 		// Personality routine pointer (will need relocation to __gxx_personality_v0)
 		// Store offset for relocation tracking
 		personality_routine_offset_ = static_cast<uint32_t>(eh_frame_data.size());
-		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);  // Placeholder
-		
+		for (int i = 0; i < 4; ++i)
+			eh_frame_data.push_back(0);	// Placeholder
+
 		// L: LSDA encoding
 		// Use pcrel|sdata4 (0x1b = PC-relative signed 4-byte) with R_X86_64_PC32 relocation
 		// This is required for the linker to create .eh_frame_hdr
 		eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
 	}
-	
+
 	// R: FDE encoding (PC-relative signed 4-byte) - always present with 'z'
 	eh_frame_data.push_back(DwarfCFI::DW_EH_PE_pcrel | DwarfCFI::DW_EH_PE_sdata4);
-	
+
 	// Update augmentation data length
 	uint8_t aug_length = static_cast<uint8_t>(eh_frame_data.size() - aug_data_start);
 	eh_frame_data[aug_length_offset] = aug_length;
-	
+
 	// Initial instructions
 	// DW_CFA_def_cfa: RSP (reg 7) + 8
 	eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa);
 	DwarfCFI::appendULEB128(eh_frame_data, 7);  // RSP
 	DwarfCFI::appendULEB128(eh_frame_data, 8);  // Offset 8
-	
+
 	// DW_CFA_offset: RIP (reg 16) is at CFA-8
 	eh_frame_data.push_back(DwarfCFI::DW_CFA_offset | 16);
 	DwarfCFI::appendULEB128(eh_frame_data, 1);  // Offset 1 * -8 = -8
-	
+
 	// Pad to 8-byte alignment
 	while ((eh_frame_data.size() - cie_start + 4) % 8 != 0) {
 		eh_frame_data.push_back(DwarfCFI::DW_CFA_nop);
 	}
-	
+
 	// Fill in length (excluding the length field itself)
 	uint32_t cie_length = static_cast<uint32_t>(eh_frame_data.size() - cie_start);
 	eh_frame_data[length_offset + 0] = (cie_length >> 0) & 0xff;
@@ -424,37 +434,39 @@ void ElfFileWriter::generate_eh_frame_cie(std::vector<uint8_t>& eh_frame_data, b
 }
 
 // Generate Frame Description Entry (FDE) for a function
-void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data, 
-                           uint32_t cie_offset,
-                           FDEInfo& fde_info,
-                           bool cie_has_lsda) {  // Non-const so we can update pc_begin_offset
+void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data,
+										  uint32_t cie_offset,
+										  FDEInfo& fde_info,
+										  bool cie_has_lsda) {  // Non-const so we can update pc_begin_offset
 	// FDE structure
-	
+
 	size_t length_offset = eh_frame_data.size();
-	
+
 	// Length field (will be filled in at the end)
-	for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
-	
+	for (int i = 0; i < 4; ++i)
+		eh_frame_data.push_back(0);
+
 	size_t fde_start = eh_frame_data.size();
-	
+
 	// CIE pointer (offset from current location to CIE)
 	uint32_t cie_pointer = static_cast<uint32_t>(fde_start - cie_offset);
 	eh_frame_data.push_back((cie_pointer >> 0) & 0xff);
 	eh_frame_data.push_back((cie_pointer >> 8) & 0xff);
 	eh_frame_data.push_back((cie_pointer >> 16) & 0xff);
 	eh_frame_data.push_back((cie_pointer >> 24) & 0xff);
-	
+
 	// PC begin (will be relocated - placeholder for now)
 	// Record offset for relocation
 	fde_info.pc_begin_offset = static_cast<uint32_t>(eh_frame_data.size());
-	for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
-	
+	for (int i = 0; i < 4; ++i)
+		eh_frame_data.push_back(0);
+
 	// PC range (function length)
 	eh_frame_data.push_back((fde_info.function_length >> 0) & 0xff);
 	eh_frame_data.push_back((fde_info.function_length >> 8) & 0xff);
 	eh_frame_data.push_back((fde_info.function_length >> 16) & 0xff);
 	eh_frame_data.push_back((fde_info.function_length >> 24) & 0xff);
-	
+
 	// Augmentation data
 	// When CIE has 'L' (LSDA pointer format), every FDE must include an LSDA pointer field.
 	// For functions without exception handling, emit a null pointer (4 zero bytes, no relocation).
@@ -470,18 +482,19 @@ void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data,
 		}
 		// Emit 4 bytes: null for non-exception functions, placeholder for exception functions
 		// (the placeholder will be patched by R_X86_64_PC32 relocation)
-		for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
+		for (int i = 0; i < 4; ++i)
+			eh_frame_data.push_back(0);
 	} else {
 		// No LSDA in CIE - augmentation data length is 0
 		DwarfCFI::appendULEB128(eh_frame_data, 0);
 	}
-	
+
 	// Generate CFI instructions based on tracked prologue state
 	// The initial state from CIE is: CFA = RSP+8, RIP at CFA-8
 	// After push rbp: CFA = RSP+16, RBP at CFA-16
 	// After mov rbp, rsp: CFA = RBP+16
 	// After sub rsp, N: CFA still = RBP+16 (RBP-based frame)
-	
+
 	uint32_t last_offset = 0;
 	for (const auto& cfi : fde_info.cfi_instructions) {
 		// Emit DW_CFA_advance_loc if offset changed
@@ -502,7 +515,7 @@ void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data,
 			}
 			last_offset = cfi.offset;
 		}
-		
+
 		switch (cfi.type) {
 		case CFIInstruction::PUSH_RBP:
 			// After push rbp: CFA = RSP+16, RBP saved at CFA-16
@@ -513,23 +526,23 @@ void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data,
 			eh_frame_data.push_back(DwarfCFI::DW_CFA_offset | 6);  // RBP = register 6
 			DwarfCFI::appendULEB128(eh_frame_data, 2);  // 2 * 8 = 16
 			break;
-			
+
 		case CFIInstruction::MOV_RSP_RBP:
 			// After mov rbp, rsp: CFA = RBP+16 (use frame pointer)
 			// DW_CFA_def_cfa_register: rbp
 			eh_frame_data.push_back(DwarfCFI::DW_CFA_def_cfa_register);
 			DwarfCFI::appendULEB128(eh_frame_data, 6);  // RBP = register 6
 			break;
-			
+
 		case CFIInstruction::SUB_RSP:
 			// After sub rsp, N: CFA still RBP+16 (no change needed when using frame pointer)
 			// CFA remains based on RBP, not RSP
 			break;
-			
+
 		case CFIInstruction::ADD_RSP:
 			// Epilogue starts - no CFI change needed until pop rbp
 			break;
-			
+
 		case CFIInstruction::POP_RBP:
 			// After pop rbp: CFA = RSP+8 (back to call site state)
 			// DW_CFA_def_cfa: rsp, 8
@@ -537,22 +550,22 @@ void ElfFileWriter::generate_eh_frame_fde(std::vector<uint8_t>& eh_frame_data,
 			DwarfCFI::appendULEB128(eh_frame_data, 7);  // RSP = register 7
 			DwarfCFI::appendULEB128(eh_frame_data, 8);  // offset 8
 			break;
-			
+
 		case CFIInstruction::REMEMBER_STATE:
 			eh_frame_data.push_back(DwarfCFI::DW_CFA_remember_state);
 			break;
-			
+
 		case CFIInstruction::RESTORE_STATE:
 			eh_frame_data.push_back(DwarfCFI::DW_CFA_restore_state);
 			break;
 		}
 	}
-	
+
 	// Pad to 8-byte alignment
 	while ((eh_frame_data.size() - fde_start + 4) % 8 != 0) {
 		eh_frame_data.push_back(DwarfCFI::DW_CFA_nop);
 	}
-	
+
 	// Fill in length (excluding the length field itself)
 	uint32_t fde_length = static_cast<uint32_t>(eh_frame_data.size() - fde_start);
 	eh_frame_data[length_offset + 0] = (fde_length >> 0) & 0xff;
@@ -567,9 +580,9 @@ void ElfFileWriter::generate_eh_frame() {
 		// No functions with exception handling - skip .eh_frame generation
 		return;
 	}
-	
+
 	std::vector<uint8_t> eh_frame_data;
-	
+
 	// Check if any function has exception handling
 	bool has_exception_handlers = false;
 	for (const auto& fde_info : functions_with_fdes_) {
@@ -578,27 +591,28 @@ void ElfFileWriter::generate_eh_frame() {
 			break;
 		}
 	}
-	
+
 	// Generate CIE
 	uint32_t cie_offset = 0;
 	generate_eh_frame_cie(eh_frame_data, has_exception_handlers);
-	
+
 	// Generate FDEs for each function
 	for (auto& fde_info : functions_with_fdes_) {  // Non-const to update pc_begin_offset
 		generate_eh_frame_fde(eh_frame_data, cie_offset, fde_info, has_exception_handlers);
 	}
-	
+
 	// Add zero terminator (4 bytes of 0) to mark end of .eh_frame
-	for (int i = 0; i < 4; ++i) eh_frame_data.push_back(0);
-	
+	for (int i = 0; i < 4; ++i)
+		eh_frame_data.push_back(0);
+
 	// Create .eh_frame section
 	auto* eh_frame_section = elf_writer_.sections.add(".eh_frame");
 	eh_frame_section->set_type(ELFIO::SHT_X86_64_UNWIND);
 	eh_frame_section->set_flags(ELFIO::SHF_ALLOC);
 	eh_frame_section->set_addr_align(8);
 	eh_frame_section->set_data(reinterpret_cast<const char*>(eh_frame_data.data()),
-	                           eh_frame_data.size());
-	
+							   eh_frame_data.size());
+
 	// Create .rela.eh_frame section for relocations
 	auto* rela_eh_frame = elf_writer_.sections.add(".rela.eh_frame");
 	rela_eh_frame->set_type(ELFIO::SHT_RELA);
@@ -607,12 +621,11 @@ void ElfFileWriter::generate_eh_frame() {
 	rela_eh_frame->set_link(symtab_section_->get_index());
 	rela_eh_frame->set_addr_align(8);
 	rela_eh_frame->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-	
+
 	// Create relocation accessor for .eh_frame
 	auto rela_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-		elf_writer_, rela_eh_frame
-	);
-	
+		elf_writer_, rela_eh_frame);
+
 	// Add relocations for each FDE's PC begin field
 	// Build symbol cache once before the loop to avoid O(N²) symbol lookups
 	buildSymbolIndexCache();
@@ -626,10 +639,10 @@ void ElfFileWriter::generate_eh_frame() {
 		// Look up the symbol index via cache (O(1)) instead of O(N) scan
 		ELFIO::Elf_Word sym_idx = lookupSymbolIndex(fde_info.function_symbol);
 		rela_accessor->add_entry(fde_info.pc_begin_offset,
-		                        sym_idx,
-		                        ELFIO::R_X86_64_PC32,
-		                        0);  // Addend (0 for PC-relative to function start)
-		
+								 sym_idx,
+								 ELFIO::R_X86_64_PC32,
+								 0);	 // Addend (0 for PC-relative to function start)
+
 		// Add LSDA relocation if function has exception handling
 		if (fde_info.has_exception_handling && fde_info.lsda_pointer_offset > 0) {
 			// Locate .gcc_except_table symbol index (cached after first lookup)
@@ -644,8 +657,8 @@ void ElfFileWriter::generate_eh_frame() {
 						auto* accessor = getSymbolAccessor();
 						// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 						accessor->add_symbol(*string_accessor_, ".gcc_except_table",
-						                    0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
-						                    ELFIO::STV_DEFAULT, except_section->get_index());
+											 0, 0, ELFIO::STB_LOCAL, ELFIO::STT_SECTION,
+											 ELFIO::STV_DEFAULT, except_section->get_index());
 						gcc_except_table_sym_index = static_cast<ELFIO::Elf_Word>(accessor->get_symbols_num() - 1);
 						symbol_index_cache_[".gcc_except_table"] = gcc_except_table_sym_index;
 						found_except_table = true;
@@ -656,16 +669,16 @@ void ElfFileWriter::generate_eh_frame() {
 			// Add R_X86_64_PC32 relocation for LSDA pointer (pcrel|sdata4 encoding)
 			if (g_enable_debug_output) {
 				std::cerr << "[DEBUG] LSDA relocation for " << fde_info.function_symbol
-				         << ": offset=" << fde_info.lsda_pointer_offset
-				         << " lsda_offset=" << fde_info.lsda_offset << std::endl;
+						  << ": offset=" << fde_info.lsda_pointer_offset
+						  << " lsda_offset=" << fde_info.lsda_offset << std::endl;
 			}
 			rela_accessor->add_entry(fde_info.lsda_pointer_offset,
-			                        static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
-			                        ELFIO::R_X86_64_PC32,
-			                        static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
+									 static_cast<ELFIO::Elf_Word>(gcc_except_table_sym_index),
+									 ELFIO::R_X86_64_PC32,
+									 static_cast<ELFIO::Elf_Sxword>(fde_info.lsda_offset));
 		}
 	}
-	
+
 	// Add relocation for personality routine pointer in CIE
 	// The personality encoding is indirect (0x9b = indirect|pcrel|sdata4), which means:
 	// - The pointer in .eh_frame is NOT the address of __gxx_personality_v0
@@ -680,23 +693,23 @@ void ElfFileWriter::generate_eh_frame() {
 			personality_ref_section->set_type(ELFIO::SHT_PROGBITS);
 			personality_ref_section->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
 			personality_ref_section->set_addr_align(8);
-			
+
 			// Section data: 8 zero bytes (will be filled by linker via R_X86_64_64 relocation)
 			std::vector<uint8_t> ref_data(8, 0);
 			personality_ref_section->set_data(reinterpret_cast<const char*>(ref_data.data()), ref_data.size());
-			
+
 			// Step 2: Add __gxx_personality_v0 as undefined external symbol
-			accessor->add_symbol(*string_accessor_, "__gxx_personality_v0", 
-			                    0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE, 
-			                    ELFIO::STV_DEFAULT, 0);
+			accessor->add_symbol(*string_accessor_, "__gxx_personality_v0",
+								 0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
+								 ELFIO::STV_DEFAULT, 0);
 			ELFIO::Elf_Xword personality_sym_index = accessor->get_symbols_num() - 1;
-			
+
 			// Step 3: Add DW.ref.__gxx_personality_v0 symbol (weak, hidden) pointing to the ref section
 			accessor->add_symbol(*string_accessor_, "DW.ref.__gxx_personality_v0",
-			                    0, 8, ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
-			                    ELFIO::STV_HIDDEN, personality_ref_section->get_index());
+								 0, 8, ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
+								 ELFIO::STV_HIDDEN, personality_ref_section->get_index());
 			ELFIO::Elf_Xword dw_ref_sym_index = accessor->get_symbols_num() - 1;
-			
+
 			// Step 4: Create .rela.data.DW.ref.__gxx_personality_v0 for the R_X86_64_64 relocation
 			auto* rela_personality_ref = elf_writer_.sections.add(".rela.data.DW.ref.__gxx_personality_v0");
 			rela_personality_ref->set_type(ELFIO::SHT_RELA);
@@ -705,25 +718,25 @@ void ElfFileWriter::generate_eh_frame() {
 			rela_personality_ref->set_link(symtab_section_->get_index());
 			rela_personality_ref->set_addr_align(8);
 			rela_personality_ref->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-			
+
 			// Add R_X86_64_64 relocation from ref section to __gxx_personality_v0
 			ELFIO::relocation_section_accessor rela_ref_accessor(elf_writer_, rela_personality_ref);
 			rela_ref_accessor.add_entry(0,  // offset within the ref section
-			                           static_cast<ELFIO::Elf_Word>(personality_sym_index),
-			                           ELFIO::R_X86_64_64,
-			                           0);
-			
+										static_cast<ELFIO::Elf_Word>(personality_sym_index),
+										ELFIO::R_X86_64_64,
+										0);
+
 			// Step 5: Add R_X86_64_PC32 relocation in .eh_frame to DW.ref.__gxx_personality_v0
 			rela_accessor->add_entry(personality_routine_offset_,
-			                        static_cast<ELFIO::Elf_Word>(dw_ref_sym_index),
-			                        ELFIO::R_X86_64_PC32,
-			                        0);
+									 static_cast<ELFIO::Elf_Word>(dw_ref_sym_index),
+									 ELFIO::R_X86_64_PC32,
+									 0);
 		}
 	}
-	
+
 	if (g_enable_debug_output) {
-		std::cerr << "Generated .eh_frame section with " << functions_with_fdes_.size() 
-		         << " FDEs (" << eh_frame_data.size() << " bytes)" << std::endl;
+		std::cerr << "Generated .eh_frame section with " << functions_with_fdes_.size()
+				  << " FDEs (" << eh_frame_data.size() << " bytes)" << std::endl;
 	}
 }
 
@@ -735,11 +748,11 @@ void ElfFileWriter::generate_gcc_except_table() {
 		// No functions with exception handling
 		return;
 	}
-	
+
 	std::vector<uint8_t> gcc_except_table_data;
 	std::vector<std::pair<uint32_t, std::string>> all_type_table_relocations;
 	LSDAGenerator generator;
-	
+
 	// Generate LSDA for each function IN THE ORDER THEY APPEAR IN functions_with_fdes_
 	// This ensures the LSDA offsets match the FDE order (critical for correct .eh_frame relocations)
 	// Using unordered_map iteration order would break the LSDA-to-FDE mapping!
@@ -749,10 +762,10 @@ void ElfFileWriter::generate_gcc_except_table() {
 			// Function has no exception handling - no LSDA needed
 			continue;
 		}
-		
+
 		uint32_t lsda_offset = static_cast<uint32_t>(gcc_except_table_data.size());
 		fde_info.lsda_offset = lsda_offset;
-		
+
 		auto result = generator.generate(it->second);
 
 		// Adjust relocation offsets to be relative to .gcc_except_table start
@@ -761,7 +774,7 @@ void ElfFileWriter::generate_gcc_except_table() {
 		}
 
 		gcc_except_table_data.insert(gcc_except_table_data.end(),
-		                            result.data.begin(), result.data.end());
+									 result.data.begin(), result.data.end());
 	}
 
 	// Create .gcc_except_table section
@@ -770,8 +783,8 @@ void ElfFileWriter::generate_gcc_except_table() {
 	except_section->set_flags(ELFIO::SHF_ALLOC);
 	except_section->set_addr_align(4);
 	except_section->set_data(reinterpret_cast<const char*>(gcc_except_table_data.data()),
-	                        gcc_except_table_data.size());
-	
+							 gcc_except_table_data.size());
+
 	// Add a DATA symbol for the .gcc_except_table section
 	// Use STB_WEAK instead of STB_LOCAL so it doesn't break symbol ordering
 	// (WEAK symbols are treated like GLOBAL for ordering purposes)
@@ -779,13 +792,13 @@ void ElfFileWriter::generate_gcc_except_table() {
 	if (accessor && string_accessor_) {
 		// Parameters: (pStrWriter, name, value, size, bind, type, other, shndx)
 		ELFIO::Elf_Word gcc_etc_sym_idx = accessor->add_symbol(*string_accessor_, ".gcc_except_table",
-		                    0, gcc_except_table_data.size(), 
-		                    ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
-		                    ELFIO::STV_HIDDEN, except_section->get_index());
+															   0, gcc_except_table_data.size(),
+															   ELFIO::STB_WEAK, ELFIO::STT_OBJECT,
+															   ELFIO::STV_HIDDEN, except_section->get_index());
 		// Keep cache in sync so generate_eh_frame() can find this symbol without a full rebuild
 		symbol_index_cache_[".gcc_except_table"] = gcc_etc_sym_idx;
 	}
-	
+
 	// For indirect encoding (0x9b), we need to:
 	// 1. Create a .data section with 8-byte entries for each typeinfo pointer
 	// 2. Add R_X86_64_64 relocations from .data to typeinfo symbols
@@ -802,7 +815,7 @@ void ElfFileWriter::generate_gcc_except_table() {
 		typeinfo_data_section->set_flags(ELFIO::SHF_ALLOC | ELFIO::SHF_WRITE);
 		typeinfo_data_section->set_addr_align(8);
 		typeinfo_data_section->set_data(reinterpret_cast<const char*>(typeinfo_data.data()),
-		                               typeinfo_data.size());
+										typeinfo_data.size());
 
 		// Add .data section symbol (needed for LSDA relocations)
 		// Use STB_WEAK instead of STB_LOCAL to avoid symbol ordering issues
@@ -811,8 +824,8 @@ void ElfFileWriter::generate_gcc_except_table() {
 		ELFIO::Elf_Xword data_section_sym_index = 0;
 		if (sym_accessor && string_accessor_) {
 			sym_accessor->add_symbol(*string_accessor_, ".data",
-			                        0, 0, ELFIO::STB_WEAK, ELFIO::STT_SECTION,
-			                        ELFIO::STV_HIDDEN, typeinfo_data_section->get_index());
+									 0, 0, ELFIO::STB_WEAK, ELFIO::STT_SECTION,
+									 ELFIO::STV_HIDDEN, typeinfo_data_section->get_index());
 			data_section_sym_index = sym_accessor->get_symbols_num() - 1;
 			// Keep cache in sync
 			symbol_index_cache_[".data"] = static_cast<ELFIO::Elf_Word>(data_section_sym_index);
@@ -828,8 +841,7 @@ void ElfFileWriter::generate_gcc_except_table() {
 		rela_data->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
 
 		auto rela_data_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-			elf_writer_, rela_data
-		);
+			elf_writer_, rela_data);
 
 		// Create .rela.gcc_except_table for LSDA type table R_X86_64_PC32 relocations
 		auto* rela_except_table = elf_writer_.sections.add(".rela.gcc_except_table");
@@ -841,8 +853,7 @@ void ElfFileWriter::generate_gcc_except_table() {
 		rela_except_table->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
 
 		auto rela_except_accessor = std::make_unique<ELFIO::relocation_section_accessor>(
-			elf_writer_, rela_except_table
-		);
+			elf_writer_, rela_except_table);
 
 		uint32_t data_offset = 0;
 		// Build symbol cache once before the loop to avoid O(N²) typeinfo symbol lookups
@@ -858,37 +869,36 @@ void ElfFileWriter::generate_gcc_except_table() {
 				} else {
 					// Add as undefined external symbol
 					sym_accessor->add_symbol(*string_accessor_, symbol.c_str(),
-					                        0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
-					                        ELFIO::STV_DEFAULT, 0);
+											 0, 0, ELFIO::STB_GLOBAL, ELFIO::STT_NOTYPE,
+											 ELFIO::STV_DEFAULT, 0);
 					typeinfo_sym_index = sym_accessor->get_symbols_num() - 1;
 					symbol_index_cache_[symbol] = static_cast<ELFIO::Elf_Word>(typeinfo_sym_index);
 				}
 
 				// Add R_X86_64_64 relocation from .data to typeinfo symbol
 				rela_data_accessor->add_entry(data_offset,
-				                             static_cast<ELFIO::Elf_Word>(typeinfo_sym_index),
-				                             ELFIO::R_X86_64_64,
-				                             0);
+											  static_cast<ELFIO::Elf_Word>(typeinfo_sym_index),
+											  ELFIO::R_X86_64_64,
+											  0);
 
 				// Add R_X86_64_PC32 relocation from LSDA type table to .data entry
 				rela_except_accessor->add_entry(lsda_offset,
-				                               static_cast<ELFIO::Elf_Word>(data_section_sym_index),
-				                               ELFIO::R_X86_64_PC32,
-				                               static_cast<ELFIO::Elf_Sxword>(data_offset));
+												static_cast<ELFIO::Elf_Word>(data_section_sym_index),
+												ELFIO::R_X86_64_PC32,
+												static_cast<ELFIO::Elf_Sxword>(data_offset));
 
 				data_offset += 8;  // Each typeinfo pointer is 8 bytes
 			}
 		}
 	}
-	
+
 	if (g_enable_debug_output) {
-		std::cerr << "Generated .gcc_except_table section with " 
-		         << function_lsda_map_.size() << " LSDAs (" 
-		         << gcc_except_table_data.size() << " bytes), "
-		         << all_type_table_relocations.size() << " type_info relocations" << std::endl;
+		std::cerr << "Generated .gcc_except_table section with "
+				  << function_lsda_map_.size() << " LSDAs ("
+				  << gcc_except_table_data.size() << " bytes), "
+				  << all_type_table_relocations.size() << " type_info relocations" << std::endl;
 	}
 }
-
 
 // Section pointers for quick access
 
@@ -910,7 +920,6 @@ void ElfFileWriter::generate_gcc_except_table() {
 // Uses transparent hashing so std::string_view lookups avoid temporary std::string allocation.
 
 // ===== DWARF4 debug info data =====
-
 
 /**
  * @brief Create standard ELF sections
@@ -956,8 +965,7 @@ void ElfFileWriter::createStandardSections() {
 
 	// Create symbol accessor
 	symbol_accessor_ = std::make_unique<ELFIO::symbol_section_accessor>(
-		elf_writer_, symtab_section_
-	);
+		elf_writer_, symtab_section_);
 
 	// Create string accessor for symbol names
 	string_accessor_ = std::make_unique<ELFIO::string_section_accessor>(strtab_section_);
@@ -972,16 +980,15 @@ void ElfFileWriter::createStandardSections() {
 
 	// Create relocation accessor for .text
 	rela_accessors_[".rela.text"] = std::make_unique<ELFIO::relocation_section_accessor>(
-		elf_writer_, rela_text_section_
-	);
+		elf_writer_, rela_text_section_);
 
 	// .note.GNU-stack - marks stack as non-executable (security feature)
 	// This section is empty but must be present to avoid linker warnings
 	ELFIO::section* gnu_stack_section = elf_writer_.sections.add(".note.GNU-stack");
 	gnu_stack_section->set_type(ELFIO::SHT_PROGBITS);
-	gnu_stack_section->set_flags(0);  // No flags = non-executable stack
+	gnu_stack_section->set_flags(0);	 // No flags = non-executable stack
 	gnu_stack_section->set_addr_align(1);
-	gnu_stack_section->set_size(0);  // Empty section
+	gnu_stack_section->set_size(0);	// Empty section
 
 	if (g_enable_debug_output) {
 		std::cerr << "Created standard ELF sections" << std::endl;
@@ -1011,11 +1018,16 @@ ELFIO::section* ElfFileWriter::getSectionByName(const std::string& name) {
 ELFIO::section* ElfFileWriter::getSectionForType(SectionType type) {
 	// Map SectionType enum to ELF sections
 	switch (type) {
-		case SectionType::TEXT: return text_section_;
-		case SectionType::DATA: return data_section_;
-		case SectionType::BSS: return bss_section_;
-		case SectionType::RDATA: return rodata_section_;
-		default: return nullptr;
+	case SectionType::TEXT:
+		return text_section_;
+	case SectionType::DATA:
+		return data_section_;
+	case SectionType::BSS:
+		return bss_section_;
+	case SectionType::RDATA:
+		return rodata_section_;
+	default:
+		return nullptr;
 	}
 }
 
@@ -1031,19 +1043,19 @@ ELFIO::symbol_section_accessor* ElfFileWriter::getSymbolAccessor() {
  */
 ELFIO::section* ElfFileWriter::getOrCreateRelocationSection(const std::string& section_name) {
 	std::string rela_name = ".rela" + section_name;
-	
+
 	// Check if it already exists
 	auto* existing = getSectionByName(rela_name);
 	if (existing) {
 		return existing;
 	}
-	
+
 	// Get the target section
 	auto* target_section = getSectionByName(section_name);
 	if (!target_section) {
 		throw std::runtime_error("Target section " + section_name + " not found");
 	}
-	
+
 	// Create new relocation section
 	auto* rela_section = elf_writer_.sections.add(rela_name);
 	rela_section->set_type(ELFIO::SHT_RELA);
@@ -1051,16 +1063,15 @@ ELFIO::section* ElfFileWriter::getOrCreateRelocationSection(const std::string& s
 	rela_section->set_link(symtab_section_->get_index());
 	rela_section->set_addr_align(8);
 	rela_section->set_entry_size(elf_writer_.get_default_entry_size(ELFIO::SHT_RELA));
-	
+
 	// Create relocation accessor
 	rela_accessors_[rela_name] = std::make_unique<ELFIO::relocation_section_accessor>(
-		elf_writer_, rela_section
-	);
-	
+		elf_writer_, rela_section);
+
 	if (g_enable_debug_output) {
 		std::cerr << "Created relocation section " << rela_name << std::endl;
 	}
-	
+
 	return rela_section;
 }
 
@@ -1080,12 +1091,12 @@ ELFIO::relocation_section_accessor* ElfFileWriter::getRelocationAccessor(const s
  * @return Symbol index
  */
 ELFIO::Elf_Word ElfFileWriter::getOrCreateSymbol(std::string_view name, unsigned char type, unsigned char bind,
-                                   ELFIO::Elf_Half section_index,
-                                   ELFIO::Elf64_Addr value, ELFIO::Elf_Xword size) {
+												 ELFIO::Elf_Half section_index,
+												 ELFIO::Elf64_Addr value, ELFIO::Elf_Xword size) {
 	// Check cache first (O(1)).
 	// Invariant: every symbol added to ELFIO is also added to symbol_index_cache_,
 	// so a cache miss means the symbol truly does not yet exist.
-	auto cache_it = symbol_index_cache_.find(name);  // transparent: no temporary std::string
+	auto cache_it = symbol_index_cache_.find(name);	// transparent: no temporary std::string
 	if (cache_it != symbol_index_cache_.end()) {
 		ELFIO::Elf_Word i = cache_it->second;
 		// If existing symbol is undefined and we're providing a definition, update it
@@ -1102,7 +1113,7 @@ ELFIO::Elf_Word ElfFileWriter::getOrCreateSymbol(std::string_view name, unsigned
 				size_t entry_size = symtab_sec->get_entry_size();
 				size_t offset = i * entry_size;
 				// ELFIO's get_data() is const-only; cast is safe as we own the mutable section data
-			char* data = const_cast<char*>(symtab_sec->get_data());
+				char* data = const_cast<char*>(symtab_sec->get_data());
 				// Symbol table entry layout (64-bit):
 				// 0:4=st_name, 4:1=st_info, 5:1=st_other, 6:2=st_shndx, 8:8=st_value, 16:8=st_size
 				data[offset + 4] = (bind << 4) | (type & 0x0F);
@@ -1117,7 +1128,7 @@ ELFIO::Elf_Word ElfFileWriter::getOrCreateSymbol(std::string_view name, unsigned
 	// Cache miss → symbol doesn't exist; create it and add to cache
 	auto* accessor = getSymbolAccessor();
 	ELFIO::Elf_Word new_idx = accessor->add_symbol(*string_accessor_, name.data(), value, size, bind, type, ELFIO::STV_DEFAULT, section_index);
-	symbol_index_cache_.emplace(name, new_idx);  // name is std::string_view, emplace constructs std::string key
+	symbol_index_cache_.emplace(name, new_idx);	// name is std::string_view, emplace constructs std::string key
 	return new_idx;
 }
 
@@ -1125,7 +1136,8 @@ ELFIO::Elf_Word ElfFileWriter::getOrCreateSymbol(std::string_view name, unsigned
  * @brief Get symbol count
  */
 size_t ElfFileWriter::getSymbolCount() const {
-	if (!symbol_accessor_) return 0;
+	if (!symbol_accessor_)
+		return 0;
 	return symbol_accessor_->get_symbols_num();
 }
 
@@ -1134,22 +1146,42 @@ size_t ElfFileWriter::getSymbolCount() const {
  */
 std::string ElfFileWriter::processStringLiteral(std::string_view str_content) {
 	std::string result;
-	
+
 	if (str_content.size() >= 2 && str_content.front() == '"' && str_content.back() == '"') {
 		// Remove quotes
 		std::string_view content(str_content.data() + 1, str_content.size() - 2);
-		
+
 		// Process escape sequences
 		for (size_t i = 0; i < content.size(); ++i) {
 			if (content[i] == '\\' && i + 1 < content.size()) {
 				switch (content[i + 1]) {
-					case 'n': result += '\n'; ++i; break;
-					case 't': result += '\t'; ++i; break;
-					case 'r': result += '\r'; ++i; break;
-					case '\\': result += '\\'; ++i; break;
-					case '"': result += '"'; ++i; break;
-					case '0': result += '\0'; ++i; break;
-					default: result += content[i]; break;
+				case 'n':
+					result += '\n';
+					++i;
+					break;
+				case 't':
+					result += '\t';
+					++i;
+					break;
+				case 'r':
+					result += '\r';
+					++i;
+					break;
+				case '\\':
+					result += '\\';
+					++i;
+					break;
+				case '"':
+					result += '"';
+					++i;
+					break;
+				case '0':
+					result += '\0';
+					++i;
+					break;
+				default:
+					result += content[i];
+					break;
 				}
 			} else {
 				result += content[i];
@@ -1158,7 +1190,7 @@ std::string ElfFileWriter::processStringLiteral(std::string_view str_content) {
 	} else {
 		result = std::string(str_content);
 	}
-	
+
 	// Add null terminator
 	result += '\0';
 	return result;
@@ -1173,17 +1205,17 @@ void ElfFileWriter::finalizeSections() {
 	generate_gcc_except_table();
 	// Then generate .eh_frame with LSDA pointers
 	generate_eh_frame();
-	
+
 	// Update section sizes and offsets
 	// ELFIO handles most of this automatically, but we need to set sh_info for .symtab
-	
+
 	// For .symtab, sh_info should point to the first non-local symbol
 	// Count all local symbols
 	auto* accessor = getSymbolAccessor();
 	if (accessor) {
 		ELFIO::Elf_Xword sym_count = accessor->get_symbols_num();
 		ELFIO::Elf_Xword first_global = sym_count;  // Default to end if no globals
-		
+
 		for (ELFIO::Elf_Xword i = 0; i < sym_count; ++i) {
 			std::string sym_name;
 			ELFIO::Elf64_Addr sym_value;
@@ -1193,22 +1225,22 @@ void ElfFileWriter::finalizeSections() {
 			unsigned char sym_other;
 
 			accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
-			
+
 			// Check if this is a local symbol (bind == STB_LOCAL)
 			if (sym_bind != ELFIO::STB_LOCAL) {
 				first_global = i;
 				break;
 			}
 		}
-		
+
 		// Set sh_info to index of first global symbol
 		symtab_section_->set_info(first_global);
-		
+
 		if (g_enable_debug_output) {
 			std::cerr << "Symbol table: " << sym_count << " total symbols, first global at index " << first_global << std::endl;
 		}
 	}
-	
+
 	if (g_enable_debug_output) {
 		std::cerr << "Finalizing sections:" << std::endl;
 		std::cerr << "  .text size: " << text_section_->get_size() << std::endl;
@@ -1223,16 +1255,22 @@ void ElfFileWriter::finalizeSections() {
 // Build (or rebuild) the symbol name→index cache from the current symbol table.
 // Called lazily before any bulk symbol lookup to amortise the O(n) scan to O(1) per lookup.
 void ElfFileWriter::buildSymbolIndexCache() {
-	if (!symbol_index_cache_dirty_) return;
+	if (!symbol_index_cache_dirty_)
+		return;
 	symbol_index_cache_.clear();
 	auto* accessor = getSymbolAccessor();
-	if (!accessor) { symbol_index_cache_dirty_ = false; return; }
+	if (!accessor) {
+		symbol_index_cache_dirty_ = false;
+		return;
+	}
 	ELFIO::Elf_Xword count = accessor->get_symbols_num();
 	symbol_index_cache_.reserve(count);
 	for (ELFIO::Elf_Xword i = 0; i < count; ++i) {
 		std::string sym_name;
-		ELFIO::Elf64_Addr sv; ELFIO::Elf_Xword ss;
-		unsigned char sb, st, so; ELFIO::Elf_Half sec;
+		ELFIO::Elf64_Addr sv;
+		ELFIO::Elf_Xword ss;
+		unsigned char sb, st, so;
+		ELFIO::Elf_Half sec;
 		accessor->get_symbol(i, sym_name, sv, ss, sb, st, sec, so);
 		symbol_index_cache_.emplace(std::move(sym_name), static_cast<ELFIO::Elf_Word>(i));
 	}
@@ -1250,13 +1288,16 @@ ELFIO::Elf_Word ElfFileWriter::lookupSymbolIndex(const std::string& name) {
 // Update the st_size field of a FUNC symbol by name
 void ElfFileWriter::updateSymbolSize(const std::string& name, uint32_t size) {
 	auto* accessor = getSymbolAccessor();
-	if (!accessor) return;
+	if (!accessor)
+		return;
 	buildSymbolIndexCache();
 	auto it = symbol_index_cache_.find(name);
-	if (it == symbol_index_cache_.end()) return;
+	if (it == symbol_index_cache_.end())
+		return;
 	ELFIO::Elf_Xword i = it->second;
 	ELFIO::section* symtab_sec = getSectionByName(".symtab");
-	if (!symtab_sec) return;
+	if (!symtab_sec)
+		return;
 	// Verify it's a FUNC symbol before patching
 	std::string sym_name;
 	ELFIO::Elf64_Addr sym_value;
@@ -1264,7 +1305,8 @@ void ElfFileWriter::updateSymbolSize(const std::string& name, uint32_t size) {
 	unsigned char sym_bind, sym_type, sym_other;
 	ELFIO::Elf_Half sym_section;
 	accessor->get_symbol(i, sym_name, sym_value, sym_size, sym_bind, sym_type, sym_section, sym_other);
-	if (sym_type != ELFIO::STT_FUNC) return;
+	if (sym_type != ELFIO::STT_FUNC)
+		return;
 	size_t entry_size = symtab_sec->get_entry_size();
 	// ELFIO's get_data() is const-only; cast is safe as we own the mutable section data
 	char* data = const_cast<char*>(symtab_sec->get_data());
@@ -1275,48 +1317,90 @@ void ElfFileWriter::updateSymbolSize(const std::string& name, uint32_t size) {
 // Map CodeView x64 register code to DWARF x86-64 register number (System V AMD64)
 int ElfFileWriter::dwarfRegFromCodeViewReg(uint16_t cv) {
 	switch (cv) {
-		case  0: return  0; // RAX
-		case  1: return  2; // RCX
-		case  2: return  1; // RDX
-		case  3: return  3; // RBX
-		case  4: return  7; // RSP
-		case  5: return  6; // RBP
-		case  6: return  4; // RSI
-		case  7: return  5; // RDI
-		case  8: return  8; case  9: return  9;
-		case 10: return 10; case 11: return 11;
-		case 12: return 12; case 13: return 13;
-		case 14: return 14; case 15: return 15;
-		default:
-			if (cv >= 154 && cv <= 169) return 17 + (cv - 154); // XMM0-15
-			return -1;
+	case 0:
+		return 0; // RAX
+	case 1:
+		return 2; // RCX
+	case 2:
+		return 1; // RDX
+	case 3:
+		return 3; // RBX
+	case 4:
+		return 7; // RSP
+	case 5:
+		return 6; // RBP
+	case 6:
+		return 4; // RSI
+	case 7:
+		return 5; // RDI
+	case 8:
+		return 8;
+	case 9:
+		return 9;
+	case 10:
+		return 10;
+	case 11:
+		return 11;
+	case 12:
+		return 12;
+	case 13:
+		return 13;
+	case 14:
+		return 14;
+	case 15:
+		return 15;
+	default:
+		if (cv >= 154 && cv <= 169)
+			return 17 + (cv - 154); // XMM0-15
+		return -1;
 	}
 }
 
 // DWARF encoding helpers
-void ElfFileWriter::dw_u8 (std::vector<uint8_t>& b, uint8_t  v) { b.push_back(v); }
-void ElfFileWriter::dw_u16(std::vector<uint8_t>& b, uint16_t v) { b.push_back(v); b.push_back(v>>8); }
+void ElfFileWriter::dw_u8(std::vector<uint8_t>& b, uint8_t v) { b.push_back(v); }
+void ElfFileWriter::dw_u16(std::vector<uint8_t>& b, uint16_t v) {
+	b.push_back(v);
+	b.push_back(v >> 8);
+}
 void ElfFileWriter::dw_u32(std::vector<uint8_t>& b, uint32_t v) {
-	b.push_back(v); b.push_back(v>>8); b.push_back(v>>16); b.push_back(v>>24);
+	b.push_back(v);
+	b.push_back(v >> 8);
+	b.push_back(v >> 16);
+	b.push_back(v >> 24);
 }
 void ElfFileWriter::dw_u64(std::vector<uint8_t>& b, uint64_t v) {
-	for (int i = 0; i < 8; ++i) { b.push_back(v & 0xff); v >>= 8; }
+	for (int i = 0; i < 8; ++i) {
+		b.push_back(v & 0xff);
+		v >>= 8;
+	}
 }
 void ElfFileWriter::dw_uleb(std::vector<uint8_t>& b, uint64_t v) {
-	do { uint8_t byte = v & 0x7f; v >>= 7; if (v) byte |= 0x80; b.push_back(byte); } while (v);
+	do {
+		uint8_t byte = v & 0x7f;
+		v >>= 7;
+		if (v)
+			byte |= 0x80;
+		b.push_back(byte);
+	} while (v);
 }
 void ElfFileWriter::dw_sleb(std::vector<uint8_t>& b, int64_t v) {
 	bool more = true;
 	while (more) {
-		uint8_t byte = v & 0x7f; v >>= 7;
-		if ((v == 0 && !(byte & 0x40)) || (v == -1 && (byte & 0x40))) more = false;
-		else byte |= 0x80;
+		uint8_t byte = v & 0x7f;
+		v >>= 7;
+		if ((v == 0 && !(byte & 0x40)) || (v == -1 && (byte & 0x40)))
+			more = false;
+		else
+			byte |= 0x80;
 		b.push_back(byte);
 	}
 }
 // Patch a previously reserved 4-byte field
 void ElfFileWriter::dw_patch32(std::vector<uint8_t>& b, uint32_t off, uint32_t v) {
-	b[off]=v; b[off+1]=v>>8; b[off+2]=v>>16; b[off+3]=v>>24;
+	b[off] = v;
+	b[off + 1] = v >> 8;
+	b[off + 2] = v >> 16;
+	b[off + 3] = v >> 24;
 }
 
 // Build a DW_OP_fbreg location expression for a stack-relative variable.
@@ -1346,12 +1430,13 @@ std::vector<uint8_t> ElfFileWriter::dwarfRegExpr(int dwarf_reg) {
 ELFIO::Elf_Word ElfFileWriter::dwarfSymbolIndex(const std::string& name) {
 	buildSymbolIndexCache();
 	auto it = symbol_index_cache_.find(name);
-	if (it != symbol_index_cache_.end()) return it->second;
+	if (it != symbol_index_cache_.end())
+		return it->second;
 	// Not found – add a placeholder (will be resolved at link time)
 	auto* accessor = getSymbolAccessor();
 	ELFIO::Elf_Word idx = accessor->add_symbol(*string_accessor_, name.c_str(), 0, 0,
-	                            ELFIO::STB_GLOBAL, ELFIO::STT_FUNC,
-	                            ELFIO::STV_DEFAULT, ELFIO::SHN_UNDEF);
+											   ELFIO::STB_GLOBAL, ELFIO::STT_FUNC,
+											   ELFIO::STV_DEFAULT, ELFIO::SHN_UNDEF);
 	symbol_index_cache_[name] = idx;
 	return idx;
 }
@@ -1359,7 +1444,8 @@ ELFIO::Elf_Word ElfFileWriter::dwarfSymbolIndex(const std::string& name) {
 // Generate all DWARF4 debug sections
 void ElfFileWriter::generateDwarfSections() {
 	const std::string src_file = !debug_source_files_.empty()
-	                             ? debug_source_files_[0] : "unknown.cpp";
+									 ? debug_source_files_[0]
+									 : "unknown.cpp";
 
 	// ── .debug_str ──────────────────────────────────────────────────────────
 	std::vector<uint8_t> str_data;
@@ -1367,7 +1453,8 @@ void ElfFileWriter::generateDwarfSections() {
 
 	auto addStr = [&](const std::string& s) -> uint32_t {
 		auto it = str_cache.find(s);
-		if (it != str_cache.end()) return it->second;
+		if (it != str_cache.end())
+			return it->second;
 		uint32_t off = static_cast<uint32_t>(str_data.size());
 		str_data.insert(str_data.end(), s.begin(), s.end());
 		str_data.push_back(0);
@@ -1376,54 +1463,89 @@ void ElfFileWriter::generateDwarfSections() {
 	};
 
 	uint32_t producer_off = addStr("FlashCpp");
-	uint32_t compdir_off  = addStr(".");
-	uint32_t srcfile_off  = addStr(src_file);
+	uint32_t compdir_off = addStr(".");
+	uint32_t srcfile_off = addStr(src_file);
 	for (const auto& f : debug_functions_) {
 		addStr(f.name);
-		for (const auto& v : f.vars) addStr(v.name);
+		for (const auto& v : f.vars)
+			addStr(v.name);
 	}
 
 	// ── .debug_abbrev ───────────────────────────────────────────────────────
 	std::vector<uint8_t> abbrev_data;
 
 	// Abbrev 1: DW_TAG_compile_unit, has children
-	dw_uleb(abbrev_data, 1);   dw_uleb(abbrev_data, 0x11); dw_u8(abbrev_data, 1);
-	dw_uleb(abbrev_data, 0x25); dw_uleb(abbrev_data, 0x0e); // producer, strp
-	dw_uleb(abbrev_data, 0x13); dw_uleb(abbrev_data, 0x05); // language, data2
-	dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
-	dw_uleb(abbrev_data, 0x1b); dw_uleb(abbrev_data, 0x0e); // comp_dir, strp
-	dw_uleb(abbrev_data, 0x10); dw_uleb(abbrev_data, 0x17); // stmt_list, sec_offset
-	dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 1);
+	dw_uleb(abbrev_data, 0x11);
+	dw_u8(abbrev_data, 1);
+	dw_uleb(abbrev_data, 0x25);
+	dw_uleb(abbrev_data, 0x0e); // producer, strp
+	dw_uleb(abbrev_data, 0x13);
+	dw_uleb(abbrev_data, 0x05); // language, data2
+	dw_uleb(abbrev_data, 0x03);
+	dw_uleb(abbrev_data, 0x0e); // name, strp
+	dw_uleb(abbrev_data, 0x1b);
+	dw_uleb(abbrev_data, 0x0e); // comp_dir, strp
+	dw_uleb(abbrev_data, 0x10);
+	dw_uleb(abbrev_data, 0x17); // stmt_list, sec_offset
+	dw_u8(abbrev_data, 0);
+	dw_u8(abbrev_data, 0);
 
 	// Abbrev 2: DW_TAG_subprogram, has children
-	dw_uleb(abbrev_data, 2);   dw_uleb(abbrev_data, 0x2e); dw_u8(abbrev_data, 1);
-	dw_uleb(abbrev_data, 0x3f); dw_uleb(abbrev_data, 0x19); // external, flag_present
-	dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
-	dw_uleb(abbrev_data, 0x11); dw_uleb(abbrev_data, 0x01); // low_pc, addr
-	dw_uleb(abbrev_data, 0x12); dw_uleb(abbrev_data, 0x07); // high_pc, data8
-	dw_uleb(abbrev_data, 0x40); dw_uleb(abbrev_data, 0x18); // frame_base, exprloc
-	dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 2);
+	dw_uleb(abbrev_data, 0x2e);
+	dw_u8(abbrev_data, 1);
+	dw_uleb(abbrev_data, 0x3f);
+	dw_uleb(abbrev_data, 0x19); // external, flag_present
+	dw_uleb(abbrev_data, 0x03);
+	dw_uleb(abbrev_data, 0x0e); // name, strp
+	dw_uleb(abbrev_data, 0x11);
+	dw_uleb(abbrev_data, 0x01); // low_pc, addr
+	dw_uleb(abbrev_data, 0x12);
+	dw_uleb(abbrev_data, 0x07); // high_pc, data8
+	dw_uleb(abbrev_data, 0x40);
+	dw_uleb(abbrev_data, 0x18); // frame_base, exprloc
+	dw_u8(abbrev_data, 0);
+	dw_u8(abbrev_data, 0);
 
 	// Abbrev 3: DW_TAG_formal_parameter, no children
-	dw_uleb(abbrev_data, 3);   dw_uleb(abbrev_data, 0x05); dw_u8(abbrev_data, 0);
-	dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
-	dw_uleb(abbrev_data, 0x49); dw_uleb(abbrev_data, 0x13); // type, ref4
-	dw_uleb(abbrev_data, 0x02); dw_uleb(abbrev_data, 0x18); // location, exprloc
-	dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 3);
+	dw_uleb(abbrev_data, 0x05);
+	dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 0x03);
+	dw_uleb(abbrev_data, 0x0e); // name, strp
+	dw_uleb(abbrev_data, 0x49);
+	dw_uleb(abbrev_data, 0x13); // type, ref4
+	dw_uleb(abbrev_data, 0x02);
+	dw_uleb(abbrev_data, 0x18); // location, exprloc
+	dw_u8(abbrev_data, 0);
+	dw_u8(abbrev_data, 0);
 
 	// Abbrev 4: DW_TAG_variable, no children
-	dw_uleb(abbrev_data, 4);   dw_uleb(abbrev_data, 0x34); dw_u8(abbrev_data, 0);
-	dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
-	dw_uleb(abbrev_data, 0x49); dw_uleb(abbrev_data, 0x13); // type, ref4
-	dw_uleb(abbrev_data, 0x02); dw_uleb(abbrev_data, 0x18); // location, exprloc
-	dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 4);
+	dw_uleb(abbrev_data, 0x34);
+	dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 0x03);
+	dw_uleb(abbrev_data, 0x0e); // name, strp
+	dw_uleb(abbrev_data, 0x49);
+	dw_uleb(abbrev_data, 0x13); // type, ref4
+	dw_uleb(abbrev_data, 0x02);
+	dw_uleb(abbrev_data, 0x18); // location, exprloc
+	dw_u8(abbrev_data, 0);
+	dw_u8(abbrev_data, 0);
 
 	// Abbrev 5: DW_TAG_base_type, no children
-	dw_uleb(abbrev_data, 5);   dw_uleb(abbrev_data, 0x24); dw_u8(abbrev_data, 0);
-	dw_uleb(abbrev_data, 0x03); dw_uleb(abbrev_data, 0x0e); // name, strp
-	dw_uleb(abbrev_data, 0x3e); dw_uleb(abbrev_data, 0x0b); // encoding, data1
-	dw_uleb(abbrev_data, 0x0b); dw_uleb(abbrev_data, 0x0b); // byte_size, data1
-	dw_u8(abbrev_data, 0); dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 5);
+	dw_uleb(abbrev_data, 0x24);
+	dw_u8(abbrev_data, 0);
+	dw_uleb(abbrev_data, 0x03);
+	dw_uleb(abbrev_data, 0x0e); // name, strp
+	dw_uleb(abbrev_data, 0x3e);
+	dw_uleb(abbrev_data, 0x0b); // encoding, data1
+	dw_uleb(abbrev_data, 0x0b);
+	dw_uleb(abbrev_data, 0x0b); // byte_size, data1
+	dw_u8(abbrev_data, 0);
+	dw_u8(abbrev_data, 0);
 
 	dw_u8(abbrev_data, 0); // end of abbrev table
 
@@ -1434,28 +1556,30 @@ void ElfFileWriter::generateDwarfSections() {
 
 	// Header (DWARF4 line number program header)
 	uint32_t unit_len_off = static_cast<uint32_t>(line_data.size());
-	dw_u32(line_data, 0);                   // unit_length placeholder
-	dw_u16(line_data, 4);                   // version = 4
+	dw_u32(line_data, 0);					  // unit_length placeholder
+	dw_u16(line_data, 4);					  // version = 4
 	uint32_t hdr_len_off = static_cast<uint32_t>(line_data.size());
-	dw_u32(line_data, 0);                   // header_length placeholder
+	dw_u32(line_data, 0);					  // header_length placeholder
 	uint32_t hdr_body_start = static_cast<uint32_t>(line_data.size());
-	dw_u8(line_data, 1);                    // minimum_instruction_length
-	dw_u8(line_data, 1);                    // maximum_ops_per_insn (DWARF4)
-	dw_u8(line_data, 1);                    // default_is_stmt
+	dw_u8(line_data, 1);					 // minimum_instruction_length
+	dw_u8(line_data, 1);					 // maximum_ops_per_insn (DWARF4)
+	dw_u8(line_data, 1);					 // default_is_stmt
 	dw_u8(line_data, static_cast<uint8_t>(-5)); // line_base = -5
-	dw_u8(line_data, 14);                   // line_range
-	dw_u8(line_data, 13);                   // opcode_base
+	dw_u8(line_data, 14);					  // line_range
+	dw_u8(line_data, 13);					  // opcode_base
 	// standard_opcode_lengths[1..12]
-	static constexpr uint8_t kOpcLens[12] = {0,1,1,1,1,0,0,0,1,0,0,1};
-	for (uint8_t l : kOpcLens) dw_u8(line_data, l);
-	dw_u8(line_data, 0);                    // include_directories: empty list
+	static constexpr uint8_t kOpcLens[12] = {0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1};
+	for (uint8_t l : kOpcLens)
+		dw_u8(line_data, l);
+	dw_u8(line_data, 0);					 // include_directories: empty list
 	// file_names: entry 1
-	for (char c : src_file) dw_u8(line_data, static_cast<uint8_t>(c));
-	dw_u8(line_data, 0);                    // name null terminator
-	dw_uleb(line_data, 0);                  // directory index
-	dw_uleb(line_data, 0);                  // mtime
-	dw_uleb(line_data, 0);                  // file size
-	dw_u8(line_data, 0);                    // end of file_names list
+	for (char c : src_file)
+		dw_u8(line_data, static_cast<uint8_t>(c));
+	dw_u8(line_data, 0);					 // name null terminator
+	dw_uleb(line_data, 0);				   // directory index
+	dw_uleb(line_data, 0);				   // mtime
+	dw_uleb(line_data, 0);				   // file size
+	dw_u8(line_data, 0);					 // end of file_names list
 
 	// Patch header_length
 	uint32_t hdr_len_val = static_cast<uint32_t>(line_data.size()) - hdr_body_start;
@@ -1463,22 +1587,23 @@ void ElfFileWriter::generateDwarfSections() {
 
 	// Line number program – one sequence per function
 	for (const auto& f : debug_functions_) {
-		if (f.length == 0 || f.lines.empty()) continue;
+		if (f.length == 0 || f.lines.empty())
+			continue;
 
 		// Sort line entries by code offset
 		std::vector<DebugLineEntry> sorted_lines = f.lines;
 		std::sort(sorted_lines.begin(), sorted_lines.end(),
-		          [](const DebugLineEntry& a, const DebugLineEntry& b) {
-			          return a.code_offset < b.code_offset;
-		          });
+				  [](const DebugLineEntry& a, const DebugLineEntry& b) {
+					  return a.code_offset < b.code_offset;
+				  });
 
 		// DW_LNE_set_address at function start
-		dw_u8(line_data, 0x00);             // extended opcode
-		dw_uleb(line_data, 9);              // length: 1 + 8
-		dw_u8(line_data, 0x02);             // DW_LNE_set_address
+		dw_u8(line_data, 0x00);				// extended opcode
+		dw_uleb(line_data, 9);			   // length: 1 + 8
+		dw_u8(line_data, 0x02);				// DW_LNE_set_address
 		uint32_t addr_off = static_cast<uint32_t>(line_data.size());
 		line_relocs.push_back({addr_off, f.name});
-		dw_u64(line_data, 0);               // address (filled by relocation)
+		dw_u64(line_data, 0);				  // address (filled by relocation)
 
 		uint32_t cur_addr = 0;
 		uint32_t cur_line = 1; // initial line register = 1
@@ -1486,18 +1611,18 @@ void ElfFileWriter::generateDwarfSections() {
 		for (const auto& le : sorted_lines) {
 			// Advance PC
 			if (le.code_offset > cur_addr) {
-				dw_u8(line_data, 0x02);     // DW_LNS_advance_pc
+				dw_u8(line_data, 0x02);		// DW_LNS_advance_pc
 				dw_uleb(line_data, le.code_offset - cur_addr);
 				cur_addr = le.code_offset;
 			}
 			// Advance line
 			int32_t ldelta = static_cast<int32_t>(le.line_number) - static_cast<int32_t>(cur_line);
 			if (ldelta != 0) {
-				dw_u8(line_data, 0x03);     // DW_LNS_advance_line
+				dw_u8(line_data, 0x03);		// DW_LNS_advance_line
 				dw_sleb(line_data, ldelta);
 				cur_line = le.line_number;
 			}
-			dw_u8(line_data, 0x01);         // DW_LNS_copy
+			dw_u8(line_data, 0x01);			// DW_LNS_copy
 		}
 
 		// Advance to end of function
@@ -1514,7 +1639,7 @@ void ElfFileWriter::generateDwarfSections() {
 
 	// Patch unit_length for .debug_line
 	dw_patch32(line_data, unit_len_off,
-	           static_cast<uint32_t>(line_data.size()) - unit_len_off - 4);
+			   static_cast<uint32_t>(line_data.size()) - unit_len_off - 4);
 
 	// ── .debug_info ─────────────────────────────────────────────────────────
 	std::vector<uint8_t> info_data;
@@ -1523,14 +1648,18 @@ void ElfFileWriter::generateDwarfSections() {
 	// Map CodeView type index to DWARF base type properties.
 	// CV type indices (e.g. 0x74 = T_INT4) come from IRConverter's variable/parameter
 	// type_index assignments; DWARF encoding constants follow DWARF4 §7.8 (DW_ATE_*).
-	struct DwarfBaseType { const char* name; uint8_t encoding; uint8_t byte_size; };
+	struct DwarfBaseType {
+		const char* name;
+		uint8_t encoding;
+		uint8_t byte_size;
+	};
 	static constexpr std::pair<uint32_t, DwarfBaseType> kBaseTypes[] = {
-		{0x10, {"char",      6, 1}},  // T_CHAR      → DW_ATE_signed_char
-		{0x30, {"bool",      2, 1}},  // T_BOOL08    → DW_ATE_boolean
-		{0x40, {"float",     4, 4}},  // T_REAL32    → DW_ATE_float
-		{0x41, {"double",    4, 8}},  // T_REAL64    → DW_ATE_float
-		{0x72, {"long long", 5, 8}},  // T_INT8      → DW_ATE_signed
-		{0x74, {"int",       5, 4}},  // T_INT4      → DW_ATE_signed
+		{0x10, {"char", 6, 1}},	// T_CHAR      → DW_ATE_signed_char
+		{0x30, {"bool", 2, 1}},	// T_BOOL08    → DW_ATE_boolean
+		{0x40, {"float", 4, 4}},	 // T_REAL32    → DW_ATE_float
+		{0x41, {"double", 4, 8}},  // T_REAL64    → DW_ATE_float
+		{0x72, {"long long", 5, 8}},	 // T_INT8      → DW_ATE_signed
+		{0x74, {"int", 5, 4}},  // T_INT4      → DW_ATE_signed
 	};
 
 	// Collect unique CV type indices used by variables/parameters
@@ -1538,18 +1667,18 @@ void ElfFileWriter::generateDwarfSections() {
 
 	// Compilation unit header
 	uint32_t info_ul_off = static_cast<uint32_t>(info_data.size());
-	dw_u32(info_data, 0);       // unit_length placeholder
-	dw_u16(info_data, 4);       // version = 4
-	dw_u32(info_data, 0);       // debug_abbrev_offset = 0
-	dw_u8 (info_data, 8);       // address_size = 8
+	dw_u32(info_data, 0);		  // unit_length placeholder
+	dw_u16(info_data, 4);		  // version = 4
+	dw_u32(info_data, 0);		  // debug_abbrev_offset = 0
+	dw_u8(info_data, 8);		 // address_size = 8
 
 	// DW_TAG_compile_unit (abbrev 1)
 	dw_uleb(info_data, 1);
-	dw_u32(info_data, producer_off);    // DW_AT_producer
-	dw_u16(info_data, 0x0004);          // DW_AT_language = DW_LANG_C_plus_plus
-	dw_u32(info_data, srcfile_off);     // DW_AT_name
-	dw_u32(info_data, compdir_off);     // DW_AT_comp_dir
-	dw_u32(info_data, 0);               // DW_AT_stmt_list = 0 (offset into .debug_line)
+	dw_u32(info_data, producer_off);	 // DW_AT_producer
+	dw_u16(info_data, 0x0004);		   // DW_AT_language = DW_LANG_C_plus_plus
+	dw_u32(info_data, srcfile_off);		// DW_AT_name
+	dw_u32(info_data, compdir_off);		// DW_AT_comp_dir
+	dw_u32(info_data, 0);				  // DW_AT_stmt_list = 0 (offset into .debug_line)
 
 	// Emit DW_TAG_base_type DIEs for all types referenced by variables
 	// Only emit types that are actually used
@@ -1564,31 +1693,35 @@ void ElfFileWriter::generateDwarfSections() {
 		// Find the base type descriptor
 		const DwarfBaseType* bt = nullptr;
 		for (const auto& [cv, desc] : kBaseTypes)
-			if (cv == cv_type) { bt = &desc; break; }
-		if (!bt) continue; // skip unknown types
+			if (cv == cv_type) {
+				bt = &desc;
+				break;
+			}
+		if (!bt)
+			continue; // skip unknown types
 
 		// Record this DIE's CU-relative offset (from start of unit_length field)
 		die_offset = static_cast<uint32_t>(info_data.size()) - info_ul_off;
 		// Emit DW_TAG_base_type (abbrev 5)
 		dw_uleb(info_data, 5);
 		dw_u32(info_data, addStr(bt->name)); // DW_AT_name (strp) - may extend str_data
-		dw_u8 (info_data, bt->encoding);     // DW_AT_encoding
-		dw_u8 (info_data, bt->byte_size);    // DW_AT_byte_size
+		dw_u8(info_data, bt->encoding);		// DW_AT_encoding
+		dw_u8(info_data, bt->byte_size);	 // DW_AT_byte_size
 	}
 
 	// DW_TAG_subprogram entries
 	for (const auto& f : debug_functions_) {
-		dw_uleb(info_data, 2);          // abbrev 2 (DW_TAG_subprogram)
+		dw_uleb(info_data, 2);		   // abbrev 2 (DW_TAG_subprogram)
 		// DW_AT_external: flag_present → no data emitted
 		dw_u32(info_data, str_cache[f.name]); // DW_AT_name (strp)
 		// DW_AT_low_pc: 8-byte address with relocation
 		uint32_t low_pc_off = static_cast<uint32_t>(info_data.size());
 		info_relocs.push_back({low_pc_off, f.name});
-		dw_u64(info_data, 0);           // DW_AT_low_pc (placeholder)
-		dw_u64(info_data, f.length);    // DW_AT_high_pc (data8 = length)
+		dw_u64(info_data, 0);			  // DW_AT_low_pc (placeholder)
+		dw_u64(info_data, f.length);	 // DW_AT_high_pc (data8 = length)
 		// DW_AT_frame_base: exprloc = DW_OP_call_frame_cfa (1 byte)
 		dw_uleb(info_data, 1);
-		dw_u8(info_data, 0x9c);         // DW_OP_call_frame_cfa
+		dw_u8(info_data, 0x9c);			// DW_OP_call_frame_cfa
 
 		// Variable / parameter DIEs
 		for (const auto& v : f.vars) {
@@ -1615,13 +1748,13 @@ void ElfFileWriter::generateDwarfSections() {
 
 	// Patch unit_length
 	dw_patch32(info_data, info_ul_off,
-	           static_cast<uint32_t>(info_data.size()) - info_ul_off - 4);
+			   static_cast<uint32_t>(info_data.size()) - info_ul_off - 4);
 
 	// ── Create ELF sections ──────────────────────────────────────────────────
 
 	auto* debug_str_sec = elf_writer_.sections.add(".debug_str");
 	debug_str_sec->set_type(ELFIO::SHT_PROGBITS);
-	debug_str_sec->set_flags(0);  // No SHF_MERGE: linker would dedup suffixes and invalidate our offsets
+	debug_str_sec->set_flags(0);	 // No SHF_MERGE: linker would dedup suffixes and invalidate our offsets
 	debug_str_sec->set_addr_align(1);
 	debug_str_sec->set_data(reinterpret_cast<const char*>(str_data.data()), str_data.size());
 
@@ -1669,4 +1802,3 @@ void ElfFileWriter::generateDwarfSections() {
 			rela.add_entry(off, dwarfSymbolIndex(sym_name), ELFIO::R_X86_64_64, 0);
 	}
 }
-

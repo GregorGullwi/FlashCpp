@@ -1,10 +1,10 @@
-template<typename T>
+template <typename T>
 struct Box {
 	T value;
 	auto get() const;
 };
 
-template<typename T>
+template <typename T>
 auto Box<T>::get() const { return value; }
 
 int main() {

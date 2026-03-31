@@ -1,7 +1,7 @@
-template<typename T>
+template <typename T>
 struct S;
 
-template<>
+template <>
 struct S<int> {
 	int a : 3;
 	int b;

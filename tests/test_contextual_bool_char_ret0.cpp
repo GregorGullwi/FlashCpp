@@ -5,19 +5,19 @@ int main() {
 	char c = 'A';
 	char zero = '\0';
 
-	// if: nonzero char is true
+ // if: nonzero char is true
 	if (c) {
-		// ok
+	// ok
 	} else {
 		return 1;
 	}
 
-	// if: null char is false
+ // if: null char is false
 	if (zero) {
 		return 2;
 	}
 
-	// ternary with char condition
+ // ternary with char condition
 	int result = c ? 10 : 20;
 	if (result != 10) {
 		return 3;

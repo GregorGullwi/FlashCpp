@@ -414,8 +414,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// For struct pointer types, "same resolved Type" is not sufficient —
 			// Foo* and Bar* both resolve to Type::Struct.  Compare type_index too.
 			if (from_resolved_index.isStruct() &&
-			    from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
-			    from_resolved_index != to_resolved_index) {
+				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+				from_resolved_index != to_resolved_index) {
 				return ConversionPlan::no_match();
 			}
 			return ConversionPlan::exact_match();
@@ -425,8 +425,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// For struct pointer types, different type_index means different types — no match.
 		if (from_resolved_category == to_resolved_category) {
 			if (from_resolved_index.isStruct() &&
-			    from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
-			    from_resolved_index != to_resolved_index) {
+				from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+				from_resolved_index != to_resolved_index) {
 				return ConversionPlan::no_match();
 			}
 			// T* → const T* is a qualification conversion (C++20 [conv.qual]).
@@ -448,7 +448,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		// Use resolved types here to ensure that resolved typedefs still go through
 		// const-correctness checks (e.g., const MyInt* → void* where MyInt is typedef for int)
 		if (from_resolved_index.category() == TypeCategory::UserDefined ||
-		    to_resolved_index.category() == TypeCategory::UserDefined) {
+			to_resolved_index.category() == TypeCategory::UserDefined) {
 			// Still enforce const-correctness: const T* → T* is not allowed
 			if (from_pointee_is_const && !to_pointee_is_const) {
 				return ConversionPlan::no_match();
@@ -503,12 +503,12 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					// Two different struct types (e.g. Bar& vs Foo&) both resolve to
 					// Type::Struct, so we must also compare type_index.
 					if (from_base_index.isStruct() &&
-					    from_base_index.is_valid() && to_base_index.is_valid() &&
-					    from_base_index != to_base_index) {
+						from_base_index.is_valid() && to_base_index.is_valid() &&
+						from_base_index != to_base_index) {
 						// Per C++20 [conv.ref]/4: derived lvalue ref binds to base lvalue ref
 						// (standard derived-to-base reference conversion).
 						if (!from_is_rvalue && !to_is_rvalue &&
-						    isTransitivelyDerivedFrom(from.type_index(), to.type_index())) {
+							isTransitivelyDerivedFrom(from.type_index(), to.type_index())) {
 							return {ConversionRank::Conversion, StandardConversionKind::DerivedToBase, true};
 						}
 						return ConversionPlan::no_match();
@@ -557,8 +557,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				bool types_match = (from_base_category == to_base_category);
 				// For struct types, "same base type" requires the same type_index.
 				if (types_match && from_base_index.isStruct() &&
-				    from_base_index.is_valid() && to_base_index.is_valid() &&
-				    from_base_index != to_base_index) {
+					from_base_index.is_valid() && to_base_index.is_valid() &&
+					from_base_index != to_base_index) {
 					types_match = false;
 				}
 				if (!types_match) {
@@ -566,7 +566,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					// materializing a temporary of the referred-to type.
 					auto plan = buildConversionPlan(from_base_category, to_base_category);
 					if ((!to_is_rvalue && to_is_const && plan.is_valid) ||
-					    (to_is_rvalue && plan.is_valid)) {
+						(to_is_rvalue && plan.is_valid)) {
 						// Const lvalue ref can bind to values that can be converted
 						// and rvalue refs can bind to converted prvalues.
 						return plan;
@@ -611,8 +611,8 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 				// Two different struct types (e.g. Bar& → Foo) both resolve to
 				// Type::Struct, so we must also compare type_index.
 				if (from_resolved_index.isStruct() &&
-				    from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
-				    from_resolved_index != to_resolved_index) {
+					from_resolved_index.is_valid() && to_resolved_index.is_valid() &&
+					from_resolved_index != to_resolved_index) {
 					// Different struct types: a converting constructor (e.g. Target(const Source&))
 					// may allow this conversion. Check gTypeInfo if available.
 					if (hasConvertingConstructorFrom(to.type_index(), from.type_index())) {
@@ -620,7 +620,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 					}
 					// Struct info not yet finalized (parse-time): optimistically allow.
 					if (to.type_index().index() >= getTypeInfoCount() ||
-					    !getTypeInfo(to.type_index()).getStructInfo()) {
+						!getTypeInfo(to.type_index()).getStructInfo()) {
 						return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 					}
 					return ConversionPlan::no_match();
@@ -630,7 +630,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 			// If one type is still UserDefined after resolution attempt, accept as conversion
 			// This handles unresolved template parameter type aliases
 			if (from_resolved_index.category() == TypeCategory::UserDefined ||
-			    to_resolved_index.category() == TypeCategory::UserDefined) {
+				to_resolved_index.category() == TypeCategory::UserDefined) {
 				return {ConversionRank::Conversion, StandardConversionKind::None, true};
 			}
 			// Try conversion of the referenced type to target type
@@ -685,7 +685,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 	// For struct-to-struct, use type_index to distinguish same struct (ExactMatch) from
 	// different struct (UserDefined if a converting constructor exists, else no_match).
 	if (from_type_index.isStruct() && to_type_index.isStruct() &&
-	    from_type_index.is_valid() && to_type_index.is_valid()) {
+		from_type_index.is_valid() && to_type_index.is_valid()) {
 		if (from_type_index == to_type_index) {
 			return ConversionPlan::exact_match();
 		}
@@ -695,7 +695,7 @@ inline ConversionPlan buildConversionPlan(const TypeSpecifierNode& from, const T
 		}
 		// Struct info not yet finalized (parse-time): optimistically allow.
 		if (to.type_index().index() >= getTypeInfoCount() ||
-		    !getTypeInfo(to.type_index()).getStructInfo()) {
+			!getTypeInfo(to.type_index()).getStructInfo()) {
 			return {ConversionRank::UserDefined, StandardConversionKind::UserDefined, true};
 		}
 		return ConversionPlan::no_match();
@@ -718,7 +718,7 @@ struct OverloadResolutionResult {
 
 	OverloadResolutionResult() = default;
 	OverloadResolutionResult(const ASTNode* overload)
-	    : selected_overload(overload), is_ambiguous(false), has_match(true) {}
+		: selected_overload(overload), is_ambiguous(false), has_match(true) {}
 
 	static OverloadResolutionResult ambiguous() {
 		OverloadResolutionResult result;
@@ -738,7 +738,7 @@ struct ConstructorOverloadResolutionResult {
 
 	ConstructorOverloadResolutionResult() = default;
 	explicit ConstructorOverloadResolutionResult(const ConstructorDeclarationNode* overload)
-	    : selected_overload(overload), is_ambiguous(false), has_match(overload != nullptr) {}
+		: selected_overload(overload), is_ambiguous(false), has_match(overload != nullptr) {}
 
 	static ConstructorOverloadResolutionResult ambiguous() {
 		ConstructorOverloadResolutionResult result;
@@ -773,7 +773,7 @@ inline bool is_lvalue_expression_for_overload_resolution(const ASTNode& arg_node
 			return false;
 		}
 	},
-	                  arg_expr);
+					  arg_expr);
 }
 
 inline void adjust_argument_type_for_overload_resolution(const ASTNode& arg_node, TypeSpecifierNode& arg_type) {
@@ -803,8 +803,8 @@ inline size_t countMinRequiredArgs(const ConstructorDeclarationNode& ctor) {
 }
 
 inline bool isImplicitCopyOrMoveConstructorCandidate(
-    const StructTypeInfo& struct_info,
-    const ConstructorDeclarationNode& ctor_decl) {
+	const StructTypeInfo& struct_info,
+	const ConstructorDeclarationNode& ctor_decl) {
 	if (!ctor_decl.is_implicit() || !struct_info.own_type_index_.has_value()) {
 		return false;
 	}
@@ -823,18 +823,18 @@ inline bool isImplicitCopyOrMoveConstructorCandidate(
 	// Implicit copy/move ctors always have exactly 1 param that is a reference
 	// (lvalue for copy, rvalue for move) to the struct's own type.
 	if (!(param_type.is_lvalue_reference() || param_type.is_rvalue_reference()) ||
-	    !is_struct_type(param_type.category())) {
+		!is_struct_type(param_type.category())) {
 		return false;
 	}
 
 	return param_type.type_index().is_valid() &&
-	       param_type.type_index() == *struct_info.own_type_index_;
+		   param_type.type_index() == *struct_info.own_type_index_;
 }
 
 inline ConstructorOverloadResolutionResult resolve_constructor_overload(
-    const StructTypeInfo& struct_info,
-    const std::vector<TypeSpecifierNode>& argument_types,
-    bool skip_implicit = false) {
+	const StructTypeInfo& struct_info,
+	const std::vector<TypeSpecifierNode>& argument_types,
+	bool skip_implicit = false) {
 	const ConstructorDeclarationNode* best_match = nullptr;
 	std::vector<ConversionRank> best_ranks;
 	int num_best_matches = 0;
@@ -847,7 +847,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 
 		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
 		const bool is_implicit_copy_or_move =
-		    isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
 		if (skip_implicit && is_implicit_copy_or_move) {
 			continue;
 		}
@@ -862,7 +862,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 			const TypeSpecifierNode& arg_type = argument_types[0];
 			TypeCategory resolved_arg_type = resolve_type_alias(arg_type.type_index());
 			bool is_same_struct_type = is_struct_type(resolved_arg_type) &&
-			                           arg_type.type_index() == *struct_info.own_type_index_;
+									   arg_type.type_index() == *struct_info.own_type_index_;
 			if (!is_same_struct_type) {
 				continue;
 			}
@@ -927,7 +927,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 				bool prev_valid = true;
 				for (size_t k = 0; k < argument_types.size(); ++k) {
 					if (!prev_params[k].is<DeclarationNode>() ||
-					    !prev_params[k].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
+						!prev_params[k].as<DeclarationNode>().type_node().is<TypeSpecifierNode>()) {
 						prev_valid = false;
 						break;
 					}
@@ -985,9 +985,9 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload(
 // Tiebreaking: prefer value-param ctors over same-type-reference ctors (copy/move-like).
 // Ambiguous only when multiple non-copy-like explicit ctors match.
 inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
-    const StructTypeInfo& struct_info,
-    size_t num_args,
-    bool skip_implicit = false) {
+	const StructTypeInfo& struct_info,
+	size_t num_args,
+	bool skip_implicit = false) {
 	auto is_same_type_ref_ctor = [&](const ConstructorDeclarationNode& ctor) -> bool {
 		const auto& params = ctor.parameter_nodes();
 		if (params.empty() || !params[0].is<DeclarationNode>())
@@ -1014,7 +1014,7 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 		}
 		const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
 		const bool is_implicit_copy_or_move =
-		    isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
+			isImplicitCopyOrMoveConstructorCandidate(struct_info, ctor_decl);
 		if (skip_implicit && is_implicit_copy_or_move) {
 			continue;
 		}
@@ -1055,8 +1055,8 @@ inline ConstructorOverloadResolutionResult resolve_constructor_overload_arity(
 // Perform overload resolution for a function call
 // Returns the best matching overload, or nullptr if no match or ambiguous
 inline OverloadResolutionResult resolve_overload(
-    const std::vector<ASTNode>& overloads,
-    const std::vector<TypeSpecifierNode>& argument_types) {
+	const std::vector<ASTNode>& overloads,
+	const std::vector<TypeSpecifierNode>& argument_types) {
 	if (overloads.empty()) {
 		return OverloadResolutionResult::no_match();
 	}
@@ -1238,9 +1238,9 @@ inline OverloadResolutionResult resolve_overload(
 				const auto& bp = best_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 				const auto& cp = cand_params[i].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 				if (bp.type() != cp.type() || bp.type_index() != cp.type_index() ||
-				    bp.pointer_depth() != cp.pointer_depth() ||
-				    bp.is_reference() != cp.is_reference() ||
-				    bp.is_rvalue_reference() != cp.is_rvalue_reference()) {
+					bp.pointer_depth() != cp.pointer_depth() ||
+					bp.is_reference() != cp.is_reference() ||
+					bp.is_rvalue_reference() != cp.is_rvalue_reference()) {
 					differs_only_in_cv = false;
 					break;
 				}
@@ -1268,9 +1268,9 @@ struct OperatorOverloadResult {
 
 	OperatorOverloadResult() = default;
 	explicit OperatorOverloadResult(const StructMemberFunction* overload)
-	    : member_overload(overload), has_match(overload != nullptr) {}
+		: member_overload(overload), has_match(overload != nullptr) {}
 	explicit OperatorOverloadResult(const FunctionDeclarationNode* free_func)
-	    : free_function_overload(free_func), has_match(free_func != nullptr), is_free_function(free_func != nullptr) {}
+		: free_function_overload(free_func), has_match(free_func != nullptr), is_free_function(free_func != nullptr) {}
 
 	static OperatorOverloadResult ambiguous() {
 		OperatorOverloadResult result;
@@ -1398,10 +1398,10 @@ inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& ar
 }
 
 inline ConversionRank rankImplicitObjectToBinaryOperator(
-    const TypeSpecifierNode& object_spec,
-    const StructMemberFunction& member_func,
-    TypeIndex actual_object_type_index,
-    TypeIndex member_owner_type_index) {
+	const TypeSpecifierNode& object_spec,
+	const StructMemberFunction& member_func,
+	TypeIndex actual_object_type_index,
+	TypeIndex member_owner_type_index) {
 	if (object_spec.is_const() && !member_func.is_const()) {
 		return ConversionRank::NoMatch;
 	}
@@ -1426,10 +1426,10 @@ enum class BinaryOperatorCandidateComparison {
 };
 
 inline BinaryOperatorCandidateComparison compareBinaryOperatorCandidateRanks(
-    ConversionRank lhs_lhs_rank,
-    ConversionRank lhs_rhs_rank,
-    ConversionRank rhs_lhs_rank,
-    ConversionRank rhs_rhs_rank) {
+	ConversionRank lhs_lhs_rank,
+	ConversionRank lhs_rhs_rank,
+	ConversionRank rhs_lhs_rank,
+	ConversionRank rhs_rhs_rank) {
 	bool lhs_is_better = false;
 	bool lhs_is_worse = false;
 
@@ -1492,9 +1492,9 @@ inline OperatorOverloadResult findUnaryOperatorOverload(TypeIndex operand_type_i
 // Returns the member function that overloads the given operator, or nullptr if not found
 // This handles the member function form: a.operator+(b)
 inline OperatorOverloadResult findBinaryOperatorOverload(
-    const TypeSpecifierNode& left_type_spec,
-    const TypeSpecifierNode& right_type_spec,
-    OverloadableOperator operator_kind) {
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
+	OverloadableOperator operator_kind) {
 	TypeIndex left_type_index = left_type_spec.type_index();
 	if (!left_type_index.is_valid() || left_type_index.index() >= getTypeInfoCount()) {
 		return OperatorOverloadResult::no_overload();
@@ -1541,17 +1541,17 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 				continue;
 
 			ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
-			    left_type_spec,
-			    member_func,
-			    left_type_index,
-			    struct_idx);
+				left_type_spec,
+				member_func,
+				left_type_index,
+				struct_idx);
 			if (lhs_rank == ConversionRank::NoMatch)
 				continue;
 
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
-			    right_type_spec,
-			    param_type_node.as<TypeSpecifierNode>(),
-			    struct_idx);
+				right_type_spec,
+				param_type_node.as<TypeSpecifierNode>(),
+				struct_idx);
 			if (rhs_rank == ConversionRank::NoMatch)
 				continue;
 
@@ -1581,10 +1581,10 @@ inline OperatorOverloadResult findBinaryOperatorOverload(
 			if (i == j)
 				continue;
 			if (compareBinaryOperatorCandidateRanks(
-			        candidates[j].lhs_rank,
-			        candidates[j].rhs_rank,
-			        candidate.lhs_rank,
-			        candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+					candidates[j].lhs_rank,
+					candidates[j].rhs_rank,
+					candidate.lhs_rank,
+					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
 				is_dominated = true;
 				break;
 			}
@@ -1615,9 +1615,9 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 		}
 	}
 	return findBinaryOperatorOverload(
-	    makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
-	    makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
-	    operator_kind);
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
+		operator_kind);
 }
 
 // Find binary operator overload, including free-function operators in the given symbol table.
@@ -1626,11 +1626,11 @@ inline OperatorOverloadResult findBinaryOperatorOverload(TypeIndex left_type_ind
 // When a member and non-member have identical conversion ranks on all positions,
 // the member is preferred per [over.match.oper]/3.3.
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
-    const TypeSpecifierNode& left_type_spec,
-    const TypeSpecifierNode& right_type_spec,
-    OverloadableOperator operator_kind,
-    std::string_view operator_symbol,
-    const SymbolTable& symbol_table) {
+	const TypeSpecifierNode& left_type_spec,
+	const TypeSpecifierNode& right_type_spec,
+	OverloadableOperator operator_kind,
+	std::string_view operator_symbol,
+	const SymbolTable& symbol_table) {
 	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
 		ConversionRank lhs_rank;
@@ -1675,17 +1675,17 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 				continue;
 
 			ConversionRank lhs_rank = rankImplicitObjectToBinaryOperator(
-			    left_type_spec,
-			    member_func,
-			    left_type_index,
-			    struct_idx);
+				left_type_spec,
+				member_func,
+				left_type_index,
+				struct_idx);
 			if (lhs_rank == ConversionRank::NoMatch)
 				continue;
 
 			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
-			    right_type_spec,
-			    param_type_node.as<TypeSpecifierNode>(),
-			    struct_idx);
+				right_type_spec,
+				param_type_node.as<TypeSpecifierNode>(),
+				struct_idx);
 			if (rhs_rank != ConversionRank::NoMatch) {
 				candidates.push_back({lhs_rank, rhs_rank, &member_func, nullptr, false});
 			}
@@ -1807,10 +1807,10 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 			if (i == j)
 				continue;
 			if (compareBinaryOperatorCandidateRanks(
-			        candidates[j].lhs_rank,
-			        candidates[j].rhs_rank,
-			        candidate.lhs_rank,
-			        candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+					candidates[j].lhs_rank,
+					candidates[j].rhs_rank,
+					candidate.lhs_rank,
+					candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
 				is_dominated = true;
 				break;
 			}
@@ -1835,10 +1835,10 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 				if (other->is_free_function)
 					continue;
 				if (compareBinaryOperatorCandidateRanks(
-				        candidate->lhs_rank,
-				        candidate->rhs_rank,
-				        other->lhs_rank,
-				        other->rhs_rank) == BinaryOperatorCandidateComparison::Equivalent) {
+						candidate->lhs_rank,
+						candidate->rhs_rank,
+						other->lhs_rank,
+						other->rhs_rank) == BinaryOperatorCandidateComparison::Equivalent) {
 					loses_member_tiebreak = true;
 					break;
 				}
@@ -1865,12 +1865,12 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 }
 
 inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
-    TypeIndex left_type_index,
-    TypeIndex right_type_index,
-    OverloadableOperator operator_kind,
-    std::string_view operator_symbol,
-    const SymbolTable& symbol_table,
-    TypeCategory right_type) {
+	TypeIndex left_type_index,
+	TypeIndex right_type_index,
+	OverloadableOperator operator_kind,
+	std::string_view operator_symbol,
+	const SymbolTable& symbol_table,
+	TypeCategory right_type) {
 	TypeCategory effective_right_type = right_type;
 	if (right_type_index.is_valid()) {
 		TypeCategory indexed_right_type = resolve_type_alias(right_type_index);
@@ -1879,11 +1879,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		}
 	}
 	return findBinaryOperatorOverloadWithFreeFunction(
-	    makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
-	    makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
-	    operator_kind,
-	    operator_symbol,
-	    symbol_table);
+		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
+		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
+		operator_kind,
+		operator_symbol,
+		symbol_table);
 }
 
 // ============================================================================
@@ -1915,8 +1915,8 @@ inline FlashCpp::TypeIndexArg makeTypeIndexArgFromSpec(const TypeSpecifierNode& 
  * The key can be used as a hash map key for O(1) function resolution cache lookups.
  */
 inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
-    StringHandle function_name,
-    const std::vector<TypeSpecifierNode>& argument_types) {
+	StringHandle function_name,
+	const std::vector<TypeSpecifierNode>& argument_types) {
 
 	FlashCpp::FunctionSignatureKey key(function_name);
 	key.param_types.reserve(argument_types.size());
@@ -1938,11 +1938,11 @@ inline FlashCpp::FunctionSignatureKey makeFunctionSignatureKey(
  * Value: Pointer to the selected function declaration ASTNode (or nullptr if no match)
  */
 inline std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult,
-                          FlashCpp::FunctionSignatureKeyHash>&
+						  FlashCpp::FunctionSignatureKeyHash>&
 getFunctionResolutionCache() {
 	static std::unordered_map<FlashCpp::FunctionSignatureKey, OverloadResolutionResult,
-	                          FlashCpp::FunctionSignatureKeyHash>
-	    cache;
+							  FlashCpp::FunctionSignatureKeyHash>
+		cache;
 	return cache;
 }
 
@@ -1968,9 +1968,9 @@ inline void clearFunctionResolutionCache() {
  * @return OverloadResolutionResult with selected overload or no_match/ambiguous
  */
 inline OverloadResolutionResult resolve_overload_cached(
-    StringHandle function_name,
-    const std::vector<ASTNode>& overloads,
-    const std::vector<TypeSpecifierNode>& argument_types) {
+	StringHandle function_name,
+	const std::vector<ASTNode>& overloads,
+	const std::vector<TypeSpecifierNode>& argument_types) {
 	// Build signature key for cache lookup
 	auto key = makeFunctionSignatureKey(function_name, argument_types);
 

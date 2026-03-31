@@ -11,5 +11,5 @@ struct Caller {
 
 int main() {
 	Caller c;
-	return c(5);  // Expected: 5 + 10 = 15
+	return c(5);	 // Expected: 5 + 10 = 15
 }

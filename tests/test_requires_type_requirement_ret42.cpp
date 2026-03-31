@@ -2,22 +2,22 @@
 // Pattern from <type_traits> line 2736:
 // requires requires { typename _Op<_Args...>; }
 
-template<typename T>
+template <typename T>
 struct Container {
-    using type = T;
+	using type = T;
 };
 
 // Type requirement with template instantiation in requires expression
-template<typename T>
+template <typename T>
 concept HasContainer = requires {
-    typename Container<T>;  // Type requirement with template arguments
+	typename Container<T>;  // Type requirement with template arguments
 };
 
-template<HasContainer T>
+template <HasContainer T>
 int getValue() {
-    return 42;
+	return 42;
 }
 
 int main() {
-    return getValue<int>();
+	return getValue<int>();
 }

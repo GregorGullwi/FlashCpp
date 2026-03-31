@@ -2,5 +2,5 @@
 concept Integral = true;
 
 int main() {
-    return 42;
+	return 42;
 }

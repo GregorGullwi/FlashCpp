@@ -7,14 +7,14 @@
 //
 // Return value is 0 on success.
 namespace ns {
-	struct Container {
-		typedef int MyInt;
-	};
+struct Container {
+	typedef int MyInt;
+};
 
-	int check(Container::MyInt v) {
-		return v;
-	}
+int check(Container::MyInt v) {
+	return v;
 }
+} // namespace ns
 
 int main() {
 	ns::Container::MyInt x = 0;

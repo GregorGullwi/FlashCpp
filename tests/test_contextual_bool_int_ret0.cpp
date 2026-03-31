@@ -5,19 +5,19 @@ int main() {
 	int x = 42;
 	int zero = 0;
 
-	// if: nonzero int is true
+ // if: nonzero int is true
 	if (x) {
-		// ok
+	// ok
 	} else {
 		return 1;
 	}
 
-	// if: zero int is false
+ // if: zero int is false
 	if (zero) {
 		return 2;
 	}
 
-	// while: nonzero int → true, zero → false
+ // while: nonzero int → true, zero → false
 	int count = 3;
 	while (count) {
 		count = count - 1;
@@ -26,7 +26,7 @@ int main() {
 		return 3;
 	}
 
-	// for: int condition
+ // for: int condition
 	int sum = 0;
 	for (int i = 5; i; i = i - 1) {
 		sum = sum + 1;
@@ -35,7 +35,7 @@ int main() {
 		return 4;
 	}
 
-	// do-while: int condition
+ // do-while: int condition
 	int n = 3;
 	do {
 		n = n - 1;
@@ -44,7 +44,7 @@ int main() {
 		return 5;
 	}
 
-	// ternary: int condition
+ // ternary: int condition
 	int result = x ? 10 : 20;
 	if (result != 10) {
 		return 6;

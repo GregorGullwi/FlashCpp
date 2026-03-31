@@ -34,7 +34,7 @@
  */
 
 #include "AstNodeTypes.h"  // For Type, TypeIndex
-#include "StringTable.h"   // For StringHandle
+#include "StringTable.h"	 // For StringHandle
 #include "InlineVector.h"  // For InlineVector
 #include <array>
 #include <vector>
@@ -59,11 +59,11 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 	// Compare every field that contributes to function type identity in the AST signature model:
 	// return type, parameter types, linkage, member class name, and cv-qualification.
 	if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
-	    lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
-	    lhs.linkage != rhs.linkage ||
-	    lhs.class_name != rhs.class_name ||
-	    lhs.is_const != rhs.is_const ||
-	    lhs.is_volatile != rhs.is_volatile) {
+		lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
+		lhs.linkage != rhs.linkage ||
+		lhs.class_name != rhs.class_name ||
+		lhs.is_const != rhs.is_const ||
+		lhs.is_volatile != rhs.is_volatile) {
 		return false;
 	}
 	for (size_t i = 0; i < lhs.parameter_type_indices.size(); ++i) {
@@ -101,41 +101,41 @@ inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
  * type_index.category(); no separate base_type field is needed.
  */
 struct TypeIndexArg {
-	TypeIndex type_index {};
-	
+	TypeIndex type_index{};
+
 	// CV-qualifiers and reference info that affect template identity
 	// These are stored separately because the same TypeIndex with different
 	// qualifiers represents different template arguments (e.g., int vs const int&)
 	CVQualifier cv_qualifier = CVQualifier::None;
 	ReferenceQualifier ref_qualifier = ReferenceQualifier::None;
 	uint8_t pointer_depth = 0;
-	
+
 	// Array information - critical for differentiating T[], T[N], and T
 	bool is_array = false;
 	std::optional<size_t> array_size;  // nullopt for T[], value for T[N]
 	std::optional<FunctionSignature> function_signature; // Needed for function pointer identity
-	
+
 	TypeIndexArg() = default;
-	
+
 	explicit TypeIndexArg(TypeIndex idx) : type_index(idx) {}
-	
+
 	bool operator==(const TypeIndexArg& other) const {
 		return type_index == other.type_index &&
-		       type_index.category() == other.type_index.category() &&
-		       cv_qualifier == other.cv_qualifier &&
-		       ref_qualifier == other.ref_qualifier &&
-		       pointer_depth == other.pointer_depth &&
-		       is_array == other.is_array &&
-		       array_size == other.array_size &&
-		       function_signature.has_value() == other.function_signature.has_value() &&
-		       (!function_signature.has_value() ||
-		        equalFunctionSignatureIdentity(*function_signature, *other.function_signature));
+			   type_index.category() == other.type_index.category() &&
+			   cv_qualifier == other.cv_qualifier &&
+			   ref_qualifier == other.ref_qualifier &&
+			   pointer_depth == other.pointer_depth &&
+			   is_array == other.is_array &&
+			   array_size == other.array_size &&
+			   function_signature.has_value() == other.function_signature.has_value() &&
+			   (!function_signature.has_value() ||
+				equalFunctionSignatureIdentity(*function_signature, *other.function_signature));
 	}
-	
+
 	bool operator!=(const TypeIndexArg& other) const {
 		return !(*this == other);
 	}
-	
+
 	size_t hash() const {
 		size_t h = hashTypeIndexIdentity(type_index);
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(cv_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -179,32 +179,32 @@ struct TypeIndexArg {
  * to each type during parsing.
  */
 struct TemplateInstantiationKey {
-	StringHandle base_template;                           // Template name handle
-	InlineVector<TypeIndexArg, 4> type_args;              // Type arguments
-	InlineVector<int64_t, 4> value_args;                  // Non-type arguments
+	StringHandle base_template;							// Template name handle
+	InlineVector<TypeIndexArg, 4> type_args;				 // Type arguments
+	InlineVector<int64_t, 4> value_args;					 // Non-type arguments
 	InlineVector<StringHandle, 2> template_template_args; // Template template args
-	
+
 	TemplateInstantiationKey() = default;
-	
+
 	explicit TemplateInstantiationKey(StringHandle template_name)
 		: base_template(template_name) {}
-	
+
 	bool operator==(const TemplateInstantiationKey& other) const {
 		return base_template == other.base_template &&
-		       type_args == other.type_args &&
-		       value_args == other.value_args &&
-		       template_template_args == other.template_template_args;
+			   type_args == other.type_args &&
+			   value_args == other.value_args &&
+			   template_template_args == other.template_template_args;
 	}
-	
+
 	bool operator!=(const TemplateInstantiationKey& other) const {
 		return !(*this == other);
 	}
-	
+
 	// Check if the key is empty (no template specified)
 	[[nodiscard]] bool empty() const {
 		return base_template.handle == 0;
 	}
-	
+
 	// Clear the key
 	void clear() {
 		base_template = StringHandle{};
@@ -220,22 +220,22 @@ struct TemplateInstantiationKey {
 struct TemplateInstantiationKeyHash {
 	size_t operator()(const TemplateInstantiationKey& key) const {
 		size_t h = std::hash<uint32_t>{}(key.base_template.handle);
-		
+
 		// Hash type arguments
 		for (const auto& arg : key.type_args) {
 			h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
-		
+
 		// Hash value arguments
 		for (const auto& val : key.value_args) {
 			h ^= std::hash<int64_t>{}(val) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
-		
+
 		// Hash template template arguments
 		for (const auto& tmpl : key.template_template_args) {
 			h ^= std::hash<uint32_t>{}(tmpl.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
-		
+
 		return h;
 	}
 };
@@ -258,27 +258,27 @@ struct TemplateInstantiationKeyHash {
  * - param_qualifiers: CV and reference qualifiers for each parameter
  */
 struct FunctionSignatureKey {
-	StringHandle function_name;                   // Function name handle
-	InlineVector<TypeIndexArg, 8> param_types;    // Parameter types (8 inline for common cases)
-	
+	StringHandle function_name;					// Function name handle
+	InlineVector<TypeIndexArg, 8> param_types;	   // Parameter types (8 inline for common cases)
+
 	FunctionSignatureKey() = default;
-	
+
 	explicit FunctionSignatureKey(StringHandle name)
 		: function_name(name) {}
-	
+
 	bool operator==(const FunctionSignatureKey& other) const {
 		return function_name == other.function_name &&
-		       param_types == other.param_types;
+			   param_types == other.param_types;
 	}
-	
+
 	bool operator!=(const FunctionSignatureKey& other) const {
 		return !(*this == other);
 	}
-	
+
 	[[nodiscard]] bool empty() const {
 		return function_name.handle == 0;
 	}
-	
+
 	void clear() {
 		function_name = StringHandle{};
 		param_types.clear();
@@ -291,12 +291,12 @@ struct FunctionSignatureKey {
 struct FunctionSignatureKeyHash {
 	size_t operator()(const FunctionSignatureKey& key) const {
 		size_t h = std::hash<uint32_t>{}(key.function_name.handle);
-		
+
 		// Hash parameter types
 		for (const auto& param : key.param_types) {
 			h ^= param.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
-		
+
 		return h;
 	}
 };
@@ -317,8 +317,8 @@ struct FunctionSignatureKeyHash {
  * @param key The instantiation key with type arguments
  * @return A unique, human-readable name like "is_arithmetic$a1b2c3d4"
  */
-inline std::string_view generateInstantiatedName(std::string_view template_name, 
-                                                  const TemplateInstantiationKey& key) {
+inline std::string_view generateInstantiatedName(std::string_view template_name,
+												 const TemplateInstantiationKey& key) {
 	// Compute the hash of the template arguments
 	size_t h = 0;
 	for (const auto& arg : key.type_args) {
@@ -330,7 +330,7 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 	for (const auto& arg : key.template_template_args) {
 		h ^= std::hash<uint32_t>{}(arg.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
-	
+
 	// Build the name: template_name$hash (using $ as unambiguous separator)
 	// Use lowercase hex for compactness
 	static const char hex_chars[] = "0123456789abcdef";
@@ -340,21 +340,21 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 		h >>= 4;
 	}
 	hash_str[16] = '\0';
-	
+
 	StringBuilder builder;
 	builder.append(template_name);
-	builder.append("$");  // $ is not valid in C++ identifiers, so unambiguous
+	builder.append("$");	 // $ is not valid in C++ identifiers, so unambiguous
 	builder.append(std::string_view(hash_str, 16));
-	
+
 	return builder.commit();
 }
 
 // ============================================================================
 // Helper functions for building template keys
 // ============================================================================
-// NOTE: These functions are implemented in TemplateRegistry.h after the 
+// NOTE: These functions are implemented in TemplateRegistry.h after the
 // TemplateTypeArg definition to avoid circular dependencies.
-// 
+//
 // Available functions:
 //   - FlashCpp::makeTypeIndexArg(const TemplateTypeArg& arg) -> TypeIndexArg
 //   - FlashCpp::makeInstantiationKey(StringHandle, const std::vector<TemplateTypeArg>&) -> TemplateInstantiationKey
@@ -363,24 +363,24 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 
 // Provide std::hash specialization for use with unordered_map
 namespace std {
-	template<>
-	struct hash<FlashCpp::TemplateInstantiationKey> {
-		size_t operator()(const FlashCpp::TemplateInstantiationKey& key) const {
-			return FlashCpp::TemplateInstantiationKeyHash{}(key);
-		}
-	};
-	
-	template<>
-	struct hash<FlashCpp::TypeIndexArg> {
-		size_t operator()(const FlashCpp::TypeIndexArg& arg) const {
-			return arg.hash();
-		}
-	};
-	
-	template<>
-	struct hash<FlashCpp::FunctionSignatureKey> {
-		size_t operator()(const FlashCpp::FunctionSignatureKey& key) const {
-			return FlashCpp::FunctionSignatureKeyHash{}(key);
-		}
-	};
-}
+template <>
+struct hash<FlashCpp::TemplateInstantiationKey> {
+	size_t operator()(const FlashCpp::TemplateInstantiationKey& key) const {
+		return FlashCpp::TemplateInstantiationKeyHash{}(key);
+	}
+};
+
+template <>
+struct hash<FlashCpp::TypeIndexArg> {
+	size_t operator()(const FlashCpp::TypeIndexArg& arg) const {
+		return arg.hash();
+	}
+};
+
+template <>
+struct hash<FlashCpp::FunctionSignatureKey> {
+	size_t operator()(const FlashCpp::FunctionSignatureKey& key) const {
+		return FlashCpp::FunctionSignatureKeyHash{}(key);
+	}
+};
+} // namespace std

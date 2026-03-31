@@ -76,8 +76,8 @@ public:
 	// Compiler compatibility mode - controls which compiler's builtin macros to use
 	// Default is auto-detected: MSVC for Windows builds, GCC for Linux/Unix builds
 	enum class CompilerMode {
-		MSVC,    // Microsoft Visual C++ (Windows default)
-		GCC      // GCC/Clang (Linux/Unix default)
+		MSVC,	  // Microsoft Visual C++ (Windows default)
+		GCC		// GCC/Clang (Linux/Unix default)
 	};
 
 	CompilerMode getCompilerMode() const {
@@ -99,8 +99,8 @@ public:
 	// Name mangling style - controls which ABI to use for name mangling
 	// Can be set independently from output format for cross-compilation
 	enum class ManglingStyle {
-		MSVC,      // Microsoft Visual C++ name mangling
-		Itanium    // Itanium C++ ABI name mangling (Linux/Unix)
+		MSVC,	  // Microsoft Visual C++ name mangling
+		Itanium	// Itanium C++ ABI name mangling (Linux/Unix)
 	};
 
 	ManglingStyle getManglingStyle() const {
@@ -123,8 +123,8 @@ public:
 	// Windows uses LLP64: long is 32-bit, long long is 64-bit
 	// Linux/Unix uses LP64: long is 64-bit, long long is 64-bit
 	enum class DataModel {
-		LLP64,     // Windows x64: long = 32 bits (COFF)
-		LP64       // Linux/Unix x64: long = 64 bits (ELF)
+		LLP64,	   // Windows x64: long = 32 bits (COFF)
+		LP64		 // Linux/Unix x64: long = 64 bits (ELF)
 	};
 
 	DataModel getDataModel() const {
@@ -266,27 +266,27 @@ private:
 	bool enableLazyTemplateInstantiation_ = true; // Enable lazy template member instantiation (default: on)
 	CompilerMode compilerMode_ =
 #if defined(_WIN32) || defined(_WIN64)
-		CompilerMode::MSVC;  // Windows default
+		CompilerMode::MSVC;	// Windows default
 #else
 		CompilerMode::GCC;   // Linux/Unix default
 #endif
 	ManglingStyle manglingStyle_ =
 #if defined(_WIN32) || defined(_WIN64)
-		ManglingStyle::MSVC;  // Windows default
+		ManglingStyle::MSVC;	 // Windows default
 #else
-		ManglingStyle::Itanium;  // Linux/Unix default
+		ManglingStyle::Itanium;	// Linux/Unix default
 #endif
-	DataModel dataModel_ = 
+	DataModel dataModel_ =
 #if defined(_WIN32) || defined(_WIN64)
 		DataModel::LLP64;  // Windows default (long = 32 bits)
 #else
-		DataModel::LP64;   // Linux/Unix default (long = 64 bits)
+		DataModel::LP64;	 // Linux/Unix default (long = 64 bits)
 #endif
 	std::vector<std::string> dependencies_;
 
 	// #pragma pack state
 	size_t currentPackAlignment_ = 0;  // 0 = no packing (use natural alignment)
-	std::stack<size_t> packAlignmentStack_;  // Stack for push/pop operations
+	std::stack<size_t> packAlignmentStack_;	// Stack for push/pop operations
 	std::unordered_map<std::string, size_t> namedPackStates_;  // Named pack states for labels
 
 	// Storage for function name string literals (__FUNCTION__, __func__, __PRETTY_FUNCTION__)

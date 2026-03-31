@@ -5,15 +5,15 @@
 // This file is a _fail test — compilation must fail.
 
 struct NoDflt {
-    int v;
-    constexpr NoDflt(int a, int b) : v(a + b) {}
+	int v;
+	constexpr NoDflt(int a, int b) : v(a + b) {}
 };
 
 constexpr int make() {
-    NoDflt* p = new NoDflt;   // ERROR: no default constructor
-    int val = p->v;
-    delete p;
-    return val;
+	NoDflt* p = new NoDflt;	// ERROR: no default constructor
+	int val = p->v;
+	delete p;
+	return val;
 }
 
 static_assert(make() == 0);

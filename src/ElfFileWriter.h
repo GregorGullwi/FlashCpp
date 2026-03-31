@@ -60,7 +60,7 @@ public:
 		elf_writer_.create(ELFIO::ELFCLASS64, ELFIO::ELFDATA2LSB);
 
 		// Set file header attributes
-		elf_writer_.set_type(ELFIO::ET_REL);  // Relocatable object file
+		elf_writer_.set_type(ELFIO::ET_REL);	 // Relocatable object file
 		elf_writer_.set_machine(ELFIO::EM_X86_64);  // x86-64 architecture
 		elf_writer_.set_os_abi(ELFIO::ELFOSABI_NONE);  // No extensions or unspecified
 
@@ -98,11 +98,11 @@ public:
 	/**
 	 * @brief Add a function symbol to the symbol table
 	 */
-	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, 
-	                        [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None) {
+	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset,
+							 [[maybe_unused]] uint32_t stack_space, [[maybe_unused]] Linkage linkage = Linkage::None) {
 		if (g_enable_debug_output) {
-			std::cerr << "Adding function symbol: " << mangled_name 
-			          << " at offset " << section_offset << std::endl;
+			std::cerr << "Adding function symbol: " << mangled_name
+					  << " at offset " << section_offset << std::endl;
 		}
 
 		// Get symbol accessor
@@ -156,8 +156,8 @@ public:
 		}
 
 		if (g_enable_debug_output) {
-			std::cerr << "Adding " << data.size() << " bytes to section " 
-			          << section->get_name() << std::endl;
+			std::cerr << "Adding " << data.size() << " bytes to section "
+					  << section->get_name() << std::endl;
 		}
 
 		// Append data to section
@@ -171,7 +171,7 @@ public:
 		}
 		if (g_enable_debug_output) {
 			std::cerr << "Adding " << data.size() << " bytes to section "
-			          << section->get_name() << std::endl;
+					  << section->get_name() << std::endl;
 		}
 		section->append_data(reinterpret_cast<const char*>(data.data()), data.size());
 	}
@@ -191,9 +191,9 @@ public:
 	 */
 	void add_relocation(uint64_t offset, std::string_view symbol_name, uint32_t relocation_type, int64_t addend = -4) {
 		if (g_enable_debug_output) {
-			std::cerr << "Adding relocation at offset " << offset 
-			          << " for symbol " << symbol_name 
-			          << " type " << relocation_type << std::endl;
+			std::cerr << "Adding relocation at offset " << offset
+					  << " for symbol " << symbol_name
+					  << " type " << relocation_type << std::endl;
 		}
 
 		// Get or create symbol
@@ -213,14 +213,14 @@ public:
 		// Add relocation entry
 		// For RELA format: offset, symbol, type, addend
 		ELFIO::Elf64_Addr rel_offset = offset;
-		
+
 		// Construct r_info field for x86-64 ELF relocation
 		// Format: r_info = (symbol_index << 32) | (relocation_type & 0xffffffff)
 		// This matches the ELF64_R_INFO macro but we inline it to avoid macro namespace issues
 		// Upper 32 bits: symbol table index
 		// Lower 32 bits: relocation type (e.g., R_X86_64_PLT32 = 4, R_X86_64_PC32 = 2)
-		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(symbol_index) << 32) | 
-		                             (static_cast<ELFIO::Elf_Xword>(relocation_type) & 0xffffffffUL);
+		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(symbol_index) << 32) |
+									(static_cast<ELFIO::Elf_Xword>(relocation_type) & 0xffffffffUL);
 
 		rela_accessor->add_entry(rel_offset, rel_info, addend);
 	}
@@ -234,7 +234,8 @@ public:
 	void add_data_relocation(std::string_view var_name, std::string_view target_name) {
 		// Find the .data section
 		auto* data_section = getSectionByName(".data");
-		if (!data_section) return;
+		if (!data_section)
+			return;
 
 		// Find the variable's offset in .data by looking up its symbol
 		ELFIO::Elf64_Addr var_offset = 0;
@@ -256,7 +257,8 @@ public:
 				}
 			}
 		}
-		if (!found) return;
+		if (!found)
+			return;
 
 		// Get or create the target symbol (may be in .data, .bss, or external)
 		auto target_index = getOrCreateSymbol(target_name, ELFIO::STT_NOTYPE, ELFIO::STB_GLOBAL);
@@ -276,12 +278,12 @@ public:
 		// Add R_X86_64_64 relocation: absolute 64-bit address
 		ELFIO::relocation_section_accessor rela_accessor(elf_writer_, rela_data);
 		ELFIO::Elf_Xword rel_info = (static_cast<ELFIO::Elf_Xword>(target_index) << 32) |
-		                             (static_cast<ELFIO::Elf_Xword>(ELFIO::R_X86_64_64) & 0xffffffffUL);
+									(static_cast<ELFIO::Elf_Xword>(ELFIO::R_X86_64_64) & 0xffffffffUL);
 		rela_accessor.add_entry(var_offset, rel_info, 0);
 
 		if (g_enable_debug_output) {
 			std::cerr << "Added data relocation: " << var_name << " -> " << target_name
-			          << " at offset " << var_offset << std::endl;
+					  << " at offset " << var_offset << std::endl;
 		}
 	}
 
@@ -315,12 +317,12 @@ public:
 		// No collision risk across object files
 		// NOTE: Ideally these would be LOCAL, but deferred symbol approach requires
 		// complex relocation handling. This pragmatic solution works correctly.
-		[[maybe_unused]] auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL, 
-		                                      rodata->get_index(), offset, processed_str.size());
+		[[maybe_unused]] auto symbol_index = getOrCreateSymbol(symbol_name_sv, ELFIO::STT_OBJECT, ELFIO::STB_GLOBAL,
+															   rodata->get_index(), offset, processed_str.size());
 
 		if (g_enable_debug_output) {
-			std::cerr << "Added string literal '" << processed_str << "' with symbol " 
-			          << symbol_name_sv << std::endl;
+			std::cerr << "Added string literal '" << processed_str << "' with symbol "
+					  << symbol_name_sv << std::endl;
 		}
 
 		return symbol_name_sv;  // Return string_view to stable storage in ChunkedStringAllocator
@@ -385,8 +387,8 @@ public:
 	// Cleanup landing pad info for function-level stack unwinding (ELF Phase 2)
 	struct CleanupBlockInfo {
 		uint32_t region_start;   // Start of code region that needs cleanup (usually 0)
-		uint32_t region_end;     // End of region = start of the cleanup LP itself
-		uint32_t cleanup_lp;     // Offset of the cleanup landing pad
+		uint32_t region_end;	 // End of region = start of the cleanup LP itself
+		uint32_t cleanup_lp;	 // Offset of the cleanup landing pad
 	};
 
 	// --- Method declarations (ElfFileWriter_EH.cpp) ---
@@ -447,7 +449,7 @@ private:
 	std::unordered_set<std::string> added_exception_functions_;
 	std::unordered_map<std::string, ELFIO::Elf_Word, ObjectFileCommon::StringViewHash, std::equal_to<>> symbol_index_cache_;
 	bool symbol_index_cache_dirty_ = true;
-	std::set<std::string> created_class_typeinfos_;  // tracks emitted _ZTI symbols within this ElfFileWriter instance
+	std::set<std::string> created_class_typeinfos_;	// tracks emitted _ZTI symbols within this ElfFileWriter instance
 
 	// DWARF4 debug info data
 	struct DebugLineEntry {
@@ -456,26 +458,26 @@ private:
 	};
 	struct DebugVarInfo {
 		std::string name;
-		bool        is_parameter   = false;
-		bool        is_register    = false;
-		int         dwarf_reg      = -1;
-		int32_t     stack_off      = 0;
-		uint32_t    cv_type_index  = 0x74;
+		bool is_parameter = false;
+		bool is_register = false;
+		int dwarf_reg = -1;
+		int32_t stack_off = 0;
+		uint32_t cv_type_index = 0x74;
 	};
 	struct DebugFuncInfo {
-		std::string              name;
-		uint32_t                 text_offset = 0;
-		uint32_t                 length      = 0;
-		uint32_t                 file_id     = 0;
+		std::string name;
+		uint32_t text_offset = 0;
+		uint32_t length = 0;
+		uint32_t file_id = 0;
 		std::vector<DebugLineEntry> lines;
-		std::vector<DebugVarInfo>   vars;
+		std::vector<DebugVarInfo> vars;
 	};
 
-	std::vector<std::string>   debug_source_files_;
+	std::vector<std::string> debug_source_files_;
 	std::vector<DebugFuncInfo> debug_functions_;
-	DebugFuncInfo              debug_current_func_;
-	bool                       debug_has_current_         = false;
-	uint32_t                   debug_pending_text_offset_ = 0;
+	DebugFuncInfo debug_current_func_;
+	bool debug_has_current_ = false;
+	uint32_t debug_pending_text_offset_ = 0;
 
 	// EH data members
 	std::vector<FDEInfo> functions_with_fdes_;

@@ -9,22 +9,22 @@
 //
 // Return value is 0 on success.
 namespace lib {
-	struct Base {
-		int value;
-		friend int get_value(Base& b) { return b.value; }
-	};
-}
+struct Base {
+	int value;
+	friend int get_value(Base& b) { return b.value; }
+};
+} // namespace lib
 
 namespace mid {
-	struct Middle : lib::Base {};
-}
+struct Middle : lib::Base {};
+} // namespace mid
 
 struct Derived : mid::Middle {};
 
 int main() {
 	Derived d;
 	d.value = 10;
-	// ADL should walk: Derived -> mid::Middle -> lib::Base
-	// and find lib::get_value via the associated namespace "lib".
+ // ADL should walk: Derived -> mid::Middle -> lib::Base
+ // and find lib::get_value via the associated namespace "lib".
 	return get_value(d) - 10;  // 10 - 10 == 0
 }

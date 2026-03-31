@@ -29,23 +29,22 @@ extern bool g_enable_debug_output;
 
 // Additional COFF relocation types not defined in COFFI
 #ifndef IMAGE_REL_AMD64_SECREL
-#define IMAGE_REL_AMD64_SECREL          0x000B  // 32 bit offset from base of section containing target
+#define IMAGE_REL_AMD64_SECREL 0x000B  // 32 bit offset from base of section containing target
 #endif
 #ifndef IMAGE_REL_AMD64_SECTION
-#define IMAGE_REL_AMD64_SECTION         0x000A  // Section index
+#define IMAGE_REL_AMD64_SECTION 0x000A  // Section index
 #endif
 #ifndef IMAGE_REL_AMD64_ADDR64
-#define IMAGE_REL_AMD64_ADDR64          0x0001  // 64-bit absolute address
+#define IMAGE_REL_AMD64_ADDR64 0x0001  // 64-bit absolute address
 #endif
 #ifndef IMAGE_REL_AMD64_REL32
-#define IMAGE_REL_AMD64_REL32           0x0004	// 32-bit relative address from byte following reloc
+#define IMAGE_REL_AMD64_REL32 0x0004 // 32-bit relative address from byte following reloc
 #endif
 #ifndef IMAGE_REL_AMD64_ADDR32NB
-#define IMAGE_REL_AMD64_ADDR32NB        0x0003 // 32-bit address w/o image base (RVA).
+#define IMAGE_REL_AMD64_ADDR32NB 0x0003 // 32-bit address w/o image base (RVA).
 #endif
 
-enum class SectionType : unsigned char
-{
+enum class SectionType : unsigned char {
 	TEXT,
 	DATA,
 	BSS,
@@ -64,7 +63,7 @@ class ObjectFileWriter {
 public:
 	// Constants for RTTI and exception handling
 	static constexpr size_t POINTER_SIZE = 8;  // 64-bit pointers on x64
-	
+
 	// Use shared structures from ObjectFileCommon
 	using FunctionSignature = ObjectFileCommon::FunctionSignature;
 	using CatchHandlerInfo = ObjectFileCommon::CatchHandlerInfo;
@@ -90,7 +89,8 @@ public:
 	}
 
 	ObjectFileWriter() {
-		if (g_enable_debug_output) std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << "Creating simplified ObjectFileWriter for debugging..." << std::endl;
 
 		coffi_.create(COFFI::COFFI_ARCHITECTURE_PE);
 		coffi_.get_header()->set_machine(IMAGE_FILE_MACHINE_AMD64);
@@ -227,7 +227,8 @@ public:
 		// Add auxiliary symbol for .llvm_addrsig section
 		addSectionAuxSymbol(symbol_llvm_addrsig, section_llvm_addrsig);
 
-		if (g_enable_debug_output) std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
+		if (g_enable_debug_output)
+			std::cerr << "Simplified ObjectFileWriter created successfully" << std::endl;
 	}
 
 	COFFI::section* add_section(const std::string& section_name, int32_t flags, std::optional<SectionType> section_type) {
@@ -243,9 +244,12 @@ public:
 	void write(const std::string& filename) {
 		try {
 			// Skip debug info for now
-			if (g_enable_debug_output) std::cerr << "Starting coffi_.save..." << std::endl;
-			if (g_enable_debug_output) std::cerr << "Number of sections: " << coffi_.get_sections().get_count() << std::endl;
-			if (g_enable_debug_output) std::cerr << "Number of symbols: " << coffi_.get_symbols()->size() << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Starting coffi_.save..." << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Number of sections: " << coffi_.get_sections().get_count() << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Number of symbols: " << coffi_.get_symbols()->size() << std::endl;
 
 			// Print section info
 			for (size_t i = 0; i < coffi_.get_sections().get_count(); ++i) {
@@ -259,51 +263,61 @@ public:
 					}
 				}
 				auto data_size = section->get_data_size();
-				if (g_enable_debug_output) std::cerr << "Section " << i << ": '" << section_name << "'"
-				         << " size=" << data_size
-				         << " flags=0x" << std::hex << section->get_flags() << std::dec
-				         << " reloc_count=" << section->get_reloc_count()
-				         << " reloc_offset=" << section->get_reloc_offset();
-				
+				if (g_enable_debug_output)
+					std::cerr << "Section " << i << ": '" << section_name << "'"
+							  << " size=" << data_size
+							  << " flags=0x" << std::hex << section->get_flags() << std::dec
+							  << " reloc_count=" << section->get_reloc_count()
+							  << " reloc_offset=" << section->get_reloc_offset();
+
 				// For .data section (index 2), check data
 				if (section_name == ".data") {
-					if (g_enable_debug_output) std::cerr << " <<< DATA SECTION";
+					if (g_enable_debug_output)
+						std::cerr << " <<< DATA SECTION";
 				}
-				// For .pdata section, check relocations  
+				// For .pdata section, check relocations
 				if (section_name == ".pdata") {
-					if (g_enable_debug_output) std::cerr << " <<< PDATA SECTION";
+					if (g_enable_debug_output)
+						std::cerr << " <<< PDATA SECTION";
 				}
-				if (g_enable_debug_output) std::cerr << std::endl;
+				if (g_enable_debug_output)
+					std::cerr << std::endl;
 			}
 
 			// Print symbol info
 			auto symbols = coffi_.get_symbols();
 			for (size_t i = 0; i < symbols->size(); ++i) {
 				auto symbol = (*symbols)[i];
-				if (g_enable_debug_output) std::cerr << "Symbol " << i << ": " << symbol.get_name()
-				         << " section=" << symbol.get_section_number()
-				         << " value=0x" << std::hex << symbol.get_value() << std::dec << std::endl;
+				if (g_enable_debug_output)
+					std::cerr << "Symbol " << i << ": " << symbol.get_name()
+							  << " section=" << symbol.get_section_number()
+							  << " value=0x" << std::hex << symbol.get_value() << std::dec << std::endl;
 			}
 
 			bool success = coffi_.save(filename);
-			if (g_enable_debug_output) std::cerr << "COFFI save returned: " << (success ? "true" : "FALSE") << std::endl;
-			
+			if (g_enable_debug_output)
+				std::cerr << "COFFI save returned: " << (success ? "true" : "FALSE") << std::endl;
+
 			// Verify the file was written correctly by checking size
 			std::ifstream check_file(filename, std::ios::binary | std::ios::ate);
 			if (check_file.is_open()) {
 				auto file_size = check_file.tellg();
-				if (g_enable_debug_output) std::cerr << "Written file size: " << file_size << " bytes\n";
+				if (g_enable_debug_output)
+					std::cerr << "Written file size: " << file_size << " bytes\n";
 				check_file.close();
 			}
-			
+
 			if (success) {
-				if (g_enable_debug_output) std::cerr << "Object file written successfully!" << std::endl;
+				if (g_enable_debug_output)
+					std::cerr << "Object file written successfully!" << std::endl;
 			} else {
-				if (g_enable_debug_output) std::cerr << "COFFI save failed!" << std::endl;
+				if (g_enable_debug_output)
+					std::cerr << "COFFI save failed!" << std::endl;
 				throw std::runtime_error("Failed to save object file with both COFFI and manual fallback");
 			}
 		} catch (const std::exception& e) {
-			if (g_enable_debug_output) std::cerr << "Error writing object file: " << e.what() << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "Error writing object file: " << e.what() << std::endl;
 			throw;
 		}
 	}
@@ -337,12 +351,12 @@ public:
 		}
 
 		// Calculate approximate size and reserve to avoid reallocations
-		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;  // '?' + name + "@@" + calling_conv + return_type
+		size_t estimated_size = 1 + name.size() + 2 + 2 + 2;	 // '?' + name + "@@" + calling_conv + return_type
 		if (!sig.class_name.empty()) {
-			estimated_size += 1 + sig.class_name.size();  // '@' + class_name
+			estimated_size += 1 + sig.class_name.size();	 // '@' + class_name
 		}
 		estimated_size += sig.parameter_types.size() * 3;  // Rough estimate for param types
-		estimated_size += 2;  // "@Z"
+		estimated_size += 2;	 // "@Z"
 
 		std::string mangled;
 		mangled.reserve(estimated_size);
@@ -361,12 +375,11 @@ public:
 				if (last_colon != std::string_view::npos) {
 					class_short_name = class_short_name.substr(last_colon + 2);
 				}
-				
+
 				if (name.substr(1) == class_short_name) {
 					// It is a destructor
 					return std::string(NameMangling::generateMangledNameForDestructor(
-						StringTable::getOrInternStringHandle(sig.class_name)
-					));
+						StringTable::getOrInternStringHandle(sig.class_name)));
 				}
 			}
 		}
@@ -378,13 +391,12 @@ public:
 			if (last_colon != std::string_view::npos) {
 				class_short_name = class_short_name.substr(last_colon + 2);
 			}
-				
+
 			if (name == class_short_name) {
 				// It is a constructor
 				return std::string(NameMangling::generateMangledNameForConstructor(
 					sig.class_name,
-					sig.parameter_types
-				));
+					sig.parameter_types));
 			}
 		}
 
@@ -395,14 +407,14 @@ public:
 			std::vector<std::string_view> class_parts;
 			std::string_view remaining = sig.class_name;
 			size_t pos;
-			
+
 			// Split class_name by "::" and collect parts
 			while ((pos = remaining.find("::")) != std::string_view::npos) {
 				class_parts.push_back(remaining.substr(0, pos));
 				remaining = remaining.substr(pos + 2);
 			}
 			class_parts.push_back(remaining);  // Add the last part
-			
+
 			// Reverse and append with @ separators (innermost to outermost)
 			for (auto it = class_parts.rbegin(); it != class_parts.rend(); ++it) {
 				mangled += '@';
@@ -420,7 +432,7 @@ public:
 				mangled += "QEAA";  // non-const member function (__cdecl x64)
 			}
 		} else {
-			mangled += "YA";  // Non-member function with __cdecl
+			mangled += "YA";	 // Non-member function with __cdecl
 		}
 
 		// Return type
@@ -432,12 +444,13 @@ public:
 		}
 
 		if (sig.is_variadic) {
-			mangled += "Z";  // ... ellipsis parameter
+			mangled += "Z";	// ... ellipsis parameter
 		} else {
-			mangled += "@Z";  // End of parameter list (no ellipsis)
+			mangled += "@Z";	 // End of parameter list (no ellipsis)
 		}
 
-		if (g_enable_debug_output) std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
+		if (g_enable_debug_output)
+			std::cerr << "DEBUG generateMangledName: " << name << " -> " << mangled << "\n";
 		return mangled;
 	}
 
@@ -452,7 +465,7 @@ public:
 		function_signatures_[mangled_name] = sig;
 		return mangled_name;
 	}
-	
+
 	// Overload that accepts pre-computed mangled name (for function definitions from IR)
 	void addFunctionSignature([[maybe_unused]] std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false) {
 		FunctionSignature sig(return_type, parameter_types);
@@ -462,12 +475,11 @@ public:
 		function_signatures_[std::string(mangled_name)] = sig;
 	}
 
-
 	// --- Method declarations (ObjFileWriter_Symbols.cpp) ---
 	std::string addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage = Linkage::None, bool is_variadic = false);
 	void addFunctionSignature(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& parameter_types, std::string_view class_name, Linkage linkage, bool is_variadic, std::string_view mangled_name, bool is_inline = false);
 	void add_function_symbol(std::string_view mangled_name, uint32_t section_offset, uint32_t stack_space, Linkage linkage = Linkage::None);
-		void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
+	void add_static_text_symbol(std::string_view symbol_name, uint32_t section_offset);
 	void add_data(std::span<const uint8_t> data, SectionType section_type);
 	void add_data(std::span<const char> data, SectionType section_type);
 	void add_relocation(uint64_t offset, std::string_view symbol_name);
@@ -524,7 +536,7 @@ public:
 	void ensure_type_descriptor(const std::string& type_name);
 	void build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset, uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, uint32_t effective_frame_size, uint32_t stack_frame_size, uint32_t cpp_funcinfo_rva_field_offset, bool has_cpp_funcinfo_rva_field, uint32_t& cpp_funcinfo_local_offset_out, std::vector<uint32_t>& cpp_xdata_rva_field_offsets, std::vector<uint32_t>& cpp_text_rva_field_offsets);
 	void emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset, bool is_seh, bool is_cpp, const std::vector<ScopeTableReloc>& scope_relocs, const std::vector<uint32_t>& cpp_xdata_rva_field_offsets, const std::vector<uint32_t>& cpp_text_rva_field_offsets);
-		void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
+	void build_pdata_entries(uint32_t function_start, uint32_t function_size, std::string_view mangled_name, const std::vector<TryBlockInfo>& try_blocks, const std::vector<UnwindMapEntryInfo>& unwind_map, bool is_cpp, uint32_t xdata_offset, const UnwindCodeResult& unwind_info, uint32_t cpp_funcinfo_local_offset);
 
 	// --- Method declarations (ObjFileWriter_RTTI.cpp) ---
 	void add_function_exception_info(std::string_view mangled_name, uint32_t function_start, uint32_t function_size, const std::vector<TryBlockInfo>& try_blocks = {}, const std::vector<UnwindMapEntryInfo>& unwind_map = {}, const std::vector<SehTryBlockInfo>& seh_try_blocks = {}, uint32_t stack_frame_size = 0);
@@ -563,7 +575,7 @@ protected:
 
 	// Counter for generating unique string literal symbols
 	uint64_t string_literal_counter_ = 0;
-	
+
 	// Thread-local reusable buffer for string literal processing
 	inline static thread_local std::string string_literal_buffer_;
 };

@@ -6,29 +6,33 @@
 // Return value is 0 on success.
 
 namespace ns {
-	struct S {
-		int x;
-	};
+struct S {
+	int x;
+};
 
-	// Regular free function — NOT a hidden friend.
-	// ADL should find this when called with ns::S arguments.
-	bool operator==(S a, S b) { return a.x == b.x; }
-	bool operator!=(S a, S b) { return a.x != b.x; }
-}
+ // Regular free function — NOT a hidden friend.
+ // ADL should find this when called with ns::S arguments.
+bool operator==(S a, S b) { return a.x == b.x; }
+bool operator!=(S a, S b) { return a.x != b.x; }
+} // namespace ns
 
 int main() {
 	ns::S a{};
 	ns::S b{};
 
-	// ADL should find ns::operator== because both arguments are ns::S.
-	if (!(a == b)) return 1;
+ // ADL should find ns::operator== because both arguments are ns::S.
+	if (!(a == b))
+		return 1;
 
 	a.x = 42;
-	if (a == b) return 2;
-	if (!(a != b)) return 3;
+	if (a == b)
+		return 2;
+	if (!(a != b))
+		return 3;
 
 	b.x = 42;
-	if (a != b) return 4;
+	if (a != b)
+		return 4;
 
 	return 0;
 }

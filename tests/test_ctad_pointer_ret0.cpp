@@ -1,6 +1,6 @@
 template <typename T>
 struct PtrBox {
-    const T* ptr;
+	const T* ptr;
 };
 
 // Deduction guide requiring pointer-aware template argument deduction
@@ -9,8 +9,8 @@ PtrBox(T* value_ptr) -> PtrBox<T>;
 
 // Expected return: 0
 int main() {
-    int value = 21;
-    PtrBox box{&value};
-    value = 34;
-    return *box.ptr - 34;
+	int value = 21;
+	PtrBox box{&value};
+	value = 34;
+	return *box.ptr - 34;
 }

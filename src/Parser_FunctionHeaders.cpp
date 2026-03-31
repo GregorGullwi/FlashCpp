@@ -4,15 +4,13 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
-
 // Phase 1: Unified parameter list parsing
 // This method handles all the common parameter parsing logic:
 // - Basic parameters: (int x, float y)
 // - Variadic parameters: (int x, ...)
 // - Default values: (int x = 0, float y = 1.0)
 // - Empty parameter lists: ()
-ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention)
-{
+ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention) {
 	out_params.parameters.clear();
 	out_params.is_variadic = false;
 
@@ -46,8 +44,8 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 			// Validate calling convention for variadic functions
 			// Only __cdecl and __vectorcall support variadic parameters (caller cleanup)
 			if (calling_convention != CallingConvention::Default &&
-			    calling_convention != CallingConvention::Cdecl &&
-			    calling_convention != CallingConvention::Vectorcall) {
+				calling_convention != CallingConvention::Cdecl &&
+				calling_convention != CallingConvention::Vectorcall) {
 				return ParseResult::error(
 					"Variadic functions must use __cdecl or __vectorcall calling convention "
 					"(other conventions use callee cleanup which is incompatible with variadic arguments)",
@@ -77,13 +75,12 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					const TypeSpecifierNode& orig_type = decl.type_node().as<TypeSpecifierNode>();
 					TypeSpecifierNode param_type = orig_type;  // Copy needed since we modify
 					param_type.add_pointer_level();
-					
+
 					// Create new declaration without array size (now a pointer)
 					ASTNode new_decl = emplace_node<DeclarationNode>(
 						emplace_node<TypeSpecifierNode>(param_type),
-						decl.identifier_token()
-					);
-					
+						decl.identifier_token());
+
 					// Copy over any other attributes
 					if (decl.has_default_value()) {
 						new_decl.as<DeclarationNode>().set_default_value(decl.default_value());
@@ -91,7 +88,7 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 					if (decl.is_parameter_pack()) {
 						new_decl.as<DeclarationNode>().set_parameter_pack(true);
 					}
-					
+
 					out_params.parameters.push_back(new_decl);
 				} else {
 					out_params.parameters.push_back(*node);
@@ -143,19 +140,20 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 		// C++20 [dcl.fct.default]/4: If a parameter has a default argument,
 		// all subsequent parameters shall also have default arguments.
 		bool current_has_default = !out_params.parameters.empty() &&
-			out_params.parameters.back().is<DeclarationNode>() &&
-			out_params.parameters.back().as<DeclarationNode>().has_default_value();
+								   out_params.parameters.back().is<DeclarationNode>() &&
+								   out_params.parameters.back().as<DeclarationNode>().has_default_value();
 		if (current_has_default) {
 			seen_default_param = true;
 		} else if (seen_default_param && !out_params.parameters.empty() &&
-			out_params.parameters.back().is<DeclarationNode>()) {
+				   out_params.parameters.back().is<DeclarationNode>()) {
 			const auto& param = out_params.parameters.back().as<DeclarationNode>();
 			// C++20 [dcl.fct.default]/4: parameter packs are exempt from the
 			// trailing-default requirement ("unless the parameter was expanded
 			// from a parameter pack or is a function parameter pack").
 			if (!param.is_parameter_pack()) {
 				return ParseResult::error("Missing default argument on parameter '" +
-					std::string(param.identifier_token().value()) + "'", param.identifier_token());
+											  std::string(param.identifier_token().value()) + "'",
+										  param.identifier_token());
 			}
 		}
 
@@ -170,8 +168,8 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 
 				// Validate calling convention for variadic functions
 				if (calling_convention != CallingConvention::Default &&
-				    calling_convention != CallingConvention::Cdecl &&
-				    calling_convention != CallingConvention::Vectorcall) {
+					calling_convention != CallingConvention::Cdecl &&
+					calling_convention != CallingConvention::Vectorcall) {
 					return ParseResult::error(
 						"Variadic functions must use __cdecl or __vectorcall calling convention "
 						"(other conventions use callee cleanup which is incompatible with variadic arguments)",
@@ -184,11 +182,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 				break;
 			}
 			continue;
-		}
-		else if (consume(")"_tok)) {
+		} else if (consume(")"_tok)) {
 			break;
-		}
-		else {
+		} else {
 			return ParseResult::error("Expected ',' or ')' in parameter list", current_token_);
 		}
 	}
@@ -203,10 +199,9 @@ ParseResult Parser::parse_parameter_list(FlashCpp::ParsedParameterList& out_para
 // - Pack expansion (...) after arguments
 // - Optional argument type collection for template deduction
 // - Simple pack identifier expansion (for already-expanded packs in symbol table)
-FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx)
-{
+FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx) {
 	using namespace FlashCpp;
-	
+
 	// Check if function call has arguments (not empty parentheses)
 	if (peek().is_eof() || peek() == ")"_tok) {
 		// Empty argument list - return empty result without allocating
@@ -214,79 +209,79 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 		result.success = true;
 		return result;
 	}
-	
+
 	// We have arguments, so allocate storage
 	ChunkedVector<ASTNode> args;
 	std::vector<TypeSpecifierNode> arg_types;
-		const std::vector<ASTNode>* callee_params = nullptr;
-		if (ctx.callee_decl) {
-			callee_params = &ctx.callee_decl->parameter_nodes();
-		} else if (!ctx.callee_name.empty()) {
-			auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
-			if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
-				callee_params = &func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
-			}
+	const std::vector<ASTNode>* callee_params = nullptr;
+	if (ctx.callee_decl) {
+		callee_params = &ctx.callee_decl->parameter_nodes();
+	} else if (!ctx.callee_name.empty()) {
+		auto func_lookup = gSymbolTable.lookup(ctx.callee_name);
+		if (func_lookup.has_value() && func_lookup->is<FunctionDeclarationNode>()) {
+			callee_params = &func_lookup->as<FunctionDeclarationNode>().parameter_nodes();
 		}
-	
+	}
+
 	while (true) {
 		// Handle brace-init-list argument: func({.x=1}) -> func(ParamType{.x=1})
 		// When a '{' is encountered as an argument, infer the parameter type from the function signature
-			if (peek() == "{"_tok && callee_params) {
-				size_t arg_index = args.size();
-				if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
-					const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
-					if (param_decl.type_node().is<TypeSpecifierNode>()) {
-						const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		if (peek() == "{"_tok && callee_params) {
+			size_t arg_index = args.size();
+			if (arg_index < callee_params->size() && (*callee_params)[arg_index].is<DeclarationNode>()) {
+				const auto& param_decl = (*callee_params)[arg_index].as<DeclarationNode>();
+				if (param_decl.type_node().is<TypeSpecifierNode>()) {
+					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
 						// Only handle struct/user-defined types
-						if (is_struct_type(param_type.category())) {
+					if (is_struct_type(param_type.category())) {
 							// Save position before parse_brace_initializer since it consumes '{'
-							SaveHandle brace_pos = save_token_position();
-							auto init_result = parse_brace_initializer(param_type);
-							if (!init_result.is_error() && init_result.node()) {
-								discard_saved_token(brace_pos);
-								if (init_result.node()->is<InitializerListNode>()) {
+						SaveHandle brace_pos = save_token_position();
+						auto init_result = parse_brace_initializer(param_type);
+						if (!init_result.is_error() && init_result.node()) {
+							discard_saved_token(brace_pos);
+							if (init_result.node()->is<InitializerListNode>()) {
 									// Convert InitializerListNode to ConstructorCallNode
-									auto type_node = emplace_node<TypeSpecifierNode>(param_type);
-									const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
-									ChunkedVector<ASTNode> ctor_args;
-									for (const auto& init : init_list.initializers()) {
-										ctor_args.push_back(init);
-									}
-									args.push_back(emplace_node<ExpressionNode>(
-										ConstructorCallNode(type_node, std::move(ctor_args), peek_info())));
-								} else {
-									args.push_back(*init_result.node());
+								auto type_node = emplace_node<TypeSpecifierNode>(param_type);
+								const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
+								ChunkedVector<ASTNode> ctor_args;
+								for (const auto& init : init_list.initializers()) {
+									ctor_args.push_back(init);
 								}
-								if (ctx.collect_types) {
-									arg_types.push_back(param_type);
-								}
-								// Check for comma or end
-								if (peek() == ","_tok) {
-									advance(); // consume ','
-									continue;
-								}
-								break;
+								args.push_back(emplace_node<ExpressionNode>(
+									ConstructorCallNode(type_node, std::move(ctor_args), peek_info())));
 							} else {
-								// parse_brace_initializer failed - restore token stream
-								restore_token_position(brace_pos);
+								args.push_back(*init_result.node());
 							}
+							if (ctx.collect_types) {
+								arg_types.push_back(param_type);
+							}
+								// Check for comma or end
+							if (peek() == ","_tok) {
+								advance(); // consume ','
+								continue;
+							}
+							break;
+						} else {
+								// parse_brace_initializer failed - restore token stream
+							restore_token_position(brace_pos);
 						}
 					}
 				}
+			}
 		}
-		
+
 		auto arg_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (arg_result.is_error()) {
-			return ParsedFunctionArguments::make_error(arg_result.error_message(), 
-				arg_result.error_token());
+			return ParsedFunctionArguments::make_error(arg_result.error_message(),
+													   arg_result.error_token());
 		}
-		
+
 		if (auto arg = arg_result.node()) {
 			// Check for pack expansion (...) after the argument
 			if (ctx.handle_pack_expansion && peek() == "..."_tok) {
 				Token ellipsis_token = peek_info();
 				advance(); // consume '...'
-				
+
 				// Handle simple pack expansion if enabled
 				bool expanded = false;
 				if (ctx.expand_simple_packs) {
@@ -297,63 +292,63 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						pack_name = std::get<IdentifierNode>(arg->as<ExpressionNode>()).name();
 					}
 					if (!pack_name.empty()) {
-					
+
 					// Try to find expanded pack elements in the symbol table
 					// Pattern: pack_name_0, pack_name_1, etc.
-					size_t pack_size = 0;
-					StringBuilder sb;
-					for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
-						std::string_view element_name = sb
-							.append(pack_name)
-							.append("_")
-							.append(i)
-							.preview();
-						
-						if (gSymbolTable.lookup(element_name).has_value()) {
-							++pack_size;
-							sb.reset();
-						} else {
-							break;
-						}
-					}
-					sb.reset();
-					
-					if (pack_size > 0) {
-						// Add each pack element as a separate argument
-						for (size_t i = 0; i < pack_size; ++i) {
-							std::string_view element_name = StringBuilder()
-								.append(pack_name)
-								.append("_")
-								.append(i)
-								.commit();
-							
-							// Use ellipsis token position for proper error reporting
-							Token elem_token(Token::Type::Identifier, element_name, 
-								ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
-							auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
-							args.push_back(elem_node);
-							
-							// Collect type if needed
-							if (ctx.collect_types) {
-								std::optional<TypeSpecifierNode> elem_type = get_expression_type(elem_node);
-								if (elem_type.has_value()) {
-									arg_types.push_back(*elem_type);
-								} else {
-									arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
-								}
+						size_t pack_size = 0;
+						StringBuilder sb;
+						for (size_t i = 0; i < MAX_PACK_ELEMENTS; ++i) {
+							std::string_view element_name = sb
+																.append(pack_name)
+																.append("_")
+																.append(i)
+																.preview();
+
+							if (gSymbolTable.lookup(element_name).has_value()) {
+								++pack_size;
+								sb.reset();
+							} else {
+								break;
 							}
 						}
-						expanded = true;
-					}
+						sb.reset();
+
+						if (pack_size > 0) {
+						// Add each pack element as a separate argument
+							for (size_t i = 0; i < pack_size; ++i) {
+								std::string_view element_name = StringBuilder()
+																	.append(pack_name)
+																	.append("_")
+																	.append(i)
+																	.commit();
+
+							// Use ellipsis token position for proper error reporting
+								Token elem_token(Token::Type::Identifier, element_name,
+												 ellipsis_token.line(), ellipsis_token.column(), ellipsis_token.file_index());
+								auto elem_node = emplace_node<ExpressionNode>(IdentifierNode(elem_token));
+								args.push_back(elem_node);
+
+							// Collect type if needed
+								if (ctx.collect_types) {
+									std::optional<TypeSpecifierNode> elem_type = get_expression_type(elem_node);
+									if (elem_type.has_value()) {
+										arg_types.push_back(*elem_type);
+									} else {
+										arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, ellipsis_token, CVQualifier::None);
+									}
+								}
+							}
+							expanded = true;
+						}
 					} // !pack_name.empty()
 				}
-				
+
 				if (!expanded) {
 					// Wrap the argument in a PackExpansionExprNode
 					auto pack_expr = emplace_node<ExpressionNode>(
 						PackExpansionExprNode(*arg, ellipsis_token));
 					args.push_back(pack_expr);
-					
+
 					// For pack expansions, we can't reliably determine the type
 					if (ctx.collect_types) {
 						std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
@@ -364,11 +359,11 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						}
 					}
 				}
-				
+
 				FLASH_LOG(Parser, Debug, "Handled pack expansion for function argument");
 			} else {
 				args.push_back(*arg);
-				
+
 				// Collect argument type if requested
 				if (ctx.collect_types) {
 					std::optional<TypeSpecifierNode> arg_type = get_expression_type(*arg);
@@ -393,26 +388,26 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								}
 							}
 						}
-						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type), 
-							current_token_, CVQualifier::None);
+						arg_types.emplace_back(deduced_type, TypeQualifier::None, get_type_size_bits(deduced_type),
+											   current_token_, CVQualifier::None);
 					}
 				}
 			}
 		}
-		
+
 		if (peek().is_eof()) {
 			return ParsedFunctionArguments::make_error("Expected ',' or ')' in function call", current_token_);
 		}
-		
+
 		if (peek() == ")"_tok) {
 			break;
 		}
-		
+
 		if (!consume(","_tok)) {
 			return ParsedFunctionArguments::make_error("Expected ',' between function arguments", current_token_);
 		}
 	}
-	
+
 	if (ctx.collect_types) {
 		return ParsedFunctionArguments::make_success(std::move(args), std::move(arg_types));
 	}
@@ -423,15 +418,14 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 // This is used when collecting argument types for template instantiation.
 // In perfect forwarding (T&&), lvalues should deduce to T& while rvalues deduce to T.
 std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
-	const ChunkedVector<ASTNode>& args, 
-	const std::vector<TypeSpecifierNode>& arg_types)
-{
+	const ChunkedVector<ASTNode>& args,
+	const std::vector<TypeSpecifierNode>& arg_types) {
 	std::vector<TypeSpecifierNode> result;
 	result.reserve(arg_types.size());
-	
+
 	for (size_t i = 0; i < arg_types.size(); ++i) {
 		TypeSpecifierNode arg_type_node = arg_types[i];
-		
+
 		// Check if this is an lvalue (for perfect forwarding deduction)
 		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
 		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
@@ -452,16 +446,17 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 				} else {
 					return false;
 				}
-			}, expr);
-			
+			},
+										expr);
+
 			if (is_lvalue) {
 				arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			}
 		}
-		
+
 		result.push_back(arg_type_node);
 	}
-	
+
 	return result;
 }
 
@@ -486,34 +481,34 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 			if (peek() == "("_tok) {
 				// explicit(condition) - parse and evaluate the condition using constexpr evaluator
 				advance(); // consume '('
-				
+
 				// Parse the condition expression
 				ParseResult condition_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
-				bool explicit_value = true;  // Default to true if evaluation fails
-				
+				bool explicit_value = true;	// Default to true if evaluation fails
+
 				if (!condition_result.is_error() && condition_result.node().has_value()) {
 					// Evaluate the constant expression using ConstExprEvaluator
 					ConstExpr::EvaluationContext ctx(gSymbolTable);
 					ctx.parser = this;  // Enable template function instantiation if needed
-					
+
 					auto eval_result = ConstExpr::Evaluator::evaluate(*condition_result.node(), ctx);
-					
+
 					if (eval_result.success()) {
 						// Convert result to bool - any non-zero value is true
 						explicit_value = eval_result.as_bool();
 					} else {
 						// If evaluation fails (e.g., template-dependent expression),
 						// default to true for safety (explicit is the safer default)
-						FLASH_LOG(Parser, Debug, "explicit(condition) evaluation failed: ", 
-							eval_result.error_message, " - defaulting to explicit=true");
+						FLASH_LOG(Parser, Debug, "explicit(condition) evaluation failed: ",
+								  eval_result.error_message, " - defaulting to explicit=true");
 						explicit_value = true;
 					}
 				}
-				
+
 				if (!consume(")"_tok)) {
 					// Error: expected closing paren
 				}
-				
+
 				// Only set MLS_Explicit if the condition is true
 				if (explicit_value) {
 					specs |= MLS_Explicit;
@@ -542,8 +537,7 @@ FlashCpp::MemberLeadingSpecifiers Parser::parse_member_leading_specifiers() {
 // - Attributes: __attribute__((...))
 ParseResult Parser::parse_function_trailing_specifiers(
 	FlashCpp::MemberQualifiers& out_quals,
-	FlashCpp::FunctionSpecifiers& out_specs
-) {
+	FlashCpp::FunctionSpecifiers& out_specs) {
 	// Initialize output structures
 	out_quals = FlashCpp::MemberQualifiers{};
 	out_specs = FlashCpp::FunctionSpecifiers{};
@@ -608,8 +602,10 @@ ParseResult Parser::parse_function_trailing_specifiers(
 				advance(); // consume '('
 				int paren_depth = 1;
 				while (!peek().is_eof() && paren_depth > 0) {
-					if (peek() == "("_tok) paren_depth++;
-					else if (peek() == ")"_tok) paren_depth--;
+					if (peek() == "("_tok)
+						paren_depth++;
+					else if (peek() == ")"_tok)
+						paren_depth--;
 					advance();
 				}
 			}
@@ -621,7 +617,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		// Also handles: requires requires { expr } (nested requires expression)
 		if (token.kind() == "requires"_tok) {
 			advance(); // consume 'requires'
-			
+
 			// Skip the constraint expression by counting balanced brackets/parens
 			// The constraint expression ends before '{', ';', '= default', '= delete', or '= 0'
 			// BUT: If the constraint is a requires-expression, its body uses { } which shouldn't end the clause
@@ -630,7 +626,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 			int brace_depth = 0;
 			while (!peek().is_eof()) {
 				auto tk = peek();
-				
+
 				// Special handling for 'requires' keyword inside the constraint
 				// This indicates a requires-expression like: requires requires { ... }
 				// The { } after a nested 'requires' is the requires-expression body, not the function body
@@ -641,8 +637,10 @@ ParseResult Parser::parse_function_trailing_specifiers(
 						advance(); // consume '('
 						int param_paren_depth = 1;
 						while (!peek().is_eof() && param_paren_depth > 0) {
-							if (peek() == "("_tok) param_paren_depth++;
-							else if (peek() == ")"_tok) param_paren_depth--;
+							if (peek() == "("_tok)
+								param_paren_depth++;
+							else if (peek() == ")"_tok)
+								param_paren_depth--;
 							advance();
 						}
 					}
@@ -653,7 +651,7 @@ ParseResult Parser::parse_function_trailing_specifiers(
 					}
 					continue;
 				}
-				
+
 				// At top level, check for end of constraint BEFORE updating depth tracking
 				// This ensures we break on the function body '{' instead of consuming it
 				if (paren_depth == 0 && angle_depth == 0 && brace_depth == 0) {
@@ -666,14 +664,19 @@ ParseResult Parser::parse_function_trailing_specifiers(
 						break;
 					}
 				}
-				
+
 				// Track nested brackets (after checking for end of constraint)
-				if (tk == "("_tok) paren_depth++;
-				else if (tk == ")"_tok) paren_depth--;
-				else if (tk == "{"_tok) brace_depth++;
-				else if (tk == "}"_tok) brace_depth--;
-				else update_angle_depth(tk, angle_depth);
-				
+				if (tk == "("_tok)
+					paren_depth++;
+				else if (tk == ")"_tok)
+					paren_depth--;
+				else if (tk == "{"_tok)
+					brace_depth++;
+				else if (tk == "}"_tok)
+					brace_depth--;
+				else
+					update_angle_depth(tk, angle_depth);
+
 				advance();
 			}
 			continue;
@@ -683,14 +686,14 @@ ParseResult Parser::parse_function_trailing_specifiers(
 		// Note: 'override' and 'final' are contextual keywords in C++11+
 		// They may be tokenized as either Keyword or Identifier depending on context
 		// We accept both to be safe
-		if (token.kind() == "override"_tok || 
-		    (token.type() == Token::Type::Identifier && token.value() == "override")) {
+		if (token.kind() == "override"_tok ||
+			(token.type() == Token::Type::Identifier && token.value() == "override")) {
 			out_specs.is_override = true;
 			advance();
 			continue;
 		}
 		if (token.kind() == "final"_tok ||
-		    (token.type() == Token::Type::Identifier && token.value() == "final")) {
+			(token.type() == Token::Type::Identifier && token.value() == "final")) {
 			out_specs.is_final = true;
 			advance();
 			continue;
@@ -748,14 +751,13 @@ ParseResult Parser::parse_function_trailing_specifiers(
 // in a unified way across all function types (free functions, member functions, constructors, etc.)
 ParseResult Parser::parse_function_header(
 	const FlashCpp::FunctionParsingContext& ctx,
-	FlashCpp::ParsedFunctionHeader& out_header
-) {
+	FlashCpp::ParsedFunctionHeader& out_header) {
 	// Initialize output header
 	out_header = FlashCpp::ParsedFunctionHeader{};
 
 	// Parse return type (if not constructor/destructor)
-	if (ctx.kind != FlashCpp::FunctionKind::Constructor && 
-	    ctx.kind != FlashCpp::FunctionKind::Destructor) {
+	if (ctx.kind != FlashCpp::FunctionKind::Constructor &&
+		ctx.kind != FlashCpp::FunctionKind::Destructor) {
 		auto type_result = parse_type_specifier();
 		if (type_result.is_error()) {
 			return type_result;
@@ -875,8 +877,7 @@ ParseResult Parser::parse_function_header(
 // Expects '->' as the next token. Registers params in a temporary SymbolTableScope so that
 // decltype(param_name) resolves correctly (C++11/C++20 trailing-return-type rule).
 // Uses RAII (SymbolTableScope) to ensure the temporary scope is always popped, even on exceptions.
-ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<ASTNode>& params)
-{
+ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<ASTNode>& params) {
 	if (peek() != "->"_tok)
 		return ParseResult::error("Expected '->' for trailing return type", peek_info());
 	advance();  // consume '->'
@@ -899,8 +900,7 @@ ParseResult Parser::parse_trailing_return_type_with_params(const std::vector<AST
 // Phase 4: Create a FunctionDeclarationNode from a ParsedFunctionHeader
 ParseResult Parser::create_function_from_header(
 	const FlashCpp::ParsedFunctionHeader& header,
-	[[maybe_unused]] const FlashCpp::FunctionParsingContext& ctx
-) {
+	[[maybe_unused]] const FlashCpp::FunctionParsingContext& ctx) {
 	// Create the type specifier node for the return type
 	ASTNode type_node;
 	if (header.return_type != nullptr) {

@@ -6,21 +6,20 @@
 // Combined:        5 + 25     = 30  ✓
 
 struct Adder {
-    int operator()(int x) {
-        return x;                        // int path: 5 → 5
-    }
+	int operator()(int x) {
+		return x;						// int path: 5 → 5
+	}
 
-    int operator()(double x) {
-        return static_cast<int>(x) * 5; // double path: 5.0 → 25
-    }
+	int operator()(double x) {
+		return static_cast<int>(x) * 5; // double path: 5.0 → 25
+	}
 };
 
 int test_functor() {
-    Adder adder;
-    return adder(5) + adder(5.0);  // Should return 5 + 25 = 30
+	Adder adder;
+	return adder(5) + adder(5.0);  // Should return 5 + 25 = 30
 }
 
-
 int main() {
-    return test_functor();
+	return test_functor();
 }

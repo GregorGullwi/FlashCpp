@@ -5,19 +5,20 @@ namespace outer {
 namespace inner {
 
 class Foo {
-    int value_;
+	int value_;
+
 public:
-    Foo();
-    int get() const { return value_; }
+	Foo();
+	int get() const { return value_; }
 };
 
 // Out-of-line constructor in nested namespace
-inline Foo::Foo() : value_(42) { }
+inline Foo::Foo() : value_(42) {}
 
-}
-}
+} // namespace inner
+} // namespace outer
 
 int main() {
-    outer::inner::Foo f;
-    return f.get() == 42 ? 0 : 1;
+	outer::inner::Foo f;
+	return f.get() == 42 ? 0 : 1;
 }

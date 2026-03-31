@@ -1,8 +1,8 @@
 // Simplified template template parameter test
-template<template<typename> class Container, typename T>
+template <template <typename> class Container, typename T>
 void test_func(Container<T> arg) {
 }
 
 int main() {
-    return 0;
+	return 0;
 }

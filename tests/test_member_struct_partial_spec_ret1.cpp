@@ -3,20 +3,21 @@
 
 class TestClass {
 protected:
-    // Primary template
-    template<typename...> struct List { 
-        static constexpr int size = 0;
-    };
+	// Primary template
+	template <typename...>
+	struct List {
+		static constexpr int size = 0;
+	};
 
-    // Partial specialization with static constexpr member
-    template<typename T, typename... Rest>
-    struct List<T, Rest...> : List<Rest...> {
-        static constexpr int size = 1;
-    };
+	// Partial specialization with static constexpr member
+	template <typename T, typename... Rest>
+	struct List<T, Rest...> : List<Rest...> {
+		static constexpr int size = 1;
+	};
 };
 
 int main() {
-    // Instantiate template - the static constexpr members now parse correctly
-    TestClass::List<int, char, float> list;
-    return 1;  // Return 1 for the size value
+	// Instantiate template - the static constexpr members now parse correctly
+	TestClass::List<int, char, float> list;
+	return 1;  // Return 1 for the size value
 }

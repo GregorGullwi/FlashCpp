@@ -2,24 +2,22 @@
 // Ensures ExpressionSubstitutor handles recursive ternary substitution without
 // dropping inner expression nodes when multiple ternaries are chained together.
 
-template<typename T, T v>
+template <typename T, T v>
 struct integral_constant {
 	static constexpr T value = v;
 };
 
-template<int Pn>
+template <int Pn>
 struct ternary_bucket
 	: integral_constant<int,
-		(Pn < -5) ? -2 :
-		((Pn < 0) ? -1 :
-		((Pn == 0) ? 0 : 1))> { };
+						(Pn < -5) ? -2 : ((Pn < 0) ? -1 : ((Pn == 0) ? 0 : 1))> {};
 
-template<int Pn>
-struct ternary_adjusted
-	: integral_constant<int,
-		ternary_bucket<Pn>::value < 0
-			? -ternary_bucket<Pn>::value
-			: ternary_bucket<Pn>::value> { };
+template <int Pn>
+	struct ternary_adjusted
+	: integral_constant < int,
+	ternary_bucket<Pn>::value<0
+								  ? -ternary_bucket<Pn>::value
+								  : ternary_bucket<Pn>::value> {};
 
 int main() {
 	static_assert(ternary_bucket<-6>::value == -2);

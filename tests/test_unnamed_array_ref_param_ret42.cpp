@@ -3,7 +3,7 @@
 void accept_array(const int (&)[5]) {}
 
 int main() {
-    int arr[5] = {1, 2, 3, 4, 42};
-    accept_array(arr);
-    return arr[4];
+	int arr[5] = {1, 2, 3, 4, 42};
+	accept_array(arr);
+	return arr[4];
 }

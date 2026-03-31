@@ -8,12 +8,12 @@ struct ThrowingBase {
 };
 
 struct DerivedImplicit : ThrowingBase {
-	// No explicit destructor — implicit dtor inherits noexcept(false) from ThrowingBase
+ // No explicit destructor — implicit dtor inherits noexcept(false) from ThrowingBase
 };
 
 struct MemberHolder {
-	ThrowingBase member;  // member has noexcept(false) destructor
-	// No explicit destructor — implicit dtor inherits noexcept(false) from member
+	ThrowingBase member;	 // member has noexcept(false) destructor
+ // No explicit destructor — implicit dtor inherits noexcept(false) from member
 };
 
 struct SafeBase {
@@ -22,31 +22,31 @@ struct SafeBase {
 };
 
 struct DerivedSafe : SafeBase {
-	// implicit dtor remains noexcept(true) since SafeBase is nothrow-destructible
+ // implicit dtor remains noexcept(true) since SafeBase is nothrow-destructible
 };
 
 int main() {
 	int result = 0;
 
-	// DerivedImplicit: implicit dtor inherits noexcept(false) from base
+ // DerivedImplicit: implicit dtor inherits noexcept(false) from base
 	if (noexcept(DerivedImplicit{}.~DerivedImplicit()))
 		result |= 1;
 	if (__is_nothrow_destructible(DerivedImplicit))
 		result |= 2;
 
-	// MemberHolder: implicit dtor inherits noexcept(false) from member
+ // MemberHolder: implicit dtor inherits noexcept(false) from member
 	if (noexcept(MemberHolder{}.~MemberHolder()))
 		result |= 4;
 	if (__is_nothrow_destructible(MemberHolder))
 		result |= 8;
 
-	// DerivedSafe: implicit dtor remains noexcept(true)
+ // DerivedSafe: implicit dtor remains noexcept(true)
 	if (!noexcept(DerivedSafe{}.~DerivedSafe()))
 		result |= 16;
 	if (!__is_nothrow_destructible(DerivedSafe))
 		result |= 32;
 
-	// SafeBase: explicit dtor is noexcept(true) by default
+ // SafeBase: explicit dtor is noexcept(true) by default
 	if (!__is_nothrow_destructible(SafeBase))
 		result |= 64;
 

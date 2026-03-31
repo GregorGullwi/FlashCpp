@@ -37,9 +37,12 @@ int main() {
 	IntAliasRef ref = value;
 	ConstIntAliasPtr const_ptr = ptr;
 
-	if (pickPointer(ptr) != 42) return 1;
-	if (pickReference(ref) != 42) return 2;
-	if (pickConstPointer(const_ptr) != 42) return 3;
+	if (pickPointer(ptr) != 42)
+		return 1;
+	if (pickReference(ref) != 42)
+		return 2;
+	if (pickConstPointer(const_ptr) != 42)
+		return 3;
 
 	return 0;
 }

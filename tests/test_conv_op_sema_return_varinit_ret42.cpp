@@ -17,15 +17,18 @@ int get_int() {
 int main() {
 	BoxedInt b(21);
 
-	// variable-init paths
-	int i = b;          // operator int()
-	double d = b;       // operator double()
+ // variable-init paths
+	int i = b;		   // operator int()
+	double d = b;		  // operator double()
 
 	int from_return = get_int();
 
-	if (i != 21) return 1;
-	if (static_cast<int>(d) != 21) return 2;
-	if (from_return != 21) return 3;
+	if (i != 21)
+		return 1;
+	if (static_cast<int>(d) != 21)
+		return 2;
+	if (from_return != 21)
+		return 3;
 
-	return i + from_return;  // 42
+	return i + from_return;	// 42
 }

@@ -16,6 +16,7 @@ int main() {
 		result += 10;
 	}
 	result += 100;
-	if (result != 113) return 1;
+	if (result != 113)
+		return 1;
 	return 0;
 }

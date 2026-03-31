@@ -1,9 +1,9 @@
 // Test variable template instantiation in expression
 
-template<typename T>
+template <typename T>
 T pi = T(3.14159265358979323846);
 
 int main() {
-    auto x = pi<float>;
-    return 0;
+	auto x = pi<float>;
+	return 0;
 }

@@ -11,8 +11,7 @@ extern "C" void log_message(const char* format, int level, ...);
 // This should be rejected by the parser
 
 int main() {
-    // Just test that we can declare variadic functions
-    // We don't call them since we don't have va_list implementation yet
-    return 0;
+	// Just test that we can declare variadic functions
+	// We don't call them since we don't have va_list implementation yet
+	return 0;
 }
-

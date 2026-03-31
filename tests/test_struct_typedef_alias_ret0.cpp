@@ -18,23 +18,29 @@ Point makePoint(int x, int y) {
 }
 
 int main() {
-	// Test typedef alias for struct
+ // Test typedef alias for struct
 	PointAlias p1;
 	p1.x = 10;
 	p1.y = 20;
-	if (p1.x != 10) return 1;
-	if (p1.y != 20) return 2;
+	if (p1.x != 10)
+		return 1;
+	if (p1.y != 20)
+		return 2;
 
-	// Test function returning struct used through alias
+ // Test function returning struct used through alias
 	PointAlias p2 = makePoint(3, 4);
-	if (p2.x != 3) return 3;
-	if (p2.y != 4) return 4;
+	if (p2.x != 3)
+		return 3;
+	if (p2.y != 4)
+		return 4;
 
-	// Test struct assignment through alias
+ // Test struct assignment through alias
 	PointAlias p3;
 	p3 = p1;
-	if (p3.x != 10) return 5;
-	if (p3.y != 20) return 6;
+	if (p3.x != 10)
+		return 5;
+	if (p3.y != 20)
+		return 6;
 
 	return 0;
 }

@@ -9,5 +9,5 @@ concept Floating = false;
 
 // Main function to test concept parsing
 int main() {
-    return 0;
+	return 0;
 }

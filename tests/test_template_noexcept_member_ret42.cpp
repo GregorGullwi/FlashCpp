@@ -1,5 +1,5 @@
 // Test that noexcept propagates correctly through template class assignment operators.
-template<typename T>
+template <typename T>
 struct Wrapper {
 	T value;
 	Wrapper& operator=(const Wrapper&) noexcept { return *this; }

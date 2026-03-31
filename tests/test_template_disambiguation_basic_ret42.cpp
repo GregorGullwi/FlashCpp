@@ -3,23 +3,23 @@
 // rather than as a less-than comparison operator
 
 namespace ns {
-    template<typename T>
-    int func() {
-        return 42;
-    }
+template <typename T>
+int func() {
+	return 42;
 }
+} // namespace ns
 
 // Test 1: Basic qualified identifier with template arguments
 int test1() {
-    return ns::func<int>();
+	return ns::func<int>();
 }
 
 // Test 2: Qualified identifier with template in expression context
 int test2() {
-    int x = ns::func<int>();
-    return x;
+	int x = ns::func<int>();
+	return x;
 }
 
 int main() {
-    return test1();
+	return test1();
 }

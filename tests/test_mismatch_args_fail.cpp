@@ -2,7 +2,7 @@
 struct Point {
 	int x;
 	int y;
-	int add(int a);  // Declaration: 1 parameter
+	int add(int a);	// Declaration: 1 parameter
 };
 
 // Definition: 2 parameters (MISMATCH)

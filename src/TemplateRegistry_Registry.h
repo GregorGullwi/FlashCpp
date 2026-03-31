@@ -40,7 +40,8 @@ public:
 	// underlying StructDeclarationNode was parsed from a forward declaration
 	// like `template<typename T> struct Foo;` (semicolon instead of body).
 	static bool isClassTemplateForwardDecl(const ASTNode& node) {
-		if (!node.is<TemplateClassDeclarationNode>()) return false;
+		if (!node.is<TemplateClassDeclarationNode>())
+			return false;
 		return node.as<TemplateClassDeclarationNode>().class_decl_node().is_forward_declaration();
 	}
 
@@ -135,9 +136,9 @@ public:
 
 	// Register a variable template partial specialization with its pattern args
 	void registerVariableTemplateSpecialization(std::string_view base_name,
-	                                             const std::vector<ASTNode>& template_params,
-	                                             const std::vector<TemplateTypeArg>& pattern_args,
-	                                             ASTNode specialized_node) {
+												const std::vector<ASTNode>& template_params,
+												const std::vector<TemplateTypeArg>& pattern_args,
+												ASTNode specialized_node) {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		variable_template_specializations_[key].push_back(
 			TemplatePattern{template_params, pattern_args, specialized_node, std::nullopt});
@@ -151,19 +152,18 @@ public:
 	};
 
 	std::optional<VarTemplateSpecMatch> findVariableTemplateSpecialization(
-	    std::string_view base_name,
-	    const std::vector<TemplateTypeArg>& concrete_args) const
-	{
+		std::string_view base_name,
+		const std::vector<TemplateTypeArg>& concrete_args) const {
 		StringHandle key = StringTable::getOrInternStringHandle(base_name);
 		auto it = variable_template_specializations_.find(key);
 		if (it == variable_template_specializations_.end()) {
 			return std::nullopt;
 		}
-		
+
 		const TemplatePattern* best_match = nullptr;
 		int best_specificity = -1;
 		std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> best_subs;
-		
+
 		for (const auto& pattern : it->second) {
 			std::unordered_map<StringHandle, TemplateTypeArg, StringHandleHash, std::equal_to<>> subs;
 			if (pattern.matches(concrete_args, subs)) {
@@ -175,7 +175,7 @@ public:
 				}
 			}
 		}
-		
+
 		if (best_match) {
 			return VarTemplateSpecMatch{best_match->specialized_node, std::move(best_subs)};
 		}
@@ -239,14 +239,14 @@ public:
 		}
 		return {};
 	}
-	
+
 	// Look up a template by name
 	// If multiple overloads exist, returns the first one registered
 	// For all overloads, use lookupAllTemplates()
 	std::optional<ASTNode> lookupTemplate(std::string_view name) const {
 		return lookupTemplate(StringTable::getOrInternStringHandle(name));
 	}
-	
+
 	std::optional<ASTNode> lookupTemplate(StringHandle name) const {
 		auto it = templates_.find(name);
 		if (it != templates_.end() && !it->second.empty()) {
@@ -262,7 +262,8 @@ public:
 			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
 				qi.namespace_handle, qi.identifier_handle);
 			auto result = lookupTemplate(qualified);
-			if (result.has_value()) return result;
+			if (result.has_value())
+				return result;
 		}
 		return lookupTemplate(qi.identifier_handle);
 	}
@@ -279,7 +280,7 @@ public:
 		}
 		return nullptr;
 	}
-	
+
 	// Get all registered template names (for smart re-instantiation)
 	std::vector<std::string_view> getAllTemplateNames() const {
 		std::vector<std::string_view> result;
@@ -289,12 +290,12 @@ public:
 		}
 		return result;
 	}
-	
+
 	// Check if a template instantiation already exists
 	bool hasInstantiation(const FlashCpp::TemplateInstantiationKey& key) const {
 		return instantiations_.find(key) != instantiations_.end();
 	}
-	
+
 	// Get an existing instantiation
 	std::optional<ASTNode> getInstantiation(const FlashCpp::TemplateInstantiationKey& key) const {
 		auto it = instantiations_.find(key);
@@ -303,62 +304,89 @@ public:
 		}
 		return std::nullopt;
 	}
-	
+
 	// Register a new instantiation
 	void registerInstantiation(const FlashCpp::TemplateInstantiationKey& key, ASTNode instantiated_node) {
 		instantiations_[key] = instantiated_node;
 	}
-	
+
 	// Convenience method: register instantiation using template name and TemplateTypeArg args
-	void registerInstantiation(StringHandle template_name, 
-	                            const std::vector<TemplateTypeArg>& args,
-	                            ASTNode instantiated_node) {
+	void registerInstantiation(StringHandle template_name,
+							   const std::vector<TemplateTypeArg>& args,
+							   ASTNode instantiated_node) {
 		auto key = FlashCpp::makeInstantiationKey(template_name, args);
 		instantiations_[key] = instantiated_node;
 	}
-	
+
 	// Convenience method: lookup instantiation using template name and TemplateTypeArg args
 	std::optional<ASTNode> getInstantiation(StringHandle template_name,
-	                                         const std::vector<TemplateTypeArg>& args) const {
+											const std::vector<TemplateTypeArg>& args) const {
 		auto key = FlashCpp::makeInstantiationKey(template_name, args);
 		return getInstantiation(key);
 	}
-	
+
 	// Helper to convert TypeCategory to string for mangling
 	static std::string_view typeToString(TypeCategory cat) {
 		switch (cat) {
-			case TypeCategory::Int: return "int";
-			case TypeCategory::Float: return "float";
-			case TypeCategory::Double: return "double";
-			case TypeCategory::Bool: return "bool";
-			case TypeCategory::Char: return "char";
-			case TypeCategory::Long: return "long";
-			case TypeCategory::LongLong: return "longlong";
-			case TypeCategory::Short: return "short";
-			case TypeCategory::UnsignedInt: return "uint";
-			case TypeCategory::UnsignedLong: return "ulong";
-			case TypeCategory::UnsignedLongLong: return "ulonglong";
-			case TypeCategory::UnsignedShort: return "ushort";
-			case TypeCategory::UnsignedChar: return "uchar";
-			default: return "?";
+		case TypeCategory::Int:
+			return "int";
+		case TypeCategory::Float:
+			return "float";
+		case TypeCategory::Double:
+			return "double";
+		case TypeCategory::Bool:
+			return "bool";
+		case TypeCategory::Char:
+			return "char";
+		case TypeCategory::Long:
+			return "long";
+		case TypeCategory::LongLong:
+			return "longlong";
+		case TypeCategory::Short:
+			return "short";
+		case TypeCategory::UnsignedInt:
+			return "uint";
+		case TypeCategory::UnsignedLong:
+			return "ulong";
+		case TypeCategory::UnsignedLongLong:
+			return "ulonglong";
+		case TypeCategory::UnsignedShort:
+			return "ushort";
+		case TypeCategory::UnsignedChar:
+			return "uchar";
+		default:
+			return "?";
 		}
 	}
 
 	// Helper to convert string to TypeCategory for parsing mangled names
 	static TypeCategory stringToType(std::string_view str) {
-		if (str == "int") return TypeCategory::Int;
-		if (str == "float") return TypeCategory::Float;
-		if (str == "double") return TypeCategory::Double;
-		if (str == "bool") return TypeCategory::Bool;
-		if (str == "char") return TypeCategory::Char;
-		if (str == "long") return TypeCategory::Long;
-		if (str == "longlong") return TypeCategory::LongLong;
-		if (str == "short") return TypeCategory::Short;
-		if (str == "uint") return TypeCategory::UnsignedInt;
-		if (str == "ulong") return TypeCategory::UnsignedLong;
-		if (str == "ulonglong") return TypeCategory::UnsignedLongLong;
-		if (str == "ushort") return TypeCategory::UnsignedShort;
-		if (str == "uchar") return TypeCategory::UnsignedChar;
+		if (str == "int")
+			return TypeCategory::Int;
+		if (str == "float")
+			return TypeCategory::Float;
+		if (str == "double")
+			return TypeCategory::Double;
+		if (str == "bool")
+			return TypeCategory::Bool;
+		if (str == "char")
+			return TypeCategory::Char;
+		if (str == "long")
+			return TypeCategory::Long;
+		if (str == "longlong")
+			return TypeCategory::LongLong;
+		if (str == "short")
+			return TypeCategory::Short;
+		if (str == "uint")
+			return TypeCategory::UnsignedInt;
+		if (str == "ulong")
+			return TypeCategory::UnsignedLong;
+		if (str == "ulonglong")
+			return TypeCategory::UnsignedLongLong;
+		if (str == "ushort")
+			return TypeCategory::UnsignedShort;
+		if (str == "uchar")
+			return TypeCategory::UnsignedChar;
 		return TypeCategory::Invalid;
 	}
 
@@ -484,35 +512,35 @@ public:
 	}
 
 	// Register a template specialization pattern (StringHandle overload)
-	void registerSpecializationPattern(StringHandle template_name, 
-	                                   const std::vector<ASTNode>& template_params,
-	                                   const std::vector<TemplateTypeArg>& pattern_args, 
-	                                   ASTNode specialized_node,
-	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
-		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name), 
-		          "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
-		
+	void registerSpecializationPattern(StringHandle template_name,
+									   const std::vector<ASTNode>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+		FLASH_LOG(Templates, Debug, "registerSpecializationPattern: template_name='", StringTable::getStringView(template_name),
+				  "', num_template_params=", template_params.size(), ", num_pattern_args=", pattern_args.size());
+
 		// Debug: log each pattern arg
 		for (size_t i = 0; i < pattern_args.size(); ++i) {
 			const auto& arg = pattern_args[i];
 			std::string_view dep_name_view = arg.dependent_name.isValid() ? StringTable::getStringView(arg.dependent_name) : "";
 			FLASH_LOG(Templates, Debug, "  pattern_arg[", i, "]: base_type=", static_cast<int>(arg.category()),
-			          ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
-			          ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
+					  ", type_index=", arg.type_index, ", is_dependent=", arg.is_dependent,
+					  ", is_value=", arg.is_value, ", dependent_name='", dep_name_view, "'");
 		}
-		
+
 		// Debug: log each template param type
 		for (size_t i = 0; i < template_params.size(); ++i) {
-			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: type_name=", template_params[i].type_name(), 
-			          ", is_TemplateParameterNode=", template_params[i].is<TemplateParameterNode>());
+			FLASH_LOG(Templates, Debug, "  template_param[", i, "]: type_name=", template_params[i].type_name(),
+					  ", is_TemplateParameterNode=", template_params[i].is<TemplateParameterNode>());
 		}
-		
+
 		TemplatePattern pattern;
 		pattern.template_params = template_params;
 		pattern.pattern_args = pattern_args;
 		pattern.specialized_node = specialized_node;
 		pattern.sfinae_condition = sfinae_cond;
-		
+
 		// Auto-detect void_t SFINAE patterns if no explicit condition provided.
 		// Heuristic: patterns with 2 args where first is dependent and second is void
 		// indicate void_t<...> usage. The member name to check is extracted from the
@@ -520,14 +548,14 @@ public:
 		if (!sfinae_cond.has_value() && pattern_args.size() == 2) {
 			const auto& first_arg = pattern_args[0];
 			const auto& second_arg = pattern_args[1];
-			
+
 			// Check: first arg is dependent (template param), second arg is void (from void_t expansion)
-			if (first_arg.is_dependent && !second_arg.is_dependent && 
-			    second_arg.category() == TypeCategory::Void) {
+			if (first_arg.is_dependent && !second_arg.is_dependent &&
+				second_arg.category() == TypeCategory::Void) {
 				// This looks like a void_t SFINAE pattern.
 				// Try to extract the member name from available information.
 				StringHandle member_name;
-				
+
 				// Check if the first arg's dependent_name contains a qualified name like "T::type"
 				if (first_arg.dependent_name.isValid()) {
 					std::string_view dep_name = StringTable::getStringView(first_arg.dependent_name);
@@ -539,7 +567,7 @@ public:
 						FLASH_LOG(Templates, Debug, "Extracted SFINAE member name '", extracted_member, "' from dependent_name '", dep_name, "'");
 					}
 				}
-				
+
 				// If no member name was extracted, check the type name via type_index
 				if (!member_name.isValid()) {
 					if (const TypeInfo* first_arg_ti = tryGetTypeInfo(first_arg.type_index)) {
@@ -552,45 +580,45 @@ public:
 						}
 					}
 				}
-				
+
 				// Default to "type" if no member name could be extracted
 				// This is the most common pattern (e.g., void_t<typename T::type>)
 				if (!member_name.isValid()) {
 					member_name = StringTable::getOrInternStringHandle("type");
 					FLASH_LOG(Templates, Debug, "Using default SFINAE member name 'type'");
 				}
-				
+
 				pattern.sfinae_condition = SfinaeCondition(0, member_name);
-				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::", 
-				          StringTable::getStringView(member_name), " member");
+				FLASH_LOG(Templates, Debug, "Auto-detected void_t SFINAE pattern: checking for ::",
+						  StringTable::getStringView(member_name), " member");
 			}
 		}
-		
+
 		specialization_patterns_[template_name].push_back(std::move(pattern));
 		const auto& stored_pattern = specialization_patterns_[template_name].back();
 		FLASH_LOG(Templates, Debug, "  Total patterns for '", StringTable::getStringView(template_name), "': ", specialization_patterns_[template_name].size());
 		if (stored_pattern.sfinae_condition.has_value()) {
-			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index, 
-			          "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
+			FLASH_LOG(Templates, Debug, "  SFINAE condition set: check param[", stored_pattern.sfinae_condition->template_param_index,
+					  "]::", StringTable::getStringView(stored_pattern.sfinae_condition->member_name));
 		}
 	}
 
 	// Register a template specialization pattern (string_view overload)
-	void registerSpecializationPattern(std::string_view template_name, 
-	                                   const std::vector<ASTNode>& template_params,
-	                                   const std::vector<TemplateTypeArg>& pattern_args, 
-	                                   ASTNode specialized_node,
-	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+	void registerSpecializationPattern(std::string_view template_name,
+									   const std::vector<ASTNode>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		StringHandle key = StringTable::getOrInternStringHandle(template_name);
 		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
 	}
 
 	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
 	void registerSpecializationPattern(QualifiedIdentifier qi,
-	                                   const std::vector<ASTNode>& template_params,
-	                                   const std::vector<TemplateTypeArg>& pattern_args,
-	                                   ASTNode specialized_node,
-	                                   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
+									   const std::vector<ASTNode>& template_params,
+									   const std::vector<TemplateTypeArg>& pattern_args,
+									   ASTNode specialized_node,
+									   std::optional<SfinaeCondition> sfinae_cond = std::nullopt) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerSpecializationPattern(name, template_params, pattern_args, specialized_node, sfinae_cond);
 		});
@@ -613,9 +641,9 @@ public:
 	// Look up an exact template specialization (no pattern matching)
 	std::optional<ASTNode> lookupExactSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
 		SpecializationKey key{std::string(template_name), template_args};
-		
+
 		FLASH_LOG(Templates, Debug, "lookupExactSpecialization: '", template_name, "' with ", template_args.size(), " args");
-		
+
 		auto it = specializations_.find(key);
 		if (it != specializations_.end()) {
 			return it->second;
@@ -626,14 +654,14 @@ public:
 	// Look up a template specialization (exact match first, then pattern match)
 	std::optional<ASTNode> lookupSpecialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args) const {
 		FLASH_LOG(Templates, Debug, "lookupSpecialization: template_name='", template_name, "', num_args=", template_args.size());
-		
+
 		// First, try exact match
 		auto exact = lookupExactSpecialization(template_name, template_args);
 		if (exact.has_value()) {
 			FLASH_LOG(Templates, Debug, "  Found exact specialization match");
 			return exact;
 		}
-		
+
 		// No exact match - try pattern matching
 		FLASH_LOG(Templates, Debug, "  No exact match, trying pattern matching...");
 		auto pattern_result = matchSpecializationPattern(template_name, template_args);
@@ -652,27 +680,27 @@ public:
 			StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(
 				qi.namespace_handle, qi.identifier_handle);
 			auto result = lookupSpecialization(StringTable::getStringView(qualified), template_args);
-			if (result.has_value()) return result;
+			if (result.has_value())
+				return result;
 		}
 		return lookupSpecialization(StringTable::getStringView(qi.identifier_handle), template_args);
 	}
 
-	
 	// Find a matching specialization pattern (StringHandle overload)
-	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name, 
-	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
+	std::optional<ASTNode> matchSpecializationPattern(StringHandle template_name,
+													  const std::vector<TemplateTypeArg>& concrete_args) const {
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
 			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", StringTable::getStringView(template_name), "'");
-			return std::nullopt;  // No patterns for this template
+			return std::nullopt;	 // No patterns for this template
 		}
-		
+
 		const std::vector<TemplatePattern>& patterns = patterns_it->second;
 		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", StringTable::getStringView(template_name), "'");
-		
+
 		const TemplatePattern* best_match = nullptr;
 		int best_specificity = -1;
-		
+
 		// Find the most specific matching pattern
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
@@ -690,32 +718,32 @@ public:
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
 			}
 		}
-		
+
 		if (best_match) {
 			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
 			return best_match->specialized_node;
 		}
-		
+
 		FLASH_LOG(Templates, Debug, "    No matching pattern found");
 		return std::nullopt;
 	}
 
 	// Find a matching specialization pattern (string_view overload)
-	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name, 
-	                                                  const std::vector<TemplateTypeArg>& concrete_args) const {
+	std::optional<ASTNode> matchSpecializationPattern(std::string_view template_name,
+													  const std::vector<TemplateTypeArg>& concrete_args) const {
 		// Heterogeneous lookup - string_view accepted directly
 		auto patterns_it = specialization_patterns_.find(template_name);
 		if (patterns_it == specialization_patterns_.end()) {
 			FLASH_LOG(Templates, Debug, "    No patterns registered for template '", template_name, "'");
-			return std::nullopt;  // No patterns for this template
+			return std::nullopt;	 // No patterns for this template
 		}
-		
+
 		const std::vector<TemplatePattern>& patterns = patterns_it->second;
 		FLASH_LOG(Templates, Debug, "    Found ", patterns.size(), " pattern(s) for template '", template_name, "'");
-		
+
 		const TemplatePattern* best_match = nullptr;
 		int best_specificity = -1;
-		
+
 		// Find the most specific matching pattern
 		for (size_t i = 0; i < patterns.size(); ++i) {
 			const auto& pattern = patterns[i];
@@ -733,12 +761,12 @@ public:
 				FLASH_LOG(Templates, Debug, "      Pattern #", i, " does not match");
 			}
 		}
-		
+
 		if (best_match) {
 			FLASH_LOG(Templates, Debug, "    Selected best pattern (specificity=", best_specificity, ")");
 			return best_match->specialized_node;
 		}
-		
+
 		FLASH_LOG(Templates, Debug, "    No matching pattern found");
 		return std::nullopt;
 	}
@@ -767,7 +795,7 @@ public:
 
 	// Public access to specialization patterns for pattern matching in Parser
 	std::unordered_map<StringHandle, std::vector<TemplatePattern>, TransparentStringHash, TransparentStringEqual> specialization_patterns_;
-	
+
 	// Register a pattern struct name (for partial specializations) along with its base template name.
 	// The base_template_name is stored for non-string-based reverse lookup (pattern → base template).
 	void registerPatternStructName(StringHandle pattern_name, StringHandle base_template_name) {
@@ -797,7 +825,6 @@ public:
 		registerPatternStructName(pattern_name, base_template_name);
 	}
 
-	
 	// Look up which pattern was used for an instantiation
 	std::optional<StringHandle> get_instantiation_pattern(StringHandle instantiated_name) const {
 		auto it = instantiation_to_pattern_.find(instantiated_name);
@@ -811,7 +838,7 @@ private:
 	// Helper: Given a QualifiedIdentifier, call `fn` with both the unqualified name
 	// and (if the identifier has a non-global namespace) the fully-qualified name.
 	// Used by all QualifiedIdentifier registration overloads to eliminate duplication.
-	template<typename Fn>
+	template <typename Fn>
 	void forEachQualifiedName(QualifiedIdentifier qi, Fn&& fn) {
 		std::string_view simple = StringTable::getStringView(qi.identifier_handle);
 		fn(simple);
@@ -862,7 +889,7 @@ private:
 
 	// Map from (template_name, template_args) to specialized class node (exact matches)
 	std::unordered_map<SpecializationKey, ASTNode, SpecializationKeyHash> specializations_;
-	
+
 	// Map from instantiated struct name to the pattern struct name used (for partial specializations)
 	// Example: "Wrapper_int_0" -> "Wrapper$pattern__"
 	// This allows looking up member aliases from the correct specialization
@@ -887,7 +914,6 @@ public:
 	// Lives here (rather than as a static local) so that clear() resets it between
 	// translation units processed in a single compiler invocation.
 	std::atomic<size_t> constrained_pattern_counter{0};
-
 };
 
 // Global template registry

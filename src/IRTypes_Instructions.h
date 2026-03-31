@@ -16,7 +16,7 @@ public:
 	}
 
 	// Typed constructor - defined in IROperandHelpers.h where types are complete
-	template<typename PayloadType>
+	template <typename PayloadType>
 	IrInstruction(IrOpcode opcode, PayloadType&& payload, Token first_token);
 
 	// Add operand (builder pattern)
@@ -25,7 +25,7 @@ public:
 	}
 
 	// Convenience template for adding operands
-	template<typename T>
+	template <typename T>
 	void addOperand(T&& value) {
 		operands_.addOperand(IrOperand(std::forward<T>(value)));
 	}
@@ -42,7 +42,7 @@ public:
 		return operands_[index];
 	}
 
-	template<class TClass>
+	template <class TClass>
 	const TClass& getOperandAs(size_t index) const {
 		return std::get<TClass>(operands_[index]);
 	}
@@ -69,7 +69,7 @@ public:
 		return "";
 	}
 
-	template<class TClass>
+	template <class TClass>
 	bool isOperandType(size_t index) const {
 		return std::holds_alternative<TClass>(operands_[index]);
 	}
@@ -179,8 +179,7 @@ public:
 			oss << formatConversionOp("trunc", getTypedPayload<ConversionOp>());
 			break;
 
-		case IrOpcode::Return:
-		{
+		case IrOpcode::Return: {
 			const auto& op = getTypedPayload<ReturnOp>();
 			oss << "ret ";
 
@@ -205,11 +204,9 @@ public:
 				// Void return
 				oss << "void";
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::FunctionDecl:
-		{
+		case IrOpcode::FunctionDecl: {
 			const auto& op = getTypedPayload<FunctionDeclOp>();
 
 			// Linkage
@@ -248,7 +245,8 @@ public:
 
 			// Parameters
 			for (size_t i = 0; i < op.parameters.size(); ++i) {
-				if (i > 0) oss << ", ";
+				if (i > 0)
+					oss << ", ";
 
 				const auto& param = op.parameters[i];
 
@@ -287,7 +285,8 @@ public:
 			}
 
 			if (op.is_variadic) {
-				if (!op.parameters.empty()) oss << ", ";
+				if (!op.parameters.empty())
+					oss << ", ";
 				oss << "...";
 			}
 
@@ -298,11 +297,9 @@ public:
 			if (struct_name_handle.handle != 0) {
 				oss << " [" << StringTable::getStringView(struct_name_handle) << "]";
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::FunctionCall:
-		{
+		case IrOpcode::FunctionCall: {
 			const auto& op = getTypedPayload<CallOp>();
 
 			// Result variable (Phase 4: Use helper)
@@ -310,7 +307,8 @@ public:
 
 			// Arguments
 			for (size_t i = 0; i < op.args.size(); ++i) {
-				if (i > 0) oss << ", ";
+				if (i > 0)
+					oss << ", ";
 
 				const auto& arg = op.args[i];
 
@@ -325,11 +323,9 @@ public:
 			}
 
 			oss << ")";
-		}
-		break;
+		} break;
 
-		case IrOpcode::StackAlloc:
-		{
+		case IrOpcode::StackAlloc: {
 			const StackAllocOp& op = getTypedPayload<StackAllocOp>();
 			// %name = alloca [Type][SizeInBits]
 			oss << '%';
@@ -341,18 +337,14 @@ public:
 			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
 				oss << type_info->name();
 			oss << op.size_in_bits;
-		}
-		break;
+		} break;
 
-		case IrOpcode::Branch:
-		{
+		case IrOpcode::Branch: {
 			const auto& op = getTypedPayload<BranchOp>();
-			oss << "br label %" << op.getTargetLabel();  // Phase 4: Use helper
-		}
-		break;
+			oss << "br label %" << op.getTargetLabel();	// Phase 4: Use helper
+		} break;
 
-		case IrOpcode::ConditionalBranch:
-		{
+		case IrOpcode::ConditionalBranch: {
 			const auto& op = getTypedPayload<CondBranchOp>();
 			oss << "br i1 ";
 
@@ -366,71 +358,55 @@ public:
 				oss << '%' << StringTable::getStringView(*string);
 			}
 
-			oss << ", label %" << op.getLabelTrue();   // Phase 4: Use helper
+			oss << ", label %" << op.getLabelTrue();	 // Phase 4: Use helper
 			oss << ", label %" << op.getLabelFalse();  // Phase 4: Use helper
-		}
-		break;
+		} break;
 
-		case IrOpcode::Label:
-		{
+		case IrOpcode::Label: {
 			const auto& op = getTypedPayload<LabelOp>();
-			oss << op.getLabelName() << ":";  // Phase 4: Use helper
-		}
-		break;
+			oss << op.getLabelName() << ":";	 // Phase 4: Use helper
+		} break;
 
-		case IrOpcode::LoopBegin:
-		{
+		case IrOpcode::LoopBegin: {
 			assert(hasTypedPayload() && "LoopBegin instruction must use typed payload");
 			const auto& op = getTypedPayload<LoopBeginOp>();
 			oss << "loop_begin %" << op.loop_start_label
 				<< " %" << op.loop_end_label
 				<< " %" << op.loop_increment_label;
-		}
-		break;
+		} break;
 
-		case IrOpcode::LoopEnd:
-		{
+		case IrOpcode::LoopEnd: {
 			// loop_end (no operands)
 			assert(getOperandCount() == 0 && "LoopEnd instruction must have exactly 0 operands");
 			oss << "loop_end";
-		}
-		break;
+		} break;
 
-		case IrOpcode::ScopeBegin:
-		{
+		case IrOpcode::ScopeBegin: {
 			// scope_begin (no operands)
 			assert(getOperandCount() == 0 && "ScopeBegin instruction must have exactly 0 operands");
 			oss << "scope_begin";
-		}
-		break;
+		} break;
 
-		case IrOpcode::ScopeEnd:
-		{
+		case IrOpcode::ScopeEnd: {
 			// scope_end (no operands)
 			assert(getOperandCount() == 0 && "ScopeEnd instruction must have exactly 0 operands");
 			oss << "scope_end";
-		}
-		break;
+		} break;
 
-		case IrOpcode::Break:
-		{
+		case IrOpcode::Break: {
 			// break (no operands - uses loop context stack)
 			assert(getOperandCount() == 0 && "Break instruction must have exactly 0 operands");
 			oss << "break";
-		}
-		break;
+		} break;
 
-		case IrOpcode::Continue:
-		{
+		case IrOpcode::Continue: {
 			// continue (no operands - uses loop context stack)
 			assert(getOperandCount() == 0 && "Continue instruction must have exactly 0 operands");
 			oss << "continue";
-		}
-		break;
+		} break;
 
-		case IrOpcode::ArrayAccess:
-		{
-			assert (hasTypedPayload() && "expected ArrayAccess to have typed payload");
+		case IrOpcode::ArrayAccess: {
+			assert(hasTypedPayload() && "expected ArrayAccess to have typed payload");
 			const ArrayAccessOp& op = std::any_cast<const ArrayAccessOp&>(getTypedPayload());
 			oss << '%' << op.result.var_number << " = array_access ";
 			oss << "[" << static_cast<int>(op.elementType()) << "][" << op.element_size_in_bits << "] ";
@@ -448,12 +424,10 @@ public:
 				oss << '%' << std::get<TempVar>(op.index.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.index.value))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.index.value));
-		}
-		break;
+		} break;
 
-		case IrOpcode::ArrayStore:
-		{
-			assert (hasTypedPayload() && "expected ArrayStore to have typed payload");
+		case IrOpcode::ArrayStore: {
+			assert(hasTypedPayload() && "expected ArrayStore to have typed payload");
 			const ArrayStoreOp& op = std::any_cast<const ArrayStoreOp&>(getTypedPayload());
 			oss << "array_store [" << static_cast<int>(op.elementType()) << "][" << op.element_size_in_bits << "] ";
 
@@ -470,11 +444,9 @@ public:
 
 			printTypedValue(oss, op.value);
 			break;
-		}
-		break;
+		} break;
 
-		case IrOpcode::ArrayElementAddress:
-		{
+		case IrOpcode::ArrayElementAddress: {
 			assert(hasTypedPayload() && "ArrayElementAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ArrayElementAddressOp>();
 			oss << '%' << op.result.var_number << " = array_element_address ";
@@ -489,11 +461,9 @@ public:
 			oss << "[";
 			printTypedValue(oss, op.index);
 			oss << "]";
-		}
-		break;
+		} break;
 
-		case IrOpcode::AddressOf:
-		{
+		case IrOpcode::AddressOf: {
 			assert(hasTypedPayload() && "AddressOf instruction must use typed payload");
 			const auto& op = getTypedPayload<AddressOfOp>();
 			oss << '%' << op.result.var_number << " = addressof ";
@@ -515,22 +485,18 @@ public:
 				oss << '%' << StringTable::getStringView(*string_ptr);
 			else if (std::holds_alternative<TempVar>(op.operand.value))
 				oss << '%' << std::get<TempVar>(op.operand.value).var_number;
-		}
-		break;
+		} break;
 
-		case IrOpcode::AddressOfMember:
-		{
+		case IrOpcode::AddressOfMember: {
 			assert(hasTypedPayload() && "AddressOfMember instruction must use typed payload");
 			const auto& op = getTypedPayload<AddressOfMemberOp>();
 			oss << '%' << op.result.var_number << " = addressof_member ";
 			oss << "[" << static_cast<int>(op.memberType()) << "]" << op.member_size_in_bits << " ";
 			oss << '%' << StringTable::getStringView(op.base_object);
 			oss << " (offset: " << op.member_offset << ")";
-		}
-		break;
+		} break;
 
-		case IrOpcode::ComputeAddress:
-		{
+		case IrOpcode::ComputeAddress: {
 			assert(hasTypedPayload() && "ComputeAddress instruction must use typed payload");
 			const auto& op = getTypedPayload<ComputeAddressOp>();
 			oss << '%' << op.result.var_number << " = compute_address ";
@@ -562,11 +528,9 @@ public:
 			if (op.total_member_offset > 0) {
 				oss << ", member_offset: " << op.total_member_offset;
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::Dereference:
-		{
+		case IrOpcode::Dereference: {
 			assert(hasTypedPayload() && "Dereference instruction must use typed payload");
 			const auto& op = getTypedPayload<DereferenceOp>();
 			oss << '%' << op.result.var_number << " = dereference ";
@@ -592,11 +556,9 @@ public:
 				oss << '%' << StringTable::getStringView(*string);
 			else if (std::holds_alternative<TempVar>(op.pointer.value))
 				oss << '%' << std::get<TempVar>(op.pointer.value).var_number;
-		}
-		break;
+		} break;
 
-		case IrOpcode::DereferenceStore:
-		{
+		case IrOpcode::DereferenceStore: {
 			assert(hasTypedPayload() && "DereferenceStore instruction must use typed payload");
 			const auto& op = getTypedPayload<DereferenceStoreOp>();
 			oss << "store_through_ptr ";
@@ -630,11 +592,9 @@ public:
 				oss << "%" << std::get<TempVar>(op.value.value).var_number;
 			else if (std::holds_alternative<StringHandle>(op.value.value))
 				oss << "%" << StringTable::getStringView(std::get<StringHandle>(op.value.value));
-		}
-		break;
+		} break;
 
-		case IrOpcode::MemberAccess:
-		{
+		case IrOpcode::MemberAccess: {
 			// %result = member_access [MemberType][MemberSize] %object.member_name (offset: N) [ref]
 			assert(hasTypedPayload() && "MemberAccess instruction must use typed payload");
 			const auto& op = getTypedPayload<MemberLoadOp>();
@@ -667,11 +627,9 @@ public:
 			if (op.is_rvalue_reference()) {
 				oss << " [rvalue_ref]";
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::MemberStore:
-		{
+		case IrOpcode::MemberStore: {
 			// member_store [MemberType][MemberSize] %object.member_name (offset: N) [ref], %value
 			assert(hasTypedPayload() && "MemberStore instruction must use typed payload");
 			const auto& op = getTypedPayload<MemberStoreOp>();
@@ -702,11 +660,9 @@ public:
 
 			// Value - use printTypedValue helper
 			printTypedValue(oss, op.value);
-		}
-		break;
+		} break;
 
-		case IrOpcode::ConstructorCall:
-		{
+		case IrOpcode::ConstructorCall: {
 			// constructor_call StructName %object_var [param1_type, param1_size, param1_value, ...]
 			const ConstructorCallOp& op = getTypedPayload<ConstructorCallOp>();
 			oss << "constructor_call " << op.struct_name << " %";
@@ -742,11 +698,9 @@ public:
 				else if (std::holds_alternative<double>(arg.value))
 					oss << std::get<double>(arg.value);
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::DestructorCall:
-		{
+		case IrOpcode::DestructorCall: {
 			// destructor_call StructName %object_var
 			const DestructorCallOp& op = getTypedPayload<DestructorCallOp>();
 			oss << "destructor_call " << op.struct_name << " %";
@@ -756,11 +710,9 @@ public:
 				oss << StringTable::getStringView(*string_ptr);
 			else if (std::holds_alternative<TempVar>(op.object))
 				oss << std::get<TempVar>(op.object).var_number;
-		}
-		break;
+		} break;
 
-		case IrOpcode::VirtualCall:
-		{
+		case IrOpcode::VirtualCall: {
 			// %result = virtual_call %object, vtable_index, [args...]
 			const VirtualCallOp& op = getTypedPayload<VirtualCallOp>();
 			assert(std::holds_alternative<TempVar>(op.result.value) && "VirtualCallOp result must be a TempVar");
@@ -785,7 +737,8 @@ public:
 			if (!op.arguments.empty()) {
 				oss << "(";
 				for (size_t i = 0; i < op.arguments.size(); ++i) {
-					if (i > 0) oss << ", ";
+					if (i > 0)
+						oss << ", ";
 
 					const auto& arg = op.arguments[i];
 
@@ -805,11 +758,9 @@ public:
 				}
 				oss << ")";
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::StringLiteral:
-		{
+		case IrOpcode::StringLiteral: {
 			// %result = string_literal "content"
 			const StringLiteralOp& op = getTypedPayload<StringLiteralOp>();
 			oss << '%';
@@ -820,21 +771,17 @@ public:
 				oss << StringTable::getStringView(std::get<StringHandle>(op.result));
 
 			oss << " = string_literal " << op.content;
-		}
-		break;
+		} break;
 
-		case IrOpcode::HeapAlloc:
-		{
+		case IrOpcode::HeapAlloc: {
 			// %result = heap_alloc [Type][Size][PointerDepth]
 			const HeapAllocOp& op = getTypedPayload<HeapAllocOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc ["
 				<< static_cast<int>(op.opType()) << "]["
 				<< op.size_in_bytes << "][" << op.pointer_depth.value << "]";
-		}
-		break;
+		} break;
 
-		case IrOpcode::HeapAllocArray:
-		{
+		case IrOpcode::HeapAllocArray: {
 			// %result = heap_alloc_array [Type][Size][PointerDepth] %count
 			const HeapAllocArrayOp& op = getTypedPayload<HeapAllocArrayOp>();
 			oss << '%' << op.result.var_number << " = heap_alloc_array ["
@@ -847,11 +794,9 @@ public:
 				oss << std::get<unsigned long long>(op.count);
 			else if (std::holds_alternative<StringHandle>(op.count))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.count));
-		}
-		break;
+		} break;
 
-		case IrOpcode::HeapFree:
-		{
+		case IrOpcode::HeapFree: {
 			// heap_free %ptr
 			const HeapFreeOp& op = getTypedPayload<HeapFreeOp>();
 			oss << "heap_free ";
@@ -859,11 +804,9 @@ public:
 				oss << '%' << temp_var->var_number;
 			else if (std::holds_alternative<StringHandle>(op.pointer))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
-		}
-		break;
+		} break;
 
-		case IrOpcode::HeapFreeArray:
-		{
+		case IrOpcode::HeapFreeArray: {
 			// heap_free_array %ptr
 			const HeapFreeArrayOp& op = getTypedPayload<HeapFreeArrayOp>();
 			oss << "heap_free_array ";
@@ -871,11 +814,9 @@ public:
 				oss << '%' << temp_var->var_number;
 			else if (std::holds_alternative<StringHandle>(op.pointer))
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.pointer));
-		}
-		break;
+		} break;
 
-		case IrOpcode::PlacementNew:
-		{
+		case IrOpcode::PlacementNew: {
 			// %result = placement_new %address [Type][Size]
 			const PlacementNewOp& op = getTypedPayload<PlacementNewOp>();
 			oss << '%' << op.result.var_number << " = placement_new ";
@@ -886,11 +827,9 @@ public:
 			else if (std::holds_alternative<unsigned long long>(op.address))
 				oss << std::get<unsigned long long>(op.address);
 			oss << " [" << static_cast<int>(op.opType()) << "][" << op.size_in_bytes << "]";
-		}
-		break;
+		} break;
 
-		case IrOpcode::Typeid:
-		{
+		case IrOpcode::Typeid: {
 			// %result = typeid [type_name_or_expr] [is_type]
 			auto& op = getTypedPayload<TypeidOp>();
 			oss << '%' << op.result.var_number << " = typeid ";
@@ -900,18 +839,15 @@ public:
 				oss << '%' << std::get<TempVar>(op.operand).var_number;
 			}
 			oss << " [is_type=" << (op.is_type ? "true" : "false") << "]";
-		}
-		break;
+		} break;
 
-		case IrOpcode::DynamicCast:
-		{
+		case IrOpcode::DynamicCast: {
 			// %result = dynamic_cast %source_ptr [target_type] [is_reference]
 			auto& op = getTypedPayload<DynamicCastOp>();
 			oss << '%' << op.result.var_number << " = dynamic_cast %" << op.source.var_number;
 			oss << " [" << op.target_type_name << "]";
 			oss << " [is_ref=" << (op.is_reference ? "true" : "false") << "]";
-		}
-		break;
+		} break;
 
 		case IrOpcode::PreIncrement:
 			oss << formatUnaryOp("pre_inc", getTypedPayload<UnaryOp>());
@@ -931,23 +867,30 @@ public:
 
 		case IrOpcode::AddAssign:
 			oss << formatBinaryOp("add", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::SubAssign:
+			break;
+		case IrOpcode::SubAssign:
 			oss << formatBinaryOp("sub", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::MulAssign:
+			break;
+		case IrOpcode::MulAssign:
 			oss << formatBinaryOp("mul", getTypedPayload<BinaryOp>());
-			break;		case IrOpcode::DivAssign:
-				oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
-				break;
+			break;
+		case IrOpcode::DivAssign:
+			oss << formatBinaryOp("sdiv", getTypedPayload<BinaryOp>());
+			break;
 
 		case IrOpcode::ModAssign:
 			oss << formatBinaryOp("srem", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::AndAssign:
+			break;
+		case IrOpcode::AndAssign:
 			oss << formatBinaryOp("and", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::OrAssign:
+			break;
+		case IrOpcode::OrAssign:
 			oss << formatBinaryOp("or", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::XorAssign:
+			break;
+		case IrOpcode::XorAssign:
 			oss << formatBinaryOp("xor", getTypedPayload<BinaryOp>());
-			break;	case IrOpcode::ShlAssign:
+			break;
+		case IrOpcode::ShlAssign:
 			oss << formatBinaryOp("shl", getTypedPayload<BinaryOp>());
 			break;
 
@@ -989,8 +932,7 @@ public:
 			oss << formatBinaryOp("fcmp oge", getTypedPayload<BinaryOp>());
 			break;
 
-		case IrOpcode::Assignment:
-		{
+		case IrOpcode::Assignment: {
 			const AssignmentOp& op = getTypedPayload<AssignmentOp>();
 			// assign %lhs = %rhs (simple assignment a = b)
 			oss << "assign %";
@@ -1014,13 +956,11 @@ public:
 				oss << '%' << StringTable::getStringView(std::get<StringHandle>(op.rhs.value));
 			else if (std::holds_alternative<double>(op.rhs.value))
 				oss << std::get<double>(op.rhs.value);
-		}
-		break;
+		} break;
 
-		case IrOpcode::VariableDecl:
-		{
+		case IrOpcode::VariableDecl: {
 			const VariableDeclOp& op = getTypedPayload<VariableDeclOp>();
-			std::string_view var_name = op.getVarName();  // Phase 4: Use helper
+			std::string_view var_name = op.getVarName();	 // Phase 4: Use helper
 			oss << "%" << var_name << " = alloc ";
 
 			if (op.is_array && op.array_count.has_value()) {
@@ -1055,11 +995,10 @@ public:
 			break;
 		}
 
-		case IrOpcode::GlobalVariableDecl:
-		{
+		case IrOpcode::GlobalVariableDecl: {
 			const GlobalVariableDeclOp& op = getTypedPayload<GlobalVariableDeclOp>();
 			StringHandle var_name_handle = op.getVarName();
-		std::string_view var_name = StringTable::getStringView(var_name_handle);  // Use helper for backward compatibility
+			std::string_view var_name = StringTable::getStringView(var_name_handle);	 // Use helper for backward compatibility
 
 			oss << "global_var ";
 			if (const TypeInfo* type_info = findNativeType(op.type_index.category()))
@@ -1069,11 +1008,9 @@ public:
 				oss << "[" << op.element_count << "]";
 			}
 			oss << " " << (op.is_initialized ? "initialized" : "uninitialized");
-		}
-		break;
+		} break;
 
-		case IrOpcode::GlobalLoad:
-		{
+		case IrOpcode::GlobalLoad: {
 			const GlobalLoadOp& op = getTypedPayload<GlobalLoadOp>();
 			// %result = global_load @global_name
 			if (const auto* temp_var = std::get_if<TempVar>(&op.result.value)) {
@@ -1081,21 +1018,17 @@ public:
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
 				oss << '%' << StringTable::getStringView(*string_ptr);
 			}
-			oss << " = global_load @" << op.getGlobalName();  // Phase 4: Use helper
-		}
-		break;
+			oss << " = global_load @" << op.getGlobalName();	 // Phase 4: Use helper
+		} break;
 
-		case IrOpcode::GlobalStore:
-		{
+		case IrOpcode::GlobalStore: {
 			// global_store @global_name, %value
 			// Format: [global_name, value]
 			assert(getOperandCount() == 2 && "GlobalStore must have exactly 2 operands");
 			oss << "global_store @" << StringTable::getStringView(getOperandAs<StringHandle>(0)) << ", %" << getOperandAs<TempVar>(1).var_number;
-		}
-		break;
+		} break;
 
-		case IrOpcode::FunctionAddress:
-		{
+		case IrOpcode::FunctionAddress: {
 			// %result = function_address @function_name
 			auto& op = getTypedPayload<FunctionAddressOp>();
 			if (const auto* temp_var = std::get_if<TempVar>(&op.result.value)) {
@@ -1103,12 +1036,10 @@ public:
 			} else if (const auto* string_ptr = std::get_if<StringHandle>(&op.result.value)) {
 				oss << '%' << StringTable::getStringView(*string_ptr);
 			}
-			oss << " = function_address @" << op.getFunctionName();  // Phase 4: Use helper
-		}
-		break;
+			oss << " = function_address @" << op.getFunctionName();	// Phase 4: Use helper
+		} break;
 
-		case IrOpcode::IndirectCall:
-		{
+		case IrOpcode::IndirectCall: {
 			// %result = indirect_call %func_ptr, arg1, arg2, ...
 			auto& op = getTypedPayload<IndirectCallOp>();
 			oss << '%' << op.result.var_number << " = indirect_call ";
@@ -1137,21 +1068,26 @@ public:
 					oss << *d_val;
 				}
 			}
-		}
-		break;
+		} break;
 
 		case IrOpcode::FloatToInt:
 		case IrOpcode::IntToFloat:
-		case IrOpcode::FloatToFloat:
-		{
+		case IrOpcode::FloatToFloat: {
 			// %result = opcode from_val : from_type -> to_type
 			auto& op = getTypedPayload<TypeConversionOp>();
 			oss << '%' << op.result.var_number << " = ";
 			switch (opcode_) {
-				case IrOpcode::FloatToInt: oss << "float_to_int "; break;
-				case IrOpcode::IntToFloat: oss << "int_to_float "; break;
-				case IrOpcode::FloatToFloat: oss << "float_to_float "; break;
-				default: break;
+			case IrOpcode::FloatToInt:
+				oss << "float_to_int ";
+				break;
+			case IrOpcode::IntToFloat:
+				oss << "int_to_float ";
+				break;
+			case IrOpcode::FloatToFloat:
+				oss << "float_to_float ";
+				break;
+			default:
+				break;
 			}
 			// Format: from_type from_size from_value to to_type to_size
 			if (const TypeInfo* from_type_info = findNativeType(op.from.category())) {
@@ -1172,23 +1108,19 @@ public:
 				oss << to_type_info->name();
 			}
 			oss << op.to_size_in_bits;
-		}
-		break;
+		} break;
 
 		// Exception handling opcodes
-		case IrOpcode::TryBegin:
-		{
+		case IrOpcode::TryBegin: {
 			const auto& op = getTypedPayload<BranchOp>();
-			oss << "try_begin @" << op.getTargetLabel();  // Phase 4: Use helper
-		}
-		break;
+			oss << "try_begin @" << op.getTargetLabel();	 // Phase 4: Use helper
+		} break;
 
 		case IrOpcode::TryEnd:
 			oss << "try_end";
 			break;
 
-		case IrOpcode::CatchBegin:
-		{
+		case IrOpcode::CatchBegin: {
 			const auto& op = getTypedPayload<CatchBeginOp>();
 			oss << "catch_begin ";
 			if (!op.type_index.is_valid()) {
@@ -1197,26 +1129,25 @@ public:
 				oss << "type_" << op.type_index.index();
 			}
 			oss << " %" << op.exception_temp.var_number;
-			if (op.is_const) oss << " const";
-			if (op.is_reference()) oss << "&";
-			if (op.is_rvalue_reference()) oss << "&&";
+			if (op.is_const)
+				oss << " const";
+			if (op.is_reference())
+				oss << "&";
+			if (op.is_rvalue_reference())
+				oss << "&&";
 			oss << " -> @" << op.catch_end_label;
-		}
-		break;
+		} break;
 
-		case IrOpcode::CatchEnd:
-		{
+		case IrOpcode::CatchEnd: {
 			if (hasTypedPayload()) {
 				const auto& op = getTypedPayload<CatchEndOp>();
 				oss << "catch_end -> @" << op.continuation_label;
 			} else {
 				oss << "catch_end";
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::Throw:
-		{
+		case IrOpcode::Throw: {
 			const auto& op = getTypedPayload<ThrowOp>();
 			oss << "throw ";
 			// Print the exception value based on IrValue variant type
@@ -1231,48 +1162,42 @@ public:
 				oss << "\"" << StringTable::getStringView(*string_ptr) << "\"";
 			}
 			oss << " : type_" << op.type_index.index() << " (" << op.size_in_bytes << " bytes)";
-			if (op.is_rvalue) oss << " rvalue";
-		}
-		break;
+			if (op.is_rvalue)
+				oss << " rvalue";
+		} break;
 
 		case IrOpcode::Rethrow:
 			oss << "rethrow";
 			break;
 
-		case IrOpcode::FunctionCleanupLP:
-		{
+		case IrOpcode::FunctionCleanupLP: {
 			if (hasTypedPayload()) {
 				const auto& op = getTypedPayload<FunctionCleanupLPOp>();
 				oss << "function_cleanup_lp [" << op.cleanup_vars.size() << " vars]";
 			} else {
 				oss << "function_cleanup_lp";
 			}
-		}
-		break;
+		} break;
 
 		case IrOpcode::ElfCatchNoMatch:
 			oss << "elf_catch_no_match";
 			break;
 
 		// Windows SEH opcodes
-		case IrOpcode::SehTryBegin:
-		{
+		case IrOpcode::SehTryBegin: {
 			const auto& op = getTypedPayload<BranchOp>();
 			oss << "seh_try_begin @" << op.getTargetLabel();
-		}
-		break;
+		} break;
 
 		case IrOpcode::SehTryEnd:
 			oss << "seh_try_end";
 			break;
 
-		case IrOpcode::SehExceptBegin:
-		{
+		case IrOpcode::SehExceptBegin: {
 			const auto& op = getTypedPayload<SehExceptBeginOp>();
 			oss << "seh_except_begin %" << op.filter_result.var_number;
 			oss << " -> @" << op.except_end_label;
-		}
-		break;
+		} break;
 
 		case IrOpcode::SehExceptEnd:
 			oss << "seh_except_end";
@@ -1286,69 +1211,53 @@ public:
 			oss << "seh_finally_end";
 			break;
 
-		case IrOpcode::SehFinallyCall:
-		{
+		case IrOpcode::SehFinallyCall: {
 			const auto& op = getTypedPayload<SehFinallyCallOp>();
 			oss << "seh_finally_call @" << op.funclet_label << " -> @" << op.end_label;
-		}
-		break;
+		} break;
 
 		case IrOpcode::SehFilterBegin:
 			oss << "seh_filter_begin";
 			break;
 
-		case IrOpcode::SehFilterEnd:
-		{
+		case IrOpcode::SehFilterEnd: {
 			const auto& op = getTypedPayload<SehFilterEndOp>();
 			if (op.is_constant_result) {
 				oss << "seh_filter_end constant=" << op.constant_result;
 			} else {
 				oss << "seh_filter_end %" << op.filter_result.var_number;
 			}
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehLeave:
-		{
+		case IrOpcode::SehLeave: {
 			const auto& op = getTypedPayload<SehLeaveOp>();
 			oss << "seh_leave @" << op.target_label;
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehGetExceptionCode:
-		{
+		case IrOpcode::SehGetExceptionCode: {
 			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
 			oss << "%" << op.result.var_number << " = seh_get_exception_code";
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehGetExceptionInfo:
-		{
+		case IrOpcode::SehGetExceptionInfo: {
 			const auto& op = getTypedPayload<SehExceptionIntrinsicOp>();
 			oss << "%" << op.result.var_number << " = seh_get_exception_info";
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehSaveExceptionCode:
-		{
+		case IrOpcode::SehSaveExceptionCode: {
 			const auto& op = getTypedPayload<SehSaveExceptionCodeOp>();
 			oss << "seh_save_exception_code -> %" << op.saved_var.var_number;
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehGetExceptionCodeBody:
-		{
+		case IrOpcode::SehGetExceptionCodeBody: {
 			const auto& op = getTypedPayload<SehGetExceptionCodeBodyOp>();
 			oss << "%" << op.result.var_number << " = seh_get_exception_code_body(%" << op.saved_var.var_number << ")";
-		}
-		break;
+		} break;
 
-		case IrOpcode::SehAbnormalTermination:
-		{
+		case IrOpcode::SehAbnormalTermination: {
 			const auto& op = getTypedPayload<SehAbnormalTerminationOp>();
 			oss << "%" << op.result.var_number << " = seh_abnormal_termination";
-		}
-		break;
+		} break;
 
 		default:
 			FLASH_LOG(Codegen, Error, "Unhandled opcode: ", static_cast<std::underlying_type_t<IrOpcode>>(opcode_));
@@ -1376,7 +1285,7 @@ public:
 	}
 
 	// Template version that casts to the requested type
-	template<typename T>
+	template <typename T>
 	const T& getTypedPayload() const {
 		assert(typed_payload_.has_value() && "Instruction must have typed payload");
 		const T* ptr = std::any_cast<T>(&typed_payload_);
@@ -1384,7 +1293,7 @@ public:
 		return *ptr;
 	}
 
-	template<typename T>
+	template <typename T>
 	T& getTypedPayload() {
 		assert(typed_payload_.has_value() && "Instruction must have typed payload");
 		T* ptr = std::any_cast<T>(&typed_payload_);
@@ -1396,7 +1305,7 @@ private:
 	IrOpcode opcode_;
 	OperandStorage operands_;
 	Token first_token_;
-	std::any typed_payload_;  // Optional typed payload
+	std::any typed_payload_;	 // Optional typed payload
 };
 
 class Ir {
@@ -1411,12 +1320,12 @@ public:
 
 	// Backward compatibility
 	void addInstruction(IrOpcode&& opcode,
-		std::vector<IrOperand>&& operands, Token first_token) {
+						std::vector<IrOperand>&& operands, Token first_token) {
 		instructions.emplace_back(opcode, std::move(operands), first_token);
 	}
 
 	// Add instruction with typed payload (template for any payload type)
-	template<typename PayloadType>
+	template <typename PayloadType>
 	void addInstruction(IrOpcode&& opcode, PayloadType&& payload, Token first_token) {
 		instructions.emplace_back(opcode, std::forward<PayloadType>(payload), first_token);
 	}
@@ -1461,7 +1370,7 @@ public:
 			printf("Usage:             %.1f%% of reserved\n", usage_percent);
 			if (instructions.size() > reserved_capacity_) {
 				printf("WARNING: Exceeded reserved capacity by %zu instructions\n",
-				       instructions.size() - reserved_capacity_);
+					   instructions.size() - reserved_capacity_);
 			}
 		}
 		printf("==========================================\n\n");

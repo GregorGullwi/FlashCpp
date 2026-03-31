@@ -4,13 +4,13 @@
 // instead of makeTypeSpecifier(), the qualifiers would be lost and T would become
 // a bare int (or worse, the pointer depth would vanish), causing the function to
 // fail to instantiate or produce wrong results.
-template<typename T, int N>
+template <typename T, int N>
 struct Holder {
 	T value;
 	int tag;
 };
 
-template<typename T, int N>
+template <typename T, int N>
 int getTag(Holder<T, N>& h) {
 	return N;
 }

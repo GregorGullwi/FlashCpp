@@ -3,13 +3,13 @@
 // Expected return: 3
 
 int count() {
-    static int counter = 0;
-    counter++;
-    return counter;
+	static int counter = 0;
+	counter++;
+	return counter;
 }
 
 int main() {
-    count();   // counter = 1
-    count();   // counter = 2
-    return count();  // counter = 3
+	count();	 // counter = 1
+	count();	 // counter = 2
+	return count();	// counter = 3
 }

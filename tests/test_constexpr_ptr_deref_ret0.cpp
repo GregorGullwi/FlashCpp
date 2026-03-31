@@ -31,7 +31,8 @@ static_assert(sum_via_arrow(&pt) == 30);
 
 // Pointer branching inside constexpr function
 constexpr int maybe_deref(const int* p, bool do_it) {
-	if (do_it) return *p;
+	if (do_it)
+		return *p;
 	return 0;
 }
 static_assert(maybe_deref(&global_val, true) == 42);

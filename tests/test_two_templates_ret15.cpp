@@ -1,17 +1,17 @@
 // Test two template function calls in variable initialization
 
-template<typename T>
+template <typename T>
 T increment(T x) {
-    return x + 1;
+	return x + 1;
 }
 
-template<typename T>
+template <typename T>
 T decrement(T x) {
-    return x - 1;
+	return x - 1;
 }
 
 int main() {
-    int a = increment(5);
-    int b = decrement(10);
-    return a + b;
+	int a = increment(5);
+	int b = decrement(10);
+	return a + b;
 }

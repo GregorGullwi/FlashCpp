@@ -4,13 +4,15 @@
 // and that SFINAE correctly selects the matching overload.
 // Both positive (WithFoo has foo()) and negative (WithoutFoo lacks foo()) cases.
 
-struct WithFoo { void foo() {} };
+struct WithFoo {
+	void foo() {}
+};
 struct WithoutFoo {};
 
-template<typename U>
+template <typename U>
 auto has_foo_check(U* u) -> decltype(u->foo(), void(), true) { return true; }
 
-template<typename U>
+template <typename U>
 auto has_foo_check(...) -> bool { return false; }
 
 int main() {

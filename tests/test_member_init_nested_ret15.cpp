@@ -12,6 +12,5 @@ struct Outer {
 
 int main() {
 	Outer o;
-	return o.inner.a + o.b;  // Should return 15 (5 + 10)
+	return o.inner.a + o.b;	// Should return 15 (5 + 10)
 }
-

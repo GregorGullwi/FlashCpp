@@ -1,9 +1,9 @@
 // Test function pointer member WITHOUT initialization
 
 struct Test {
-    int (*func)();
+	int (*func)();
 };
 
 int main() {
-    return 0;
+	return 0;
 }

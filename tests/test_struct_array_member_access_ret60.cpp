@@ -1,5 +1,4 @@
-struct P
-{
+struct P {
 	int x;
 };
 
@@ -12,5 +11,5 @@ int main() {
 	for (int i = 0; i < 3; ++i) {
 		sum = sum + p[i].x;
 	}
-	return sum;  // Should be 60
+	return sum;	// Should be 60
 }

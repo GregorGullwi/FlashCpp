@@ -1,17 +1,17 @@
 // Test: using-declaration with pack expansion (C++17)
 // Pattern: using Base<Args>::member...;
 
-template<int I>
+template <int I>
 struct Fun {
-    static int call() { return I; }
+	static int call() { return I; }
 };
 
-template<typename... Bases>
+template <typename... Bases>
 struct Combined : Bases... {
-    using Bases::call...;
+	using Bases::call...;
 };
 
 int main() {
-    Combined<Fun<1>> c;
-    return c.call(); // 1
+	Combined<Fun<1>> c;
+	return c.call(); // 1
 }

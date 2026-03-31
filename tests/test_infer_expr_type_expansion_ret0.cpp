@@ -13,22 +13,26 @@ long long getOffset() {
 
 bool checkNoexcept() {
 	int x = 42;
-	return noexcept(x + 1);  // noexcept returns bool
+	return noexcept(x + 1);	// noexcept returns bool
 }
 
 int main() {
-	// ConstructorCallNode: Point{1, 2} returns Point (struct type)
+ // ConstructorCallNode: Point{1, 2} returns Point (struct type)
 	Point p = Point{1, 2};
-	if (p.x != 1) return 1;
-	if (p.y != 2) return 2;
+	if (p.x != 1)
+		return 1;
+	if (p.y != 2)
+		return 2;
 
-	// offsetof type inference
+ // offsetof type inference
 	long long off = getOffset();
-	if (off != 4) return 3;
+	if (off != 4)
+		return 3;
 
-	// noexcept type inference
+ // noexcept type inference
 	bool ne = checkNoexcept();
-	if (!ne) return 4;
+	if (!ne)
+		return 4;
 
 	return 0;
 }

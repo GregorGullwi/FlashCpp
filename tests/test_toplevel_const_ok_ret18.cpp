@@ -2,7 +2,7 @@
 struct Point {
 	int x;
 	int y;
-	int add(int a);  // declaration without const
+	int add(int a);	// declaration without const
 };
 
 int Point::add(const int a) {  // definition WITH const - should be OK
@@ -13,5 +13,5 @@ int main() {
 	Point p;
 	p.x = 5;
 	p.y = 10;
-	return p.add(3);  // Should return 18
+	return p.add(3);	 // Should return 18
 }

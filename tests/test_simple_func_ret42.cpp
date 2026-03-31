@@ -1,10 +1,9 @@
 // Simple function test
 int test_simple() {
-    int x = 42;
-    return x;
+	int x = 42;
+	return x;
 }
 
-
 int main() {
-    return test_simple();
+	return test_simple();
 }

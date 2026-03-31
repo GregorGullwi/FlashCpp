@@ -21,7 +21,7 @@ struct Target2 {
 // This exercises the type_index matching code at IrGenerator_Call_Direct.cpp:754-760
 // because template instantiations produce Type::UserDefined != Type::Struct,
 // which enters the converting constructor check block at line 729.
-template<typename T>
+template <typename T>
 struct Wrapper {
 	T value;
 };

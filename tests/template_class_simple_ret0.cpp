@@ -1,20 +1,19 @@
 // Simple class template
 // Tests basic class template parsing (no instantiation yet)
-template<typename T>
+template <typename T>
 class Container {
 public:
-    T value;
+	T value;
 
-    void set(T v) {
-        value = v;
-    }
+	void set(T v) {
+		value = v;
+	}
 
-    T get() {
-        return value;
-    }
+	T get() {
+		return value;
+	}
 };
 
 int main() {
-    return 0;
+	return 0;
 }
-

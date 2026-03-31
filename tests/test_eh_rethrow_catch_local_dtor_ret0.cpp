@@ -23,7 +23,8 @@ int main() {
 		rethrowWithCatchLocal();
 		return 1;
 	} catch (int value) {
-		if (value != 42) return 2;
+		if (value != 42)
+			return 2;
 		return g_destroyed == 1 ? 0 : 3;
 	}
 

@@ -5,7 +5,7 @@ int answer() {
 	return 42;
 }
 
-template<typename... Args>
+template <typename... Args>
 int forwardAnswer(Args... args) {
 	return answer(args...);
 }

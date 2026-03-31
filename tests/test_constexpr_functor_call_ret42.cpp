@@ -1,8 +1,8 @@
 struct Add {
 	constexpr Add(int) {}
 
-	// Place a double overload first to verify we don't blindly pick it
-	// when only a single arity match exists (the int overload has different arity).
+ // Place a double overload first to verify we don't blindly pick it
+ // when only a single arity match exists (the int overload has different arity).
 	constexpr int operator()(double a, double b, double c) const {
 		return 0;
 	}

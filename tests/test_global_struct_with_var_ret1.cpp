@@ -6,6 +6,5 @@ struct Point {
 } q;
 
 int main() {
-	return q.x;  // Should return 1
+	return q.x;	// Should return 1
 }
-

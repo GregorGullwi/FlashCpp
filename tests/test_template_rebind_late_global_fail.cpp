@@ -4,11 +4,11 @@
 // Previously FlashCpp accepted this via post-substitution rebinding (MSVC-like
 // non-standard behaviour).  This test documents the correct rejection.
 
-template<typename T>
+template <typename T>
 T get_late_global() { return late_global; }
 
 int late_global = 42;
 
 int main() {
-    return get_late_global<int>() == 42 ? 0 : 1;
+	return get_late_global<int>() == 42 ? 0 : 1;
 }

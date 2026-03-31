@@ -3,12 +3,12 @@ int sumRestricted(int* __restrict lhs, int const* __restrict rhs) {
 }
 
 int main() {
-	#ifdef __restrict
+#ifdef __restrict
 	return 1;
-	#else
+#else
 	int lhs = 20;
 	int rhs = 22;
 	int* __restrict lhsPtr = &lhs;
 	return sumRestricted(lhsPtr, &rhs);
-	#endif
+#endif
 }

@@ -1,15 +1,15 @@
 // Validate template partial specializations with array template arguments
-template<typename T>
+template <typename T>
 struct is_array {
 	static constexpr int value = 0;
 };
 
-template<typename T>
+template <typename T>
 struct is_array<T[]> {
 	static constexpr int value = 1;
 };
 
-template<typename T, int N>
+template <typename T, int N>
 struct is_array<T[N]> {
 	static constexpr int value = 2;
 };

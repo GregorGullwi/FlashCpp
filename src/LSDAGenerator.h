@@ -37,38 +37,38 @@ class LSDAGenerator {
 public:
 	// Information about a single catch handler
 	struct CatchHandlerInfo {
-		uint32_t type_index;       // Index into type table (0 for catch-all)
-		std::string typeinfo_symbol;  // Symbol name of type_info (e.g., "_ZTIi" for int)
-		bool is_catch_all;         // True for catch(...)
+		uint32_t type_index;		 // Index into type table (0 for catch-all)
+		std::string typeinfo_symbol;	 // Symbol name of type_info (e.g., "_ZTIi" for int)
+		bool is_catch_all;		   // True for catch(...)
 	};
-	
+
 	// Information about a try region and its handlers
 	struct TryRegionInfo {
-		uint32_t try_start_offset;    // Start of try block (relative to function)
-		uint32_t try_length;          // Length of try block
-		uint32_t landing_pad_offset;  // Start of catch handler(s)
+		uint32_t try_start_offset;	   // Start of try block (relative to function)
+		uint32_t try_length;			 // Length of try block
+		uint32_t landing_pad_offset;	 // Start of catch handler(s)
 		std::vector<CatchHandlerInfo> catch_handlers;  // Catch clauses
-		bool has_cleanup = false;     // True if the action chain should end in a cleanup entry (type_filter=0)
+		bool has_cleanup = false;	  // True if the action chain should end in a cleanup entry (type_filter=0)
 	};
-	
+
 	// Information for generating LSDA for a function
 	struct FunctionLSDAInfo {
 		std::vector<TryRegionInfo> try_regions;
-		std::vector<std::string> type_table;  // Ordered list of type_info symbols
+		std::vector<std::string> type_table;	 // Ordered list of type_info symbols
 	};
-	
+
 	// Result of LSDA generation - includes data and relocation info
 	struct LSDAGenerationResult {
 		std::vector<uint8_t> data;
 		// Type table relocations: offset (within LSDA) and symbol name
 		std::vector<std::pair<uint32_t, std::string>> type_table_relocations;
 	};
-	
+
 	// Generate LSDA binary data for a function
 	LSDAGenerationResult generate(const FunctionLSDAInfo& info) {
 		LSDAGenerationResult result;
 		std::vector<uint8_t>& lsda_data = result.data;
-		
+
 		// Make a mutable copy so we can add NULL type table entries for catch-all handlers.
 		// In the Itanium C++ ABI, catch(...) requires a NULL entry in the type table
 		// with a positive type_filter pointing to it. type_filter=0 means "cleanup" which
@@ -84,27 +84,27 @@ public:
 				}
 			}
 		}
-		
+
 		// Build type table first (to know offsets)
 		std::vector<uint8_t> type_table_data;
 		std::vector<std::pair<uint32_t, std::string>> type_table_relocs;
 		encode_type_table(type_table_data, effective_info, type_table_relocs);
-		
+
 		// Build action table with per-region action offsets
 		std::vector<uint8_t> action_table_data;
 		std::vector<uint32_t> region_action_offsets;
 		encode_action_table(action_table_data, effective_info, region_action_offsets);
-		
+
 		// Build call site table using per-region action offsets
 		std::vector<uint8_t> call_site_table_data;
 		encode_call_site_table(call_site_table_data, effective_info, region_action_offsets);
-		
+
 		// Now assemble the LSDA header with actual sizes
 		encode_header(lsda_data, type_table_data.size(), call_site_table_data.size(), action_table_data.size());
-		
+
 		// Append call site table
 		DwarfCFI::appendVector(lsda_data, call_site_table_data);
-		
+
 		// Append action table
 		DwarfCFI::appendVector(lsda_data, action_table_data);
 
@@ -125,7 +125,7 @@ public:
 private:
 	// Encode LSDA header
 	void encode_header(std::vector<uint8_t>& data, size_t type_table_size,
-	                  size_t call_site_table_size, size_t action_table_size) {
+					   size_t call_site_table_size, size_t action_table_size) {
 		// LPStart encoding (landing pad base)
 		// 0xff = omitted (we use function-relative offsets)
 		data.push_back(DwarfCFI::DW_EH_PE_omit);
@@ -163,10 +163,10 @@ private:
 		// Call site table size
 		DwarfCFI::appendULEB128(data, call_site_table_size);
 	}
-	
+
 	// Encode call site table with per-region action offsets
 	void encode_call_site_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
-	                           const std::vector<uint32_t>& region_action_offsets) {
+								const std::vector<uint32_t>& region_action_offsets) {
 		size_t handler_region_idx = 0;
 		for (const auto& try_region : info.try_regions) {
 			// Call site entry:
@@ -178,15 +178,15 @@ private:
 			uint32_t action = 0;
 			if (!try_region.catch_handlers.empty()) {
 				assert(handler_region_idx < region_action_offsets.size() && "action offset mismatch");
-				action = region_action_offsets[handler_region_idx] + 1;  // 1-based
+				action = region_action_offsets[handler_region_idx] + 1;	// 1-based
 				handler_region_idx++;
 			}
 
 			if (g_enable_debug_output) {
 				std::cerr << "[LSDA] Call site: start=" << try_region.try_start_offset
-				         << " len=" << try_region.try_length
-				         << " lpad=" << try_region.landing_pad_offset
-				         << " action=" << action << std::endl;
+						  << " len=" << try_region.try_length
+						  << " lpad=" << try_region.landing_pad_offset
+						  << " action=" << action << std::endl;
 			}
 
 			DwarfCFI::appendULEB128(data, try_region.try_start_offset);
@@ -195,10 +195,10 @@ private:
 			DwarfCFI::appendULEB128(data, action);
 		}
 	}
-	
+
 	// Encode action table with per-region action offset tracking
 	void encode_action_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
-	                        std::vector<uint32_t>& region_action_offsets) {
+							 std::vector<uint32_t>& region_action_offsets) {
 		// Action table entries describe what to do when exception is caught
 		// Each entry has:
 		// - Type filter (SLEB128) - positive for catch clause, 0 for cleanup, negative for exception spec
@@ -227,13 +227,13 @@ private:
 			// Generate action entries for all catch handlers in this try region
 			// We need to encode them and track positions to calculate offsets
 			std::vector<std::vector<uint8_t>> action_entries;
-			
+
 			// First pass: encode all type filters
 			for (size_t handler_idx = 0; handler_idx < try_region.catch_handlers.size(); ++handler_idx) {
 				const auto& handler = try_region.catch_handlers[handler_idx];
-				
+
 				std::vector<uint8_t> type_filter_bytes;
-				
+
 				// Generate type filter
 				if (handler.is_catch_all) {
 					// Catch-all uses a NULL entry in the type table with a POSITIVE type_filter.
@@ -255,16 +255,16 @@ private:
 						int filter = static_cast<int>(info.type_table.size()) - type_index;
 						if (g_enable_debug_output) {
 							std::cerr << "[DEBUG] Action table: handler_idx=" << handler_idx
-							         << " type_index=" << type_index
-							         << " filter=" << filter << std::endl;
+									  << " type_index=" << type_index
+									  << " filter=" << filter << std::endl;
 						}
 						DwarfCFI::appendSLEB128(type_filter_bytes, filter);
 					}
 				}
-				
+
 				action_entries.push_back(type_filter_bytes);
 			}
-			
+
 			// Second pass: encode and write all entries with correct next_offset values.
 			// If append_cleanup is true, a final cleanup record (type_filter=0, next=0)
 			// is emitted after the typed catch entries. The last typed catch entry's
@@ -279,10 +279,10 @@ private:
 			for (size_t i = 0; i < action_entries.size(); ++i) {
 				const auto& type_filter_bytes = action_entries[i];
 				bool is_last = (i == total_entries - 1);
-				
+
 				// Write type filter
 				DwarfCFI::appendVector(data, type_filter_bytes);
-				
+
 				// Calculate next_offset
 				// The next_offset is a signed byte offset from the end of this next_offset field
 				// to the start of the next action's type_filter field.
@@ -295,31 +295,31 @@ private:
 					// the offset is 1 byte from the end of current next_offset to the
 					// start of next type_filter.
 					next_offset = 1;
-					
+
 					if (g_enable_debug_output) {
 						std::cerr << "[DEBUG] Action chaining: entry " << i
-						         << " -> entry " << (i + 1)
-						         << " next_offset=" << next_offset << std::endl;
+								  << " -> entry " << (i + 1)
+								  << " next_offset=" << next_offset << std::endl;
 					}
 				}
-				
+
 				DwarfCFI::appendSLEB128(data, next_offset);
 			}
 			// Append cleanup action entry when required (type_filter=0, next=0)
 			if (append_cleanup) {
-				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));  // type_filter=0 → cleanup
-				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));  // next=0 → end of chain
+				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));	// type_filter=0 → cleanup
+				DwarfCFI::appendSLEB128(data, static_cast<int64_t>(0));	// next=0 → end of chain
 			}
 		}
-		
+
 		if (g_enable_debug_output) {
 			std::cerr << "[DEBUG] Action table size: " << data.size() << " bytes" << std::endl;
 		}
 	}
-	
+
 	// Encode type table with relocation tracking
 	void encode_type_table(std::vector<uint8_t>& data, const FunctionLSDAInfo& info,
-	                      std::vector<std::pair<uint32_t, std::string>>& relocations) {
+						   std::vector<std::pair<uint32_t, std::string>>& relocations) {
 		// Type table contains type_info pointers in reverse order
 		// (type filter 1 refers to last entry, 2 to second-to-last, etc.)
 		//
@@ -351,10 +351,10 @@ private:
 			}
 		}
 	}
-	
+
 	// Helper: find index of type_info symbol in type table
-	int find_type_index(const std::vector<std::string>& type_table, 
-	                   const std::string& typeinfo_symbol) const {
+	int find_type_index(const std::vector<std::string>& type_table,
+						const std::string& typeinfo_symbol) const {
 		for (size_t i = 0; i < type_table.size(); ++i) {
 			if (type_table[i] == typeinfo_symbol) {
 				return static_cast<int>(i);
@@ -362,6 +362,6 @@ private:
 		}
 		return -1;  // Not found
 	}
-	
+
 	// Calculate action table size (approximate)
 };

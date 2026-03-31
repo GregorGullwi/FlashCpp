@@ -1,7 +1,7 @@
 // Verify: lazy materialized conversion operator uses canonical name (not original "operator value_type").
 // Expected return: 0 (42 - 42)
 
-template<typename T>
+template <typename T>
 struct LazyWrapper {
 	using value_type = T;
 	T value_;

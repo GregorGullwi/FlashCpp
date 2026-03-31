@@ -6,6 +6,6 @@
 int get_divisor() { return 5; }
 
 int main() {
-    int result = 25 / get_divisor();
-    return result;  // expected: 5
+	int result = 25 / get_divisor();
+	return result;  // expected: 5
 }

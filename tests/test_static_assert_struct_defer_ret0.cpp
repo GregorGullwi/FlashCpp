@@ -5,7 +5,7 @@ struct Helper {
 };
 
 struct MyStruct {
-	// static_assert with complex constexpr that the evaluator may not fully handle
+ // static_assert with complex constexpr that the evaluator may not fully handle
 	static constexpr int x = 42;
 };
 

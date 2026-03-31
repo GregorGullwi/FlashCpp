@@ -4,18 +4,18 @@
 // struct __detected_or
 
 // Primary template
-template<typename T>
+template <typename T>
 struct Container {
-    T value;
+	T value;
 };
 
 // Template template parameter with variadic pack: template<typename...> class Op
-template<typename Def, template<typename...> class Op, typename... Args>
+template <typename Def, template <typename...> class Op, typename... Args>
 struct detected_or {
-    using type = Def;
+	using type = Def;
 };
 
 int main() {
-    detected_or<int, Container, double>::type x = 42;
-    return x;
+	detected_or<int, Container, double>::type x = 42;
+	return x;
 }

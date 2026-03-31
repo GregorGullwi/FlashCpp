@@ -38,7 +38,8 @@ static_assert(arrow_crossscope_y() == 7);
 // if (ptr) — valid non-null constexpr pointer is truthy
 constexpr int val = 42;
 constexpr bool non_null_ptr_is_true(const int* p) {
-	if (p) return true;
+	if (p)
+		return true;
 	return false;
 }
 static_assert(non_null_ptr_is_true(&val));

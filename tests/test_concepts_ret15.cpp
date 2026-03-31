@@ -1,13 +1,13 @@
-template<typename T>
+template <typename T>
 concept Addable = requires(T a, T b) {
-    a + b;
+	a + b;
 };
 
-template<Addable T>
+template <Addable T>
 T add(T a, T b) {
-    return a + b;
+	return a + b;
 }
 
 int main() {
-    return add(5, 10);
+	return add(5, 10);
 }

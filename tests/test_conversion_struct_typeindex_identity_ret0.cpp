@@ -38,13 +38,20 @@ int main() {
 	Bar bar{5};
 	Foo same = foo;
 
-	if (same.value != 3) return 1;
-	if (pickValue(foo) != 3) return 2;
-	if (pickValue(bar) != 105) return 3;
-	if (pickPointer(&foo) != 3) return 4;
-	if (pickPointer(&bar) != 105) return 5;
-	if (pickReference(foo) != 3) return 6;
-	if (pickReference(bar) != 105) return 7;
+	if (same.value != 3)
+		return 1;
+	if (pickValue(foo) != 3)
+		return 2;
+	if (pickValue(bar) != 105)
+		return 3;
+	if (pickPointer(&foo) != 3)
+		return 4;
+	if (pickPointer(&bar) != 105)
+		return 5;
+	if (pickReference(foo) != 3)
+		return 6;
+	if (pickReference(bar) != 105)
+		return 7;
 
 	return 0;
 }

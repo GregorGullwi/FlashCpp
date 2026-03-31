@@ -4,8 +4,12 @@
 // migrating Type::Enum/UserDefined checks to carriesSemanticTypeIndex()
 // and isIrStructType(toIrType()) helpers.
 
-enum Color { Red = 0, Green = 1, Blue = 2 };
-enum class Shape : int { Circle = 10, Square = 20, Triangle = 30 };
+enum Color { Red = 0,
+			 Green = 1,
+			 Blue = 2 };
+enum class Shape : int { Circle = 10,
+						 Square = 20,
+						 Triangle = 30 };
 
 // User-defined operator overloads for enum types
 // Tests: typeSpecRequiresUserDefinedOperator / hasUserDefinedIdentityFromIr
@@ -41,7 +45,7 @@ int test_static_cast_scoped_enum() {
 
 // Enum operator overload test
 int test_enum_user_defined_operator() {
-	Color result = Red + Green;  // Should call operator+(Color, Color)
+	Color result = Red + Green;	// Should call operator+(Color, Color)
 	return result == Green ? 0 : 4;
 }
 
@@ -53,14 +57,19 @@ int test_enum_user_defined_comparison() {
 int main() {
 	int r = 0;
 	r = test_static_cast_enum_to_int();
-	if (r != 0) return r;
+	if (r != 0)
+		return r;
 	r = test_static_cast_int_to_enum();
-	if (r != 0) return r;
+	if (r != 0)
+		return r;
 	r = test_static_cast_scoped_enum();
-	if (r != 0) return r;
+	if (r != 0)
+		return r;
 	r = test_enum_user_defined_operator();
-	if (r != 0) return r;
+	if (r != 0)
+		return r;
 	r = test_enum_user_defined_comparison();
-	if (r != 0) return r;
+	if (r != 0)
+		return r;
 	return 0;
 }

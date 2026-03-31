@@ -1,14 +1,14 @@
-template<int N>
+template <int N>
 struct Inner {
-    int data[N];
+	int data[N];
 };
 
-template<int M>
+template <int M>
 struct Outer {
-    Inner<M> inner;
+	Inner<M> inner;
 };
 
 int main() {
-    Outer<5> outer;
-    return 0;
+	Outer<5> outer;
+	return 0;
 }

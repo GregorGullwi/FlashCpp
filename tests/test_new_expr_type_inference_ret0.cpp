@@ -5,7 +5,8 @@ int main() {
 	int* p = new int(42);
 	int result = *p;
 	delete p;
-	if (result != 42) return 1;
+	if (result != 42)
+		return 1;
 
 	int* arr = new int[3];
 	arr[0] = 10;
@@ -13,7 +14,8 @@ int main() {
 	arr[2] = 30;
 	int sum = arr[0] + arr[1] + arr[2];
 	delete[] arr;
-	if (sum != 60) return 2;
+	if (sum != 60)
+		return 2;
 
 	return 0;
 }

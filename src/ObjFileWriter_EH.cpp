@@ -4,11 +4,9 @@
 // ObjFileWriter_EH.cpp - Out-of-line method definitions for ObjectFileWriter
 // Part of ObjectFileWriter class (unity build)
 
-
-
 void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t function_start,
-                           const std::vector<SehTryBlockInfo>& seh_try_blocks,
-                           std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs) {
+											 const std::vector<SehTryBlockInfo>& seh_try_blocks,
+											 std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs) {
 	// SEH uses a scope table instead of FuncInfo
 	// Scope table format:
 	//   DWORD Count (number of scope entries)
@@ -52,7 +50,7 @@ void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t 
 				jump_target = function_start + seh_block.except_handler.handler_offset;
 				reloc_info.needs_jump_reloc = true;
 				FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: constant filter={}, jump_target={:x}",
-				                 seh_block.except_handler.constant_filter_value, jump_target);
+								 seh_block.except_handler.constant_filter_value, jump_target);
 			} else {
 				// Non-constant filter: handler_address = RVA of filter funclet
 				handler_address = function_start + seh_block.except_handler.filter_funclet_offset;
@@ -60,14 +58,14 @@ void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t 
 				jump_target = function_start + seh_block.except_handler.handler_offset;
 				reloc_info.needs_jump_reloc = true;
 				FLASH_LOG_FORMAT(Codegen, Debug, "SEH __except: filter funclet at offset {:x}, jump_target={:x}",
-				                 seh_block.except_handler.filter_funclet_offset, jump_target);
+								 seh_block.except_handler.filter_funclet_offset, jump_target);
 			}
 		} else if (seh_block.has_finally_handler) {
 			handler_address = function_start + seh_block.finally_handler.handler_offset;
 			reloc_info.needs_handler_reloc = true;
-			jump_target = 0;  // JumpTarget = 0 identifies __finally (termination handler) entries
+			jump_target = 0;	 // JumpTarget = 0 identifies __finally (termination handler) entries
 		} else {
-			handler_address = 0;  // No handler (shouldn't happen)
+			handler_address = 0;	 // No handler (shouldn't happen)
 			jump_target = 0;
 		}
 		reloc_info.handler_offset = static_cast<uint32_t>(xdata.size());
@@ -79,16 +77,16 @@ void ObjectFileWriter::build_seh_scope_table(std::vector<char>& xdata, uint32_t 
 		scope_relocs.push_back(reloc_info);
 
 		FLASH_LOG_FORMAT(Codegen, Debug, "SEH scope: begin={} end={} handler={} type={}",
-		                 seh_block.try_start_offset, seh_block.try_end_offset,
-		                 (seh_block.has_except_handler ? seh_block.except_handler.handler_offset : seh_block.finally_handler.handler_offset),
-		                 (seh_block.has_except_handler ? "__except" : "__finally"));
+						 seh_block.try_start_offset, seh_block.try_end_offset,
+						 (seh_block.has_except_handler ? seh_block.except_handler.handler_offset : seh_block.finally_handler.handler_offset),
+						 (seh_block.has_except_handler ? "__except" : "__finally"));
 	}
 }
 
 void ObjectFileWriter::ensure_type_descriptor(const std::string& type_name) {
 	// Mangle the type name to get the symbol name
 	auto [type_desc_symbol, type_desc_runtime_name] = getMsvcTypeDescriptorInfo(type_name);
-	
+
 	// Check if we've already created a descriptor for this type
 	// by checking both the class member map and if the symbol already exists
 	if (type_descriptor_offsets_.find(type_name) == type_descriptor_offsets_.end()) {
@@ -97,64 +95,70 @@ void ObjectFileWriter::ensure_type_descriptor(const std::string& type_name) {
 		if (existing_symbol) {
 			// Symbol already exists, just record its offset for later use
 			type_descriptor_offsets_[type_name] = existing_symbol->get_value();
-			if (g_enable_debug_output) std::cerr << "  Type descriptor '" << type_desc_symbol 
-			          << "' already exists for exception type '" << type_name << "'" << std::endl;
+			if (g_enable_debug_output)
+				std::cerr << "  Type descriptor '" << type_desc_symbol
+						  << "' already exists for exception type '" << type_name << "'" << std::endl;
 		} else {
 			// Symbol doesn't exist, create it
 			// Validate that RDATA section exists
 			auto rdata_section_it = sectiontype_to_index.find(SectionType::RDATA);
 			if (rdata_section_it == sectiontype_to_index.end()) {
-				if (g_enable_debug_output) std::cerr << "ERROR: RDATA section not found for type descriptor generation of '" << type_name << "'" << std::endl;
+				if (g_enable_debug_output)
+					std::cerr << "ERROR: RDATA section not found for type descriptor generation of '" << type_name << "'" << std::endl;
 				return;
 			}
-			
+
 			// Generate type descriptor in .rdata section
 			auto rdata_section = coffi_.get_sections()[rdata_section_it->second];
 			uint32_t type_desc_offset = static_cast<uint32_t>(rdata_section->get_data_size());
-			
+
 			// Create type descriptor data
 			// Format: vtable_ptr (8 bytes) + spare (8 bytes) + mangled_name (null-terminated)
 			std::vector<char> type_desc_data;
-			
+
 			// vtable pointer (POINTER_SIZE bytes) - null for exception types
-			for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-			
+			for (size_t i = 0; i < POINTER_SIZE; ++i)
+				type_desc_data.push_back(0);
+
 			// spare pointer (POINTER_SIZE bytes) - null
-			for (size_t i = 0; i < POINTER_SIZE; ++i) type_desc_data.push_back(0);
-			
+			for (size_t i = 0; i < POINTER_SIZE; ++i)
+				type_desc_data.push_back(0);
+
 			// mangled name (null-terminated)
-			for (char c : type_desc_runtime_name) type_desc_data.push_back(c);
+			for (char c : type_desc_runtime_name)
+				type_desc_data.push_back(c);
 			type_desc_data.push_back(0);
-			
+
 			// Add to .rdata section
 			add_data(type_desc_data, SectionType::RDATA);
-			
+
 			// Create symbol for the type descriptor
 			auto type_desc_sym = coffi_.add_symbol(type_desc_symbol);
 			type_desc_sym->set_type(IMAGE_SYM_TYPE_NOT_FUNCTION);
 			type_desc_sym->set_storage_class(IMAGE_SYM_CLASS_EXTERNAL);
 			type_desc_sym->set_section_number(rdata_section->get_index() + 1);
 			type_desc_sym->set_value(type_desc_offset);
-			
-			if (g_enable_debug_output) std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '" 
-			          << type_name << "' at offset " << type_desc_offset << std::endl;
-			
+
+			if (g_enable_debug_output)
+				std::cerr << "  Created type descriptor '" << type_desc_symbol << "' for exception type '"
+						  << type_name << "' at offset " << type_desc_offset << std::endl;
+
 			type_descriptor_offsets_[type_name] = type_desc_offset;
 		}
 	}
 }
 
 void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, uint32_t xdata_offset,
-                                  uint32_t function_start, uint32_t function_size,
-                                  std::string_view mangled_name,
-                                  const std::vector<TryBlockInfo>& try_blocks,
-                                  const std::vector<UnwindMapEntryInfo>& unwind_map,
-                                  uint32_t effective_frame_size, [[maybe_unused]] uint32_t stack_frame_size,
-                                  uint32_t cpp_funcinfo_rva_field_offset,
-                                  bool has_cpp_funcinfo_rva_field,
-                                  uint32_t& cpp_funcinfo_local_offset_out,
-                                  std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
-	                                  std::vector<uint32_t>& cpp_text_rva_field_offsets) {
+													uint32_t function_start, uint32_t function_size,
+													std::string_view mangled_name,
+													const std::vector<TryBlockInfo>& try_blocks,
+													const std::vector<UnwindMapEntryInfo>& unwind_map,
+													uint32_t effective_frame_size, [[maybe_unused]] uint32_t stack_frame_size,
+													uint32_t cpp_funcinfo_rva_field_offset,
+													bool has_cpp_funcinfo_rva_field,
+													uint32_t& cpp_funcinfo_local_offset_out,
+													std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
+													std::vector<uint32_t>& cpp_text_rva_field_offsets) {
 	// Add FuncInfo structure for C++ exception handling
 	// This contains information about try blocks and catch handlers
 	// FuncInfo structure (simplified):
@@ -197,15 +201,15 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 
 	// Sort try blocks innermost-first (smaller range first) — MSVC convention.
 	// This must happen BEFORE state assignment so states follow nesting order.
-        std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
-	        std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
-	            uint32_t range_a = a.try_end_offset - a.try_start_offset;
-	            uint32_t range_b = b.try_end_offset - b.try_start_offset;
-	            if (range_a != range_b) {
-	                return range_a < range_b;
-	            }
-	            return a.try_start_offset < b.try_start_offset;
-	        });
+	std::vector<TryBlockInfo> sorted_try_blocks(try_blocks.begin(), try_blocks.end());
+	std::sort(sorted_try_blocks.begin(), sorted_try_blocks.end(), [](const auto& a, const auto& b) {
+		uint32_t range_a = a.try_end_offset - a.try_start_offset;
+		uint32_t range_b = b.try_end_offset - b.try_start_offset;
+		if (range_a != range_b) {
+			return range_a < range_b;
+		}
+		return a.try_start_offset < b.try_start_offset;
+	});
 
 	// Determine nesting relationships: block j contains block i if
 	// j.start <= i.start && i.end <= j.end (sorted innermost-first, so j > i means j is outer).
@@ -249,58 +253,58 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	std::vector<bool> has_cleanup_landing_by_sorted_index(sorted_try_blocks.size(), false);
 	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
 		has_cleanup_landing_by_sorted_index[i] = !sorted_try_blocks[i].catch_handlers.empty() &&
-			unwind_state_has_action(old_try_state_by_sorted_index[i]);
+												 unwind_state_has_action(old_try_state_by_sorted_index[i]);
 	}
 
-		std::vector<std::vector<size_t>> child_indices_by_sorted_index(sorted_try_blocks.size());
-		std::vector<size_t> top_level_sorted_indices;
-		for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
-			if (parent_index[i] >= 0) {
-				child_indices_by_sorted_index[static_cast<size_t>(parent_index[i])].push_back(i);
-			} else {
-				top_level_sorted_indices.push_back(i);
+	std::vector<std::vector<size_t>> child_indices_by_sorted_index(sorted_try_blocks.size());
+	std::vector<size_t> top_level_sorted_indices;
+	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
+		if (parent_index[i] >= 0) {
+			child_indices_by_sorted_index[static_cast<size_t>(parent_index[i])].push_back(i);
+		} else {
+			top_level_sorted_indices.push_back(i);
+		}
+	}
+
+	auto sort_try_indices_by_source_order = [&](std::vector<size_t>& indices) {
+		std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+			if (sorted_try_blocks[a].try_start_offset != sorted_try_blocks[b].try_start_offset) {
+				return sorted_try_blocks[a].try_start_offset < sorted_try_blocks[b].try_start_offset;
 			}
-		}
+			return sorted_try_blocks[a].try_end_offset < sorted_try_blocks[b].try_end_offset;
+		});
+	};
 
-		auto sort_try_indices_by_source_order = [&](std::vector<size_t>& indices) {
-			std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
-				if (sorted_try_blocks[a].try_start_offset != sorted_try_blocks[b].try_start_offset) {
-					return sorted_try_blocks[a].try_start_offset < sorted_try_blocks[b].try_start_offset;
-				}
-				return sorted_try_blocks[a].try_end_offset < sorted_try_blocks[b].try_end_offset;
-			});
-		};
-
-		sort_try_indices_by_source_order(top_level_sorted_indices);
-		for (auto& child_indices : child_indices_by_sorted_index) {
-			sort_try_indices_by_source_order(child_indices);
-		}
+	sort_try_indices_by_source_order(top_level_sorted_indices);
+	for (auto& child_indices : child_indices_by_sorted_index) {
+		sort_try_indices_by_source_order(child_indices);
+	}
 
 	std::vector<int32_t> landing_state_by_sorted_index(sorted_try_blocks.size(), -1);
 	std::vector<int32_t> try_low_by_sorted_index(sorted_try_blocks.size(), -1);
-		std::vector<std::vector<int32_t>> catch_states_by_sorted_index(sorted_try_blocks.size());
+	std::vector<std::vector<int32_t>> catch_states_by_sorted_index(sorted_try_blocks.size());
 	int32_t next_state = 0;
 
-		auto assign_emitted_states = [&](auto&& self, size_t try_index) -> void {
-			if (has_cleanup_landing_by_sorted_index[try_index]) {
-				landing_state_by_sorted_index[try_index] = next_state++;
-			}
-			try_low_by_sorted_index[try_index] = next_state++;
-
-			for (size_t child_index : child_indices_by_sorted_index[try_index]) {
-				self(self, child_index);
-			}
-
-			auto& catch_states = catch_states_by_sorted_index[try_index];
-			catch_states.reserve(sorted_try_blocks[try_index].catch_handlers.size());
-			for ([[maybe_unused]] const auto& handler : sorted_try_blocks[try_index].catch_handlers) {
-				catch_states.push_back(next_state++);
-			}
-		};
-
-		for (size_t top_level_index : top_level_sorted_indices) {
-			assign_emitted_states(assign_emitted_states, top_level_index);
+	auto assign_emitted_states = [&](auto&& self, size_t try_index) -> void {
+		if (has_cleanup_landing_by_sorted_index[try_index]) {
+			landing_state_by_sorted_index[try_index] = next_state++;
 		}
+		try_low_by_sorted_index[try_index] = next_state++;
+
+		for (size_t child_index : child_indices_by_sorted_index[try_index]) {
+			self(self, child_index);
+		}
+
+		auto& catch_states = catch_states_by_sorted_index[try_index];
+		catch_states.reserve(sorted_try_blocks[try_index].catch_handlers.size());
+		for ([[maybe_unused]] const auto& handler : sorted_try_blocks[try_index].catch_handlers) {
+			catch_states.push_back(next_state++);
+		}
+	};
+
+	for (size_t top_level_index : top_level_sorted_indices) {
+		assign_emitted_states(assign_emitted_states, top_level_index);
+	}
 
 	std::vector<int32_t> state_remap(unwind_map.size(), -1);
 	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
@@ -388,41 +392,39 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		}
 	}
 
-		auto handler_contains_try = [function_size](const TryBlockInfo& outer_try, const TryBlockInfo& inner_try) {
-			for (const auto& handler : outer_try.catch_handlers) {
-				uint32_t catch_start = handler.handler_offset != 0 ? handler.handler_offset : handler.funclet_entry_offset;
-				uint32_t catch_end = handler.handler_end_offset != 0 ? handler.handler_end_offset :
-					(handler.funclet_end_offset != 0 ? handler.funclet_end_offset : function_size);
-				if (catch_start <= inner_try.try_start_offset && inner_try.try_end_offset <= catch_end) {
-					return true;
-				}
+	auto handler_contains_try = [function_size](const TryBlockInfo& outer_try, const TryBlockInfo& inner_try) {
+		for (const auto& handler : outer_try.catch_handlers) {
+			uint32_t catch_start = handler.handler_offset != 0 ? handler.handler_offset : handler.funclet_entry_offset;
+			uint32_t catch_end = handler.handler_end_offset != 0 ? handler.handler_end_offset : (handler.funclet_end_offset != 0 ? handler.funclet_end_offset : function_size);
+			if (catch_start <= inner_try.try_start_offset && inner_try.try_end_offset <= catch_end) {
+				return true;
 			}
-			return false;
-		};
+		}
+		return false;
+	};
 
 		// Fourth pass: extend catchHigh to cover nested try/catch states that live
 		// inside this try block's catch handlers.
-		for (size_t i = 0; i < try_state_layout.size(); ++i) {
-			for (size_t j = 0; j < try_state_layout.size(); ++j) {
-				if (i == j) {
-					continue;
-				}
-				if (handler_contains_try(sorted_try_blocks[j], sorted_try_blocks[i]) &&
-					try_state_layout[i].catch_high > try_state_layout[j].catch_high) {
-					try_state_layout[j].catch_high = try_state_layout[i].catch_high;
-				}
+	for (size_t i = 0; i < try_state_layout.size(); ++i) {
+		for (size_t j = 0; j < try_state_layout.size(); ++j) {
+			if (i == j) {
+				continue;
+			}
+			if (handler_contains_try(sorted_try_blocks[j], sorted_try_blocks[i]) &&
+				try_state_layout[i].catch_high > try_state_layout[j].catch_high) {
+				try_state_layout[j].catch_high = try_state_layout[i].catch_high;
 			}
 		}
+	}
 
-	if (IS_FLASH_LOG_ENABLED(Codegen, Debug))
-	{
+	if (IS_FLASH_LOG_ENABLED(Codegen, Debug)) {
 		// Debug: log state layout for each try block
 		for (size_t i = 0; i < try_state_layout.size(); i++) {
 			FLASH_LOG_FORMAT(Codegen, Debug, "  TryBlock[{}]: oldTryState={}, landingState={}, activeTryState={}, tryLow={}, tryHigh={}, catchHigh={}, offsets=[{},{}], catches={}",
-				i, try_state_layout[i].old_try_state, try_state_layout[i].landing_state, try_state_layout[i].active_try_state,
-				try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
-				sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
-				try_state_layout[i].catches.size());
+							 i, try_state_layout[i].old_try_state, try_state_layout[i].landing_state, try_state_layout[i].active_try_state,
+							 try_state_layout[i].try_low, try_state_layout[i].try_high, try_state_layout[i].catch_high,
+							 sorted_try_blocks[i].try_start_offset, sorted_try_blocks[i].try_end_offset,
+							 try_state_layout[i].catches.size());
 		}
 	}
 
@@ -434,7 +436,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	uint32_t magic = 0x19930522;
 	bool use_disp_unwind_help = (magic >= 0x19930521);
 	appendLE_xdata(xdata, magic);
-	
+
 	// maxState - state count used by FH3 state machine.
 	uint32_t max_state = static_cast<uint32_t>(next_state);
 	if (!unwind_map.empty() && unwind_map.size() > max_state) {
@@ -444,8 +446,8 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	// FH3 expects a valid unwind map for the active state range.
 	// If IR-level unwind actions are missing, synthesize no-op entries.
 	uint32_t unwind_entry_count = !unwind_map.empty()
-		? static_cast<uint32_t>(std::max<size_t>(max_state, unwind_map.size()))
-		: max_state;
+									  ? static_cast<uint32_t>(std::max<size_t>(max_state, unwind_map.size()))
+									  : max_state;
 	if (unwind_entry_count > max_state) {
 		max_state = unwind_entry_count;
 	}
@@ -500,7 +502,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		patch_xdata_u32(xdata, p_unwind_map_field_offset, unwind_map_offset);
 		cpp_xdata_rva_field_offsets.push_back(p_unwind_map_field_offset);
 	}
-	
+
 	// Build proper unwind map with state chaining for nested try/catch.
 	// For each state, determine toState: the state to unwind to (parent state).
 	// - synthesized landing state → parent try's active state, or -1 if top-level
@@ -619,7 +621,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	uint32_t tryblock_map_offset = xdata_offset + static_cast<uint32_t>(xdata.size());
 	patch_xdata_u32(xdata, p_try_block_map_field_offset, tryblock_map_offset);
 	cpp_xdata_rva_field_offsets.push_back(p_try_block_map_field_offset);
-	
+
 	// Now add TryBlockMap entries
 	// Each TryBlockMapEntry:
 	//   int tryLow (state number)
@@ -627,48 +629,48 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	//   int catchHigh (state number after try)
 	//   int nCatches
 	//   DWORD pHandlerArray (RVA)
-	
+
 	uint32_t handler_array_base = tryblock_map_offset + (num_try_blocks * 20); // 20 bytes per TryBlockMapEntry
-	
+
 	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
 		const auto& try_block = sorted_try_blocks[i];
 		const auto& state_layout = try_state_layout[i];
-		
+
 		// tryLow (state when entering try block)
 		uint32_t try_low = static_cast<uint32_t>(state_layout.try_low);
 		appendLE_xdata(xdata, try_low);
-		
+
 		// tryHigh (inclusive state range for the try body)
 		uint32_t try_high = static_cast<uint32_t>(state_layout.try_high);
 		appendLE_xdata(xdata, try_high);
-		
+
 		// catchHigh (highest state owned by this try + catch funclets)
 		uint32_t catch_high = static_cast<uint32_t>(state_layout.catch_high);
 		appendLE_xdata(xdata, catch_high);
-		
+
 		// nCatches
 		uint32_t num_catches = static_cast<uint32_t>(try_block.catch_handlers.size());
 		appendLE_xdata(xdata, num_catches);
-		
+
 		// pHandlerArray - RVA to handler array for this try block
 		uint32_t handler_array_offset = handler_array_base;
 		uint32_t p_handler_array_field_offset = static_cast<uint32_t>(xdata.size());
 		appendLE_xdata(xdata, handler_array_offset);
 		cpp_xdata_rva_field_offsets.push_back(p_handler_array_field_offset);
-		
+
 		handler_array_base += num_catches * 20; // 20 bytes per HandlerType entry (x64 FH3 includes dispFrame)
 	}
-	
+
 	// Now add HandlerType arrays for each try block
 	// Each HandlerType:
 	//   DWORD adjectives (0x01 = const, 0x08 = reference, 0 = by-value)
 	//   DWORD pType (RVA to type descriptor, 0 for catch-all)
 	//   int catchObjOffset (frame offset of catch parameter, negative)
 	//   DWORD addressOfHandler (RVA of catch handler code)
-	
+
 	// First, generate type descriptors for all unique exception types
 	// Use class member to track across multiple function calls
-	
+
 	for (const auto& try_block : sorted_try_blocks) {
 		for (const auto& handler : try_block.catch_handlers) {
 			if (!handler.is_catch_all && !handler.type_name.empty()) {
@@ -676,7 +678,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			}
 		}
 	}
-	
+
 	// Now generate HandlerType entries with proper pType references
 	auto ensure_catch_symbol = [this, function_start](std::string_view parent_mangled_name, uint32_t funclet_entry_offset, size_t handler_idx) -> std::string {
 		StringBuilder sb;
@@ -720,41 +722,42 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			if (handler.is_rvalue_reference) {
 				adjectives |= 0x10;
 			}
-			
+
 			appendLE_xdata(xdata, adjectives);
-			
+
 			// pType - RVA to type descriptor (0 for catch-all)
 			uint32_t ptype_offset = static_cast<uint32_t>(xdata.size());
 			// Add placeholder for pType (4 bytes)
 			appendLE_xdata(xdata, uint32_t(0));
-			
+
 			if (!handler.is_catch_all && !handler.type_name.empty()) {
 				// Type-specific catch - add relocation for pType to point to the type descriptor
 				auto type_desc_info = getMsvcTypeDescriptorInfo(handler.type_name);
 				const std::string& type_desc_symbol = type_desc_info.first;
 				add_xdata_relocation(xdata_offset + ptype_offset, type_desc_symbol);
-				
-				if (g_enable_debug_output) std::cerr << "  Added pType relocation for handler " << handler_index 
-				          << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
+
+				if (g_enable_debug_output)
+					std::cerr << "  Added pType relocation for handler " << handler_index
+							  << " to type descriptor '" << type_desc_symbol << "'" << std::endl;
 			}
 			// For catch(...), pType remains 0 (no relocation needed)
-			
+
 				// catchObjOffset (dispCatchObj).
 				// The CRT copies the exception object to [EstablisherFrame + dispCatchObj].
 				// EstablisherFrame = RBP - effective_frame_size.
 				// The catch variable is at [rbp + catch_obj_offset] (catch_obj_offset is negative).
 				// So: (RBP - effective_frame_size) + dispCatchObj = RBP + catch_obj_offset
 				//     dispCatchObj = catch_obj_offset + effective_frame_size
-				int32_t catch_offset = handler.catch_obj_offset;
-				if (catch_offset != 0) {
-					catch_offset += static_cast<int32_t>(effective_frame_size);
-				}
-				appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
+			int32_t catch_offset = handler.catch_obj_offset;
+			if (catch_offset != 0) {
+				catch_offset += static_cast<int32_t>(effective_frame_size);
+			}
+			appendLE_xdata(xdata, static_cast<uint32_t>(catch_offset));
 
 				// addressOfHandler - RVA of catch handler entry.
 				// Use a dedicated catch symbol to mirror MSVC's handler map relocation style.
-				uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
-				std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
+			uint32_t funclet_entry_offset = handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
+			std::string catch_symbol_name = ensure_catch_symbol(mangled_name, funclet_entry_offset, handler_index);
 			uint32_t address_of_handler_field_offset = static_cast<uint32_t>(xdata.size());
 			appendLE_xdata(xdata, uint32_t(0));
 			add_xdata_relocation(xdata_offset + address_of_handler_field_offset, catch_symbol_name);
@@ -774,7 +777,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			// (Verified empirically: clang-cl emits 0x38 for all frame sizes.)
 			int32_t disp_frame = 0x38;
 			appendLE_xdata(xdata, static_cast<uint32_t>(disp_frame));
-			
+
 			handler_index++;
 		}
 	}
@@ -789,23 +792,23 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 	std::vector<IpStateEntry> ip_to_state_entries;
 	ip_to_state_entries.reserve(sorted_try_blocks.size() * 4 + 2);
 	ip_to_state_entries.push_back({function_start, -1});
-		uint32_t first_cleanup_funclet_rva = function_start + function_size;
-		for (const auto& entry : unwind_map) {
-			if (entry.action.empty()) {
-				continue;
-			}
-			auto* action_symbol = coffi_.get_symbol(entry.action);
-			if (!action_symbol) {
-				continue;
-			}
-			first_cleanup_funclet_rva = std::min(first_cleanup_funclet_rva, action_symbol->get_value());
+	uint32_t first_cleanup_funclet_rva = function_start + function_size;
+	for (const auto& entry : unwind_map) {
+		if (entry.action.empty()) {
+			continue;
 		}
-		if (sorted_try_blocks.empty() && !unwind_map.empty()) {
-			ip_to_state_entries.push_back({function_start, 0});
-			if (first_cleanup_funclet_rva > function_start && first_cleanup_funclet_rva < function_start + function_size) {
-				ip_to_state_entries.push_back({first_cleanup_funclet_rva, -1});
-			}
+		auto* action_symbol = coffi_.get_symbol(entry.action);
+		if (!action_symbol) {
+			continue;
 		}
+		first_cleanup_funclet_rva = std::min(first_cleanup_funclet_rva, action_symbol->get_value());
+	}
+	if (sorted_try_blocks.empty() && !unwind_map.empty()) {
+		ip_to_state_entries.push_back({function_start, 0});
+		if (first_cleanup_funclet_rva > function_start && first_cleanup_funclet_rva < function_start + function_size) {
+			ip_to_state_entries.push_back({first_cleanup_funclet_rva, -1});
+		}
+	}
 
 	for (size_t i = 0; i < sorted_try_blocks.size(); ++i) {
 		const auto& tb = sorted_try_blocks[i];
@@ -817,7 +820,7 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 		}
 		// After this try ends, determine if we're still inside a parent try block.
 		// If so, transition to the parent's try_low state; otherwise transition to -1.
-			int32_t post_try_state = enclosing_catch_state_by_sorted_index[i];
+		int32_t post_try_state = enclosing_catch_state_by_sorted_index[i];
 		if (parent_index[i] >= 0) {
 			post_try_state = try_state_layout[parent_index[i]].active_try_state;
 		}
@@ -833,14 +836,14 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 			if (handler.handler_offset != 0 && handler.handler_offset < function_size) {
 				ip_to_state_entries.push_back({function_start + handler.handler_offset, catch_binding.catch_state});
 			}
-				uint32_t catch_end_offset = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
-				for (const auto& catch_range : catch_state_ranges) {
-					if (catch_range.start > handler.handler_offset && catch_range.end < catch_end_offset) {
-						ip_to_state_entries.push_back({function_start + catch_range.end, catch_binding.catch_state});
-					}
+			uint32_t catch_end_offset = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
+			for (const auto& catch_range : catch_state_ranges) {
+				if (catch_range.start > handler.handler_offset && catch_range.end < catch_end_offset) {
+					ip_to_state_entries.push_back({function_start + catch_range.end, catch_binding.catch_state});
 				}
-				if (catch_end_offset != 0 && catch_end_offset <= function_size) {
-					ip_to_state_entries.push_back({function_start + catch_end_offset, post_try_state});
+			}
+			if (catch_end_offset != 0 && catch_end_offset <= function_size) {
+				ip_to_state_entries.push_back({function_start + catch_end_offset, post_try_state});
 			}
 		}
 	}
@@ -879,10 +882,10 @@ void ObjectFileWriter::build_cpp_exception_metadata(std::vector<char>& xdata, ui
 }
 
 void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_t handler_rva_offset,
-                                bool is_seh, bool is_cpp,
-                                const std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs,
-                                const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
-                                const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
+												  bool is_seh, bool is_cpp,
+												  const std::vector<ObjectFileWriter::ScopeTableReloc>& scope_relocs,
+												  const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
+												  const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
 	// Add relocation for the exception handler RVA
 	// Point to __C_specific_handler (SEH) or __CxxFrameHandler3 (C++)
 	if (is_seh) {
@@ -964,19 +967,19 @@ void ObjectFileWriter::emit_exception_relocations(uint32_t xdata_offset, uint32_
 }
 
 void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t function_size,
-                         std::string_view mangled_name,
-                         const std::vector<TryBlockInfo>& try_blocks,
-	                         const std::vector<UnwindMapEntryInfo>& unwind_map,
-                         bool is_cpp, uint32_t xdata_offset,
-                         const ObjectFileWriter::UnwindCodeResult& unwind_info,
-                         uint32_t cpp_funcinfo_local_offset) {
+										   std::string_view mangled_name,
+										   const std::vector<TryBlockInfo>& try_blocks,
+										   const std::vector<UnwindMapEntryInfo>& unwind_map,
+										   bool is_cpp, uint32_t xdata_offset,
+										   const ObjectFileWriter::UnwindCodeResult& unwind_info,
+										   uint32_t cpp_funcinfo_local_offset) {
 	auto resolve_funclet_start = [](const CatchHandlerInfo& handler) -> uint32_t {
 		return handler.funclet_entry_offset != 0 ? handler.funclet_entry_offset : handler.handler_offset;
 	};
 
 	auto resolve_funclet_end = [function_size, &resolve_funclet_start](
-		const CatchHandlerInfo& handler,
-		const CatchHandlerInfo* next_handler) -> uint32_t {
+								   const CatchHandlerInfo& handler,
+								   const CatchHandlerInfo* next_handler) -> uint32_t {
 		uint32_t start = resolve_funclet_start(handler);
 		uint32_t end = handler.funclet_end_offset != 0 ? handler.funclet_end_offset : handler.handler_end_offset;
 		if (end == 0 && next_handler != nullptr) {
@@ -1012,7 +1015,7 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 	};
 	std::vector<RelativeRange> all_catch_funclet_ranges;
 	std::vector<RelativeRange> catch_funclet_ranges;
-		std::vector<RelativeRange> cleanup_funclet_ranges;
+	std::vector<RelativeRange> cleanup_funclet_ranges;
 	std::vector<ObjectFileWriter::PendingPdataEntry> pending_pdata_entries;
 	if (is_cpp) {
 		for (const auto& tb : try_blocks) {
@@ -1045,74 +1048,74 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 		}
 		catch_funclet_ranges = std::move(merged_ranges);
 
-			std::vector<uint32_t> cleanup_starts;
-			for (const auto& entry : unwind_map) {
-				if (entry.action.empty()) {
-					continue;
-				}
-				auto* symbol = coffi_.get_symbol(entry.action);
-				if (!symbol) {
-					continue;
-				}
-				uint32_t start = symbol->get_value();
-				if (start < function_start || start >= function_start + function_size) {
-					continue;
-				}
-				cleanup_starts.push_back(start - function_start);
+		std::vector<uint32_t> cleanup_starts;
+		for (const auto& entry : unwind_map) {
+			if (entry.action.empty()) {
+				continue;
 			}
+			auto* symbol = coffi_.get_symbol(entry.action);
+			if (!symbol) {
+				continue;
+			}
+			uint32_t start = symbol->get_value();
+			if (start < function_start || start >= function_start + function_size) {
+				continue;
+			}
+			cleanup_starts.push_back(start - function_start);
+		}
 
-			std::sort(cleanup_starts.begin(), cleanup_starts.end());
-			cleanup_starts.erase(std::unique(cleanup_starts.begin(), cleanup_starts.end()), cleanup_starts.end());
-			for (size_t i = 0; i < cleanup_starts.size(); ++i) {
-				uint32_t start = cleanup_starts[i];
-				uint32_t end = (i + 1 < cleanup_starts.size()) ? cleanup_starts[i + 1] : function_size;
-				if (end > start) {
-					cleanup_funclet_ranges.push_back({start, end});
-				}
+		std::sort(cleanup_starts.begin(), cleanup_starts.end());
+		cleanup_starts.erase(std::unique(cleanup_starts.begin(), cleanup_starts.end()), cleanup_starts.end());
+		for (size_t i = 0; i < cleanup_starts.size(); ++i) {
+			uint32_t start = cleanup_starts[i];
+			uint32_t end = (i + 1 < cleanup_starts.size()) ? cleanup_starts[i + 1] : function_size;
+			if (end > start) {
+				cleanup_funclet_ranges.push_back({start, end});
 			}
+		}
 	}
 
 	// Emit parent PDATA ranges. For C++ EH, carve out catch funclet ranges to avoid overlap.
 	std::vector<RelativeRange> parent_ranges;
-		std::vector<RelativeRange> excluded_ranges = catch_funclet_ranges;
-		excluded_ranges.insert(excluded_ranges.end(), cleanup_funclet_ranges.begin(), cleanup_funclet_ranges.end());
-		if (!excluded_ranges.empty()) {
-			std::sort(excluded_ranges.begin(), excluded_ranges.end(), [](const RelativeRange& a, const RelativeRange& b) {
-				if (a.start != b.start) {
-					return a.start < b.start;
-				}
-				return a.end < b.end;
-			});
-			std::vector<RelativeRange> merged_excluded;
-			for (const auto& range : excluded_ranges) {
-				if (merged_excluded.empty() || range.start > merged_excluded.back().end) {
-					merged_excluded.push_back(range);
-				} else if (range.end > merged_excluded.back().end) {
-					merged_excluded.back().end = range.end;
-				}
+	std::vector<RelativeRange> excluded_ranges = catch_funclet_ranges;
+	excluded_ranges.insert(excluded_ranges.end(), cleanup_funclet_ranges.begin(), cleanup_funclet_ranges.end());
+	if (!excluded_ranges.empty()) {
+		std::sort(excluded_ranges.begin(), excluded_ranges.end(), [](const RelativeRange& a, const RelativeRange& b) {
+			if (a.start != b.start) {
+				return a.start < b.start;
 			}
-			excluded_ranges = std::move(merged_excluded);
+			return a.end < b.end;
+		});
+		std::vector<RelativeRange> merged_excluded;
+		for (const auto& range : excluded_ranges) {
+			if (merged_excluded.empty() || range.start > merged_excluded.back().end) {
+				merged_excluded.push_back(range);
+			} else if (range.end > merged_excluded.back().end) {
+				merged_excluded.back().end = range.end;
+			}
 		}
+		excluded_ranges = std::move(merged_excluded);
+	}
 
-		if (!is_cpp || excluded_ranges.empty()) {
-			parent_ranges.push_back({0, function_size});
-		} else {
-			uint32_t cursor = 0;
-			for (const auto& excluded_range : excluded_ranges) {
-				if (cursor < excluded_range.start) {
-					parent_ranges.push_back({cursor, excluded_range.start});
-				}
-				if (excluded_range.end > cursor) {
-					cursor = excluded_range.end;
-				}
+	if (!is_cpp || excluded_ranges.empty()) {
+		parent_ranges.push_back({0, function_size});
+	} else {
+		uint32_t cursor = 0;
+		for (const auto& excluded_range : excluded_ranges) {
+			if (cursor < excluded_range.start) {
+				parent_ranges.push_back({cursor, excluded_range.start});
 			}
-			if (cursor < function_size) {
-				parent_ranges.push_back({cursor, function_size});
-			}
-			if (parent_ranges.empty()) {
-				parent_ranges.push_back({0, function_size});
+			if (excluded_range.end > cursor) {
+				cursor = excluded_range.end;
 			}
 		}
+		if (cursor < function_size) {
+			parent_ranges.push_back({cursor, function_size});
+		}
+		if (parent_ranges.empty()) {
+			parent_ranges.push_back({0, function_size});
+		}
+	}
 
 	// For C++ EH, the first parent range starts at function entry so it uses the
 	// main UNWIND_INFO (with correct SizeOfProlog matching the actual prologue).
@@ -1124,187 +1127,182 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 	const uint8_t post_catch_unwind_flags = try_blocks.empty() ? 0x02 : 0x03;
 	uint32_t post_catch_xdata_offset = 0;
 	bool has_post_catch_xdata = false;
-		for (size_t ri = 0; ri < parent_ranges.size(); ++ri) {
-			const auto& parent_range = parent_ranges[ri];
-			if (parent_range.end <= parent_range.start) {
-				continue;
-			}
+	for (size_t ri = 0; ri < parent_ranges.size(); ++ri) {
+		const auto& parent_range = parent_ranges[ri];
+		if (parent_range.end <= parent_range.start) {
+			continue;
+		}
 
-			FLASH_LOG_FORMAT(Codegen, Debug,
-				"PDATA parent range[{}] for {}: [0x{:X}, 0x{:X}) unwind=0x{:X}{}",
-				ri,
-				mangled_name,
-				parent_range.start,
-				parent_range.end,
-				(ri == 0 || !is_cpp) ? xdata_offset : post_catch_xdata_offset,
-				(ri == 0 || !is_cpp) ? " main" : " post-catch");
+		FLASH_LOG_FORMAT(Codegen, Debug,
+						 "PDATA parent range[{}] for {}: [0x{:X}, 0x{:X}) unwind=0x{:X}{}",
+						 ri,
+						 mangled_name,
+						 parent_range.start,
+						 parent_range.end,
+						 (ri == 0 || !is_cpp) ? xdata_offset : post_catch_xdata_offset,
+						 (ri == 0 || !is_cpp) ? " main" : " post-catch");
 
-			if (ri == 0 || !is_cpp) {
+		if (ri == 0 || !is_cpp) {
 				// First parent range (or non-C++ EH): use the main UNWIND_INFO
-				pending_pdata_entries.push_back({
-					function_start + parent_range.start,
-					function_start + parent_range.end,
-					xdata_offset
-				});
-			} else {
+			pending_pdata_entries.push_back({function_start + parent_range.start,
+											 function_start + parent_range.end,
+											 xdata_offset});
+		} else {
 				// Post-catch parent ranges: need UNWIND_INFO with SizeOfProlog=0
-				if (!has_post_catch_xdata) {
+			if (!has_post_catch_xdata) {
 					// Create a new UNWIND_INFO: same unwind codes and frame register,
 					// but keep the same C++ handler/FuncInfo linkage with SizeOfProlog=0.
-					std::vector<char> post_catch_xdata = {
-						static_cast<char>(0x01 | (post_catch_unwind_flags << 3)),
-						static_cast<char>(0x00),              // SizeOfProlog = 0
-						static_cast<char>(unwind_info.count_of_codes),    // Same count of unwind codes
-						static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
-					};
-					for (auto b : unwind_info.codes) {
-						post_catch_xdata.push_back(static_cast<char>(b));
-					}
-					uint32_t post_catch_handler_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
-					appendLE_xdata(post_catch_xdata, uint32_t(0));
-					uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
-					appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
-					auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-					post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
-					add_data(post_catch_xdata, SectionType::XDATA);
-					add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
-					add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
-					has_post_catch_xdata = true;
+				std::vector<char> post_catch_xdata = {
+					static_cast<char>(0x01 | (post_catch_unwind_flags << 3)),
+					static_cast<char>(0x00),				 // SizeOfProlog = 0
+					static_cast<char>(unwind_info.count_of_codes),	   // Same count of unwind codes
+					static_cast<char>(unwind_info.frame_reg_and_offset) // Same frame register and offset
+				};
+				for (auto b : unwind_info.codes) {
+					post_catch_xdata.push_back(static_cast<char>(b));
 				}
-				pending_pdata_entries.push_back({
-					function_start + parent_range.start,
-					function_start + parent_range.end,
-					post_catch_xdata_offset
-				});
+				uint32_t post_catch_handler_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+				appendLE_xdata(post_catch_xdata, uint32_t(0));
+				uint32_t post_catch_funcinfo_rva_local = static_cast<uint32_t>(post_catch_xdata.size());
+				appendLE_xdata(post_catch_xdata, xdata_offset + cpp_funcinfo_local_offset);
+				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+				post_catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+				add_data(post_catch_xdata, SectionType::XDATA);
+				add_xdata_relocation(post_catch_xdata_offset + post_catch_handler_rva_local, "__CxxFrameHandler3");
+				add_cpp_funcinfo_relocation(post_catch_xdata_offset, post_catch_funcinfo_rva_local);
+				has_post_catch_xdata = true;
 			}
+			pending_pdata_entries.push_back({function_start + parent_range.start,
+											 function_start + parent_range.end,
+											 post_catch_xdata_offset});
+		}
 	}
 
 	// Emit PDATA/XDATA for C++ catch funclets.
 	// Catch handlers are emitted as real funclets with prologue:
 	//   push rbp; sub rsp, 32; mov rbp, rdx
 	if (is_cpp) {
-			struct CatchFuncletMetadataRef {
-				uint32_t start_rel;
-				uint32_t end_rel;
-				uint32_t funcinfo_rva;
-			};
-			struct CatchFuncletXdataResult {
-				uint32_t xdata_offset;
-				uint32_t funcinfo_rva;
-			};
-			std::vector<CatchFuncletMetadataRef> catch_funclet_metadata_refs;
+		struct CatchFuncletMetadataRef {
+			uint32_t start_rel;
+			uint32_t end_rel;
+			uint32_t funcinfo_rva;
+		};
+		struct CatchFuncletXdataResult {
+			uint32_t xdata_offset;
+			uint32_t funcinfo_rva;
+		};
+		std::vector<CatchFuncletMetadataRef> catch_funclet_metadata_refs;
 
-			auto emit_cpp_metadata_relocations = [this](uint32_t record_xdata_offset,
-			                                           const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
-			                                           const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
-				auto* xdata_symbol = coffi_.get_symbol(".xdata");
-				auto* text_symbol = coffi_.get_symbol(".text");
-				auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+		auto emit_cpp_metadata_relocations = [this](uint32_t record_xdata_offset,
+													const std::vector<uint32_t>& cpp_xdata_rva_field_offsets,
+													const std::vector<uint32_t>& cpp_text_rva_field_offsets) {
+			auto* xdata_symbol = coffi_.get_symbol(".xdata");
+			auto* text_symbol = coffi_.get_symbol(".text");
+			auto xdata_sec = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
 
-				if (xdata_symbol) {
-					for (uint32_t field_off : cpp_xdata_rva_field_offsets) {
-						COFFI::rel_entry_generic reloc;
-						reloc.virtual_address = record_xdata_offset + field_off;
-						reloc.symbol_table_index = xdata_symbol->get_index();
-						reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-						xdata_sec->add_relocation_entry(&reloc);
-					}
+			if (xdata_symbol) {
+				for (uint32_t field_off : cpp_xdata_rva_field_offsets) {
+					COFFI::rel_entry_generic reloc;
+					reloc.virtual_address = record_xdata_offset + field_off;
+					reloc.symbol_table_index = xdata_symbol->get_index();
+					reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc);
+				}
+			}
+
+			if (text_symbol) {
+				for (uint32_t field_off : cpp_text_rva_field_offsets) {
+					COFFI::rel_entry_generic reloc;
+					reloc.virtual_address = record_xdata_offset + field_off;
+					reloc.symbol_table_index = text_symbol->get_index();
+					reloc.type = IMAGE_REL_AMD64_ADDR32NB;
+					xdata_sec->add_relocation_entry(&reloc);
+				}
+			}
+		};
+
+		auto collect_funclet_try_blocks = [&](uint32_t funclet_start_rel, uint32_t funclet_end_rel) {
+			std::vector<TryBlockInfo> funclet_try_blocks;
+			for (const auto& candidate_try_block : try_blocks) {
+				if (candidate_try_block.try_start_offset < funclet_start_rel || candidate_try_block.try_end_offset > funclet_end_rel) {
+					continue;
 				}
 
-				if (text_symbol) {
-					for (uint32_t field_off : cpp_text_rva_field_offsets) {
-						COFFI::rel_entry_generic reloc;
-						reloc.virtual_address = record_xdata_offset + field_off;
-						reloc.symbol_table_index = text_symbol->get_index();
-						reloc.type = IMAGE_REL_AMD64_ADDR32NB;
-						xdata_sec->add_relocation_entry(&reloc);
+				TryBlockInfo local_try_block = candidate_try_block;
+				local_try_block.try_start_offset -= funclet_start_rel;
+				local_try_block.try_end_offset -= funclet_start_rel;
+				for (auto& local_handler : local_try_block.catch_handlers) {
+					local_handler.handler_offset -= funclet_start_rel;
+					local_handler.handler_end_offset -= funclet_start_rel;
+					if (local_handler.funclet_entry_offset != 0) {
+						local_handler.funclet_entry_offset -= funclet_start_rel;
+					}
+					if (local_handler.funclet_end_offset != 0) {
+						local_handler.funclet_end_offset -= funclet_start_rel;
 					}
 				}
-			};
+				funclet_try_blocks.push_back(std::move(local_try_block));
+			}
+			return funclet_try_blocks;
+		};
 
-			auto collect_funclet_try_blocks = [&](uint32_t funclet_start_rel, uint32_t funclet_end_rel) {
-				std::vector<TryBlockInfo> funclet_try_blocks;
-				for (const auto& candidate_try_block : try_blocks) {
-					if (candidate_try_block.try_start_offset < funclet_start_rel || candidate_try_block.try_end_offset > funclet_end_rel) {
-						continue;
-					}
+		auto emit_catch_funclet_xdata = [this, function_start, effective_frame_size = unwind_info.effective_frame_size, &add_cpp_funcinfo_relocation, &emit_cpp_metadata_relocations](
+											bool zero_prologue,
+											std::string_view funclet_metadata_name,
+											uint32_t funclet_start_rel,
+											uint32_t funclet_end_rel,
+											const std::vector<TryBlockInfo>& funclet_try_blocks,
+											uint32_t inherited_funcinfo_rva) -> CatchFuncletXdataResult {
+			std::vector<char> catch_xdata = {
+				static_cast<char>(0x19),
+				static_cast<char>(zero_prologue ? 0x00 : 0x0A),
+				static_cast<char>(0x02),
+				static_cast<char>(0x00),
+				static_cast<char>(0x0A),
+				static_cast<char>(0x32),
+				static_cast<char>(0x06),
+				static_cast<char>(0x50)};
 
-					TryBlockInfo local_try_block = candidate_try_block;
-					local_try_block.try_start_offset -= funclet_start_rel;
-					local_try_block.try_end_offset -= funclet_start_rel;
-					for (auto& local_handler : local_try_block.catch_handlers) {
-						local_handler.handler_offset -= funclet_start_rel;
-						local_handler.handler_end_offset -= funclet_start_rel;
-						if (local_handler.funclet_entry_offset != 0) {
-							local_handler.funclet_entry_offset -= funclet_start_rel;
-						}
-						if (local_handler.funclet_end_offset != 0) {
-							local_handler.funclet_end_offset -= funclet_start_rel;
-						}
-					}
-					funclet_try_blocks.push_back(std::move(local_try_block));
-				}
-				return funclet_try_blocks;
-			};
+			uint32_t catch_handler_rva_local = static_cast<uint32_t>(catch_xdata.size());
+			appendLE_xdata(catch_xdata, uint32_t(0));
+			uint32_t catch_funcinfo_rva_local = static_cast<uint32_t>(catch_xdata.size());
+			appendLE_xdata(catch_xdata, uint32_t(0));
 
-			auto emit_catch_funclet_xdata = [this, function_start, effective_frame_size = unwind_info.effective_frame_size, &add_cpp_funcinfo_relocation, &emit_cpp_metadata_relocations](
-				bool zero_prologue,
-				std::string_view funclet_metadata_name,
-				uint32_t funclet_start_rel,
-				uint32_t funclet_end_rel,
-				const std::vector<TryBlockInfo>& funclet_try_blocks,
-				uint32_t inherited_funcinfo_rva) -> CatchFuncletXdataResult {
-				std::vector<char> catch_xdata = {
-					static_cast<char>(0x19),
-					static_cast<char>(zero_prologue ? 0x00 : 0x0A),
-					static_cast<char>(0x02),
-					static_cast<char>(0x00),
-					static_cast<char>(0x0A),
-					static_cast<char>(0x32),
-					static_cast<char>(0x06),
-					static_cast<char>(0x50)
-				};
-
-				uint32_t catch_handler_rva_local = static_cast<uint32_t>(catch_xdata.size());
-				appendLE_xdata(catch_xdata, uint32_t(0));
-				uint32_t catch_funcinfo_rva_local = static_cast<uint32_t>(catch_xdata.size());
-				appendLE_xdata(catch_xdata, uint32_t(0));
-
-				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-				uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+			auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			uint32_t catch_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
 				// Keep catch funclets on the parent FuncInfo for now. Synthesized local
 				// FuncInfo still trips FH3 fail-fast on nested throws from inside catches,
 				// while the parent FuncInfo can represent the full nested state tree.
-				bool has_local_cpp_metadata = false;
-				if (has_local_cpp_metadata) {
-					uint32_t local_cpp_funcinfo_offset = 0;
-					std::vector<uint32_t> local_cpp_xdata_rva_field_offsets;
-					std::vector<uint32_t> local_cpp_text_rva_field_offsets;
-					build_cpp_exception_metadata(catch_xdata,
-						catch_xdata_offset,
-						function_start + funclet_start_rel,
-						funclet_end_rel - funclet_start_rel,
-						funclet_metadata_name,
-						funclet_try_blocks,
-						{},
-						effective_frame_size,
-						0,
-						catch_funcinfo_rva_local,
-						true,
-						local_cpp_funcinfo_offset,
-						local_cpp_xdata_rva_field_offsets,
-						local_cpp_text_rva_field_offsets);
-					add_data(catch_xdata, SectionType::XDATA);
-					add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
-					emit_cpp_metadata_relocations(catch_xdata_offset, local_cpp_xdata_rva_field_offsets, local_cpp_text_rva_field_offsets);
-					return {catch_xdata_offset, catch_xdata_offset + local_cpp_funcinfo_offset};
-				}
-
-				patch_xdata_u32(catch_xdata, catch_funcinfo_rva_local, inherited_funcinfo_rva);
+			bool has_local_cpp_metadata = false;
+			if (has_local_cpp_metadata) {
+				uint32_t local_cpp_funcinfo_offset = 0;
+				std::vector<uint32_t> local_cpp_xdata_rva_field_offsets;
+				std::vector<uint32_t> local_cpp_text_rva_field_offsets;
+				build_cpp_exception_metadata(catch_xdata,
+											 catch_xdata_offset,
+											 function_start + funclet_start_rel,
+											 funclet_end_rel - funclet_start_rel,
+											 funclet_metadata_name,
+											 funclet_try_blocks,
+											 {},
+											 effective_frame_size,
+											 0,
+											 catch_funcinfo_rva_local,
+											 true,
+											 local_cpp_funcinfo_offset,
+											 local_cpp_xdata_rva_field_offsets,
+											 local_cpp_text_rva_field_offsets);
 				add_data(catch_xdata, SectionType::XDATA);
 				add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
-				add_cpp_funcinfo_relocation(catch_xdata_offset, catch_funcinfo_rva_local);
-				return {catch_xdata_offset, inherited_funcinfo_rva};
+				emit_cpp_metadata_relocations(catch_xdata_offset, local_cpp_xdata_rva_field_offsets, local_cpp_text_rva_field_offsets);
+				return {catch_xdata_offset, catch_xdata_offset + local_cpp_funcinfo_offset};
+			}
+
+			patch_xdata_u32(catch_xdata, catch_funcinfo_rva_local, inherited_funcinfo_rva);
+			add_data(catch_xdata, SectionType::XDATA);
+			add_xdata_relocation(catch_xdata_offset + catch_handler_rva_local, "__CxxFrameHandler3");
+			add_cpp_funcinfo_relocation(catch_xdata_offset, catch_funcinfo_rva_local);
+			return {catch_xdata_offset, inherited_funcinfo_rva};
 		};
 
 		for (const auto& tb : try_blocks) {
@@ -1319,12 +1317,12 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 					continue;
 				}
 
-					FLASH_LOG_FORMAT(Codegen, Debug,
-						"Catch funclet candidate for {}: handler[{}] range=[0x{:X}, 0x{:X})",
-						mangled_name,
-						i,
-						handler_start_rel,
-						handler_end_rel);
+				FLASH_LOG_FORMAT(Codegen, Debug,
+								 "Catch funclet candidate for {}: handler[{}] range=[0x{:X}, 0x{:X})",
+								 mangled_name,
+								 i,
+								 handler_start_rel,
+								 handler_end_rel);
 
 				std::vector<RelativeRange> nested_excluded_ranges;
 				for (const auto& range : all_catch_funclet_ranges) {
@@ -1362,42 +1360,42 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 					handler_segments.push_back({handler_start_rel, handler_end_rel});
 				}
 
-					for (const auto& excluded_range : nested_excluded_ranges) {
-						FLASH_LOG_FORMAT(Codegen, Debug,
-							"  excluded nested range: [0x{:X}, 0x{:X})",
-							excluded_range.start,
-							excluded_range.end);
-					}
-					for (size_t segment_index = 0; segment_index < handler_segments.size(); ++segment_index) {
-						const auto& segment = handler_segments[segment_index];
-						FLASH_LOG_FORMAT(Codegen, Debug,
-							"  handler segment[{}]: [0x{:X}, 0x{:X}){}",
-							segment_index,
-							segment.start,
-							segment.end,
-							segment_index == 0 ? " catch-prologue-xdata" : " catch-continuation-xdata");
-					}
+				for (const auto& excluded_range : nested_excluded_ranges) {
+					FLASH_LOG_FORMAT(Codegen, Debug,
+									 "  excluded nested range: [0x{:X}, 0x{:X})",
+									 excluded_range.start,
+									 excluded_range.end);
+				}
+				for (size_t segment_index = 0; segment_index < handler_segments.size(); ++segment_index) {
+					const auto& segment = handler_segments[segment_index];
+					FLASH_LOG_FORMAT(Codegen, Debug,
+									 "  handler segment[{}]: [0x{:X}, 0x{:X}){}",
+									 segment_index,
+									 segment.start,
+									 segment.end,
+									 segment_index == 0 ? " catch-prologue-xdata" : " catch-continuation-xdata");
+				}
 
-					std::vector<TryBlockInfo> funclet_try_blocks = collect_funclet_try_blocks(handler_start_rel, handler_end_rel);
-					std::string funclet_metadata_name = std::string(mangled_name) + "$catchfunclet$" + std::to_string(handler_start_rel);
-					uint32_t inherited_funcinfo_rva = xdata_offset + cpp_funcinfo_local_offset;
-					uint32_t best_enclosing_size = UINT32_MAX;
-					for (const auto& metadata_ref : catch_funclet_metadata_refs) {
-						if (handler_start_rel >= metadata_ref.start_rel && handler_end_rel <= metadata_ref.end_rel) {
-							uint32_t enclosing_size = metadata_ref.end_rel - metadata_ref.start_rel;
-							if (enclosing_size < best_enclosing_size) {
-								best_enclosing_size = enclosing_size;
-								inherited_funcinfo_rva = metadata_ref.funcinfo_rva;
-							}
+				std::vector<TryBlockInfo> funclet_try_blocks = collect_funclet_try_blocks(handler_start_rel, handler_end_rel);
+				std::string funclet_metadata_name = std::string(mangled_name) + "$catchfunclet$" + std::to_string(handler_start_rel);
+				uint32_t inherited_funcinfo_rva = xdata_offset + cpp_funcinfo_local_offset;
+				uint32_t best_enclosing_size = UINT32_MAX;
+				for (const auto& metadata_ref : catch_funclet_metadata_refs) {
+					if (handler_start_rel >= metadata_ref.start_rel && handler_end_rel <= metadata_ref.end_rel) {
+						uint32_t enclosing_size = metadata_ref.end_rel - metadata_ref.start_rel;
+						if (enclosing_size < best_enclosing_size) {
+							best_enclosing_size = enclosing_size;
+							inherited_funcinfo_rva = metadata_ref.funcinfo_rva;
 						}
 					}
+				}
 
-					auto catch_xdata_result = emit_catch_funclet_xdata(false, funclet_metadata_name, handler_start_rel, handler_end_rel, funclet_try_blocks, inherited_funcinfo_rva);
-					uint32_t catch_xdata_offset = catch_xdata_result.xdata_offset;
-					uint32_t funclet_funcinfo_rva = catch_xdata_result.funcinfo_rva;
-					if (!funclet_try_blocks.empty()) {
-						catch_funclet_metadata_refs.push_back({handler_start_rel, handler_end_rel, funclet_funcinfo_rva});
-					}
+				auto catch_xdata_result = emit_catch_funclet_xdata(false, funclet_metadata_name, handler_start_rel, handler_end_rel, funclet_try_blocks, inherited_funcinfo_rva);
+				uint32_t catch_xdata_offset = catch_xdata_result.xdata_offset;
+				uint32_t funclet_funcinfo_rva = catch_xdata_result.funcinfo_rva;
+				if (!funclet_try_blocks.empty()) {
+					catch_funclet_metadata_refs.push_back({handler_start_rel, handler_end_rel, funclet_funcinfo_rva});
+				}
 				uint32_t catch_continuation_xdata_offset = 0;
 				bool has_catch_continuation_xdata = false;
 				for (size_t segment_index = 0; segment_index < handler_segments.size(); ++segment_index) {
@@ -1409,42 +1407,37 @@ void ObjectFileWriter::build_pdata_entries(uint32_t function_start, uint32_t fun
 					uint32_t segment_xdata_offset = catch_xdata_offset;
 					if (segment_index > 0) {
 						if (!has_catch_continuation_xdata) {
-								catch_continuation_xdata_offset = emit_catch_funclet_xdata(true, funclet_metadata_name, handler_start_rel, handler_end_rel, {}, funclet_funcinfo_rva).xdata_offset;
+							catch_continuation_xdata_offset = emit_catch_funclet_xdata(true, funclet_metadata_name, handler_start_rel, handler_end_rel, {}, funclet_funcinfo_rva).xdata_offset;
 							has_catch_continuation_xdata = true;
 						}
 						segment_xdata_offset = catch_continuation_xdata_offset;
 					}
 
-					pending_pdata_entries.push_back({
-						function_start + segment.start,
-						function_start + segment.end,
-						segment_xdata_offset
-					});
+					pending_pdata_entries.push_back({function_start + segment.start,
+													 function_start + segment.end,
+													 segment_xdata_offset});
 				}
 			}
 		}
 
-			for (const auto& cleanup_range : cleanup_funclet_ranges) {
-				std::vector<char> cleanup_xdata = {
-					static_cast<char>(0x01),
-					static_cast<char>(0x06),
-					static_cast<char>(0x02),
-					static_cast<char>(0x00),
-					static_cast<char>(0x06),
-					static_cast<char>(0x32),
-					static_cast<char>(0x02),
-					static_cast<char>(0x50)
-				};
+		for (const auto& cleanup_range : cleanup_funclet_ranges) {
+			std::vector<char> cleanup_xdata = {
+				static_cast<char>(0x01),
+				static_cast<char>(0x06),
+				static_cast<char>(0x02),
+				static_cast<char>(0x00),
+				static_cast<char>(0x06),
+				static_cast<char>(0x32),
+				static_cast<char>(0x02),
+				static_cast<char>(0x50)};
 
-				auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
-				uint32_t cleanup_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
-				add_data(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(cleanup_xdata.data()), cleanup_xdata.size()), SectionType::XDATA);
-				pending_pdata_entries.push_back({
-					function_start + cleanup_range.start,
-					function_start + cleanup_range.end,
-					cleanup_xdata_offset
-				});
-			}
+			auto xdata_section_curr = coffi_.get_sections()[sectiontype_to_index[SectionType::XDATA]];
+			uint32_t cleanup_xdata_offset = static_cast<uint32_t>(xdata_section_curr->get_data_size());
+			add_data(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(cleanup_xdata.data()), cleanup_xdata.size()), SectionType::XDATA);
+			pending_pdata_entries.push_back({function_start + cleanup_range.start,
+											 function_start + cleanup_range.end,
+											 cleanup_xdata_offset});
+		}
 	}
 
 	std::sort(pending_pdata_entries.begin(), pending_pdata_entries.end(), [](const ObjectFileWriter::PendingPdataEntry& a, const ObjectFileWriter::PendingPdataEntry& b) {

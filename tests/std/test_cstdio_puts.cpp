@@ -2,7 +2,7 @@
 #include <cstdio>
 
 int main() {
-    std::puts("Hello from FlashCpp with <cstdio>!");
-    std::puts("Template support is working!");
-    return 0;
+	std::puts("Hello from FlashCpp with <cstdio>!");
+	std::puts("Template support is working!");
+	return 0;
 }

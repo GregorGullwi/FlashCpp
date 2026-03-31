@@ -1,18 +1,18 @@
 // Test constexpr structs, classes, and statics
 
 struct Point {
-    int x;
-    int y;
+	int x;
+	int y;
 
-    constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
+	constexpr Point(int x_val, int y_val) : x(x_val), y(y_val) {}
 
-    constexpr int sum() const {
-        return x + y;
-    }
+	constexpr int sum() const {
+		return x + y;
+	}
 
-    static constexpr int static_sum(int a, int b) {
-        return a + b;
-    }
+	static constexpr int static_sum(int a, int b) {
+		return a + b;
+	}
 };
 
 constexpr Point p1(10, 20);
@@ -28,11 +28,11 @@ static_assert(global_static_val == 100, "global_static_val should be 100");
 // Template statics
 template <typename T>
 struct Math {
-    static constexpr T pi = T(3); // Simplified pi
-    
-    static constexpr T square(T val) {
-        return val * val;
-    }
+	static constexpr T pi = T(3); // Simplified pi
+
+	static constexpr T square(T val) {
+		return val * val;
+	}
 };
 
 static_assert(Math<int>::pi == 3, "Math<int>::pi should be 3");

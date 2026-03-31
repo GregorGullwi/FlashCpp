@@ -4,7 +4,7 @@ enum Value {
 	Answer = 42
 };
 
-Value values[3] = { First, Second, Answer };
+Value values[3] = {First, Second, Answer};
 Value* g_value_ptr = &values[0];
 
 int main() {

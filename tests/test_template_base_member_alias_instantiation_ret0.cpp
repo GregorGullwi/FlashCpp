@@ -9,17 +9,17 @@ struct true_type {
 	static constexpr bool value = true;
 };
 
-template<typename T>
+template <typename T>
 struct helper {
 	using type = false_type;
 };
 
-template<>
+template <>
 struct helper<int> {
 	using type = true_type;
 };
 
-template<typename T>
+template <typename T>
 struct is_int : helper<T>::type {
 };
 

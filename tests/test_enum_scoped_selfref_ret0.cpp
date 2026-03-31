@@ -10,7 +10,9 @@ enum class Flags : int {
 };
 
 int main() {
-	if (static_cast<int>(Flags::ReadWrite) != 3) return 1;
-	if (static_cast<int>(Flags::All) != 7) return 2;
+	if (static_cast<int>(Flags::ReadWrite) != 3)
+		return 1;
+	if (static_cast<int>(Flags::All) != 7)
+		return 2;
 	return 0;
 }

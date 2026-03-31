@@ -12,33 +12,33 @@
 //   2. A namespace-scoped template is also instantiated to verify it keeps its namespace
 //   3. Both direct and indirect member function calls are exercised
 
-template<typename T>
+template <typename T>
 struct Box {
 	T val;
 	T get() const { return val; }
 };
 
 namespace alpha {
-	template<typename T>
-	struct Wrapper {
-		T inner;
-		T unwrap() const { return inner; }
-	};
+template <typename T>
+struct Wrapper {
+	T inner;
+	T unwrap() const { return inner; }
+};
 
-	int from_alpha() {
-		Box<int> b{10};          // global template, instantiated from alpha
-		Wrapper<int> w{5};       // alpha-scoped template
-		return b.get() + w.unwrap(); // 10 + 5 = 15
-	}
+int from_alpha() {
+	Box<int> b{10};			// global template, instantiated from alpha
+	Wrapper<int> w{5};	   // alpha-scoped template
+	return b.get() + w.unwrap(); // 10 + 5 = 15
 }
+} // namespace alpha
 
 namespace beta {
-	int from_beta() {
-		Box<int> b{20};          // same global template, instantiated from beta
-		alpha::Wrapper<int> w{7}; // alpha-scoped template used from beta
-		return b.get() + w.unwrap(); // 20 + 7 = 27
-	}
+int from_beta() {
+	Box<int> b{20};			// same global template, instantiated from beta
+	alpha::Wrapper<int> w{7}; // alpha-scoped template used from beta
+	return b.get() + w.unwrap(); // 20 + 7 = 27
 }
+} // namespace beta
 
 int main() {
 	return alpha::from_alpha() + beta::from_beta(); // 15 + 27 = 42

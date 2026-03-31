@@ -10,35 +10,35 @@
 
 int main() {
 	float f = 0.0f;
-	float* fp = &f;       // non-null pointer to a zero float
-	float* fn = nullptr;  // null pointer
+	float* fp = &f;		// non-null pointer to a zero float
+	float* fn = nullptr;	 // null pointer
 
 	double d = 0.0;
-	double* dp = &d;      // non-null pointer to a zero double
+	double* dp = &d;		 // non-null pointer to a zero double
 	double* dn = nullptr; // null pointer
 
 	int result = 0;
 
-	// Non-null float pointer: truthy (even though *fp == 0.0f).
+ // Non-null float pointer: truthy (even though *fp == 0.0f).
 	if (fp) {
 		result += 1;
 	}
 
-	// Null float pointer: falsy.
+ // Null float pointer: falsy.
 	if (fn) {
 		result += 100;  // should NOT execute
 	}
 
-	// Non-null double pointer: truthy (even though *dp == 0.0).
+ // Non-null double pointer: truthy (even though *dp == 0.0).
 	if (dp) {
 		result += 10;
 	}
 
-	// Null double pointer: falsy.
+ // Null double pointer: falsy.
 	if (dn) {
 		result += 100;  // should NOT execute
 	}
 
-	// Expected: result == 11 (1 + 10)
+ // Expected: result == 11 (1 + 10)
 	return result - 11;
 }

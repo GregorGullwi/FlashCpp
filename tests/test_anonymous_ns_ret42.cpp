@@ -1,14 +1,13 @@
 // Test anonymous namespace
 
 namespace {
-    int value = 42;
+int value = 42;
 }
 
 int test_anonymous() {
-    return value;
+	return value;
 }
 
-
 int main() {
-    return test_anonymous();
+	return test_anonymous();
 }

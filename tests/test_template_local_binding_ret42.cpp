@@ -4,7 +4,7 @@ struct Box {
 	Box(int x) : value(x) {}
 };
 
-template<int N>
+template <int N>
 int f() {
 	Box box(N);
 	return box.value;

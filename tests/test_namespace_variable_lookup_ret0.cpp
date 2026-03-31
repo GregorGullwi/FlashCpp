@@ -5,11 +5,11 @@
 // Variables declared in namespaces cannot be accessed with qualified names.
 
 namespace ns {
-    int value = 42;
+int value = 42;
 }
 
 int main() {
-    return ns::value == 42 ? 0 : 1;
+	return ns::value == 42 ? 0 : 1;
 }
 
 // Expected behavior (with clang++/g++):

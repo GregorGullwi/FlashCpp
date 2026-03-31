@@ -8,19 +8,19 @@ int main() {
 	int* q = nullptr;
 	int result = 0;
 
-	// Non-null pointer in if condition: truthy.
+ // Non-null pointer in if condition: truthy.
 	if (p) {
 		result += 1;
 	}
 
-	// Null pointer in if condition: falsy.
+ // Null pointer in if condition: falsy.
 	if (q) {
 		result += 100;  // should NOT execute
 	}
 
-	// Ternary condition with pointer.
+ // Ternary condition with pointer.
 	result += p ? 10 : 0;
 
-	// Expected: result == 11 (1 + 10)
+ // Expected: result == 11 (1 + 10)
 	return result - 11;
 }

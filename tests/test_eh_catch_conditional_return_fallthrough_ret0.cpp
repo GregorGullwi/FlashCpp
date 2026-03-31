@@ -7,19 +7,23 @@ int runSequence() {
 	try {
 		throw 7;
 	} catch (int value) {
-		if (value != 7) return 1;
+		if (value != 7)
+			return 1;
 		caught = true;
 	}
-	if (!caught) return 2;
+	if (!caught)
+		return 2;
 
 	caught = false;
 	try {
 		throw 8;
 	} catch (int value) {
-		if (value != 8) return 3;
+		if (value != 8)
+			return 3;
 		caught = true;
 	}
-	if (!caught) return 4;
+	if (!caught)
+		return 4;
 
 	return 0;
 }

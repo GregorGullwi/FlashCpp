@@ -3,14 +3,14 @@
 // Note: codegen for static_cast->member is a separate issue; this test validates parsing only.
 
 struct Data {
-    int x;
-    int get() { return x; }
+	int x;
+	int get() { return x; }
 };
 
 int main() {
-    Data d;
-    d.x = 42;
-    Data* p = &d;
-    int val = p->x;  // Arrow access should work
-    return val == 42 ? 0 : 1;
+	Data d;
+	d.x = 42;
+	Data* p = &d;
+	int val = p->x;	// Arrow access should work
+	return val == 42 ? 0 : 1;
 }

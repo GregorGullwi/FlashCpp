@@ -1,7 +1,7 @@
 // Regression: constexpr member function calls on template instantiations must
 // keep template_param_names aligned with template_args so sizeof(T) resolves.
 
-template<typename T>
+template <typename T>
 struct Box {
 	constexpr Box() {}
 

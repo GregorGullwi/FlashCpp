@@ -1,14 +1,14 @@
 // Test Undefined Behavior in constexpr
 
 constexpr int div_by_zero(int a, int b) {
-    return a / b;
+	return a / b;
 }
 
 // This should fail compilation
 // constexpr int fail_div = div_by_zero(10, 0);
 
 constexpr int signed_overflow(int a) {
-    return a + 1;
+	return a + 1;
 }
 
 // This should fail compilation (assuming 32-bit int)
@@ -16,7 +16,7 @@ constexpr int signed_overflow(int a) {
 // constexpr int fail_overflow = signed_overflow(max_int);
 
 constexpr int shift_too_much(int a) {
-    return a << 33;
+	return a << 33;
 }
 
 // This should fail compilation

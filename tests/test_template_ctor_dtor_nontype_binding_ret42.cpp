@@ -1,7 +1,7 @@
 // Test: instantiated ctor/dtor bodies can resolve non-type template params in sema
 int gTemplateCtorDtorBinding = 0;
 
-template<int N>
+template <int N>
 struct Counter {
 	int value = 0;
 

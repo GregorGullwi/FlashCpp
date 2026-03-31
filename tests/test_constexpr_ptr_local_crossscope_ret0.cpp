@@ -24,7 +24,8 @@ static_assert(outer_relay() == 99);
 
 // Pointer passed and used in conditional
 constexpr int conditional_deref(const int* p, bool flag) {
-	if (flag) return *p;
+	if (flag)
+		return *p;
 	return 0;
 }
 

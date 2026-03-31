@@ -17,22 +17,21 @@ typedef char* va_list;
 // Simple variadic function that sums integers
 // First parameter is the count of variadic arguments
 int sum_ints(int count, ...) {
-    va_list args;
-    va_start(args, count);
-    
-    int total = 0;
-    for (int i = 0; i < count; i++) {
-        int value = va_arg(args, int);
-        total += value;
-    }
-    
-    va_end(args);
-    return total;
+	va_list args;
+	va_start(args, count);
+
+	int total = 0;
+	for (int i = 0; i < count; i++) {
+		int value = va_arg(args, int);
+		total += value;
+	}
+
+	va_end(args);
+	return total;
 }
 
 int main() {
-    // Test: sum_ints(3, 10, 20, 30) should return 60
-    int result = sum_ints(3, 10, 20, 30);
-    return result;  // Should return 60
+	// Test: sum_ints(3, 10, 20, 30) should return 60
+	int result = sum_ints(3, 10, 20, 30);
+	return result;  // Should return 60
 }
-

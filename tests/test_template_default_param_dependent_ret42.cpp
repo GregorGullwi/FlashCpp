@@ -1,20 +1,20 @@
 // Test non-type template default parameter referencing earlier type parameter.
 
-template<typename T>
+template <typename T>
 struct is_int {
-    static constexpr bool value = false;
+	static constexpr bool value = false;
 };
 
-template<>
+template <>
 struct is_int<int> {
-    static constexpr bool value = true;
+	static constexpr bool value = true;
 };
 
-template<typename T, bool IsInt = is_int<T>::value>
+template <typename T, bool IsInt = is_int<T>::value>
 struct marker {
-    static constexpr bool value = IsInt;
+	static constexpr bool value = IsInt;
 };
 
 int main() {
-    return marker<int>::value ? 42 : 0;
+	return marker<int>::value ? 42 : 0;
 }

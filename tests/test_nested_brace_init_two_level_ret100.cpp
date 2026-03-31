@@ -22,10 +22,10 @@ struct ReallyFar {
 };
 
 int main() {
-	// Test two-level nested braced initialization
-	Outer oo = { .middle = { .inner = { .a = 10, .b = 20 }, .c = 30 }, .d = 40 };
-	Outer o = { { { 10, 20 }, 30 }, 40 };
-	ReallyFar rf = { .outer = o };
-	// Expected: 10 + 20 + 30 + 40 = 100
+ // Test two-level nested braced initialization
+	Outer oo = {.middle = {.inner = {.a = 10, .b = 20}, .c = 30}, .d = 40};
+	Outer o = {{{10, 20}, 30}, 40};
+	ReallyFar rf = {.outer = o};
+ // Expected: 10 + 20 + 30 + 40 = 100
 	return oo.middle.inner.a + o.middle.inner.b + o.middle.c + o.d;
 }

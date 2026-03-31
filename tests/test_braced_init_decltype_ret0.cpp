@@ -5,10 +5,10 @@
 void helper(const int&) {}
 
 // Use braced initializer {} in decltype context
-template<typename T>
+template <typename T>
 using result_type = decltype(helper({}));
 
 int main() {
-    // The test is about compilation, not execution
-    return 0;
+	// The test is about compilation, not execution
+	return 0;
 }

@@ -2,14 +2,17 @@
 // This tells the compiler a code path is never reached
 
 int test_switch(int x) {
-    switch(x) {
-        case 1: return 10;
-        case 2: return 20;
-        default: __builtin_unreachable();
-    }
-    // Control should never reach here
+	switch (x) {
+	case 1:
+		return 10;
+	case 2:
+		return 20;
+	default:
+		__builtin_unreachable();
+	}
+	// Control should never reach here
 }
 
 int main() {
-    return test_switch(1);  // Expected: 10
+	return test_switch(1);  // Expected: 10
 }

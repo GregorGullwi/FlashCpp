@@ -5,11 +5,10 @@ struct B {
 };
 
 struct A {
-	B b = { .a = 1 };
+	B b = {.a = 1};
 };
 
 int main() {
 	A obj;
-	return obj.b.a;  // Should return 1
+	return obj.b.a;	// Should return 1
 }
-

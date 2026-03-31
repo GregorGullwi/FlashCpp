@@ -6,12 +6,12 @@ namespace {
 [[noreturn]] void throwDeletedSameTypeAssignmentCompileError(const StructTypeInfo& struct_info, bool prefer_move) {
 	const char* assignment_kind = prefer_move ? "move" : "copy";
 	std::string_view error_msg = StringBuilder()
-	                                 .append("Call to deleted ")
-	                                 .append(assignment_kind)
-	                                 .append(" assignment operator of '")
-	                                 .append(StringTable::getStringView(struct_info.name))
-	                                 .append("'")
-	                                 .commit();
+									 .append("Call to deleted ")
+									 .append(assignment_kind)
+									 .append(" assignment operator of '")
+									 .append(StringTable::getStringView(struct_info.name))
+									 .append("'")
+									 .commit();
 	throw CompileError(std::string(error_msg));
 }
 
@@ -130,8 +130,8 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		const std::string_view resolved_name = info.store_name.view();
 		const size_t last_scope_pos = resolved_name.rfind("::");
 		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
-		                                    ? StringHandle{}
-		                                    : StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
+											? StringHandle{}
+											: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
 
 		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
 		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
@@ -215,7 +215,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			store_value = toIrValue(init_result.value);
 			store_value_set = true;
 		} else if (init_expr.is<InitializerListNode>() && member.type_index.category() == TypeCategory::Struct &&
-		           member.type_index.is_valid()) {
+				   member.type_index.is_valid()) {
 			// Nested struct aggregate init: recursively construct the sub-aggregate
 			// Per C++20 [dcl.init.aggr]/4-5, nested brace-enclosed init lists
 			// initialize sub-aggregate members recursively.
@@ -294,10 +294,10 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 }
 
 TypedValue AstToIr::buildConstructorArgumentValue(
-    const ExprResult& argument_result,
-    const ASTNode& argument,
-    const TypeSpecifierNode* param_type,
-    const Token& token) {
+	const ExprResult& argument_result,
+	const ASTNode& argument,
+	const TypeSpecifierNode* param_type,
+	const Token& token) {
 	TypedValue value;
 	bool param_is_ref = param_type && (param_type->is_reference() || param_type->is_rvalue_reference());
 
@@ -328,8 +328,8 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	};
 
 	if (param_is_ref &&
-	    argument.is<ExpressionNode>() &&
-	    std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+		argument.is<ExpressionNode>() &&
+		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
 		const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 		std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 
@@ -368,9 +368,9 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 	} else if (param_is_ref && std::holds_alternative<TempVar>(argument_result.value)) {
 		const TempVar& arg_temp = std::get<TempVar>(argument_result.value);
 		if (auto lvalue_info = getTempVarLValueInfo(arg_temp);
-		    lvalue_info.has_value() &&
-		    lvalue_info->kind == LValueInfo::Kind::Member &&
-		    std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			lvalue_info.has_value() &&
+			lvalue_info->kind == LValueInfo::Kind::Member &&
+			std::holds_alternative<StringHandle>(lvalue_info->base)) {
 			TempVar address_temp = var_counter.next();
 			AddressOfMemberOp addr_member_op;
 			addr_member_op.result = address_temp;
@@ -382,9 +382,9 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 			ValueCategory category = isTempVarXValue(arg_temp) ? ValueCategory::XValue : ValueCategory::LValue;
 			TempVarMetadata address_meta = TempVarMetadata::makeReference(
-			    TypeIndex{0, argument_result.typeEnum()},
-			    argument_result.size_in_bits,
-			    category);
+				TypeIndex{0, argument_result.typeEnum()},
+				argument_result.size_in_bits,
+				category);
 			address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 			setTempVarMetadata(address_temp, std::move(address_meta));
 
@@ -393,14 +393,14 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 			value = toTypedValue(argument_result);
 		} else {
 			TempVar addr_var = emitAddressOf(
-			    argument_result.category(),
-			    argument_result.size_in_bits.value,
-			    IrValue(arg_temp),
-			    token);
+				argument_result.category(),
+				argument_result.size_in_bits.value,
+				IrValue(arg_temp),
+				token);
 			makeReferenceAddressValue(addr_var);
 		}
 	} else if (param_is_ref && (std::holds_alternative<unsigned long long>(argument_result.value) ||
-	                            std::holds_alternative<double>(argument_result.value))) {
+								std::holds_alternative<double>(argument_result.value))) {
 		materializeReferenceTemporary(toTypedValue(argument_result));
 	} else {
 		value = toTypedValue(argument_result);
@@ -439,37 +439,37 @@ void AstToIr::fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>
 			// Reaching a non-default parameter here means overload resolution
 			// accepted a call with too few arguments — that's a compiler bug.
 			throw InternalError("Missing default argument for parameter '" +
-			                    std::string(param_decl.identifier_token().value()) +
-			                    "' (overload resolution should have rejected this call)");
+								std::string(param_decl.identifier_token().value()) +
+								"' (overload resolution should have rejected this call)");
 		}
 		call_op.args.push_back(materializeDefaultArgument(
-		    param_decl.default_value(),
-		    param_decl.type_node().as<TypeSpecifierNode>(),
-		    StringBuilder()
-		        .append("parameter '")
-		        .append(param_decl.identifier_token().value())
-		        .append("'")
-		        .commit()));
+			param_decl.default_value(),
+			param_decl.type_node().as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("parameter '")
+				.append(param_decl.identifier_token().value())
+				.append("'")
+				.commit()));
 	}
 }
 
 TypedValue AstToIr::materializeDefaultArgument(
-    const ASTNode& default_expr,
-    const TypeSpecifierNode& param_type_spec,
-    std::string_view error_context) {
+	const ASTNode& default_expr,
+	const TypeSpecifierNode& param_type_spec,
+	std::string_view error_context) {
 	auto materializePlaceholderCtorDefault = [&](const ConstructorCallNode& ctor_call) -> std::optional<TypedValue> {
 		if (ctor_call.arguments().size() == 0 &&
-		    ctor_call.type_node().is<TypeSpecifierNode>() &&
-		    (ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::UserDefined ||
-		     ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Struct ||
-		     ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Template ||
-		     isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
-		    !is_struct_type(param_type_spec.category()) &&
-		    param_type_spec.category() != TypeCategory::UserDefined) {
+			ctor_call.type_node().is<TypeSpecifierNode>() &&
+			(ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::UserDefined ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Struct ||
+			 ctor_call.type_node().as<TypeSpecifierNode>().category() == TypeCategory::Template ||
+			 isPlaceholderAutoType(ctor_call.type_node().as<TypeSpecifierNode>().type())) &&
+			!is_struct_type(param_type_spec.category()) &&
+			param_type_spec.category() != TypeCategory::UserDefined) {
 			const int type_size_bits = get_type_size_bits(param_type_spec.category());
 			TypedValue concrete_default = is_floating_point_type(param_type_spec.category())
-			                                  ? makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0.0)
-			                                  : makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0ULL);
+											  ? makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0.0)
+											  : makeTypedValue(param_type_spec.type(), SizeInBits{type_size_bits}, 0ULL);
 			applyTypeNodeMetadata(concrete_default, param_type_spec);
 			return concrete_default;
 		}
@@ -514,9 +514,9 @@ TypedValue AstToIr::materializeDefaultArgument(
 }
 
 void AstToIr::fillInConstructorDefaultArguments(
-    ConstructorCallOp& ctor_op,
-    const ConstructorDeclarationNode& ctor_node,
-    size_t explicit_arg_count) {
+	ConstructorCallOp& ctor_op,
+	const ConstructorDeclarationNode& ctor_node,
+	size_t explicit_arg_count) {
 	const auto& params = ctor_node.parameter_nodes();
 	for (size_t i = explicit_arg_count; i < params.size(); ++i) {
 		if (!params[i].is<DeclarationNode>()) {
@@ -530,20 +530,20 @@ void AstToIr::fillInConstructorDefaultArguments(
 		}
 		if (!param_decl.has_default_value()) {
 			throw InternalError(std::string(StringBuilder()
-			                                    .append("Missing default argument for constructor parameter '")
-			                                    .append(param_decl.identifier_token().value())
-			                                    .append("' (constructor resolution should have rejected this call)")
-			                                    .commit()));
+												.append("Missing default argument for constructor parameter '")
+												.append(param_decl.identifier_token().value())
+												.append("' (constructor resolution should have rejected this call)")
+												.commit()));
 		}
 
 		ctor_op.arguments.push_back(materializeDefaultArgument(
-		    param_decl.default_value(),
-		    param_decl.type_node().as<TypeSpecifierNode>(),
-		    StringBuilder()
-		        .append("constructor parameter '")
-		        .append(param_decl.identifier_token().value())
-		        .append("'")
-		        .commit()));
+			param_decl.default_value(),
+			param_decl.type_node().as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("constructor parameter '")
+				.append(param_decl.identifier_token().value())
+				.append("'")
+				.commit()));
 	}
 }
 
@@ -554,9 +554,9 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 	}
 
 	fillInConstructorDefaultArguments(
-	    ctor_op,
-	    default_ctor->function_decl.as<ConstructorDeclarationNode>(),
-	    ctor_op.arguments.size());
+		ctor_op,
+		default_ctor->function_decl.as<ConstructorDeclarationNode>(),
+		ctor_op.arguments.size());
 }
 
 void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {
@@ -567,8 +567,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 		}
 		if (!param.has_default_value) {
 			throw InternalError("Missing default argument for parameter '" +
-			                    std::string(StringTable::getStringView(param.name)) +
-			                    "' (overload resolution should have rejected this call)");
+								std::string(StringTable::getStringView(param.name)) +
+								"' (overload resolution should have rejected this call)");
 		}
 
 		const ASTNode& default_expr = param.default_value;
@@ -576,13 +576,13 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 			throw InternalError("Cached parameter type missing for default argument evaluation");
 		}
 		call_op.args.push_back(materializeDefaultArgument(
-		    default_expr,
-		    param.type_node.as<TypeSpecifierNode>(),
-		    StringBuilder()
-		        .append("cached parameter '")
-		        .append(StringTable::getStringView(param.name))
-		        .append("'")
-		        .commit()));
+			default_expr,
+			param.type_node.as<TypeSpecifierNode>(),
+			StringBuilder()
+				.append("cached parameter '")
+				.append(StringTable::getStringView(param.name))
+				.append("'")
+				.commit()));
 	}
 }
 
@@ -724,7 +724,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Check if LHS is an array subscript or member access (lvalue expressions)
 		if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) ||
-		    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 			// Evaluate LHS with LValueAddress context (no Load instruction)
 			ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
@@ -804,7 +804,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (capture_it != current_lambda_context_.captures.end()) {
 					auto kind_it = current_lambda_context_.capture_kinds.find(lhs_name_str);
 					is_captured_by_ref = (kind_it != current_lambda_context_.capture_kinds.end() &&
-					                      kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
+										  kind_it->second == LambdaCaptureNode::CaptureKind::ByReference);
 				}
 			}
 			if (is_captured_by_ref) {
@@ -899,8 +899,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(load_op), binaryOperatorNode.get_token()));
 
 		setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
-		                                    LValueInfo(LValueInfo::Kind::Global, binding.store_name, 0),
-		                                    binding.type_index.category(), binding.size_in_bits.value));
+											LValueInfo(LValueInfo::Kind::Global, binding.store_name, 0),
+											binding.type_index.category(), binding.size_in_bits.value));
 
 		return makeExprResult(nativeTypeIndex(binding.bindingType()), binding.size_in_bits, IrOperand{result_temp}, PointerDepth{}, ValueStorage::ContainsData);
 	};
@@ -911,9 +911,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			return std::nullopt;
 		}
 		if (auto lvalue_info = getTempVarLValueInfo(*temp_var);
-		    lvalue_info.has_value() &&
-		    lvalue_info->kind == LValueInfo::Kind::Global &&
-		    std::holds_alternative<StringHandle>(lvalue_info->base)) {
+			lvalue_info.has_value() &&
+			lvalue_info->kind == LValueInfo::Kind::Global &&
+			std::holds_alternative<StringHandle>(lvalue_info->base)) {
 			return std::get<StringHandle>(lvalue_info->base);
 		}
 		return std::nullopt;
@@ -934,7 +934,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// C++20 [expr.ass]: convert RHS to LHS type if they differ.
 				// Phase 15: sema should annotate global/static assignment conversions.
 				if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), gsi.type_index.category()) &&
-				    rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
+					rhsExprResult.typeEnum() != gsi.bindingType() && gsi.type_index.category() != TypeCategory::Void) {
 					if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsExprResult.typeEnum()) && is_standard_arithmetic_type(gsi.type_index.category()))
 						throw InternalError(std::string("Phase 15: sema missed global/static assignment (") + std::string(getTypeName(rhsExprResult.typeEnum())) + " -> " + std::string(getTypeName(gsi.bindingType())) + ")");
 					rhsExprResult = generateTypeConversion(rhsExprResult, rhsExprResult.category(), gsi.type_index.category(), binaryOperatorNode.get_token());
@@ -967,7 +967,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Special handling for compound assignment to global/static local variables
 	// (e.g., static int n = 0; n += 21;)
 	if (isCompoundAssignmentOp(op) &&
-	    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 		if (std::holds_alternative<IdentifierNode>(lhs_expr)) {
 			const IdentifierNode& lhs_ident = std::get<IdentifierNode>(lhs_expr);
@@ -999,8 +999,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// All other operators use usual arithmetic conversions per [expr.ass]/7.
 				const bool is_shift_op = (op == "<<=" || op == ">>=");
 				const TypeCategory commonType = is_shift_op
-				                                    ? promote_integer_type(gsi.type_index.category())
-				                                    : get_common_type(gsi.type_index.category(), rhs_result.category());
+													? promote_integer_type(gsi.type_index.category())
+													: get_common_type(gsi.type_index.category(), rhs_result.category());
 
 				// Reject floating-point LHS early for shift ops (C++20 [expr.shift]/1).
 				if (is_shift_op && is_floating_point_type(gsi.type_index.category()))
@@ -1068,9 +1068,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				// Perform the operation in common type
 				TempVar result_var = var_counter.next();
 				BinaryOp bin_op{
-				    .lhs = toTypedValue(lhs_operand),
-				    .rhs = toTypedValue(rhs_result),
-				    .result = result_var,
+					.lhs = toTypedValue(lhs_operand),
+					.rhs = toTypedValue(rhs_result),
+					.result = result_var,
 				};
 				ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
@@ -1079,7 +1079,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (commonType != gsi.type_index.category()) {
 					// Phase 17: verify sema annotated the back-conversion.
 					if (sema_ && sema_normalized_current_function_ &&
-					    is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type_index.category())) {
+						is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(gsi.type_index.category())) {
 						auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 						if (!back_conv.has_value())
 							throw InternalError(std::string("Phase 17: sema missed global compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(gsi.type_index.category())) + ")");
@@ -1117,12 +1117,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Use LValueAddress context for the LHS, similar to regular assignment
 	// Helper lambda to check if operator is a compound assignment
 	if (isCompoundAssignmentOp(op) &&
-	    binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
+		binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
 		const ExpressionNode& lhs_expr = binaryOperatorNode.get_lhs().as<ExpressionNode>();
 
 		// Check if LHS is an array subscript or member access (lvalue expressions)
 		if (std::holds_alternative<ArraySubscriptNode>(lhs_expr) ||
-		    std::holds_alternative<MemberAccessNode>(lhs_expr)) {
+			std::holds_alternative<MemberAccessNode>(lhs_expr)) {
 
 			// Evaluate LHS with LValueAddress context (no Load instruction)
 			ExprResult lhsExprResult = visitExpressionNode(lhs_expr, ExpressionContext::LValueAddress);
@@ -1168,7 +1168,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// Try unified metadata-based handler for compound assignments on identifiers
 	// This ensures implicit member accesses (including [*this] lambdas) use the correct base object
 	if (isCompoundAssignmentOp(op) &&
-	    handleLValueCompoundAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token(), op)) {
+		handleLValueCompoundAssignment(lhsExprResult, rhsExprResult, binaryOperatorNode.get_token(), op)) {
 		FLASH_LOG(Codegen, Info, "Unified handler SUCCESS for compound assignment");
 		return lhsExprResult;
 	}
@@ -1246,8 +1246,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			arg.value = is_already_address
-			                ? IrValue(temp_var)
-			                : emitAddressOf(operand_type, operand_size, IrValue(temp_var));
+							? IrValue(temp_var)
+							: emitAddressOf(operand_type, operand_size, IrValue(temp_var));
 			return arg;
 		}
 
@@ -1278,14 +1278,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// This handles patterns like: struct_var = primitive_value
 	// where struct has operator=(int), operator=(double), etc.
 	if (op == "=" && lhsCat == TypeCategory::Struct &&
-	    rhsCat != TypeCategory::Struct &&
-	    !rhsExprResult.type_index.is_valid() &&
-	    lhsExprResult.type_index.is_valid()) {
+		rhsCat != TypeCategory::Struct &&
+		!rhsExprResult.type_index.is_valid() &&
+		lhsExprResult.type_index.is_valid()) {
 		// Get the type index of the struct
 		TypeIndex lhs_type_index = lhsExprResult.type_index;
 		TypeIndex rhs_type_index = carriesSemanticTypeIndex(rhsCat)
-		                               ? rhsExprResult.type_index
-		                               : TypeIndex{};
+									   ? rhsExprResult.type_index
+									   : TypeIndex{};
 
 		if (lhs_type_index.is_valid()) {
 			// Check for user-defined operator= that takes the RHS type
@@ -1314,7 +1314,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (lhs_type_index.is_valid()) {
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
-						    same_type_assignment_kind.has_value()) {
+							same_type_assignment_kind.has_value()) {
 							diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
 						}
 					}
@@ -1344,14 +1344,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						// Generate mangled name for operator=
 						std::vector<std::string_view> empty_namespace;
 						auto mangled_name = NameMangling::generateMangledName(
-						    "operator=",
-						    return_type,
-						    param_types,
-						    false, // not variadic
-						    struct_name,
-						    empty_namespace,
-						    Linkage::CPlusPlus,
-						    member_func.is_const());
+							"operator=",
+							return_type,
+							param_types,
+							false, // not variadic
+							struct_name,
+							empty_namespace,
+							Linkage::CPlusPlus,
+							member_func.is_const());
 
 						TempVar result_var = var_counter.next();
 
@@ -1452,7 +1452,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				std::string_view token_name = type_spec.token().value();
 				if (!token_name.empty() && token_name != StringTable::getStringView(owner_struct->name)) {
 					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
-					    StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
+						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 					auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
 						const TypeInfo& alias_type_info = *alias_it->second;
@@ -1540,7 +1540,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 	}
 	bool concrete_operands_require_user_defined_operator =
-	    concrete_type_specs.has_value() && (isUserDefinedBinaryOperatorOperandType(concrete_type_specs->first) || isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second));
+		concrete_type_specs.has_value() && (isUserDefinedBinaryOperatorOperandType(concrete_type_specs->first) || isUserDefinedBinaryOperatorOperandType(concrete_type_specs->second));
 	auto syntaxOperandRequiresUserDefinedOperator = [&](const ASTNode& operand) -> std::optional<bool> {
 		auto type_spec = syntaxOperandTypeSpec(operand);
 		if (type_spec.has_value()) {
@@ -1597,15 +1597,15 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	}
 	OverloadableOperator op_kind = stringToOverloadableOperator(op);
 	bool should_attempt_operator_overload = isOverloadableBinaryOperator(op_kind) && (concrete_type_specs.has_value()
-	                                                                                      ? concrete_operands_require_user_defined_operator
-	                                                                                      : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
+																						  ? concrete_operands_require_user_defined_operator
+																						  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));
 	bool can_try_spaceship_rewrite = false;
 
 	if (should_attempt_operator_overload) {
 		// Check for operator overload (member function or free function)
 		OperatorOverloadResult overload_result;
 		bool can_recompute_recorded_failure =
-		    (binaryOperatorNode.has_ambiguous_operator_overload() || binaryOperatorNode.has_no_match_operator_overload()) && recorded_overload_still_relevant && (lhs_has_user_defined_identity || rhs_has_user_defined_identity);
+			(binaryOperatorNode.has_ambiguous_operator_overload() || binaryOperatorNode.has_no_match_operator_overload()) && recorded_overload_still_relevant && (lhs_has_user_defined_identity || rhs_has_user_defined_identity);
 
 		if (binaryOperatorNode.has_ambiguous_operator_overload() && !can_recompute_recorded_failure) {
 			overload_result = OperatorOverloadResult::ambiguous();
@@ -1619,28 +1619,28 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			SymbolTable& sym_table = global_symbol_table_ ? *global_symbol_table_ : symbol_table;
 			if (concrete_type_specs.has_value()) {
 				overload_result = findBinaryOperatorOverloadWithFreeFunction(
-				    concrete_type_specs->first,
-				    concrete_type_specs->second,
-				    op_kind,
-				    op,
-				    sym_table);
+					concrete_type_specs->first,
+					concrete_type_specs->second,
+					op_kind,
+					op,
+					sym_table);
 				if (!overload_result.has_match && !overload_result.is_ambiguous && (lhs_type_index.is_valid() || rhs_type_index.is_valid())) {
 					overload_result = findBinaryOperatorOverloadWithFreeFunction(
-					    lhs_type_index,
-					    rhs_type_index,
-					    op_kind,
-					    op,
-					    sym_table,
-					    rhsCat);
+						lhs_type_index,
+						rhs_type_index,
+						op_kind,
+						op,
+						sym_table,
+						rhsCat);
 				}
 			} else {
 				overload_result = findBinaryOperatorOverloadWithFreeFunction(
-				    lhs_type_index,
-				    rhs_type_index,
-				    op_kind,
-				    op,
-				    sym_table,
-				    rhsCat);
+					lhs_type_index,
+					rhs_type_index,
+					op_kind,
+					op,
+					sym_table,
+					rhsCat);
 			}
 		}
 		if (overload_result.is_ambiguous) {
@@ -1650,14 +1650,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		bool requires_user_defined_operator = false;
 		if (concrete_type_specs.has_value()) {
 			requires_user_defined_operator =
-			    requiresUserDefinedBinaryOperator(concrete_type_specs->first) || requiresUserDefinedBinaryOperator(concrete_type_specs->second);
+				requiresUserDefinedBinaryOperator(concrete_type_specs->first) || requiresUserDefinedBinaryOperator(concrete_type_specs->second);
 		} else {
 			requires_user_defined_operator =
-			    requiresUserDefinedBinaryOperatorByBase(lhs_type_index) || requiresUserDefinedBinaryOperatorByBase(rhs_type_index);
+				requiresUserDefinedBinaryOperatorByBase(lhs_type_index) || requiresUserDefinedBinaryOperatorByBase(rhs_type_index);
 		}
 
 		can_try_spaceship_rewrite =
-		    !overload_result.has_match && requires_user_defined_operator && lhsCat == TypeCategory::Struct && (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
+			!overload_result.has_match && requires_user_defined_operator && lhsCat == TypeCategory::Struct && (op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=");
 
 		if (!overload_result.has_match && requires_user_defined_operator && !can_try_spaceship_rewrite) {
 			throw CompileError("Operator" + std::string(op) + " not defined for operand types");
@@ -1696,14 +1696,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			op_name_sb.append("operator").append(op);
 			std::string_view operator_func_name = op_name_sb.commit();
 			auto mangled_name = NameMangling::generateMangledName(
-			    operator_func_name,
-			    return_type,
-			    param_types,
-			    false, // not variadic
-			    "", // no struct (free function)
-			    namespace_path,
-			    Linkage::CPlusPlus,
-			    false // free function, never const
+				operator_func_name,
+				return_type,
+				param_types,
+				false, // not variadic
+				"", // no struct (free function)
+				namespace_path,
+				Linkage::CPlusPlus,
+				false // free function, never const
 			);
 
 			TempVar result_var = var_counter.next();
@@ -1758,7 +1758,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		else if (overload_result.has_match) {
 			// Found a member operator overload! Generate a member function call
 			FLASH_LOG_FORMAT(Codegen, Debug, "Resolving binary operator{} overload for type index {}",
-			                 op, lhs_type_index);
+							 op, lhs_type_index);
 
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
@@ -1766,7 +1766,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				if (lhs_type_index.is_valid()) {
 					if (const StructTypeInfo* struct_info = getTypeInfo(lhs_type_index).getStructInfo()) {
 						if (auto same_type_assignment_kind = getSameTypeAssignmentKind(*struct_info, func_decl);
-						    same_type_assignment_kind.has_value()) {
+							same_type_assignment_kind.has_value()) {
 							diagnoseDeletedSameTypeAssignmentUsage(*struct_info, *same_type_assignment_kind);
 						}
 					}
@@ -1799,14 +1799,14 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			operator_func_name += op;
 			std::vector<std::string_view> empty_namespace;
 			auto mangled_name = NameMangling::generateMangledName(
-			    operator_func_name,
-			    return_type,
-			    param_types,
-			    false, // not variadic
-			    struct_name,
-			    empty_namespace,
-			    Linkage::CPlusPlus,
-			    member_func.is_const());
+				operator_func_name,
+				return_type,
+				param_types,
+				false, // not variadic
+				struct_name,
+				empty_namespace,
+				Linkage::CPlusPlus,
+				member_func.is_const());
 
 			// Generate the call to the operator overload
 			// For member function: a.operator+(b) where 'a' is 'this' and 'b' is the parameter
@@ -1877,13 +1877,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				call_op.return_slot = result_var;
 
 				FLASH_LOG_FORMAT(Codegen, Debug,
-				                 "Binary operator overload returns large struct by value (size={} bits) - using return slot",
-				                 actual_return_size);
+								 "Binary operator overload returns large struct by value (size={} bits) - using return slot",
+								 actual_return_size);
 			} else if (returns_struct_by_value) {
 				// Small struct return - no return slot needed
 				FLASH_LOG_FORMAT(Codegen, Debug,
-				                 "Binary operator overload returns small struct by value (size={} bits) - will return in RAX",
-				                 actual_return_size);
+								 "Binary operator overload returns small struct by value (size={} bits) - will return in RAX",
+								 actual_return_size);
 			}
 
 			// Add 'this' pointer as first argument
@@ -1923,7 +1923,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	if (op == "<=>" || op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=") {
 		FLASH_LOG_FORMAT(Codegen, Debug, "Spaceship operator detected: lhsType={}, is_struct={}",
-		                 static_cast<int>(lhsCat), lhsCat == TypeCategory::Struct);
+						 static_cast<int>(lhsCat), lhsCat == TypeCategory::Struct);
 
 		// Check if LHS is a struct type
 		if (lhsCat == TypeCategory::Struct && binaryOperatorNode.get_lhs().is<ExpressionNode>()) {
@@ -2032,13 +2032,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					}
 
 					std::string_view mangled_name = generateMangledNameForCall(
-					    "operator<=>",
-					    resolved_return_type_node,
-					    param_types,
-					    false, // not variadic
-					    StringTable::getStringView(spaceship_struct->name),
-					    {}, // namespace_path
-					    func_decl.is_const_member_function());
+						"operator<=>",
+						resolved_return_type_node,
+						param_types,
+						false, // not variadic
+						StringTable::getStringView(spaceship_struct->name),
+						{}, // namespace_path
+						func_decl.is_const_member_function());
 
 					// Create the call operation
 					CallOp call_op;
@@ -2054,8 +2054,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
 
 					FLASH_LOG_FORMAT(Codegen, Debug,
-					                 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
-					                 return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
+									 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
+									 return_size, getStructReturnThreshold(context_->isLLP64()), returns_struct_by_value, needs_hidden_return_param);
 
 					if (needs_hidden_return_param) {
 						call_op.return_slot = result_var;
@@ -2100,9 +2100,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 					TempVar cmp_result = var_counter.next();
 					BinaryOp cmp_op{
-					    .lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, result_var),
-					    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL),
-					    .result = cmp_result,
+						.lhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, result_var),
+						.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 0ULL),
+						.result = cmp_result,
 					};
 
 					IrOpcode cmp_opcode = IrOpcode::Equal;
@@ -2198,9 +2198,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Step 1: Subtract the pointers (gives byte difference)
 		TempVar byte_diff = var_counter.next();
 		BinaryOp sub_op{
-		    .lhs = makeTypedValue(lhsCat, SizeInBits{64}, toIrValue(lhsExprResult.value)),
-		    .rhs = makeTypedValue(rhsCat, SizeInBits{64}, toIrValue(rhsExprResult.value)),
-		    .result = byte_diff,
+			.lhs = makeTypedValue(lhsCat, SizeInBits{64}, toIrValue(lhsExprResult.value)),
+			.rhs = makeTypedValue(rhsCat, SizeInBits{64}, toIrValue(rhsExprResult.value)),
+			.result = byte_diff,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), binaryOperatorNode.get_token()));
 
@@ -2216,9 +2216,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Step 3: Divide byte difference by element size to get element count
 		TempVar result_var = var_counter.next();
 		BinaryOp div_op{
-		    .lhs = makeTypedValue(TypeCategory::Long, SizeInBits{64}, byte_diff),
-		    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
-		    .result = result_var,
+			.lhs = makeTypedValue(TypeCategory::Long, SizeInBits{64}, byte_diff),
+			.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
+			.result = result_var,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Divide, std::move(div_op), binaryOperatorNode.get_token()));
 
@@ -2255,9 +2255,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Use typed BinaryOp for the multiply operation
 		BinaryOp scale_op{
-		    .lhs = toTypedValue(rhsExprResult),
-		    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
-		    .result = scaled_offset,
+			.lhs = toTypedValue(rhsExprResult),
+			.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
+			.result = scaled_offset,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
 
@@ -2266,9 +2266,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Use typed BinaryOp for pointer addition/subtraction
 		BinaryOp ptr_arith_op{
-		    .lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
-		    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, scaled_offset),
-		    .result = result_var,
+			.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
+			.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, scaled_offset),
+			.result = result_var,
 		};
 
 		IrOpcode ptr_opcode = (op == "+") ? IrOpcode::Add : IrOpcode::Subtract;
@@ -2291,9 +2291,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		TempVar result_var = var_counter.next();
 		BinaryOp bin_op{
-		    .lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value)),
-		    .rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value)),
-		    .result = result_var,
+			.lhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(lhsExprResult.value)),
+			.rhs = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, toIrValue(rhsExprResult.value)),
+			.result = result_var,
 		};
 		IrOpcode opcode = (op == "&&") ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr;
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2319,18 +2319,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Scale the offset: offset_scaled = offset * element_size
 		TempVar scaled_offset = var_counter.next();
 		BinaryOp scale_op{
-		    .lhs = toTypedValue(rhsExprResult),
-		    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
-		    .result = scaled_offset,
+			.lhs = toTypedValue(rhsExprResult),
+			.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, static_cast<unsigned long long>(element_size)),
+			.result = scaled_offset,
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::Multiply, std::move(scale_op), binaryOperatorNode.get_token()));
 
 		// ptr = ptr + scaled_offset (or ptr - scaled_offset)
 		TempVar result_var = var_counter.next();
 		BinaryOp ptr_arith_op{
-		    .lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
-		    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, scaled_offset),
-		    .result = result_var,
+			.lhs = makeTypedValue(lhsCat, SizeInBits{lhsSize}, toIrValue(lhsExprResult.value)),
+			.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, scaled_offset),
+			.result = result_var,
 		};
 
 		IrOpcode ptr_opcode = (op == "+=") ? IrOpcode::Add : IrOpcode::Subtract;
@@ -2485,8 +2485,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// NOT usual arithmetic conversions.  The result type is the promoted LHS type.
 	const bool is_shift_op = (op == "<<" || op == ">>" || op == "<<=" || op == ">>=");
 	TypeCategory commonType = is_shift_op
-	                              ? promote_integer_type(lhsExprResult.category()) // shift: result type = promoted LHS
-	                              : get_common_type(lhsExprResult.category(), rhsExprResult.category());
+								  ? promote_integer_type(lhsExprResult.category()) // shift: result type = promoted LHS
+								  : get_common_type(lhsExprResult.category(), rhsExprResult.category());
 
 	// Save original LHS value binding before type conversion — only needed for compound assignment store-back.
 	const IrOperand original_lhs_value = (isCompoundAssignmentOp(op)) ? lhsExprResult.value : IrOperand{};
@@ -2558,16 +2558,16 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// 1. Perform the arithmetic in common type
 			TempVar op_result = var_counter.next();
 			BinaryOp bin_op{
-			    .lhs = toTypedValue(lhsExprResult),
-			    .rhs = toTypedValue(rhsExprResult),
-			    .result = op_result,
+				.lhs = toTypedValue(lhsExprResult),
+				.rhs = toTypedValue(rhsExprResult),
+				.result = op_result,
 			};
 			ir_.addInstruction(IrInstruction(arith_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 
 			// 2. Convert result back to original LHS type
 			// Phase 17: verify sema annotated the back-conversion (ownership transfer).
 			if (sema_ && sema_normalized_current_function_ &&
-			    is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(lhsCat)) {
+				is_standard_arithmetic_type(commonType) && is_standard_arithmetic_type(lhsCat)) {
 				auto back_conv = sema_->getCompoundAssignBackConv(static_cast<const void*>(&binaryOperatorNode));
 				if (!back_conv.has_value())
 					throw InternalError(std::string("Phase 17: sema missed compound assign back-conversion (") + std::string(getTypeName(commonType)) + " -> " + std::string(getTypeName(lhsCat)) + ")");
@@ -2610,7 +2610,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	// New typed operand goes in here. Goal is that all operands live here
 	static const std::unordered_map<std::string_view, IrOpcode> bin_ops = {
-	    {"+", IrOpcode::Add}, {"-", IrOpcode::Subtract}, {"*", IrOpcode::Multiply}, {"<<", IrOpcode::ShiftLeft}, {"&", IrOpcode::BitwiseAnd}, {"|", IrOpcode::BitwiseOr}, {"^", IrOpcode::BitwiseXor}};
+		{"+", IrOpcode::Add}, {"-", IrOpcode::Subtract}, {"*", IrOpcode::Multiply}, {"<<", IrOpcode::ShiftLeft}, {"&", IrOpcode::BitwiseAnd}, {"|", IrOpcode::BitwiseOr}, {"^", IrOpcode::BitwiseXor}};
 
 	auto bin_ops_it = !is_floating_point_op ? bin_ops.find(op) : bin_ops.end();
 	if (bin_ops_it != bin_ops.end()) {
@@ -2618,9 +2618,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 		// Use fully typed instruction (zero vector allocation!)
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2630,9 +2630,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedDivide : IrOpcode::Divide;
 
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2644,9 +2644,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedModulo : IrOpcode::Modulo;
 
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2656,9 +2656,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedShiftRight : IrOpcode::ShiftRight;
 
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2689,18 +2689,18 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 	if (op == "==" && !is_floating_point_op) {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		opcode = IrOpcode::Equal;
 		applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 	} else if (op == "!=" && !is_floating_point_op) {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		opcode = IrOpcode::NotEqual;
 		applyPointerComparisonOverride(bin_op, opcode);
@@ -2708,36 +2708,36 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	} else if (op == "<" && !is_floating_point_op) {
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessThan : IrOpcode::LessThan;
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 	} else if (op == "<=" && !is_floating_point_op) {
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedLessEqual : IrOpcode::LessEqual;
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 	} else if (op == ">" && !is_floating_point_op) {
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterThan : IrOpcode::GreaterThan;
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
 	} else if (op == ">=" && !is_floating_point_op) {
 		opcode = is_unsigned_integer_type(commonType) ? IrOpcode::UnsignedGreaterEqual : IrOpcode::GreaterEqual;
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = result_var,
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = result_var,
 		};
 		applyPointerComparisonOverride(bin_op, opcode);
 		ir_.addInstruction(IrInstruction(opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2748,73 +2748,73 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// before type promotions, to avoid truncating the pointer
 	else if (op == "+=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value), // Store result in LHS variable
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value), // Store result in LHS variable
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::AddAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "-=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::SubAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "*=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::MulAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "/=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::DivAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "%=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::ModAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "&=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::AndAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "|=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::OrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "^=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::XorAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
 	} else if (op == "<<=") {
 		BinaryOp bin_op{
-		    .lhs = toTypedValue(lhsExprResult),
-		    .rhs = toTypedValue(rhsExprResult),
-		    .result = toIrValue(lhsExprResult.value),
+			.lhs = toTypedValue(lhsExprResult),
+			.rhs = toTypedValue(rhsExprResult),
+			.result = toIrValue(lhsExprResult.value),
 		};
 		ir_.addInstruction(IrInstruction(IrOpcode::ShlAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		return lhsExprResult;
@@ -2825,9 +2825,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// Decompose into: result = lhs >> rhs; store back to lhs
 			TempVar shr_result = var_counter.next();
 			BinaryOp shr_op{
-			    .lhs = toTypedValue(lhsExprResult),
-			    .rhs = toTypedValue(rhsExprResult),
-			    .result = shr_result,
+				.lhs = toTypedValue(lhsExprResult),
+				.rhs = toTypedValue(rhsExprResult),
+				.result = shr_result,
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedShiftRight, std::move(shr_op), binaryOperatorNode.get_token()));
 			AssignmentOp assign_op;
@@ -2844,9 +2844,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), binaryOperatorNode.get_token()));
 		} else {
 			BinaryOp bin_op{
-			    .lhs = toTypedValue(lhsExprResult),
-			    .rhs = toTypedValue(rhsExprResult),
-			    .result = toIrValue(lhsExprResult.value),
+				.lhs = toTypedValue(lhsExprResult),
+				.rhs = toTypedValue(rhsExprResult),
+				.result = toIrValue(lhsExprResult.value),
 			};
 			ir_.addInstruction(IrInstruction(IrOpcode::ShrAssign, std::move(bin_op), binaryOperatorNode.get_token()));
 		}
@@ -2871,9 +2871,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// Create typed BinaryOp for float arithmetic
 			BinaryOp bin_op{
-			    .lhs = toTypedValue(lhsExprResult),
-			    .rhs = toTypedValue(rhsExprResult),
-			    .result = result_var,
+				.lhs = toTypedValue(lhsExprResult),
+				.rhs = toTypedValue(rhsExprResult),
+				.result = result_var,
 			};
 
 			ir_.addInstruction(IrInstruction(float_opcode, std::move(bin_op), binaryOperatorNode.get_token())); // Return the result variable with float type and size
@@ -2903,9 +2903,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			// Create typed BinaryOp for float comparison
 			BinaryOp bin_op{
-			    .lhs = toTypedValue(lhsExprResult),
-			    .rhs = toTypedValue(rhsExprResult),
-			    .result = result_var,
+				.lhs = toTypedValue(lhsExprResult),
+				.rhs = toTypedValue(rhsExprResult),
+				.result = result_var,
 			};
 
 			ir_.addInstruction(IrInstruction(float_cmp_opcode, std::move(bin_op), binaryOperatorNode.get_token()));
@@ -2944,7 +2944,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 	std::string_view func_name = decl_node.identifier_token().value();
 
 	std::string_view struct_name = !struct_name_override.empty() ? struct_name_override
-	                                                             : (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
+																 : (func_node.is_member_function() ? func_node.parent_struct_name() : std::string_view{});
 
 	// For member functions, resolve self-referential parameter types in template-instantiated
 	// structs. When a template class has `operator+=(const W& other)`, the stored param type
@@ -2989,18 +2989,18 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 				TypeSpecifierNode resolved_return_type_copy = return_type;
 				resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
 				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
-				                                         func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-				                                         func_node.is_const_member_function())
-				    .view();
+														 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+														 func_node.is_const_member_function())
+					.view();
 			}
 		}
 	}
 
 	// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 	return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
-	                                         func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-	                                         func_node.is_const_member_function())
-	    .view();
+											 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
+											 func_node.is_const_member_function())
+		.view();
 }
 
 std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
@@ -3075,25 +3075,25 @@ ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& funct
 	// Step 1: Arithmetic shift right by 63 to get sign mask (all 1s if negative, all 0s if positive)
 	TempVar sign_mask = var_counter.next();
 	BinaryOp shift_op{
-	    .lhs = arg_value,
-	    .rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 63ULL),
-	    .result = sign_mask};
+		.lhs = arg_value,
+		.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 63ULL),
+		.result = sign_mask};
 	ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(shift_op), functionCallNode.called_from()));
 
 	// Step 2: XOR with sign mask
 	TempVar xor_result = var_counter.next();
 	BinaryOp xor_op{
-	    .lhs = arg_value,
-	    .rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
-	    .result = xor_result};
+		.lhs = arg_value,
+		.rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
+		.result = xor_result};
 	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(xor_op), functionCallNode.called_from()));
 
 	// Step 3: Subtract sign mask
 	TempVar abs_result = var_counter.next();
 	BinaryOp sub_op{
-	    .lhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, xor_result),
-	    .rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
-	    .result = abs_result};
+		.lhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, xor_result),
+		.rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
+		.result = abs_result};
 	ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), functionCallNode.called_from()));
 
 	return makeExprResult(nativeTypeIndex(arg_type), SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, PointerDepth{}, ValueStorage::ContainsData);
@@ -3121,9 +3121,9 @@ ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& fun
 
 	TempVar abs_result = var_counter.next();
 	BinaryOp and_op{
-	    .lhs = arg_value,
-	    .rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{static_cast<int>(arg_size)}, mask),
-	    .result = abs_result};
+		.lhs = arg_value,
+		.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{static_cast<int>(arg_size)}, mask),
+		.result = abs_result};
 	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), functionCallNode.called_from()));
 
 	return makeExprResult(nativeTypeIndex(arg_type), SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, PointerDepth{}, ValueStorage::ContainsData);
@@ -4189,8 +4189,8 @@ ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallN
 // - Only Indirect (dereference) case is fully implemented
 // - Future work: Extend LValueInfo or pass additional context to handle all cases
 bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
-                                     const ExprResult& rhs_operands,
-                                     const Token& token) {
+									 const ExprResult& rhs_operands,
+									 const Token& token) {
 	// Check if LHS has a TempVar with lvalue metadata
 	if (!std::holds_alternative<TempVar>(lhs_operands.value)) {
 		FLASH_LOG(Codegen, Info, "handleLValueAssignment: FAIL - has_tempvar=false");
@@ -4244,7 +4244,7 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 			if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 				if (auto symbol = lookupSymbol(*base_name)) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol);
-					    decl && decl->type_node().is<TypeSpecifierNode>()) {
+						decl && decl->type_node().is<TypeSpecifierNode>()) {
 						return decl->type_node().as<TypeSpecifierNode>().type_index();
 					}
 				}
@@ -4331,14 +4331,14 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 
 		// Emit the store using helper
 		emitArrayStore(
-		    lhs_operands.category(), // element_type
-		    lhs_operands.size_in_bits.value, // element_size_bits
-		    lv_info.base, // array
-		    index_tv, // index
-		    value_tv, // value (with LHS type/size, RHS value)
-		    lv_info.offset, // member_offset
-		    lv_info.is_pointer_to_array, // is_pointer_to_array
-		    token);
+			lhs_operands.category(), // element_type
+			lhs_operands.size_in_bits.value, // element_size_bits
+			lv_info.base, // array
+			index_tv, // index
+			value_tv, // value (with LHS type/size, RHS value)
+			lv_info.offset, // member_offset
+			lv_info.is_pointer_to_array, // is_pointer_to_array
+			token);
 		return true;
 	}
 
@@ -4369,15 +4369,15 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 
 		// Emit the store using helper
 		emitMemberStore(
-		    value_tv, // value (with LHS type/size, RHS value)
-		    lv_info.base, // object
-		    lv_info.member_name.value(), // member_name
-		    lv_info.offset, // offset
-		    CVReferenceQualifier::None,
-		    lv_info.is_pointer_to_member, // is_pointer_to_member
-		    token,
-		    lv_info.bitfield_width, // bitfield_width
-		    lv_info.bitfield_bit_offset // bitfield_bit_offset
+			value_tv, // value (with LHS type/size, RHS value)
+			lv_info.base, // object
+			lv_info.member_name.value(), // member_name
+			lv_info.offset, // offset
+			CVReferenceQualifier::None,
+			lv_info.is_pointer_to_member, // is_pointer_to_member
+			token,
+			lv_info.bitfield_width, // bitfield_width
+			lv_info.bitfield_bit_offset // bitfield_bit_offset
 		);
 		return true;
 	}
@@ -4396,11 +4396,11 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 
 		// Emit the store using helper
 		emitDereferenceStore(
-		    value_tv,
-		    pointee_type,
-		    pointee_size_bits,
-		    lv_info.base, // pointer
-		    token);
+			value_tv,
+			pointee_type,
+			pointee_size_bits,
+			lv_info.base, // pointer
+			token);
 		return true;
 	}
 
@@ -4421,9 +4421,9 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 // Supports Member kind (struct member access), Indirect kind (dereferenced pointers - already supported), and ArrayElement kind (array subscripts - added in this function)
 // This is similar to handleLValueAssignment but also performs the arithmetic operation
 bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
-                                             const ExprResult& rhs_operands,
-                                             const Token& token,
-                                             std::string_view op) {
+											 const ExprResult& rhs_operands,
+											 const Token& token,
+											 std::string_view op) {
 	// Check if LHS has a TempVar with lvalue metadata
 	if (!std::holds_alternative<TempVar>(lhs_operands.value)) {
 		FLASH_LOG(Codegen, Info, "handleLValueCompoundAssignment: FAIL - has_tempvar=false");
@@ -4540,11 +4540,11 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		// Handle both TempVar and StringHandle bases for DereferenceStore
 		if (std::holds_alternative<TempVar>(base_value)) {
 			emitDereferenceStore(
-			    result_tv,
-			    lvalue_type,
-			    lvalue_size_bits,
-			    std::get<TempVar>(base_value),
-			    token);
+				result_tv,
+				lvalue_type,
+				lvalue_size_bits,
+				std::get<TempVar>(base_value),
+				token);
 		} else {
 			// StringHandle base: emitDereferenceStore expects a TempVar, so we pass the StringHandle as the pointer
 			// Generate DereferenceStore with StringHandle directly
@@ -4614,14 +4614,14 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 
 		// Emit the store using helper
 		emitArrayStore(
-		    lhs_operands.category(), // element_type
-		    lhs_operands.size_in_bits.value, // element_size_bits
-		    lv_info.base, // array
-		    index_tv, // index
-		    result_tv, // value (result of operation)
-		    lv_info.offset, // member_offset
-		    lv_info.is_pointer_to_array, // is_pointer_to_array
-		    token);
+			lhs_operands.category(), // element_type
+			lhs_operands.size_in_bits.value, // element_size_bits
+			lv_info.base, // array
+			index_tv, // index
+			result_tv, // value (result of operation)
+			lv_info.offset, // member_offset
+			lv_info.is_pointer_to_array, // is_pointer_to_array
+			token);
 
 		return true;
 	}
@@ -4735,19 +4735,19 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 	result_tv.size_in_bits = lhs_operands.size_in_bits;
 	result_tv.value = result_temp;
 	CVReferenceQualifier member_ref_qualifier = member_is_rvalue_reference
-	                                                ? CVReferenceQualifier::RValueReference
-	                                                : (member_is_reference ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
+													? CVReferenceQualifier::RValueReference
+													: (member_is_reference ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None);
 
 	emitMemberStore(
-	    result_tv,
-	    lv_info.base,
-	    lv_info.member_name.value(),
-	    lv_info.offset,
-	    member_ref_qualifier,
-	    lv_info.is_pointer_to_member, // is_pointer_to_member
-	    token,
-	    lv_info.bitfield_width,
-	    lv_info.bitfield_bit_offset);
+		result_tv,
+		lv_info.base,
+		lv_info.member_name.value(),
+		lv_info.offset,
+		member_ref_qualifier,
+		lv_info.is_pointer_to_member, // is_pointer_to_member
+		token,
+		lv_info.bitfield_width,
+		lv_info.bitfield_bit_offset);
 
 	return true;
 }

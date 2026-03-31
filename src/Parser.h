@@ -24,7 +24,7 @@
 #include "SymbolTable.h"
 #include "CompileContext.h"
 #include "TemplateRegistry.h"  // Includes ConceptRegistry as well
-#include "ParserTypes.h"       // Unified parsing types (Phase 1)
+#include "ParserTypes.h"		 // Unified parsing types (Phase 1)
 #include "ParserScopeGuards.h" // RAII scope guards (Phase 3)
 #include "LazyMemberResolver.h" // For gLazyMemberResolver used in createBoundIdentifier
 #include "ParserInternal.h"
@@ -36,232 +36,236 @@
 using namespace std::literals::string_view_literals;
 
 namespace ConstExpr {
-	class Evaluator;
+class Evaluator;
 }
 
 // RAII helper to execute a cleanup function on scope exit
 // Usage: ScopeGuard guard([&]() { cleanup(); });
-template<typename Func>
+template <typename Func>
 class ScopeGuard {
 public:
 	explicit ScopeGuard(Func&& cleanup) : cleanup_(std::forward<Func>(cleanup)), active_(true) {}
-	~ScopeGuard() { if (active_) cleanup_(); }
-	
+	~ScopeGuard() {
+		if (active_)
+			cleanup_();
+	}
+
 	// Prevent copying
 	ScopeGuard(const ScopeGuard&) = delete;
 	ScopeGuard& operator=(const ScopeGuard&) = delete;
-	
+
 	// Allow moving
 	ScopeGuard(ScopeGuard&& other) noexcept : cleanup_(std::move(other.cleanup_)), active_(other.active_) {
 		other.active_ = false;
 	}
-	
+
 	// Dismiss the guard (don't run cleanup)
 	void dismiss() { active_ = false; }
-	
+
 private:
 	Func cleanup_;
 	bool active_;
 };
 
 // Deduction guide for ScopeGuard
-template<typename Func>
+template <typename Func>
 ScopeGuard(Func) -> ScopeGuard<Func>;
 
 enum class ParserError {
-        None,
-        UnexpectedToken,
-        MissingSemicolon,
-        RedefinedSymbolWithDifferentValue,
+	None,
+	UnexpectedToken,
+	MissingSemicolon,
+	RedefinedSymbolWithDifferentValue,
 
-        NotImplemented
+	NotImplemented
 };
 
 static std::string_view get_parser_error_string(ParserError e) {
-        switch (e) {
-        case ParserError::None:
-        default:
-                return "Internal error";
+	switch (e) {
+	case ParserError::None:
+	default:
+		return "Internal error";
 
-        case ParserError::UnexpectedToken:
-                return "Unexpected token";
+	case ParserError::UnexpectedToken:
+		return "Unexpected token";
 
-        case ParserError::MissingSemicolon:
-                return "Missing semicolon(;)";
+	case ParserError::MissingSemicolon:
+		return "Missing semicolon(;)";
 
-        case ParserError::RedefinedSymbolWithDifferentValue:
-                return "Redefined symbol with different value";
+	case ParserError::RedefinedSymbolWithDifferentValue:
+		return "Redefined symbol with different value";
 
-        case ParserError::NotImplemented:
-                return "Feature/token type not implemented yet";
-        }
+	case ParserError::NotImplemented:
+		return "Feature/token type not implemented yet";
+	}
 }
 
 class ParseResult {
 public:
-        ParseResult() : value_or_error_(std::monostate{}) {}
-        ParseResult(ASTNode node) : value_or_error_(node) {}
-        ParseResult(std::string error_message, Token token)
-                : value_or_error_(Error{ std::move(error_message), std::move(token) }) {}
+	ParseResult() : value_or_error_(std::monostate{}) {}
+	ParseResult(ASTNode node) : value_or_error_(node) {}
+	ParseResult(std::string error_message, Token token)
+		: value_or_error_(Error{std::move(error_message), std::move(token)}) {}
 
-        bool is_error() const {
-                return std::holds_alternative<Error>(value_or_error_);
-        }
-        
-        bool is_null() const {
-                return std::holds_alternative<std::monostate>(value_or_error_);
-        }
-        
-        std::optional<ASTNode> node() const {
-                if (is_error() || is_null()) {
-                    return std::nullopt;
-                }
-                return std::get<ASTNode>(value_or_error_);
-        }
-        
-        bool has_value() const {
-                return std::holds_alternative<ASTNode>(value_or_error_);
-        }
-        
-        const std::string& error_message() const {
-                static const std::string empty;
-                return is_error() ? std::get<Error>(value_or_error_).error_message_ : empty;
-        }
-        
-        const Token& error_token() const {
-                static const Token empty_token;
-                return is_error() ? std::get<Error>(value_or_error_).token_ : empty_token;
-        }
-        
-        // Format error message with file:line:column information and include stack
-        std::string format_error(const std::deque<std::string>& file_paths, 
-                                const std::vector<SourceLineMapping>& line_map = {},
-                                const Lexer* lexer = nullptr) const {
-                if (!is_error()) return "";
-                
-                const auto& err = std::get<Error>(value_or_error_);
-                const Token& tok = err.token_;
-                std::string result;
-                
-                // Build include stack by walking parent chain
-                if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
-                        std::vector<size_t> include_chain;
-                        size_t current = tok.line();
-                        
-                        // Walk up the parent chain
-                        while (current > 0 && current <= line_map.size()) {
-                                const auto& mapping = line_map[current - 1];
-                                include_chain.push_back(current);
-                                current = mapping.parent_line;
-                        }
-                        
-                        // Reverse to get main file first
-                        std::reverse(include_chain.begin(), include_chain.end());
-                        
-                        // Show the include chain (skip the last one as it's the error location itself)
-                        if (include_chain.size() > 1) {
-                                for (size_t i = 0; i < include_chain.size() - 1; ++i) {
-                                        size_t line_idx = include_chain[i];
-                                        const auto& mapping = line_map[line_idx - 1];
-                                        if (mapping.source_file_index < file_paths.size()) {
-                                                result += "In file included from " + file_paths[mapping.source_file_index];
-                                                result += ":" + std::to_string(mapping.source_line);
-                                                if (i + 1 < include_chain.size() - 1) {
-                                                        result += ",\n";
-                                                } else {
-                                                        result += ":\n";
-                                                }
-                                        }
-                                }
-                        }
-                }
-                
-                // Primary error location
-                size_t error_line = tok.line();
-                size_t error_file_index = tok.file_index();
-                
-                // Map preprocessed line to source line if line_map is available
-                if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
-                        const auto& mapping = line_map[tok.line() - 1];
-                        error_line = mapping.source_line;
-                        error_file_index = mapping.source_file_index;
-                }
-                
-                if (error_file_index < file_paths.size()) {
-                        result += file_paths[error_file_index] + ":" + 
-                                std::to_string(error_line) + ":" + 
-                                std::to_string(tok.column()) + ": ";
-                } else {
-                        result += "<unknown>:" + std::to_string(error_line) + ":" + 
-                                std::to_string(tok.column()) + ": ";
-                }
-                
-                result += "error: " + err.error_message_;
-                
-                // Add the source line if lexer is provided
-                if (lexer && tok.line() > 0) {
-                        std::string line_text = lexer->get_line_text(tok.line());
-                        if (!line_text.empty()) {
-                                result += "\n  " + line_text;
-                                // Add a caret pointing to the error column
-                                if (tok.column() > 0) {
-                                        result += "\n  ";
-                                        for (size_t i = 1; i < tok.column(); ++i) {
-                                                result += " ";
-                                        }
-                                        result += "^";
-                                }
-                        }
-                }
-                
-                return result;
-        }
+	bool is_error() const {
+		return std::holds_alternative<Error>(value_or_error_);
+	}
 
-        static ParseResult success(ASTNode node = ASTNode{}) {
-                return ParseResult(node);
-        }
-        static ParseResult error(const std::string& error_message, Token token) {
-                return ParseResult(error_message, std::move(token));
-        }
-        static ParseResult error(ParserError e, Token token) {
-                return ParseResult(std::string(get_parser_error_string(e)),
-                        std::move(token));
-        }
-        static ParseResult null() {
-                return ParseResult();
-        }
+	bool is_null() const {
+		return std::holds_alternative<std::monostate>(value_or_error_);
+	}
 
-        struct Error {
-                std::string error_message_;
-                Token token_;
-        };
+	std::optional<ASTNode> node() const {
+		if (is_error() || is_null()) {
+			return std::nullopt;
+		}
+		return std::get<ASTNode>(value_or_error_);
+	}
+
+	bool has_value() const {
+		return std::holds_alternative<ASTNode>(value_or_error_);
+	}
+
+	const std::string& error_message() const {
+		static const std::string empty;
+		return is_error() ? std::get<Error>(value_or_error_).error_message_ : empty;
+	}
+
+	const Token& error_token() const {
+		static const Token empty_token;
+		return is_error() ? std::get<Error>(value_or_error_).token_ : empty_token;
+	}
+
+		// Format error message with file:line:column information and include stack
+	std::string format_error(const std::deque<std::string>& file_paths,
+							 const std::vector<SourceLineMapping>& line_map = {},
+							 const Lexer* lexer = nullptr) const {
+		if (!is_error())
+			return "";
+
+		const auto& err = std::get<Error>(value_or_error_);
+		const Token& tok = err.token_;
+		std::string result;
+
+				// Build include stack by walking parent chain
+		if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
+			std::vector<size_t> include_chain;
+			size_t current = tok.line();
+
+						// Walk up the parent chain
+			while (current > 0 && current <= line_map.size()) {
+				const auto& mapping = line_map[current - 1];
+				include_chain.push_back(current);
+				current = mapping.parent_line;
+			}
+
+						// Reverse to get main file first
+			std::reverse(include_chain.begin(), include_chain.end());
+
+						// Show the include chain (skip the last one as it's the error location itself)
+			if (include_chain.size() > 1) {
+				for (size_t i = 0; i < include_chain.size() - 1; ++i) {
+					size_t line_idx = include_chain[i];
+					const auto& mapping = line_map[line_idx - 1];
+					if (mapping.source_file_index < file_paths.size()) {
+						result += "In file included from " + file_paths[mapping.source_file_index];
+						result += ":" + std::to_string(mapping.source_line);
+						if (i + 1 < include_chain.size() - 1) {
+							result += ",\n";
+						} else {
+							result += ":\n";
+						}
+					}
+				}
+			}
+		}
+
+				// Primary error location
+		size_t error_line = tok.line();
+		size_t error_file_index = tok.file_index();
+
+				// Map preprocessed line to source line if line_map is available
+		if (!line_map.empty() && tok.line() > 0 && tok.line() <= line_map.size()) {
+			const auto& mapping = line_map[tok.line() - 1];
+			error_line = mapping.source_line;
+			error_file_index = mapping.source_file_index;
+		}
+
+		if (error_file_index < file_paths.size()) {
+			result += file_paths[error_file_index] + ":" +
+					  std::to_string(error_line) + ":" +
+					  std::to_string(tok.column()) + ": ";
+		} else {
+			result += "<unknown>:" + std::to_string(error_line) + ":" +
+					  std::to_string(tok.column()) + ": ";
+		}
+
+		result += "error: " + err.error_message_;
+
+				// Add the source line if lexer is provided
+		if (lexer && tok.line() > 0) {
+			std::string line_text = lexer->get_line_text(tok.line());
+			if (!line_text.empty()) {
+				result += "\n  " + line_text;
+								// Add a caret pointing to the error column
+				if (tok.column() > 0) {
+					result += "\n  ";
+					for (size_t i = 1; i < tok.column(); ++i) {
+						result += " ";
+					}
+					result += "^";
+				}
+			}
+		}
+
+		return result;
+	}
+
+	static ParseResult success(ASTNode node = ASTNode{}) {
+		return ParseResult(node);
+	}
+	static ParseResult error(const std::string& error_message, Token token) {
+		return ParseResult(error_message, std::move(token));
+	}
+	static ParseResult error(ParserError e, Token token) {
+		return ParseResult(std::string(get_parser_error_string(e)),
+						   std::move(token));
+	}
+	static ParseResult null() {
+		return ParseResult();
+	}
+
+	struct Error {
+		std::string error_message_;
+		Token token_;
+	};
 
 private:
-        std::variant<std::monostate, ASTNode, Error> value_or_error_;
+	std::variant<std::monostate, ASTNode, Error> value_or_error_;
 };
 
 // Phase 2: Unified Qualified Identifier Parser Result Structure
 // This consolidates all qualified identifier parsing into a single interface
 struct QualifiedIdParseResult {
-    std::vector<StringHandle> namespaces;
-    Token final_identifier;
-    std::optional<std::vector<TemplateTypeArg>> template_args;
-    bool has_template_arguments;
-    
-    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
-        : namespaces(ns), final_identifier(id), has_template_arguments(false) {}
-    
-    QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id, 
-                          const std::vector<TemplateTypeArg>& args)
-        : namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
+	std::vector<StringHandle> namespaces;
+	Token final_identifier;
+	std::optional<std::vector<TemplateTypeArg>> template_args;
+	bool has_template_arguments;
+
+	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id)
+		: namespaces(ns), final_identifier(id), has_template_arguments(false) {}
+
+	QualifiedIdParseResult(const std::vector<StringHandle>& ns, const Token& id,
+						   const std::vector<TemplateTypeArg>& args)
+		: namespaces(ns), final_identifier(id), template_args(args), has_template_arguments(true) {}
 };
 
 // Result of consuming ::member type access and ... pack expansion after template arguments
 // in a base class specifier. Shared across all base class parsing sites.
 struct BaseClassPostTemplateInfo {
-    std::optional<StringHandle> member_type_name;
-    std::optional<Token> member_name_token;
-    bool is_pack_expansion = false;
+	std::optional<StringHandle> member_type_name;
+	std::optional<Token> member_name_token;
+	bool is_pack_expansion = false;
 };
 
 class Parser {
@@ -271,1302 +275,1329 @@ class Parser {
 	friend class TemplateInstantiationHelper;  // Allow shared template helper to instantiate templates
 	friend class SemanticAnalysis;
 	friend class FlashCpp::FunctionParsingScopeGuard;  // Access current_function_, setup_member_function_context, etc.
-	
+
 public:
-        static constexpr size_t default_ast_tree_size_ = 256 * 1024;
+	static constexpr size_t default_ast_tree_size_ = 256 * 1024;
 
-        explicit Parser(Lexer& lexer, CompileContext& context);
+	explicit Parser(Lexer& lexer, CompileContext& context);
 
-        ParseResult parse() {
-                gSymbolTable = SymbolTable();
-                register_builtin_functions();
-                ParseResult parseResult;
-#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
-                size_t top_level_count = 0;
-                auto start_time = std::chrono::high_resolution_clock::now();
+	ParseResult parse() {
+		gSymbolTable = SymbolTable();
+		register_builtin_functions();
+		ParseResult parseResult;
+#if FLASHCPP_LOG_LEVEL >= 2	// Info level progress logging
+		size_t top_level_count = 0;
+		auto start_time = std::chrono::high_resolution_clock::now();
 #endif
-                // The main parse loop: process top-level nodes until EOF or error
-                while (!peek().is_eof() && !parseResult.is_error()) {
-                        try {
-                            parseResult = parse_top_level_node();
-                        } catch (const std::bad_any_cast& e) {
-                            FLASH_LOG(General, Error, "bad_any_cast during parsing at ", peek_info().value(), ": ", e.what());
-                            parseResult = ParseResult::error("Internal compiler error: bad_any_cast during parsing", peek_info());
-                            break;
-                        }
-#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
-                        ++top_level_count;
-                        // Log progress every 500 top-level nodes
-                        if (top_level_count % 500 == 0) {
-                            auto now = std::chrono::high_resolution_clock::now();
-                            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
-                            FLASH_LOG(General, Info, "[Progress] Parsed ", top_level_count, " top-level nodes in ", elapsed_ms, " ms");
-                        }
+				// The main parse loop: process top-level nodes until EOF or error
+		while (!peek().is_eof() && !parseResult.is_error()) {
+			try {
+				parseResult = parse_top_level_node();
+			} catch (const std::bad_any_cast& e) {
+				FLASH_LOG(General, Error, "bad_any_cast during parsing at ", peek_info().value(), ": ", e.what());
+				parseResult = ParseResult::error("Internal compiler error: bad_any_cast during parsing", peek_info());
+				break;
+			}
+#if FLASHCPP_LOG_LEVEL >= 2	// Info level progress logging
+			++top_level_count;
+						// Log progress every 500 top-level nodes
+			if (top_level_count % 500 == 0) {
+				auto now = std::chrono::high_resolution_clock::now();
+				auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time).count();
+				FLASH_LOG(General, Info, "[Progress] Parsed ", top_level_count, " top-level nodes in ", elapsed_ms, " ms");
+			}
 #endif
-                }
+		}
 
-#if FLASHCPP_LOG_LEVEL >= 2  // Info level progress logging
-                // Log final summary (even on error) for debugging
-                auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::high_resolution_clock::now() - start_time).count();
-                FLASH_LOG(General, Info, "[Progress] Parsing ", (parseResult.is_error() ? "stopped" : "complete"), ": ", 
-                          top_level_count, " top-level nodes, ", ast_nodes_.size(), " AST nodes in ", total_time, " ms");
+#if FLASHCPP_LOG_LEVEL >= 2	// Info level progress logging
+				// Log final summary (even on error) for debugging
+		auto total_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+							  std::chrono::high_resolution_clock::now() - start_time)
+							  .count();
+		FLASH_LOG(General, Info, "[Progress] Parsing ", (parseResult.is_error() ? "stopped" : "complete"), ": ",
+				  top_level_count, " top-level nodes, ", ast_nodes_.size(), " AST nodes in ", total_time, " ms");
 #endif
 
-                if (parseResult.is_error()) {
-                    last_error_ = parseResult.error_message();
-                }
-                return parseResult;
-        }
+		if (parseResult.is_error()) {
+			last_error_ = parseResult.error_message();
+		}
+		return parseResult;
+	}
 
-        const auto& get_nodes() { return ast_nodes_; }
-        ASTNode get_inner_node(ASTNode node) const {
-                return node;
-        }
+	const auto& get_nodes() { return ast_nodes_; }
+	ASTNode get_inner_node(ASTNode node) const {
+		return node;
+	}
 
-        template <typename T> bool is(ASTNode node) const {
-                return node.is<T>();
-        }
+	template <typename T>
+	bool is(ASTNode node) const {
+		return node.is<T>();
+	}
 
-        template <typename T> T& as(ASTNode node) {
-                return node.as<T>();
-        }
+	template <typename T>
+	T& as(ASTNode node) {
+		return node.as<T>();
+	}
 
-        template <typename T> const T& as(ASTNode node) const {
-                return node.as<T>();
-        }
+	template <typename T>
+	const T& as(ASTNode node) const {
+		return node.as<T>();
+	}
 
-        template <typename T> T& as(ParseResult parse_result) {
-                auto node = parse_result.node();
-                return node ? node->as<T>() : ASTNode{}.as<T>();
-        }
+	template <typename T>
+	T& as(ParseResult parse_result) {
+		auto node = parse_result.node();
+		return node ? node->as<T>() : ASTNode{}.as<T>();
+	}
 
-        std::string get_last_error() const { return last_error_; }
+	std::string get_last_error() const { return last_error_; }
 
 #if WITH_DEBUG_INFO
-        std::optional<int> break_at_line_;
+	std::optional<int> break_at_line_;
 #endif // WITH_DEBUG_INFO
 
 private:
-        Lexer& lexer_;
-        CompileContext& context_;
-        Token current_token_;
-        Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
-        std::vector<ASTNode> ast_nodes_;
-        std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
-        std::string last_error_;
+	Lexer& lexer_;
+	CompileContext& context_;
+	Token current_token_;
+	Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
+	std::vector<ASTNode> ast_nodes_;
+	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
+	std::string last_error_;
 
-        // Track current function for __FUNCTION__, __func__, __PRETTY_FUNCTION__
-        // Store pointer to the FunctionDeclarationNode which contains all the info we need
-        const FunctionDeclarationNode* current_function_ = nullptr;
+		// Track current function for __FUNCTION__, __func__, __PRETTY_FUNCTION__
+		// Store pointer to the FunctionDeclarationNode which contains all the info we need
+	const FunctionDeclarationNode* current_function_ = nullptr;
 
-        // Track current linkage for extern "C" blocks
-        Linkage current_linkage_ = Linkage::None;
-        
-        // Track last calling convention found in parse_type_and_name()
-        // This is used to communicate calling convention from type parsing to function declaration
-        CallingConvention last_calling_convention_ = CallingConvention::Default;
+		// Track current linkage for extern "C" blocks
+	Linkage current_linkage_ = Linkage::None;
 
-        // Result of constructor/destructor lookahead detection
-        struct ConstructorLookaheadResult {
-                bool detected = false;
-                bool is_destructor = false;
-        };
+		// Track last calling convention found in parse_type_and_name()
+		// This is used to communicate calling convention from type parsing to function declaration
+	CallingConvention last_calling_convention_ = CallingConvention::Default;
 
-        // Track current struct context for member function parsing
-        struct MemberFunctionContext {
-                StringHandle struct_name;  // Points directly into source text from lexer token
-                TypeIndex struct_type_index;
-                StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
-                StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
-        };
-        std::vector<MemberFunctionContext> member_function_context_stack_;
+		// Result of constructor/destructor lookahead detection
+	struct ConstructorLookaheadResult {
+		bool detected = false;
+		bool is_destructor = false;
+	};
 
-        // Track current struct being parsed (for nested class support)
-        struct StructParsingContext {
-                std::string_view struct_name;  // Points directly into source text from lexer token
-                StructDeclarationNode* struct_node;  // Pointer to the struct being parsed
-                StructTypeInfo* local_struct_info = nullptr;  // Pointer to StructTypeInfo being built (for static member lookup)
-                NamespaceHandle namespace_handle = NamespaceHandle{0};  // Namespace where the struct is declared
-                std::vector<StringHandle> imported_members;  // Members imported via using-declarations
-                bool has_inherited_constructors = false;  // True if constructors are inherited from base class
-        };
-        std::vector<StructParsingContext> struct_parsing_context_stack_;
+		// Track current struct context for member function parsing
+	struct MemberFunctionContext {
+		StringHandle struct_name;  // Points directly into source text from lexer token
+		TypeIndex struct_type_index;
+		StructDeclarationNode* struct_node;	// Pointer to the struct being parsed
+		StructTypeInfo* local_struct_info;   // Pointer to local struct_info being built (for static member lookup)
+	};
+	std::vector<MemberFunctionContext> member_function_context_stack_;
 
-        // Store parsed explicit template arguments for cross-function access
-        // This allows template arguments parsed in one function (e.g., parse_primary_expression)
-        // to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
-        std::optional<std::vector<TemplateTypeArg>> pending_explicit_template_args_;
+		// Track current struct being parsed (for nested class support)
+	struct StructParsingContext {
+		std::string_view struct_name;  // Points directly into source text from lexer token
+		StructDeclarationNode* struct_node;	// Pointer to the struct being parsed
+		StructTypeInfo* local_struct_info = nullptr;	 // Pointer to StructTypeInfo being built (for static member lookup)
+		NamespaceHandle namespace_handle = NamespaceHandle{0};  // Namespace where the struct is declared
+		std::vector<StringHandle> imported_members;	// Members imported via using-declarations
+		bool has_inherited_constructors = false;	 // True if constructors are inherited from base class
+	};
+	std::vector<StructParsingContext> struct_parsing_context_stack_;
 
-        // Handle-based save/restore to avoid cursor position collisions
-        // Each save gets a unique handle from a static incrementing counter
-        using SaveHandle = size_t;
+		// Store parsed explicit template arguments for cross-function access
+		// This allows template arguments parsed in one function (e.g., parse_primary_expression)
+		// to be accessible in another function (e.g., parse_postfix_expression) for template instantiation
+	std::optional<std::vector<TemplateTypeArg>> pending_explicit_template_args_;
 
-        // Delayed function body parsing for inline member functions
-        struct DelayedFunctionBody {
-                FunctionDeclarationNode* func_node;      // The function node to attach body to
-                SaveHandle body_start;                   // Handle to saved position at '{' (or 'try' for function-try-blocks)
-                SaveHandle initializer_list_start;       // Handle to saved position at ':' for constructor initializer list
-                StringHandle struct_name;                // For member function context
-                TypeIndex struct_type_index;                // For member function context
-                StructDeclarationNode* struct_node;      // Pointer to struct being parsed
-                bool has_initializer_list;               // True if constructor has an initializer list to re-parse
-                bool is_constructor;                     // Special handling for constructors
-                bool is_destructor;                      // Special handling for destructors
-                ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
-                DestructorDeclarationNode* dtor_node;    // For destructors (nullptr for regular functions)
-                InlineVector<StringHandle, 4> template_param_names; // For template member functions
-                bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
-                                                          // as opposed to a regular member of a template class
-                bool is_free_function = false;            // True for non-member friend functions defined inside a class body
-                bool has_function_try = false;            // True when body_start is at '{' inside a function-try-block
-                                                          // (i.e. 'try' was already consumed; catch clauses follow the body)
-        };
-        std::vector<DelayedFunctionBody> delayed_function_bodies_;
+		// Handle-based save/restore to avoid cursor position collisions
+		// Each save gets a unique handle from a static incrementing counter
+	using SaveHandle = size_t;
 
-        // Deferred template class member function bodies (for two-phase lookup)
-        // These are populated when parsing a template class definition and need to be
-        // attached to the TemplateClassDeclarationNode for parsing during instantiation
-        std::vector<DeferredTemplateMemberBody> pending_template_deferred_bodies_;
+		// Delayed function body parsing for inline member functions
+	struct DelayedFunctionBody {
+		FunctionDeclarationNode* func_node;		// The function node to attach body to
+		SaveHandle body_start;				   // Handle to saved position at '{' (or 'try' for function-try-blocks)
+		SaveHandle initializer_list_start;	   // Handle to saved position at ':' for constructor initializer list
+		StringHandle struct_name;				  // For member function context
+		TypeIndex struct_type_index;				 // For member function context
+		StructDeclarationNode* struct_node;		// Pointer to struct being parsed
+		bool has_initializer_list;			   // True if constructor has an initializer list to re-parse
+		bool is_constructor;					 // Special handling for constructors
+		bool is_destructor;						// Special handling for destructors
+		ConstructorDeclarationNode* ctor_node;   // For constructors (nullptr for regular functions)
+		DestructorDeclarationNode* dtor_node;	  // For destructors (nullptr for regular functions)
+		InlineVector<StringHandle, 4> template_param_names; // For template member functions
+		bool is_member_function_template = false; // True when this is a member function template (template<T> void f())
+														  // as opposed to a regular member of a template class
+		bool is_free_function = false;			   // True for non-member friend functions defined inside a class body
+		bool has_function_try = false;			   // True when body_start is at '{' inside a function-try-block
+														  // (i.e. 'try' was already consumed; catch clauses follow the body)
+	};
+	std::vector<DelayedFunctionBody> delayed_function_bodies_;
 
-        // Template member function body for delayed instantiation
-        // This stores the token position and template parameter info for re-parsing
-        struct TemplateMemberFunctionBody {
-                SaveHandle body_start;                           // Handle to saved position at '{'
-                std::vector<std::string_view> template_param_names; // Names of template parameters (e.g., "T", "U") - from Token storage
-                FunctionDeclarationNode* template_func_node;        // The original template function node
-        };
-        // Map from template function to its body info
-		std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
+		// Deferred template class member function bodies (for two-phase lookup)
+		// These are populated when parsing a template class definition and need to be
+		// attached to the TemplateClassDeclarationNode for parsing during instantiation
+	std::vector<DeferredTemplateMemberBody> pending_template_deferred_bodies_;
+
+		// Template member function body for delayed instantiation
+		// This stores the token position and template parameter info for re-parsing
+	struct TemplateMemberFunctionBody {
+		SaveHandle body_start;						   // Handle to saved position at '{'
+		std::vector<std::string_view> template_param_names; // Names of template parameters (e.g., "T", "U") - from Token storage
+		FunctionDeclarationNode* template_func_node;		 // The original template function node
+	};
+		// Map from template function to its body info
+	std::unordered_map<FunctionDeclarationNode*, TemplateMemberFunctionBody> template_member_function_bodies_;
 
 		// Track if we're currently parsing a template class (to skip delayed body parsing)
-		bool parsing_template_class_ = false;
+	bool parsing_template_class_ = false;
 		// Track when an inline namespace declaration was prefixed with 'inline'
-		bool pending_inline_namespace_ = false;
-		InlineVector<StringHandle, 4> current_template_param_names_;  // Names of current template parameters - from Token storage
+	bool pending_inline_namespace_ = false;
+	InlineVector<StringHandle, 4> current_template_param_names_;	 // Names of current template parameters - from Token storage
 
-        // Template parameter substitution for deferred template body parsing
-        // Maps template parameter names to their substituted values (for non-type AND type parameters)
-        struct TemplateParamSubstitution {
-            StringHandle param_name;
-            bool is_value_param = false;  // true for non-type parameters
-            int64_t value = 0;            // For non-type parameters
-            TypeCategory value_type = TypeCategory::Void; // Type of the value
-            // For type parameters - the concrete type to substitute
-            bool is_type_param = false;
-            TemplateTypeArg substituted_type;  // The concrete type for type parameters
-            // For template template parameters - maps param name to concrete template name
-            bool is_template_template_param = false;
-            StringHandle concrete_template_name;  // e.g. "MyVec" when Container=MyVec
-        };
-        InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
+		// Template parameter substitution for deferred template body parsing
+		// Maps template parameter names to their substituted values (for non-type AND type parameters)
+	struct TemplateParamSubstitution {
+		StringHandle param_name;
+		bool is_value_param = false;	 // true for non-type parameters
+		int64_t value = 0;			   // For non-type parameters
+		TypeCategory value_type = TypeCategory::Void; // Type of the value
+			// For type parameters - the concrete type to substitute
+		bool is_type_param = false;
+		TemplateTypeArg substituted_type;  // The concrete type for type parameters
+			// For template template parameters - maps param name to concrete template name
+		bool is_template_template_param = false;
+		StringHandle concrete_template_name;	 // e.g. "MyVec" when Container=MyVec
+	};
+	InlineVector<TemplateParamSubstitution, 4> template_param_substitutions_;
 
-        // Track nesting depth of template body parsing (for template parameter reference recognition).
-        // A value > 0 means we are inside one or more template definitions.
-        // Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
-        // suppress (set to 0) during SFINAE and lazy instantiation.
-        size_t parsing_template_depth_ = 0;
+		// Track nesting depth of template body parsing (for template parameter reference recognition).
+		// A value > 0 means we are inside one or more template definitions.
+		// Use FlashCpp::TemplateDepthGuard to increment/decrement; use ScopedState to temporarily
+		// suppress (set to 0) during SFINAE and lazy instantiation.
+	size_t parsing_template_depth_ = 0;
 
-        // Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
-        // Set to the opening-brace line of the template body being re-parsed.
-        // Zero means we are NOT currently in a Phase 1 re-parse check.
-        size_t phase1_cutoff_line_ = 0;
-        size_t phase1_cutoff_file_idx_ = SIZE_MAX;
-        std::optional<Token> phase1_violation_token_;
+		// Phase 1 two-phase name lookup enforcement (C++20 [temp.res]/9).
+		// Set to the opening-brace line of the template body being re-parsed.
+		// Zero means we are NOT currently in a Phase 1 re-parse check.
+	size_t phase1_cutoff_line_ = 0;
+	size_t phase1_cutoff_file_idx_ = SIZE_MAX;
+	std::optional<Token> phase1_violation_token_;
 
-        // Add parsing depth counter to detect infinite loops
-        // This is incremented/decremented in critical parsing functions
-        size_t parsing_depth_ = 0;
-        static constexpr size_t MAX_PARSING_DEPTH = 500;  // Reasonable limit for nested parsing
-        std::vector<std::string_view> template_param_names_;  // Template parameter names in current scope
-        
-        // Track if we're instantiating a lazy member function (to prevent infinite recursion)
-        bool instantiating_lazy_member_ = false;
-        
-        // Track if we're in SFINAE context (template argument substitution)
-        // When true, type resolution errors should be treated as substitution failures instead of hard errors
-        bool in_sfinae_context_ = false;
+		// Add parsing depth counter to detect infinite loops
+		// This is incremented/decremented in critical parsing functions
+	size_t parsing_depth_ = 0;
+	static constexpr size_t MAX_PARSING_DEPTH = 500;	 // Reasonable limit for nested parsing
+	std::vector<std::string_view> template_param_names_;	 // Template parameter names in current scope
 
-        // SFINAE type substitution map: maps template parameter name handles to concrete type indices.
-        // Populated during SFINAE trailing return type re-parse so the expression parser can resolve
-        // template parameter types (e.g., U → WithoutFoo) for member access validation.
-        std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual> sfinae_type_map_;
+		// Track if we're instantiating a lazy member function (to prevent infinite recursion)
+	bool instantiating_lazy_member_ = false;
 
-        // Last parsed trailing requires clause from caller-specific requires handling
-        // skip_function_trailing_specifiers() stops before 'requires' so callers can
-        // parse it themselves with proper function parameter scope setup.
-        std::optional<ASTNode> last_parsed_requires_clause_;
+		// Track if we're in SFINAE context (template argument substitution)
+		// When true, type resolution errors should be treated as substitution failures instead of hard errors
+	bool in_sfinae_context_ = false;
 
-        // Track nesting of inline namespaces (parallel to parse_namespace recursion)
-        std::vector<bool> inline_namespace_stack_;
-        
-        // Track if current scope has parameter packs (enables fold expression parsing)
-        bool has_parameter_packs_ = false;
+		// SFINAE type substitution map: maps template parameter name handles to concrete type indices.
+		// Populated during SFINAE trailing return type re-parse so the expression parser can resolve
+		// template parameter types (e.g., U → WithoutFoo) for member access validation.
+	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual> sfinae_type_map_;
 
-        // Track parameter pack expansions during variadic template instantiation
-        struct PackParamInfo {
-            std::string_view original_name;  // e.g., "rest"
-            size_t start_index;              // Index of first expanded param (e.g., rest_0)
-            size_t pack_size;                // Number of expanded elements
-        };
-        std::vector<PackParamInfo> pack_param_info_;
+		// Last parsed trailing requires clause from caller-specific requires handling
+		// skip_function_trailing_specifiers() stops before 'requires' so callers can
+		// parse it themselves with proper function parameter scope setup.
+	std::optional<ASTNode> last_parsed_requires_clause_;
 
-        // Track class template parameter pack sizes for sizeof...() in member function templates
-        // When a class template like tuple<int, float, double> is instantiated, the pack _Elements
-        // has size 3. Member function templates need access to this info when they reference sizeof...(_Elements).
-        struct ClassTemplatePackInfo {
-            std::string_view pack_name;  // e.g., "_Elements"
-            size_t pack_size;            // e.g., 3 for tuple<int, float, double>
-        };
-        std::vector<std::vector<ClassTemplatePackInfo>> class_template_pack_stack_;
-        
-        // Persistent map: instantiated class name → class template pack sizes
-        // This allows member function templates to look up their enclosing class's pack sizes
-        std::unordered_map<StringHandle, std::vector<ClassTemplatePackInfo>, TransparentStringHash, std::equal_to<>> class_template_pack_registry_;
+		// Track nesting of inline namespaces (parallel to parse_namespace recursion)
+	std::vector<bool> inline_namespace_stack_;
 
-        // Get pack size from class template pack context (stack-based, for within instantiation)
-        std::optional<size_t> get_class_template_pack_size(std::string_view pack_name) const {
-            // First check the stack (active instantiation)
-            for (auto it = class_template_pack_stack_.rbegin(); it != class_template_pack_stack_.rend(); ++it) {
-                for (const auto& info : *it) {
-                    if (info.pack_name == pack_name) {
-                        return info.pack_size;
-                    }
-                }
-            }
-            // Then check the persistent registry via member function context
-            for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
-                auto reg_it = class_template_pack_registry_.find(it->struct_name);
-                if (reg_it != class_template_pack_registry_.end()) {
-                    for (const auto& info : reg_it->second) {
-                        if (info.pack_name == pack_name) {
-                            return info.pack_size;
-                        }
-                    }
-                }
-            }
-            // Also check struct_parsing_context_stack_ (for bodies parsed during class instantiation)
-            // Note: struct_parsing_context_stack_ entries pushed during template instantiation
-            // use the instantiated name (e.g., "tuple$hash"), so the direct lookup here
-            // matches the registry key exactly.
-            // Two passes: first try exact pack_name match across all entries, then fall back
-            // to anonymous pack matching. This prevents an unrelated intermediate class template
-            // with an anonymous pack from short-circuiting before the correct entry is reached.
-            for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
-                auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
-                if (reg_it != class_template_pack_registry_.end()) {
-                    for (const auto& info : reg_it->second) {
-                        if (info.pack_name == pack_name) {
-                            return info.pack_size;
-                        }
-                    }
-                }
-            }
-            // Second pass: handle anonymous pack names from forward declarations.
-            // Only fall back if exactly one anonymous variadic pack exists in the entry.
-            for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
-                auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
-                if (reg_it != class_template_pack_registry_.end()) {
-                    if (reg_it->second.size() == 1 && reg_it->second[0].pack_name.starts_with("__anon_type_")) {
-                        return reg_it->second[0].pack_size;
-                    }
-                }
-            }
-            return std::nullopt;
-        }
+		// Track if current scope has parameter packs (enables fold expression parsing)
+	bool has_parameter_packs_ = false;
 
-        // RAII guard to push/pop class template pack info
-        struct ClassTemplatePackGuard {
-            std::vector<std::vector<ClassTemplatePackInfo>>& stack_;
-            bool active_ = false;
-            ClassTemplatePackGuard(std::vector<std::vector<ClassTemplatePackInfo>>& stack) : stack_(stack) {}
-            void push(std::vector<ClassTemplatePackInfo> info) {
-                stack_.push_back(std::move(info));
-                active_ = true;
-            }
-            ~ClassTemplatePackGuard() {
-                if (active_ && !stack_.empty()) stack_.pop_back();
-            }
-        };
+		// Track parameter pack expansions during variadic template instantiation
+	struct PackParamInfo {
+		std::string_view original_name;	// e.g., "rest"
+		size_t start_index;				// Index of first expanded param (e.g., rest_0)
+		size_t pack_size;				  // Number of expanded elements
+	};
+	std::vector<PackParamInfo> pack_param_info_;
 
-        // Track last failed template argument parse handle to prevent infinite loops
-        SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
+		// Track class template parameter pack sizes for sizeof...() in member function templates
+		// When a class template like tuple<int, float, double> is instantiated, the pack _Elements
+		// has size 3. Member function templates need access to this info when they reference sizeof...(_Elements).
+	struct ClassTemplatePackInfo {
+		std::string_view pack_name;	// e.g., "_Elements"
+		size_t pack_size;			  // e.g., 3 for tuple<int, float, double>
+	};
+	std::vector<std::vector<ClassTemplatePackInfo>> class_template_pack_stack_;
 
-        // Track functions currently undergoing auto return type deduction to prevent infinite recursion
-        std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
+		// Persistent map: instantiated class name → class template pack sizes
+		// This allows member function templates to look up their enclosing class's pack sizes
+	std::unordered_map<StringHandle, std::vector<ClassTemplatePackInfo>, TransparentStringHash, std::equal_to<>> class_template_pack_registry_;
 
-        // Deferred lambda return type deduction: store lambdas that need return type deduction
-        // after the enclosing scope completes to avoid circular dependencies
-        struct DeferredLambdaDeduction {
-            LambdaExpressionNode* lambda_node;
-            ASTNode* return_type_node;  // Pointer to the return type node to update
-            Token lambda_token;
-        };
-        std::vector<DeferredLambdaDeduction> deferred_lambda_deductions_;
+		// Get pack size from class template pack context (stack-based, for within instantiation)
+	std::optional<size_t> get_class_template_pack_size(std::string_view pack_name) const {
+			// First check the stack (active instantiation)
+		for (auto it = class_template_pack_stack_.rbegin(); it != class_template_pack_stack_.rend(); ++it) {
+			for (const auto& info : *it) {
+				if (info.pack_name == pack_name) {
+					return info.pack_size;
+				}
+			}
+		}
+			// Then check the persistent registry via member function context
+		for (auto it = member_function_context_stack_.rbegin(); it != member_function_context_stack_.rend(); ++it) {
+			auto reg_it = class_template_pack_registry_.find(it->struct_name);
+			if (reg_it != class_template_pack_registry_.end()) {
+				for (const auto& info : reg_it->second) {
+					if (info.pack_name == pack_name) {
+						return info.pack_size;
+					}
+				}
+			}
+		}
+			// Also check struct_parsing_context_stack_ (for bodies parsed during class instantiation)
+			// Note: struct_parsing_context_stack_ entries pushed during template instantiation
+			// use the instantiated name (e.g., "tuple$hash"), so the direct lookup here
+			// matches the registry key exactly.
+			// Two passes: first try exact pack_name match across all entries, then fall back
+			// to anonymous pack matching. This prevents an unrelated intermediate class template
+			// with an anonymous pack from short-circuiting before the correct entry is reached.
+		for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+			auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
+			if (reg_it != class_template_pack_registry_.end()) {
+				for (const auto& info : reg_it->second) {
+					if (info.pack_name == pack_name) {
+						return info.pack_size;
+					}
+				}
+			}
+		}
+			// Second pass: handle anonymous pack names from forward declarations.
+			// Only fall back if exactly one anonymous variadic pack exists in the entry.
+		for (auto it = struct_parsing_context_stack_.rbegin(); it != struct_parsing_context_stack_.rend(); ++it) {
+			auto reg_it = class_template_pack_registry_.find(StringTable::getOrInternStringHandle(it->struct_name));
+			if (reg_it != class_template_pack_registry_.end()) {
+				if (reg_it->second.size() == 1 && reg_it->second[0].pack_name.starts_with("__anon_type_")) {
+					return reg_it->second[0].pack_size;
+				}
+			}
+		}
+		return std::nullopt;
+	}
 
-        // Stack tracking explicit lambda capture kinds while parsing lambda bodies.
-        // Each entry maps a captured variable's StringHandle to its CaptureKind.
-        // Pushed before parse_block() and popped after.
-        std::vector<std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>> lambda_capture_stack_;
+		// RAII guard to push/pop class template pack info
+	struct ClassTemplatePackGuard {
+		std::vector<std::vector<ClassTemplatePackInfo>>& stack_;
+		bool active_ = false;
+		ClassTemplatePackGuard(std::vector<std::vector<ClassTemplatePackInfo>>& stack) : stack_(stack) {}
+		void push(std::vector<ClassTemplatePackInfo> info) {
+			stack_.push_back(std::move(info));
+			active_ = true;
+		}
+		~ClassTemplatePackGuard() {
+			if (active_ && !stack_.empty())
+				stack_.pop_back();
+		}
+	};
 
-        // Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
-        mutable std::unordered_set<const void*> expression_type_resolution_stack_;
+		// Track last failed template argument parse handle to prevent infinite loops
+	SaveHandle last_failed_template_arg_parse_handle_ = SIZE_MAX;
 
-        // Track template aliases currently being resolved to prevent infinite recursion
-        std::unordered_set<std::string_view> resolving_aliases_;
+		// Track functions currently undergoing auto return type deduction to prevent infinite recursion
+	std::unordered_set<const FunctionDeclarationNode*> functions_being_deduced_;
 
-        // Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
-        std::vector<ASTNode> pending_struct_variables_;
+		// Deferred lambda return type deduction: store lambdas that need return type deduction
+		// after the enclosing scope completes to avoid circular dependencies
+	struct DeferredLambdaDeduction {
+		LambdaExpressionNode* lambda_node;
+		ASTNode* return_type_node;  // Pointer to the return type node to update
+		Token lambda_token;
+	};
+	std::vector<DeferredLambdaDeduction> deferred_lambda_deductions_;
 
-        // Pending hidden friend function definitions from inline friend bodies inside class/struct.
-        // These need to be added to the enclosing namespace's declaration list (or the top-level
-        // AST) so the IR converter generates code for them, since they are not regular members.
-        std::vector<ASTNode> pending_hidden_friend_defs_;
+		// Stack tracking explicit lambda capture kinds while parsing lambda bodies.
+		// Each entry maps a captured variable's StringHandle to its CaptureKind.
+		// Pushed before parse_block() and popped after.
+	std::vector<std::unordered_map<StringHandle, LambdaCaptureNode::CaptureKind>> lambda_capture_stack_;
 
-        template <typename T>
-        std::pair<ASTNode, T&> create_node_ref(T&& node) {
-                return emplace_node_ref<T>(node);
-        }
+		// Track ASTNode addresses currently being processed in get_expression_type to prevent infinite recursion
+	mutable std::unordered_set<const void*> expression_type_resolution_stack_;
 
-        template <typename T, typename... Args>
-        std::pair<ASTNode, T&> emplace_node_ref(Args&&... args) {
-                ASTNode ast_node = ASTNode::emplace_node<T>(std::forward<Args>(args)...);
-                return { ast_node, ast_node.as<T>() };
-        }
+		// Track template aliases currently being resolved to prevent infinite recursion
+	std::unordered_set<std::string_view> resolving_aliases_;
 
-        template <typename T, typename... Args> ASTNode emplace_node(Args&&... args) {
-                return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
-        }
+		// Pending variable declarations from struct definitions (e.g., struct Point { ... } p, q;)
+	std::vector<ASTNode> pending_struct_variables_;
 
-        class ScopedTokenPosition {
-        public:
-                explicit ScopedTokenPosition(class Parser& parser, 
-                                            const std::source_location location = std::source_location::current());
+		// Pending hidden friend function definitions from inline friend bodies inside class/struct.
+		// These need to be added to the enclosing namespace's declaration list (or the top-level
+		// AST) so the IR converter generates code for them, since they are not regular members.
+	std::vector<ASTNode> pending_hidden_friend_defs_;
 
-                ~ScopedTokenPosition();
+	template <typename T>
+	std::pair<ASTNode, T&> create_node_ref(T&& node) {
+		return emplace_node_ref<T>(node);
+	}
 
-                ParseResult success(ASTNode node = ASTNode{});
+	template <typename T, typename... Args>
+	std::pair<ASTNode, T&> emplace_node_ref(Args&&... args) {
+		ASTNode ast_node = ASTNode::emplace_node<T>(std::forward<Args>(args)...);
+		return {ast_node, ast_node.as<T>()};
+	}
 
-                ParseResult error(std::string_view error_message);
+	template <typename T, typename... Args>
+	ASTNode emplace_node(Args&&... args) {
+		return ASTNode::emplace_node<T>(std::forward<Args>(args)...);
+	}
 
-                // Propagate result from a sub-parser that has its own ScopedTokenPosition
-                // Sub-parsers handle their own position restoration, so we just discard ours
-                ParseResult propagate(ParseResult&& result);
+	class ScopedTokenPosition {
+	public:
+		explicit ScopedTokenPosition(class Parser& parser,
+									 const std::source_location location = std::source_location::current());
 
-        private:
-                class Parser& parser_;
-                SaveHandle saved_handle_;
-                bool discarded_ = false;
-                std::source_location location_;
-        };
+		~ScopedTokenPosition();
 
-        struct SavedToken {
-                Token current_token_;
-                Token injected_token_;  // Phase 5: Save injected token state for >> splitting
-                size_t ast_nodes_size_ = 0;
-                TokenPosition lexer_position_;  // Store the lexer position with each save
-        };
-        
-        std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
-        size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+		ParseResult success(ASTNode node = ASTNode{});
 
-        Token consume_token();
+		ParseResult error(std::string_view error_message);
 
-        Token peek_token();
-        Token peek_token(size_t lookahead);  // Peek ahead N tokens (0 = current, 1 = next, etc.)
+				// Propagate result from a sub-parser that has its own ScopedTokenPosition
+				// Sub-parsers handle their own position restoration, so we just discard ours
+		ParseResult propagate(ParseResult&& result);
 
-        // ---- New TokenKind-based API (Phase 0) ----
-        // Returns the TokenKind of the current token. Returns TokenKind::eof() at end.
-        TokenKind peek() const;
-        // Returns the TokenKind of the token at +lookahead positions.
-        TokenKind peek(size_t lookahead);
-        // Returns the full Token of the current token (always valid, returns EOF token at end).
-        const Token& peek_info() const;
-        // Like peek(lookahead) but returns full info.
-        Token peek_info(size_t lookahead);
-        // Consumes the current token and returns it.
-        Token advance();
-        // Consumes the current token only if it matches `kind`. Returns true if consumed.
-        bool consume(TokenKind kind);
-        // Consumes the current token if it matches; otherwise emits a diagnostic.
-        Token expect(TokenKind kind);
+	private:
+		class Parser& parser_;
+		SaveHandle saved_handle_;
+		bool discarded_ = false;
+		std::source_location location_;
+	};
 
-        // Phase 5: >> token splitting for nested templates (e.g., Foo<Bar<int>>)
-        // When we encounter >> and need just >, this splits it by consuming first > and injecting second >
-        void split_right_shift_token();  // Split >> into > and > (for nested templates)
+	struct SavedToken {
+		Token current_token_;
+		Token injected_token_;  // Phase 5: Save injected token state for >> splitting
+		size_t ast_nodes_size_ = 0;
+		TokenPosition lexer_position_;  // Store the lexer position with each save
+	};
 
-        // Parsing functions for different constructs
-        ParseResult parse_top_level_node();
-        ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
-        ParseResult parse_type_and_name();
-        ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
-        ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);  // NEW: Parse declarators (function pointers, arrays, etc.)
-        ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
-        ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
-        ParseResult parse_namespace();
-        ParseResult parse_using_directive_or_declaration();  // Parse using directive/declaration/alias
-        ParseResult parse_type_specifier();
-        ParseResult parse_decltype_specifier();  // NEW: Parse decltype(expr) type specifier
-        
-        // Helper function to parse members of anonymous struct/union (handles recursive nesting)
-        // Returns the StructMember info for each member parsed
-        // out_members: vector to add parsed members to
-        // parent_name_prefix: prefix for generating unique anonymous type names
-        ParseResult parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, std::string_view parent_name_prefix);
-        
-        // Helper function to try parsing a function pointer member in struct/union context
-        // Pattern: type (*name)(params);
-        // Returns std::optional<StructMember> - empty if not a function pointer pattern
-        // Advances token position if successful, restores on failure
-        std::optional<StructMember> try_parse_function_pointer_member(TypeSpecifierNode return_type_spec);
-        
-        // Helper function to get Type and size for built-in type keywords
-        std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
-        
-        // Helper function to parse functional-style cast: Type(expression)
-        // Returns ParseResult with StaticCastNode on success
-        ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
-        
-        // Helper function to parse cv-qualifiers (const/volatile) from token stream
-        // Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)
-        CVQualifier parse_cv_qualifiers();
-        
-        // Helper function to parse reference qualifiers (& or &&) from token stream
-        // Returns ReferenceQualifier: None, LValueReference, or RValueReference
-        ReferenceQualifier parse_reference_qualifier();
-        
-        // Phase 4: Unified declaration parsing
-        // This is the single entry point for parsing all declarations (variables and functions)
-        // Context determines what forms are legal and how they're interpreted
-        ParseResult parse_declaration(FlashCpp::DeclarationContext context = FlashCpp::DeclarationContext::Auto);
-        
-        // Legacy functions - now implemented as wrappers around parse_declaration()
-        ParseResult parse_declaration_or_function_definition();
-        ParseResult parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs);  // NEW: Parse out-of-line constructor/destructor
-        ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
-        ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);  // Phase 1: Unified parameter list parsing
-        FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
-        std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
-        FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();  // Consume constexpr/consteval/inline/explicit/virtual before a member
-        ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);  // Phase 2: Unified trailing specifiers
-        ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);  // Phase 4: Unified function header parsing
-        ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);  // Phase 4: Create FunctionDeclarationNode from header
-        void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
-        void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
-        void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
-        StructMemberFunction* find_member_function_by_signature(StructTypeInfo& struct_info, StringHandle name, const FlashCpp::MemberQualifiers& quals, size_t param_count);  // Priority 4: Lookup regular member function by name, cv-qualifiers, and parameter count
-        StructMemberFunction* find_ctor_dtor_for_definition(StructTypeInfo& struct_info, bool is_destructor, const FlashCpp::ParsedParameterList& params);  // Priority 4: Lookup constructor/destructor matching the given parameter list
-        ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);  // Phase 5: Unified delayed body parsing
-        FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);  // Phase 7: Unified signature validation
-        void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src);  // Copy semantic properties needed before signature finalization/mangling
-        ASTNode create_defaulted_member_function_body(const FunctionDeclarationNode& func_node);  // Synthesize parser-owned bodies for defaulted member functions
-        void finalize_function_signature_after_definition(FunctionDeclarationNode& func_node);  // Materialize return type and other body-dependent signature data
-        void finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name = false);  // Finalize signature, then mangle
-        void compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute = false);  // Phase 6 (mangling): Generate and set mangled name
-        ParseResult parse_struct_declaration();  // Add struct declaration parser (entry point)
-        ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);  // With pre-parsed specifiers
-        ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
-        ParseResult parse_enum_declaration();    // Add enum declaration parser
-        ParseResult parse_typedef_declaration(); // Add typedef declaration parser
-        ParseResult parse_static_assert();       // NEW: Parse static_assert declarations
-        ParseResult parse_friend_declaration();  // NEW: Parse friend declarations
-        ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
-        void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);  // Helper: register friend in StructTypeInfo (all kinds)
-        ParseResult parse_template_declaration();  // NEW: Parse template declarations
-        ParseResult parse_concept_declaration();   // NEW: Parse C++20 concept declarations
-       ParseResult parse_requires_expression();   // NEW: Parse C++20 requires expressions
-        ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member function templates
-        ParseResult parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member template aliases
-        ParseResult parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member struct/class templates
-        ParseResult parse_member_variable_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member variable templates
-        ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
-        ParseResult parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr = nullptr);  // Helper: Parse ': <const-expr>' for bitfields
-        // Phase 6: Shared helper for template function declaration parsing
-        // Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
-        // Returns the TemplateFunctionDeclarationNode in out_template_node
-        ParseResult parse_template_function_declaration_body(
-            InlineVector<ASTNode, 4>& template_params,
-            std::optional<ASTNode> requires_clause,
-            ASTNode& out_template_node);
-        ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);  // NEW: Parse template parameter list
-        ParseResult parse_template_parameter();  // NEW: Parse a single template parameter
-        // Simple struct to hold constant expression evaluation results
-        // Public members are intentional for this lightweight data structure
-        struct ConstantValue {
-                int64_t value;
-                TypeCategory type;
-        };
-        
-        ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
-        ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
-        std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
-        bool could_be_template_arguments();  // NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
-        ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
-        ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);  // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
-        
-        // Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
-        std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts
-        
-        std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);  // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
-        std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
-        std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);  // Helper: Try to instantiate a specific template node (for SFINAE)
-        std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);  // NEW: Instantiate with explicit args
-        // Shared helper: re-parse a template function body with concrete argument substitution.
-        // Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
-        // try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
-        // detection has already passed.  Sets new_func_ref's definition.
-        // Pack-parameter state and cycle detection remain in the callers.
-        void reparse_template_function_body(
-            FunctionDeclarationNode& new_func_ref,
-            const FunctionDeclarationNode& func_decl,
-            const InlineVector<ASTNode, 4>& template_params,
-            const InlineVector<TemplateTypeArg, 4>& template_args,
-            bool preserve_ref_qualifier = false);
-        // Populate template_param_substitutions_ from parallel (name, arg) pairs for
-        // body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
-        // Overload 1: TemplateTypeArg source (lazy body-reparse path).
-        // Overload 2: TemplateTypeArg source (member-func body-reparse path).
-        void populateTemplateParamSubstitutions(
-            InlineVector<TemplateParamSubstitution, 4>& subs,
-            const InlineVector<StringHandle, 4>& param_names,
-            const std::vector<TemplateTypeArg>& type_args);
-        void populateTemplateParamSubstitutions(
-            InlineVector<TemplateParamSubstitution, 4>& subs,
-            const std::vector<ASTNode>& template_params,
-            const std::vector<TemplateTypeArg>& template_args);
+	std::unordered_map<SaveHandle, SavedToken> saved_tokens_;
+	size_t next_save_handle_ = 0;  // Auto-incrementing handle generator
+
+	Token consume_token();
+
+	Token peek_token();
+	Token peek_token(size_t lookahead);	// Peek ahead N tokens (0 = current, 1 = next, etc.)
+
+		// ---- New TokenKind-based API (Phase 0) ----
+		// Returns the TokenKind of the current token. Returns TokenKind::eof() at end.
+	TokenKind peek() const;
+		// Returns the TokenKind of the token at +lookahead positions.
+	TokenKind peek(size_t lookahead);
+		// Returns the full Token of the current token (always valid, returns EOF token at end).
+	const Token& peek_info() const;
+		// Like peek(lookahead) but returns full info.
+	Token peek_info(size_t lookahead);
+		// Consumes the current token and returns it.
+	Token advance();
+		// Consumes the current token only if it matches `kind`. Returns true if consumed.
+	bool consume(TokenKind kind);
+		// Consumes the current token if it matches; otherwise emits a diagnostic.
+	Token expect(TokenKind kind);
+
+		// Phase 5: >> token splitting for nested templates (e.g., Foo<Bar<int>>)
+		// When we encounter >> and need just >, this splits it by consuming first > and injecting second >
+	void split_right_shift_token();	// Split >> into > and > (for nested templates)
+
+		// Parsing functions for different constructs
+	ParseResult parse_top_level_node();
+	ParseResult parse_pragma_pack_inner();   // NEW: Parse the contents of pragma pack()
+	ParseResult parse_type_and_name();
+	ParseResult parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier);  // NEW: Parse structured bindings: auto [a, b] = expr; auto& [x, y] = pair;
+	ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);	 // NEW: Parse declarators (function pointers, arrays, etc.)
+	ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
+	ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
+	ParseResult parse_namespace();
+	ParseResult parse_using_directive_or_declaration();	// Parse using directive/declaration/alias
+	ParseResult parse_type_specifier();
+	ParseResult parse_decltype_specifier();	// NEW: Parse decltype(expr) type specifier
+
+		// Helper function to parse members of anonymous struct/union (handles recursive nesting)
+		// Returns the StructMember info for each member parsed
+		// out_members: vector to add parsed members to
+		// parent_name_prefix: prefix for generating unique anonymous type names
+	ParseResult parse_anonymous_struct_union_members(StructTypeInfo* out_struct_info, std::string_view parent_name_prefix);
+
+		// Helper function to try parsing a function pointer member in struct/union context
+		// Pattern: type (*name)(params);
+		// Returns std::optional<StructMember> - empty if not a function pointer pattern
+		// Advances token position if successful, restores on failure
+	std::optional<StructMember> try_parse_function_pointer_member(TypeSpecifierNode return_type_spec);
+
+		// Helper function to get Type and size for built-in type keywords
+	std::optional<std::pair<TypeCategory, unsigned char>> get_builtin_type_info(std::string_view type_name);
+
+		// Helper function to parse functional-style cast: Type(expression)
+		// Returns ParseResult with StaticCastNode on success
+	ParseResult parse_functional_cast(std::string_view type_name, const Token& type_token);
+
+		// Helper function to parse cv-qualifiers (const/volatile) from token stream
+		// Returns combined CVQualifier flags (None, Const, Volatile, or ConstVolatile)
+	CVQualifier parse_cv_qualifiers();
+
+		// Helper function to parse reference qualifiers (& or &&) from token stream
+		// Returns ReferenceQualifier: None, LValueReference, or RValueReference
+	ReferenceQualifier parse_reference_qualifier();
+
+		// Phase 4: Unified declaration parsing
+		// This is the single entry point for parsing all declarations (variables and functions)
+		// Context determines what forms are legal and how they're interpreted
+	ParseResult parse_declaration(FlashCpp::DeclarationContext context = FlashCpp::DeclarationContext::Auto);
+
+		// Legacy functions - now implemented as wrappers around parse_declaration()
+	ParseResult parse_declaration_or_function_definition();
+	ParseResult parse_out_of_line_constructor_or_destructor(std::string_view class_name, bool is_destructor, const FlashCpp::DeclarationSpecifiers& specs);	// NEW: Parse out-of-line constructor/destructor
+	ParseResult parse_function_declaration(DeclarationNode& declaration_node, CallingConvention calling_convention = CallingConvention::Default);
+	ParseResult parse_parameter_list(FlashCpp::ParsedParameterList& out_params, CallingConvention calling_convention = CallingConvention::Default);	// Phase 1: Unified parameter list parsing
+	FlashCpp::ParsedFunctionArguments parse_function_arguments(const FlashCpp::FunctionArgumentContext& ctx = {});  // Unified function call argument parsing
+	std::vector<TypeSpecifierNode> apply_lvalue_reference_deduction(const ChunkedVector<ASTNode>& args, const std::vector<TypeSpecifierNode>& arg_types);  // For template deduction: marks lvalue args with lvalue_reference for T&& forwarding
+	FlashCpp::MemberLeadingSpecifiers parse_member_leading_specifiers();	 // Consume constexpr/consteval/inline/explicit/virtual before a member
+	ParseResult parse_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals, FlashCpp::FunctionSpecifiers& out_specs);	// Phase 2: Unified trailing specifiers
+	ParseResult parse_function_header(const FlashCpp::FunctionParsingContext& ctx, FlashCpp::ParsedFunctionHeader& out_header);	// Phase 4: Unified function header parsing
+	ParseResult create_function_from_header(const FlashCpp::ParsedFunctionHeader& header, const FlashCpp::FunctionParsingContext& ctx);	// Phase 4: Create FunctionDeclarationNode from header
+	void setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index);  // Phase 5: Helper for member function scope setup
+	void register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index);  // Phase 5: Register member functions in symbol table
+	void register_parameters_in_scope(const std::vector<ASTNode>& params);  // Phase 5: Register function parameters in symbol table
+	StructMemberFunction* find_member_function_by_signature(StructTypeInfo& struct_info, StringHandle name, const FlashCpp::MemberQualifiers& quals, size_t param_count);  // Priority 4: Lookup regular member function by name, cv-qualifiers, and parameter count
+	StructMemberFunction* find_ctor_dtor_for_definition(StructTypeInfo& struct_info, bool is_destructor, const FlashCpp::ParsedParameterList& params);  // Priority 4: Lookup constructor/destructor matching the given parameter list
+	ParseResult parse_delayed_function_body(DelayedFunctionBody& delayed, std::optional<ASTNode>& out_body);	 // Phase 5: Unified delayed body parsing
+	FlashCpp::SignatureValidationResult validate_signature_match(const FunctionDeclarationNode& declaration, const FunctionDeclarationNode& definition);	 // Phase 7: Unified signature validation
+	void copy_function_properties(FunctionDeclarationNode& dest, const FunctionDeclarationNode& src);  // Copy semantic properties needed before signature finalization/mangling
+	ASTNode create_defaulted_member_function_body(const FunctionDeclarationNode& func_node);	 // Synthesize parser-owned bodies for defaulted member functions
+	void finalize_function_signature_after_definition(FunctionDeclarationNode& func_node);  // Materialize return type and other body-dependent signature data
+	void finalize_function_after_definition(FunctionDeclarationNode& func_node, bool force_recompute_mangled_name = false);	// Finalize signature, then mangle
+	void compute_and_set_mangled_name(FunctionDeclarationNode& func_node, bool force_recompute = false);	 // Phase 6 (mangling): Generate and set mangled name
+	ParseResult parse_struct_declaration();	// Add struct declaration parser (entry point)
+	ParseResult parse_struct_declaration_with_specs(bool pre_is_constexpr, bool pre_is_inline);	// With pre-parsed specifiers
+	ParseResult parse_member_type_alias(std::string_view keyword, StructDeclarationNode* struct_ref, AccessSpecifier current_access);  // Helper: Parse typedef/using in struct/template
+	ParseResult parse_enum_declaration();	  // Add enum declaration parser
+	ParseResult parse_typedef_declaration(); // Add typedef declaration parser
+	ParseResult parse_static_assert();	   // NEW: Parse static_assert declarations
+	ParseResult parse_friend_declaration();	// NEW: Parse friend declarations
+	ParseResult parse_template_friend_declaration(StructDeclarationNode& struct_node);  // NEW: Parse template friend declarations
+	void registerFriendInStructInfo(const FriendDeclarationNode& friend_decl, StructTypeInfo* struct_info);	// Helper: register friend in StructTypeInfo (all kinds)
+	ParseResult parse_template_declaration();  // NEW: Parse template declarations
+	ParseResult parse_concept_declaration();	 // NEW: Parse C++20 concept declarations
+	ParseResult parse_requires_expression();	 // NEW: Parse C++20 requires expressions
+	ParseResult parse_member_function_template(StructDeclarationNode& struct_node, AccessSpecifier access);	// NEW: Parse member function templates
+	ParseResult parse_member_template_alias(StructDeclarationNode& struct_node, AccessSpecifier access);	 // NEW: Parse member template aliases
+	ParseResult parse_member_struct_template(StructDeclarationNode& struct_node, AccessSpecifier access);  // NEW: Parse member struct/class templates
+	ParseResult parse_member_variable_template(StructDeclarationNode& struct_node, AccessSpecifier access);	// NEW: Parse member variable templates
+	ParseResult parse_member_template_or_function(StructDeclarationNode& struct_node, AccessSpecifier access);  // Helper: Detect and parse member template alias or function
+	ParseResult parse_bitfield_width(std::optional<size_t>& out_width, std::optional<ASTNode>* out_expr = nullptr);	// Helper: Parse ': <const-expr>' for bitfields
+		// Phase 6: Shared helper for template function declaration parsing
+		// Parses: type_and_name + function_declaration + body handling (semicolon or skip braces)
+		// Returns the TemplateFunctionDeclarationNode in out_template_node
+	ParseResult parse_template_function_declaration_body(
+		InlineVector<ASTNode, 4>& template_params,
+		std::optional<ASTNode> requires_clause,
+		ASTNode& out_template_node);
+	ParseResult parse_template_parameter_list(InlineVector<ASTNode, 4>& out_params);	 // NEW: Parse template parameter list
+	ParseResult parse_template_parameter();	// NEW: Parse a single template parameter
+		// Simple struct to hold constant expression evaluation results
+		// Public members are intentional for this lightweight data structure
+	struct ConstantValue {
+		int64_t value;
+		TypeCategory type;
+	};
+
+	ParseResult parse_template_template_parameter_forms(std::vector<ASTNode>& out_params);  // NEW: Parse template<template<typename> class T> forms
+	ParseResult parse_template_template_parameter_form();  // NEW: Parse single template<template<typename> class T> form
+	std::optional<std::vector<TemplateTypeArg>> parse_explicit_template_arguments(std::vector<ASTNode>* out_type_nodes = nullptr);  // NEW: Parse explicit template arguments like <int, float>
+	bool could_be_template_arguments();	// NEW: Lookahead to check if '<' starts template arguments (Phase 1 of C++20 disambiguation)
+	ConstructorLookaheadResult consume_constructor_or_destructor_prefix(std::string_view class_name);  // Priority 3: Consume ClassName[<...>]::[~] prefix and detect ClassName( pattern (advances token position)
+	ConstructorLookaheadResult lookahead_constructor_or_destructor(std::string_view class_name);	 // Priority 3: Detect ClassName[<...>]::[~]ClassName( pattern with save/restore
+
+		// Phase 2: Unified Qualified Identifier Parser (Sprint 3-4)
+	std::optional<QualifiedIdParseResult> parse_qualified_identifier_with_templates();  // NEW: Unified parser for all qualified identifier contexts
+
+	std::optional<ConstantValue> try_evaluate_constant_expression(const ASTNode& expr_node);	 // NEW: Evaluate constant expressions for template arguments (e.g., is_int<T>::value)
+	std::optional<ASTNode> try_instantiate_template(std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Try to instantiate a template
+	std::optional<ASTNode> try_instantiate_single_template(const ASTNode& template_node, std::string_view template_name, const std::vector<TypeSpecifierNode>& arg_types, int& recursion_depth);	 // Helper: Try to instantiate a specific template node (for SFINAE)
+	std::optional<ASTNode> try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count = SIZE_MAX);	// NEW: Instantiate with explicit args
+		// Shared helper: re-parse a template function body with concrete argument substitution.
+		// Called from both try_instantiate_template_explicit (preserve_ref_qualifier=true) and
+		// try_instantiate_single_template (preserve_ref_qualifier=false, default) after cycle
+		// detection has already passed.  Sets new_func_ref's definition.
+		// Pack-parameter state and cycle detection remain in the callers.
+	void reparse_template_function_body(
+		FunctionDeclarationNode& new_func_ref,
+		const FunctionDeclarationNode& func_decl,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		bool preserve_ref_qualifier = false);
+		// Populate template_param_substitutions_ from parallel (name, arg) pairs for
+		// body-reparse paths so non-type params (e.g. int N → 4) are resolved in parse_block().
+		// Overload 1: TemplateTypeArg source (lazy body-reparse path).
+		// Overload 2: TemplateTypeArg source (member-func body-reparse path).
+	void populateTemplateParamSubstitutions(
+		InlineVector<TemplateParamSubstitution, 4>& subs,
+		const InlineVector<StringHandle, 4>& param_names,
+		const std::vector<TemplateTypeArg>& type_args);
+	void populateTemplateParamSubstitutions(
+		InlineVector<TemplateParamSubstitution, 4>& subs,
+		const std::vector<ASTNode>& template_params,
+		const std::vector<TemplateTypeArg>& template_args);
 		// Build outer-template binding data from the AST template parameter list so
 		// parameter names and args stay index-aligned even if the parameter list
 		// ever stops being a pure TemplateParameterNode sequence.
-		template<typename ArgContainer, typename OutArgContainer>
-		void collectOuterTemplateBindings(
-			const InlineVector<ASTNode, 4>& template_params,
-			const ArgContainer& template_args,
-			InlineVector<StringHandle, 4>& out_param_names,
-			OutArgContainer& out_args) const {
-			const size_t pair_count = std::min(template_params.size(), template_args.size());
-			out_param_names.clear();
-			out_args.clear();
-			out_param_names.reserve(pair_count);
-			out_args.reserve(pair_count);
+	template <typename ArgContainer, typename OutArgContainer>
+	void collectOuterTemplateBindings(
+		const InlineVector<ASTNode, 4>& template_params,
+		const ArgContainer& template_args,
+		InlineVector<StringHandle, 4>& out_param_names,
+		OutArgContainer& out_args) const {
+		const size_t pair_count = std::min(template_params.size(), template_args.size());
+		out_param_names.clear();
+		out_args.clear();
+		out_param_names.reserve(pair_count);
+		out_args.reserve(pair_count);
 
-			for (size_t i = 0; i < pair_count; ++i) {
-				if (!template_params[i].is<TemplateParameterNode>()) {
-					continue;
-				}
-
-				out_param_names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
-				out_args.push_back(template_args[i]);
+		for (size_t i = 0; i < pair_count; ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
 			}
-		}
-		template<typename NodeT, typename ArgContainer>
-		void setOuterTemplateBindingsFromParams(
-			NodeT& node,
-			const InlineVector<ASTNode, 4>& template_params,
-			const ArgContainer& template_args) {
-			InlineVector<StringHandle, 4> outer_template_param_names;
-			std::vector<std::decay_t<decltype(template_args[0])>> filtered_template_args;
-			collectOuterTemplateBindings(template_params, template_args, outer_template_param_names, filtered_template_args);
 
-			if (!outer_template_param_names.empty()) {
-				node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
-			}
+			out_param_names.push_back(template_params[i].as<TemplateParameterNode>().nameHandle());
+			out_args.push_back(template_args[i]);
 		}
-        std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);  // NEW: Instantiate class template
-        std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
-        std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Instantiate variable template
-        ASTNode substitute_template_params_in_expression(
-            const ASTNode& expr, 
-            const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
-            const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map = {});  // NEW: Substitute template parameters in expressions
-        std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
-        std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
-        // Core logic shared by both try_instantiate_member_function_template and _explicit.
-        // Given a resolved template node and template arguments, performs type substitution,
-        // body parsing, scope management, and AST registration.
-        std::optional<ASTNode> instantiate_member_function_template_core(
-            std::string_view struct_name, std::string_view member_name,
-            StringHandle qualified_name,
-            const ASTNode& template_node,
-            const std::vector<TemplateTypeArg>& template_args,
-            const FlashCpp::TemplateInstantiationKey& key);
-    public:
-        std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
-        bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
-    private:
-        bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);  // Phase 2: Instantiate lazy class to specified phase
-        std::optional<TypeIndex> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);  // Phase 3: Evaluate lazy type alias on-demand
-        std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
-        std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);  // NEW: Get mangled name for instantiated class
-        std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
-        
-        // Template name extraction helpers - extract base template names from mangled/instantiated names
-        std::string_view extract_base_template_name(std::string_view mangled_name);  // Extract by searching for underscores left-to-right
-        std::string_view extract_base_template_name_by_stripping(std::string_view instantiated_name);  // Extract by stripping suffixes right-to-left
-        
-        // Template instantiation helper methods (extracted from try_instantiate_class_template)
-        std::optional<ASTNode> substitute_nontype_template_param(
-            std::string_view param_name,
-            const std::vector<TemplateTypeArg>& args,
-            const std::vector<ASTNode>& params);  // Substitute non-type template parameter in initializer
-        
-        std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<ASTNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<ASTNode, 4>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});  // NEW: Parse out-of-line template member function
-        bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
-        bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
-                const std::vector<TypeSpecifierNode>& argument_types,
-                std::vector<TemplateTypeArg>& out_template_args) const;
-        bool match_template_parameter_type(TypeSpecifierNode param_type,
-                TypeSpecifierNode argument_type,
-                const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params,
-                std::unordered_map<std::string_view, TypeSpecifierNode>& bindings) const;
-        std::optional<std::string_view> extract_template_param_name(const TypeSpecifierNode& type_spec,
-                const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const;
-        bool types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) const;
-        bool instantiate_deduced_template(std::string_view class_name,
-                const std::vector<TemplateTypeArg>& template_args,
-                TypeSpecifierNode& type_specifier);
-        
-public:  // Public methods for template instantiation
+	}
+	template <typename NodeT, typename ArgContainer>
+	void setOuterTemplateBindingsFromParams(
+		NodeT& node,
+		const InlineVector<ASTNode, 4>& template_params,
+		const ArgContainer& template_args) {
+		InlineVector<StringHandle, 4> outer_template_param_names;
+		std::vector<std::decay_t<decltype(template_args[0])>> filtered_template_args;
+		collectOuterTemplateBindings(template_params, template_args, outer_template_param_names, filtered_template_args);
+
+		if (!outer_template_param_names.empty()) {
+			node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
+		}
+	}
+	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
+	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
+	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Instantiate variable template
+	ASTNode substitute_template_params_in_expression(
+		const ASTNode& expr,
+		const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
+		const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map = {});	 // NEW: Substitute template parameters in expressions
+	std::optional<ASTNode> try_instantiate_member_function_template(std::string_view struct_name, std::string_view member_name, const std::vector<TypeSpecifierNode>& arg_types);  // NEW: Instantiate member function template
+	std::optional<ASTNode> try_instantiate_member_function_template_explicit(std::string_view struct_name, std::string_view member_name, const std::vector<TemplateTypeArg>& template_type_args);  // NEW: Instantiate member function template with explicit args
+		// Core logic shared by both try_instantiate_member_function_template and _explicit.
+		// Given a resolved template node and template arguments, performs type substitution,
+		// body parsing, scope management, and AST registration.
+	std::optional<ASTNode> instantiate_member_function_template_core(
+		std::string_view struct_name, std::string_view member_name,
+		StringHandle qualified_name,
+		const ASTNode& template_node,
+		const std::vector<TemplateTypeArg>& template_args,
+		const FlashCpp::TemplateInstantiationKey& key);
+
+public:
+	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
+	bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
+private:
+	bool instantiateLazyClassToPhase(StringHandle instantiated_name, ClassInstantiationPhase target_phase);	// Phase 2: Instantiate lazy class to specified phase
+	std::optional<TypeIndex> evaluateLazyTypeAlias(StringHandle instantiated_class_name, StringHandle member_name);	// Phase 3: Evaluate lazy type alias on-demand
+	std::optional<TypeIndex> instantiateLazyNestedType(StringHandle parent_class_name, StringHandle nested_type_name);  // Phase 4: Instantiate lazy nested type on-demand
+	std::string_view get_instantiated_class_name(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Get mangled name for instantiated class
+	std::string_view instantiate_and_register_base_template(std::string_view& base_class_name, const std::vector<TemplateTypeArg>& template_args);  // Helper: Instantiate base class template and add to AST
+
+		// Template name extraction helpers - extract base template names from mangled/instantiated names
+	std::string_view extract_base_template_name(std::string_view mangled_name);	// Extract by searching for underscores left-to-right
+	std::string_view extract_base_template_name_by_stripping(std::string_view instantiated_name);  // Extract by stripping suffixes right-to-left
+
+		// Template instantiation helper methods (extracted from try_instantiate_class_template)
+	std::optional<ASTNode> substitute_nontype_template_param(
+		std::string_view param_name,
+		const std::vector<TemplateTypeArg>& args,
+		const std::vector<ASTNode>& params);	 // Substitute non-type template parameter in initializer
+
+	std::optional<bool> try_parse_out_of_line_template_member(const InlineVector<ASTNode, 4>& template_params, const InlineVector<StringHandle, 4>& template_param_names, const InlineVector<ASTNode, 4>& inner_template_params = {}, const InlineVector<StringHandle, 4>& inner_template_param_names = {});	 // NEW: Parse out-of-line template member function
+	bool try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const InitializerListNode& init_list);
+	bool deduce_template_arguments_from_guide(const DeductionGuideNode& guide,
+											  const std::vector<TypeSpecifierNode>& argument_types,
+											  std::vector<TemplateTypeArg>& out_template_args) const;
+	bool match_template_parameter_type(TypeSpecifierNode param_type,
+									   TypeSpecifierNode argument_type,
+									   const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params,
+									   std::unordered_map<std::string_view, TypeSpecifierNode>& bindings) const;
+	std::optional<std::string_view> extract_template_param_name(const TypeSpecifierNode& type_spec,
+																const std::unordered_map<std::string_view, const TemplateParameterNode*>& template_params) const;
+	bool types_equivalent(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) const;
+	bool instantiate_deduced_template(std::string_view class_name,
+									  const std::vector<TemplateTypeArg>& template_args,
+									  TypeSpecifierNode& type_specifier);
+
+public:	// Public methods for template instantiation
 	// Parse a template function body with concrete type bindings (for template instantiation)
 	std::optional<ASTNode> parseTemplateBody(
 		SaveHandle body_pos,
 		const InlineVector<std::string_view, 4>& template_param_names,
 		const std::vector<TypeCategory>& concrete_types,
 		StringHandle struct_name,  // Optional: for member functions
-		TypeIndex struct_type_index = TypeIndex{}     // Optional: for member functions
+		TypeIndex struct_type_index = TypeIndex{}	  // Optional: for member functions
 	);
 
 	// Substitute template parameters in an AST node with concrete types/values
 	ASTNode substituteTemplateParameters(
 		const ASTNode& node,
 		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args
-		);
+		const InlineVector<TemplateTypeArg, 4>& template_args);
 
 		// Helper to extract type from an expression for overload resolution.
 		// Public so codegen/constexpr consumers can reuse the parser's type deduction.
-		std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
+	std::optional<TypeSpecifierNode> get_expression_type(const ASTNode& expr_node);
 
-	private:  // Resume private methods
+private:	 // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
-		void substituteFunctionCallExtras(
-			FunctionCallNode& new_call,
-			const FunctionCallNode& old_call,
-			const InlineVector<ASTNode, 4>& template_params,
-			const InlineVector<TemplateTypeArg, 4>& template_args
-		);
-		void register_builtin_functions();  // Register compiler builtin functions
-        ParseResult parse_block();
-        ParseResult parse_statement_or_declaration();
-        ParseResult parse_variable_declaration();
-        FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();  // Phase 1: Shared specifier parsing
-        bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
-        // Phase 3: Consolidated initialization helpers
-        std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
-        std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);  // Parse Type var = expr or Type var = {args}
-        ParseResult parse_extern_block(Linkage linkage);  // Parse extern "C" { ... } block
-        ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
-        ParseResult parse_for_loop();  // Add this line
-        ParseResult parse_while_loop();  // Add while-loop parser
-        ParseResult parse_do_while_loop();  // Add do-while-loop parser
-        ParseResult parse_if_statement();  // Add if-statement parser
-        ParseResult parse_switch_statement();  // Add switch-statement parser
-        ParseResult parse_return_statement();
-        ParseResult parse_break_statement();  // Add break-statement parser
-        ParseResult parse_continue_statement();  // Add continue-statement parser
-        ParseResult parse_goto_statement();  // Add goto-statement parser
-        ParseResult parse_label_statement();  // Add label-statement parser
-        ParseResult parse_lambda_expression();  // Add lambda expression parser
-        ParseResult parse_try_statement();  // Add try-catch statement parser
-        ParseResult parse_throw_statement();  // Add throw statement parser
-        ParseResult parse_function_body(bool is_ctor_or_dtor = false);  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
-        // Parse one catch clause at the current token position into catch_clauses.
-        // Returns an error ParseResult on failure, or an empty success otherwise.
-        ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
-        // Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
-        // Both parse_function_body() and parse_delayed_function_body() use this.
-        // Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so that the IR
-        // generator can emit the C++20 [except.handle]/15 implicit rethrow at each handler end.
-        ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token, bool is_ctor_or_dtor = false);
+	void substituteFunctionCallExtras(
+		FunctionCallNode& new_call,
+		const FunctionCallNode& old_call,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
+	void register_builtin_functions();  // Register compiler builtin functions
+	ParseResult parse_block();
+	ParseResult parse_statement_or_declaration();
+	ParseResult parse_variable_declaration();
+	FlashCpp::DeclarationSpecifiers parse_declaration_specifiers();	// Phase 1: Shared specifier parsing
+	bool looks_like_function_parameters();  // Phase 2: Detect if '(' starts function params vs direct init
+		// Phase 3: Consolidated initialization helpers
+	std::optional<ASTNode> parse_direct_initialization();  // Parse Type var(args) - returns initializer node
+	std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);	 // Parse Type var = expr or Type var = {args}
+	ParseResult parse_extern_block(Linkage linkage);	 // Parse extern "C" { ... } block
+	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
+	ParseResult parse_for_loop();  // Add this line
+	ParseResult parse_while_loop();	// Add while-loop parser
+	ParseResult parse_do_while_loop();  // Add do-while-loop parser
+	ParseResult parse_if_statement();  // Add if-statement parser
+	ParseResult parse_switch_statement();  // Add switch-statement parser
+	ParseResult parse_return_statement();
+	ParseResult parse_break_statement();	 // Add break-statement parser
+	ParseResult parse_continue_statement();	// Add continue-statement parser
+	ParseResult parse_goto_statement();	// Add goto-statement parser
+	ParseResult parse_label_statement();	 // Add label-statement parser
+	ParseResult parse_lambda_expression();  // Add lambda expression parser
+	ParseResult parse_try_statement();  // Add try-catch statement parser
+	ParseResult parse_throw_statement();	 // Add throw statement parser
+	ParseResult parse_function_body(bool is_ctor_or_dtor = false);  // Parse function body: '{...}' or function-try-block 'try {...} catch...'
+		// Parse one catch clause at the current token position into catch_clauses.
+		// Returns an error ParseResult on failure, or an empty success otherwise.
+	ParseResult parse_one_catch_clause(std::vector<ASTNode>& catch_clauses);
+		// Wrap try_body + catch_clauses into a BlockNode containing a single TryStatementNode.
+		// Both parse_function_body() and parse_delayed_function_body() use this.
+		// Set is_ctor_or_dtor=true for constructor/destructor function-try-blocks so that the IR
+		// generator can emit the C++20 [except.handle]/15 implicit rethrow at each handler end.
+	ASTNode make_try_block_body(ASTNode try_body, std::vector<ASTNode> catch_clauses, Token try_token, bool is_ctor_or_dtor = false);
 
-        // Windows SEH (Structured Exception Handling) parsers
-        ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
-        ParseResult parse_seh_leave_statement();  // Parse __leave statement
+		// Windows SEH (Structured Exception Handling) parsers
+	ParseResult parse_seh_try_statement();  // Parse __try/__except or __try/__finally
+	ParseResult parse_seh_leave_statement();	 // Parse __leave statement
 
-        // Helper functions for auto type deduction
-        TypeCategory deduce_type_from_expression(const ASTNode& expr);
-        void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
-        std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
-        std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);
-        std::optional<TypeSpecifierNode> build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token);
-        void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
-        bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;  // Check if two types are compatible
-        std::string type_to_string(const TypeSpecifierNode& type) const;  // Convert type to string for error messages
-        // Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
-		int getStructTypeSizeBits(TypeIndex type_index) const;
-        
-        // Helper functions for std::initializer_list support
-        // Check if a type is std::initializer_list<T>, returns element type index if so
-        std::optional<TypeIndex> is_initializer_list_type(const TypeSpecifierNode& type_spec) const;
-        // Find a constructor that takes std::initializer_list<T> as its parameter
-        std::optional<std::pair<const StructMemberFunction*, TypeIndex>> 
-            find_initializer_list_constructor(const StructTypeInfo& struct_info) const;
+		// Helper functions for auto type deduction
+	TypeCategory deduce_type_from_expression(const ASTNode& expr);
+	void deduce_and_update_auto_return_type(FunctionDeclarationNode& func_decl);
+	std::optional<TypeSpecifierNode> deduce_lambda_return_type(const LambdaExpressionNode& lambda);
+	std::optional<TypeSpecifierNode> build_function_pointer_type_from_lambda(const LambdaExpressionNode& lambda);
+	std::optional<TypeSpecifierNode> build_function_pointer_type_from_struct(const StructTypeInfo& struct_info, const Token& source_token);
+	void process_deferred_lambda_deductions();  // Process deferred lambda return type deductions
+	bool are_types_compatible(const TypeSpecifierNode& type1, const TypeSpecifierNode& type2) const;	 // Check if two types are compatible
+	std::string type_to_string(const TypeSpecifierNode& type) const;	 // Convert type to string for error messages
+		// Note: Use global ::get_type_size_bits() from AstNodeTypes.h for type sizes
+	int getStructTypeSizeBits(TypeIndex type_index) const;
 
-        // Helper function for counting pack elements in template parameter packs
-        size_t count_pack_elements(std::string_view pack_name) const;
+		// Helper functions for std::initializer_list support
+		// Check if a type is std::initializer_list<T>, returns element type index if so
+	std::optional<TypeIndex> is_initializer_list_type(const TypeSpecifierNode& type_spec) const;
+		// Find a constructor that takes std::initializer_list<T> as its parameter
+	std::optional<std::pair<const StructMemberFunction*, TypeIndex>>
+	find_initializer_list_constructor(const StructTypeInfo& struct_info) const;
 
-        // Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
-        // Returns std::nullopt if pack name is not found (unknown pack)
-        std::optional<size_t> get_pack_size(std::string_view pack_name) const {
-            for (const auto& info : pack_param_info_) {
-                if (info.original_name == pack_name) {
-                    return info.pack_size;
-                }
-            }
-            return std::nullopt;
-        }
+		// Helper function for counting pack elements in template parameter packs
+	size_t count_pack_elements(std::string_view pack_name) const;
 
-        // Replace a pack parameter identifier in an expression pattern with its expanded name
-        // e.g., replace "args" with "args_0" in a pattern like identity(args)
-        ASTNode replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index);
+		// Get pack size from pack_param_info_ (more reliable than count_pack_elements during nested instantiation)
+		// Returns std::nullopt if pack name is not found (unknown pack)
+	std::optional<size_t> get_pack_size(std::string_view pack_name) const {
+		for (const auto& info : pack_param_info_) {
+			if (info.original_name == pack_name) {
+				return info.pack_size;
+			}
+		}
+		return std::nullopt;
+	}
 
-        // Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
-        // Used to decide whether a complex pack-expansion expression references a given pack parameter.
-        static bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name);
+		// Replace a pack parameter identifier in an expression pattern with its expanded name
+		// e.g., replace "args" with "args_0" in a pattern like identity(args)
+	ASTNode replacePackIdentifierInExpr(const ASTNode& expr, std::string_view pack_name, size_t element_index);
 
-        // Expand a PackExpansionExprNode into substituted call arguments.
-        // Returns true when the node was recognized and consumed; empty packs
-        // legitimately contribute zero arguments.
-        bool expandPackExpansionArgs(
-            const PackExpansionExprNode& pack_expansion,
-            const InlineVector<ASTNode, 4>& template_params,
-            const InlineVector<TemplateTypeArg, 4>& template_args,
-            ChunkedVector<ASTNode>& out_args);
+		// Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
+		// Used to decide whether a complex pack-expansion expression references a given pack parameter.
+	static bool exprContainsIdentifier(const ASTNode& expr, std::string_view pack_name);
 
-        // Substitute a single argument, expanding PackExpansionExprNode into
-        // multiple arguments when present.  Falls back to substituteTemplateParameters
-        // for non-pack arguments.  Appends result(s) to `out`.
-        void substituteArgWithPackExpansion(
-            const ASTNode& arg,
-            const InlineVector<ASTNode, 4>& template_params,
-            const InlineVector<TemplateTypeArg, 4>& template_args,
-            ChunkedVector<ASTNode>& out);
+		// Expand a PackExpansionExprNode into substituted call arguments.
+		// Returns true when the node was recognized and consumed; empty packs
+		// legitimately contribute zero arguments.
+	bool expandPackExpansionArgs(
+		const PackExpansionExprNode& pack_expansion,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		ChunkedVector<ASTNode>& out_args);
 
-        // Phase 3: Expression context tracking for template disambiguation
-        enum class ExpressionContext {
-            Normal,              // Regular expression context
-            Decltype,            // Inside decltype() - strictest template-first rules
-            TemplateTypeArg,    // Template argument context
-            RequiresClause,      // Requires clause expression
-            ConceptDefinition    // Concept definition context
-        };
+		// Substitute a single argument, expanding PackExpansionExprNode into
+		// multiple arguments when present.  Falls back to substituteTemplateParameters
+		// for non-pack arguments.  Appends result(s) to `out`.
+	void substituteArgWithPackExpansion(
+		const ASTNode& arg,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args,
+		ChunkedVector<ASTNode>& out);
 
-        // Minimum precedence to accept all operators (assignment has lowest precedence = 3)
-        static constexpr int MIN_PRECEDENCE = 0;
-        // Default precedence excludes comma operator (precedence 1) to prevent it from being
-        // treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
-        static constexpr int DEFAULT_PRECEDENCE = 2;
-        // NOTE: ExpressionContext is required (no default) to prevent bugs where context
-        // is accidentally not passed in recursive calls (e.g., ternary branch parsing).
-        // Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
-        ParseResult parse_expression(int precedence, ExpressionContext context);
-        ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }  // Wrapper for keyword map
-        ParseResult parse_primary_expression(ExpressionContext context);
-        ParseResult parse_postfix_expression(ExpressionContext context);  // Phase 3: New postfix operator layer
-        ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
-	        const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
-        std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
-            const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
-        ParseResult parse_unary_expression(ExpressionContext context);
-        ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
-        // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
-        // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
-        // On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
-        std::optional<ParseResult> parse_operator_name(const Token& operator_keyword_token, std::string_view& operator_name_out);
+		// Phase 3: Expression context tracking for template disambiguation
+	enum class ExpressionContext {
+		Normal,				// Regular expression context
+		Decltype,			  // Inside decltype() - strictest template-first rules
+		TemplateTypeArg,	 // Template argument context
+		RequiresClause,		// Requires clause expression
+		ConceptDefinition	  // Concept definition context
+	};
 
-        // C++ cast operators helper
-        enum class CppCastKind {
-            Static,
-            Dynamic,
-            Const,
-            Reinterpret
-        };
-        ParseResult parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token);
+		// Minimum precedence to accept all operators (assignment has lowest precedence = 3)
+	static constexpr int MIN_PRECEDENCE = 0;
+		// Default precedence excludes comma operator (precedence 1) to prevent it from being
+		// treated as an operator in contexts where it's a separator (declarations, arguments, etc.)
+	static constexpr int DEFAULT_PRECEDENCE = 2;
+		// NOTE: ExpressionContext is required (no default) to prevent bugs where context
+		// is accidentally not passed in recursive calls (e.g., ternary branch parsing).
+		// Use ExpressionContext::Normal for most cases; TemplateTypeArg when inside <...>.
+	ParseResult parse_expression(int precedence, ExpressionContext context);
+	ParseResult parse_expression_statement() { return parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal); }	 // Wrapper for keyword map
+	ParseResult parse_primary_expression(ExpressionContext context);
+	ParseResult parse_postfix_expression(ExpressionContext context);	 // Phase 3: New postfix operator layer
+	ParseResult apply_postfix_operators(ASTNode& result);  // Apply postfix operators (., ->, [], (), ++, --) to existing result
+	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
+	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
+															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+	ParseResult parse_unary_expression(ExpressionContext context);
+	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
+		// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
+		// Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined literals, and conversion operators.
+		// On success returns std::nullopt and sets operator_name_out; on error returns a ParseResult with the error.
+	std::optional<ParseResult> parse_operator_name(const Token& operator_keyword_token, std::string_view& operator_name_out);
 
-        ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
-        
-        // Helper to parse template brace initialization: Template<Args>{}
-        // Returns ParseResult with ConstructorCallNode on success
-        ParseResult parse_template_brace_initialization(
-                const std::vector<TemplateTypeArg>& template_args,
-                std::string_view template_name,
-                const Token& identifier_token);
-        
-        // Helper to parse member template function calls: Template<T>::member<U>()
-        // Returns:
-        // - std::nullopt if not a function call (no '(' found after member name)
-        // - ParseResult with success if function call was parsed successfully
-        // - ParseResult with error if parsing failed
-        std::optional<ParseResult> try_parse_member_template_function_call(
-            std::string_view instantiated_class_name,
-            std::string_view member_name,
-            const Token& member_token);
+		// C++ cast operators helper
+	enum class CppCastKind {
+		Static,
+		Dynamic,
+		Const,
+		Reinterpret
+	};
+	ParseResult parse_cpp_cast_expression(CppCastKind kind, std::string_view cast_name, const Token& cast_token);
 
-        // Utility functions
-        bool consume_punctuator(const std::string_view& value);
-        bool consume_keyword(const std::string_view& value);
+	ParseResult parse_qualified_identifier_after_template(const Token& template_base_token, bool* had_template_keyword = nullptr);  // Parse Template<T>::member
 
-        // Attribute parsing result
-        struct AttributeInfo {
-            Linkage linkage = Linkage::None;
-            CallingConvention calling_convention = CallingConvention::Default;
-        };
+		// Helper to parse template brace initialization: Template<Args>{}
+		// Returns ParseResult with ConstructorCallNode on success
+	ParseResult parse_template_brace_initialization(
+		const std::vector<TemplateTypeArg>& template_args,
+		std::string_view template_name,
+		const Token& identifier_token);
 
-        // Attribute handling
-        void skip_cpp_attributes();                   // Skip C++ standard [[...]] attributes
-        void skip_gcc_attributes();                   // Skip GCC __attribute__((...)) specifications
-        void skip_noop_gnu_qualifiers();              // Skip GNU-style no-op qualifiers like __restrict
-        bool skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name = nullptr); // Skip declaration-suffix __asm("...") / __asm__("...")
-        void skip_noexcept_specifier();               // Skip noexcept or noexcept(expr) specifier
-        void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);     // Skip all trailing specifiers after function parameters (stops before 'requires')
-        void skip_trailing_requires_clause();         // Parse and discard trailing requires clause (if present)
-        std::optional<ASTNode> parse_trailing_requires_clause();  // Parse trailing requires clause, return RequiresClauseNode
-        bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
-        void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
-        void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
-        // Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
-        // Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
-        // calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
-        // Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
-        ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
-        
-        // Helper to parse static member functions (reduces code duplication)
-        bool parse_static_member_function(
-            ParseResult& type_and_name_result,
-            bool is_static_constexpr,
-            StringHandle struct_name_handle,
-            StructDeclarationNode& struct_ref,
-            StructTypeInfo* struct_info,
-            AccessSpecifier current_access,
-            const InlineVector<StringHandle, 4>& current_template_param_names,
-            bool add_to_struct_info,
-            bool add_to_ast_nodes
-        );
-        
-        // Helper to parse entire static member block (data or function) - reduces code duplication
-        ParseResult parse_static_member_block(
-            StringHandle struct_name_handle,
-            StructDeclarationNode& struct_ref,
-            StructTypeInfo* struct_info,
-            AccessSpecifier current_access,
-            const InlineVector<StringHandle, 4>& current_template_param_names,
-            bool use_struct_type_info,
-            bool add_functions_to_ast_nodes
-        );
-        
-        Linkage parse_declspec_attributes();          // Parse Microsoft __declspec(...) and return linkage
-        AttributeInfo parse_attributes();             // Parse all types of attributes and return linkage + calling convention
-        CallingConvention parse_calling_convention(); // Parse calling convention keywords
+		// Helper to parse member template function calls: Template<T>::member<U>()
+		// Returns:
+		// - std::nullopt if not a function call (no '(' found after member name)
+		// - ParseResult with success if function call was parsed successfully
+		// - ParseResult with error if parsing failed
+	std::optional<ParseResult> try_parse_member_template_function_call(
+		std::string_view instantiated_class_name,
+		std::string_view member_name,
+		const Token& member_token);
 
-        // Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
-        std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
-        int get_operator_precedence(const std::string_view& op);
-        std::optional<size_t> parse_alignas_specifier();  // Parse alignas(n) and return alignment value
+		// Utility functions
+	bool consume_punctuator(const std::string_view& value);
+	bool consume_keyword(const std::string_view& value);
 
-        // Check if an identifier name is a template parameter in current scope
-        bool is_template_parameter(std::string_view name) const;
-        
-        // Check if a base class name is a template parameter (used for template parameter inheritance)
-        bool is_base_class_template_parameter(std::string_view base_class_name) const;
-        
-        // Helper: Validate and add a base class (consolidates lookup, validation, and registration)
-        // Returns ParseResult::success() on success, or error if validation fails
-        ParseResult validate_and_add_base_class(
-            std::string_view base_class_name,
-            StructDeclarationNode& struct_ref,
-            StructTypeInfo* struct_info,
-            AccessSpecifier base_access,
-            bool is_virtual_base,
-            const Token& error_token);
+		// Attribute parsing result
+	struct AttributeInfo {
+		Linkage linkage = Linkage::None;
+		CallingConvention calling_convention = CallingConvention::Default;
+	};
 
-        // Helper: After parsing template arguments for a base class specifier, consume
-        // optional ::member type access and ... pack expansion in the correct order.
-        // Centralizes the parsing so all call sites get consistent behavior.
-        // Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
-        std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
+		// Attribute handling
+	void skip_cpp_attributes();					// Skip C++ standard [[...]] attributes
+	void skip_gcc_attributes();					// Skip GCC __attribute__((...)) specifications
+	void skip_noop_gnu_qualifiers();				 // Skip GNU-style no-op qualifiers like __restrict
+	bool skip_asm_suffix(std::optional<std::string_view>* asm_symbol_name = nullptr); // Skip declaration-suffix __asm("...") / __asm__("...")
+	void skip_noexcept_specifier();				// Skip noexcept or noexcept(expr) specifier
+	void skip_function_trailing_specifiers(FlashCpp::MemberQualifiers& out_quals);	   // Skip all trailing specifiers after function parameters (stops before 'requires')
+	void skip_trailing_requires_clause();		  // Parse and discard trailing requires clause (if present)
+	std::optional<ASTNode> parse_trailing_requires_clause();	 // Parse trailing requires clause, return RequiresClauseNode
+	bool parse_constructor_exception_specifier(); // Parse noexcept or throw() and return true if noexcept
+	void consume_conversion_operator_target_modifiers(TypeSpecifierNode& target_type);  // Consume *, &, && after conversion operator target type
+	void consume_pointer_ref_modifiers(TypeSpecifierNode& type_spec);  // Consume trailing *, &, && and apply to type specifier
+		// Parse trailing return type (-> type) with the given parameters visible for decltype expressions.
+		// Expects the '->' token to be the next token. Consumes it, registers params in a temporary scope,
+		// calls parse_type_specifier + consume_pointer_ref_modifiers, then pops the scope.
+		// Returns ParseResult::error on failure, or success with a TypeSpecifierNode.
+	ParseResult parse_trailing_return_type_with_params(const std::vector<ASTNode>& params);
 
-        // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
-        // Shared across all base class deferral sites.
-        static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
-            const std::vector<TemplateTypeArg>& template_args,
-            const std::vector<ASTNode>& template_arg_nodes);
+		// Helper to parse static member functions (reduces code duplication)
+	bool parse_static_member_function(
+		ParseResult& type_and_name_result,
+		bool is_static_constexpr,
+		StringHandle struct_name_handle,
+		StructDeclarationNode& struct_ref,
+		StructTypeInfo* struct_info,
+		AccessSpecifier current_access,
+		const InlineVector<StringHandle, 4>& current_template_param_names,
+		bool add_to_struct_info,
+		bool add_to_ast_nodes);
 
-        // Helper: Parse base class list for a member struct template (already consumed ':').
-        // All base classes are stored as deferred entries since the struct is inside a template body.
-        ParseResult parse_member_struct_template_base_class_list(
-            StructDeclarationNode& struct_ref,
-            bool is_class);
+		// Helper to parse entire static member block (data or function) - reduces code duplication
+	ParseResult parse_static_member_block(
+		StringHandle struct_name_handle,
+		StructDeclarationNode& struct_ref,
+		StructTypeInfo* struct_info,
+		AccessSpecifier current_access,
+		const InlineVector<StringHandle, 4>& current_template_param_names,
+		bool use_struct_type_info,
+		bool add_functions_to_ast_nodes);
 
-        // Helper: Parse an optional access specifier keyword (public/protected/private) at the
-        // current position. If one is present it is consumed and the out parameter is updated.
-        // Returns true if an access specifier was consumed, false otherwise.
-        bool parse_base_access_specifier(AccessSpecifier& out_access) {
-            if (!peek().is_keyword()) return false;
-            std::string_view kw = peek_info().value();
-            if (kw == "public")    { out_access = AccessSpecifier::Public;    advance(); return true; }
-            if (kw == "protected") { out_access = AccessSpecifier::Protected; advance(); return true; }
-            if (kw == "private")   { out_access = AccessSpecifier::Private;   advance(); return true; }
-            return false;
-        }
+	Linkage parse_declspec_attributes();			 // Parse Microsoft __declspec(...) and return linkage
+	AttributeInfo parse_attributes();			  // Parse all types of attributes and return linkage + calling convention
+	CallingConvention parse_calling_convention(); // Parse calling convention keywords
 
-        // Helper: Look up a type alias including inherited ones from base classes
-        // Returns the TypeInfo pointer if found, nullptr otherwise
-        // Uses depth limit to prevent infinite recursion in malformed input
-        const TypeInfo* lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth = 0);
-        // Convenience overload for string_view parameters
-        const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth = 0) {
-            return lookup_inherited_type_alias(
-                StringTable::getOrInternStringHandle(struct_name),
-                StringTable::getOrInternStringHandle(member_name),
-                depth
-            );
-        }
+		// Helper to build __PRETTY_FUNCTION__ signature from FunctionDeclarationNode
+	std::string buildPrettyFunctionSignature(const FunctionDeclarationNode& func_node) const;
+	int get_operator_precedence(const std::string_view& op);
+	std::optional<size_t> parse_alignas_specifier();	 // Parse alignas(n) and return alignment value
 
-        // Helper: Look up a template function including inherited ones from base classes
-        // Returns the vector of all template overloads if found, nullptr otherwise
-        // Uses depth limit to prevent infinite recursion in malformed input
-        const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
-        // Convenience overload for string_view parameters
-        const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
-            return lookup_inherited_template(
-                StringTable::getOrInternStringHandle(struct_name),
-                template_name,
-                depth
-            );
-        }
+		// Check if an identifier name is a template parameter in current scope
+	bool is_template_parameter(std::string_view name) const;
 
-        // Substitute template parameter in a type specification
-        // Handles complex transformations like const T& -> const int&, T* -> int*, etc.
-        TypeIndex substitute_template_parameter(
-            const TypeSpecifierNode& original_type,
-            const InlineVector<ASTNode, 4>& template_params,
-            const InlineVector<TemplateTypeArg, 4>& template_args
-        );
-       
-        // Lookup symbol with template parameter checking
-        std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
+		// Check if a base class name is a template parameter (used for template parameter inheritance)
+	bool is_base_class_template_parameter(std::string_view base_class_name) const;
 
-        // Unified symbol lookup that automatically provides template parameters when parsing templates
-        std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
-            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
-                return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
-            } else {
-                return gSymbolTable.lookup(identifier);
-            }
-        }
+		// Helper: Validate and add a base class (consolidates lookup, validation, and registration)
+		// Returns ParseResult::success() on success, or error if validation fails
+	ParseResult validate_and_add_base_class(
+		std::string_view base_class_name,
+		StructDeclarationNode& struct_ref,
+		StructTypeInfo* struct_info,
+		AccessSpecifier base_access,
+		bool is_virtual_base,
+		const Token& error_token);
 
-        // Overload for qualified lookups with vector of strings
-        std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
-            if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
-                // For qualified lookups, we still need template params for the base lookup
-                // But qualified lookups are less common in template bodies
-                return gSymbolTable.lookup_qualified(namespaces, identifier);
-            } else {
-                return gSymbolTable.lookup_qualified(namespaces, identifier);
-            }
-        }
+		// Helper: After parsing template arguments for a base class specifier, consume
+		// optional ::member type access and ... pack expansion in the correct order.
+		// Centralizes the parsing so all call sites get consistent behavior.
+		// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
+	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
 
-        // Overload for qualified lookups with NamespaceHandle
-        std::optional<ASTNode> lookup_symbol_qualified(NamespaceHandle namespace_handle, std::string_view identifier) const {
-            return gSymbolTable.lookup_qualified(namespace_handle, identifier);
-        }
+		// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
+		// Shared across all base class deferral sites.
+	static std::vector<TemplateArgumentNodeInfo> build_template_arg_infos(
+		const std::vector<TemplateTypeArg>& template_args,
+		const std::vector<ASTNode>& template_arg_nodes);
 
-        // Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
-        // Returns nullptr if the symbol is neither type
-        static const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
-            if (symbol.is<DeclarationNode>()) {
-                return &symbol.as<DeclarationNode>();
-            } else if (symbol.is<VariableDeclarationNode>()) {
-                return &symbol.as<VariableDeclarationNode>().declaration();
-            }
-            return nullptr;
-        }
+		// Helper: Parse base class list for a member struct template (already consumed ':').
+		// All base classes are stored as deferred entries since the struct is inside a template body.
+	ParseResult parse_member_struct_template_base_class_list(
+		StructDeclarationNode& struct_ref,
+		bool is_class);
 
-        // Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
-        // Non-const because it may call instantiateLazyStaticMember.
-        // Returns Unresolved when the name cannot be classified (template-dependent names,
-        // 'this', unknown identifiers, etc.). Safe to call for any token; the Unresolved
-        // fallback preserves all existing codegen behaviour.
-        IdentifierNode createBoundIdentifier(Token token) {
-            IdentifierNode node(token);
+		// Helper: Parse an optional access specifier keyword (public/protected/private) at the
+		// current position. If one is present it is consumed and the out parameter is updated.
+		// Returns true if an access specifier was consumed, false otherwise.
+	bool parse_base_access_specifier(AccessSpecifier& out_access) {
+		if (!peek().is_keyword())
+			return false;
+		std::string_view kw = peek_info().value();
+		if (kw == "public") {
+			out_access = AccessSpecifier::Public;
+			advance();
+			return true;
+		}
+		if (kw == "protected") {
+			out_access = AccessSpecifier::Protected;
+			advance();
+			return true;
+		}
+		if (kw == "private") {
+			out_access = AccessSpecifier::Private;
+			advance();
+			return true;
+		}
+		return false;
+	}
 
-            // In template bodies with active template parameters, names may be dependent.
-            auto sym = lookup_symbol(token.handle());
+		// Helper: Look up a type alias including inherited ones from base classes
+		// Returns the TypeInfo pointer if found, nullptr otherwise
+		// Uses depth limit to prevent infinite recursion in malformed input
+	const TypeInfo* lookup_inherited_type_alias(StringHandle struct_name, StringHandle member_name, int depth = 0);
+		// Convenience overload for string_view parameters
+	const TypeInfo* lookup_inherited_type_alias(std::string_view struct_name, std::string_view member_name, int depth = 0) {
+		return lookup_inherited_type_alias(
+			StringTable::getOrInternStringHandle(struct_name),
+			StringTable::getOrInternStringHandle(member_name),
+			depth);
+	}
 
-            // Lambda capture bindings: check lambda_capture_stack_ for explicit captures
-            if (sym.has_value() && sym->is<DeclarationNode>()) {
-                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                bool is_local = scope_type.has_value() &&
-                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
-                if (is_local && !lambda_capture_stack_.empty()) {
-                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
-                    if (cap_it != lambda_capture_stack_.back().end()) {
-                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
-                            node.set_binding(IdentifierBinding::CapturedByValue);
-                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
-                            node.set_binding(IdentifierBinding::CapturedByRef);
-                        return node;
-                    }
-                }
-            }
-            if (sym.has_value() && sym->is<VariableDeclarationNode>()) {
-                const auto& var_decl = sym->as<VariableDeclarationNode>();
-                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                bool is_local = scope_type.has_value() &&
-                    scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
-                if (is_local && var_decl.storage_class() != StorageClass::Static && !lambda_capture_stack_.empty()) {
-                    auto cap_it = lambda_capture_stack_.back().find(token.handle());
-                    if (cap_it != lambda_capture_stack_.back().end()) {
-                        if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
-                            node.set_binding(IdentifierBinding::CapturedByValue);
-                        else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
-                            node.set_binding(IdentifierBinding::CapturedByRef);
-                        return node;
-                    }
-                }
-            }
+		// Helper: Look up a template function including inherited ones from base classes
+		// Returns the vector of all template overloads if found, nullptr otherwise
+		// Uses depth limit to prevent infinite recursion in malformed input
+	const std::vector<ASTNode>* lookup_inherited_template(StringHandle struct_name, std::string_view template_name, int depth = 0);
+		// Convenience overload for string_view parameters
+	const std::vector<ASTNode>* lookup_inherited_template(std::string_view struct_name, std::string_view template_name, int depth = 0) {
+		return lookup_inherited_template(
+			StringTable::getOrInternStringHandle(struct_name),
+			template_name,
+			depth);
+	}
 
-            // Helper lambdas for member context binding
-            auto bindStaticMemberFromStructInfo = [&](const StructTypeInfo* struct_info) -> bool {
-                if (!struct_info) return false;
-                StringHandle member_handle = token.handle();
-                instantiateLazyStaticMember(struct_info->name, member_handle);
-                auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
-                if (!static_member || !owner_struct) return false;
-                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
-                if (is_template_member_context && owner_struct != struct_info) return false;
-                node.set_binding(IdentifierBinding::StaticMember);
-                node.set_resolved_name(StringTable::getOrInternStringHandle(
-                    StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_handle).commit()));
-                return true;
-            };
+		// Substitute template parameter in a type specification
+		// Handles complex transformations like const T& -> const int&, T* -> int*, etc.
+	TypeIndex substitute_template_parameter(
+		const TypeSpecifierNode& original_type,
+		const InlineVector<ASTNode, 4>& template_params,
+		const InlineVector<TemplateTypeArg, 4>& template_args);
 
-            auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
-                const StructTypeInfo* current_struct_info = local_struct_info;
-                if (!current_struct_info) {
-                    if (const TypeInfo* ti = tryGetTypeInfo(struct_type_index))
-                        current_struct_info = ti->getStructInfo();
-                }
-                if (!current_struct_info) return false;
-                bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
-                // When parsing a template body and the struct has dependent (deferred) base classes,
-                // skip gLazyMemberResolver which traverses concrete base classes — a dependent base
-                // may also provide the same name, making eager binding to a concrete base incorrect
-                // (C++20 [temp.res]/2: dependent names must not be bound at first-phase parse time).
-                // Only own-declared members are safe to bind eagerly; names inherited from concrete
-                // bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
-                bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
-                if (!skip_base_traversal && tryGetTypeInfo(struct_type_index)) {
-                    auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
-                    if (!member_result) return false;
-                    if (is_template_member_context && member_result.owner_struct != current_struct_info) return false;
-                    node.set_binding(IdentifierBinding::NonStaticMember);
-                    return true;
-                }
-                for (const auto& member : current_struct_info->members) {
-                    if (member.getName() == token.handle()) {
-                        node.set_binding(IdentifierBinding::NonStaticMember);
-                        return true;
-                    }
-                }
-                return false;
-            };
+		// Lookup symbol with template parameter checking
+	std::optional<ASTNode> lookup_symbol_with_template_check(StringHandle identifier);
 
-            auto tryBindMemberContext = [&]() -> bool {
-                if (!member_function_context_stack_.empty()) {
-                    const auto& member_ctx = member_function_context_stack_.back();
-                    const StructTypeInfo* struct_info = member_ctx.local_struct_info;
-                    if (!struct_info) {
-                        if (const TypeInfo* ti = tryGetTypeInfo(member_ctx.struct_type_index))
-                            struct_info = ti->getStructInfo();
-                    }
-                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
-                    if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info)) return true;
-                }
-                if (!struct_parsing_context_stack_.empty()) {
-                    const auto& struct_ctx = struct_parsing_context_stack_.back();
-                    const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
-                    if (!struct_info) {
-                        auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
-                        if (struct_it != getTypesByNameMap().end()) {
-                            struct_info = struct_it->second->getStructInfo();
-                        }
-                    }
-                    if (bindStaticMemberFromStructInfo(struct_info)) return true;
-                    TypeIndex struct_type_index {};
-                    if (!struct_ctx.struct_name.empty()) {
-                        auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
-                        if (struct_it != getTypesByNameMap().end()) {
-                            struct_type_index = struct_it->second->type_index_;
-                        }
-                    }
-                    if (bindNonStaticMemberFromContext(struct_type_index, struct_ctx.local_struct_info)) return true;
-                }
-                return false;
-            };
+		// Unified symbol lookup that automatically provides template parameters when parsing templates
+	std::optional<ASTNode> lookup_symbol(StringHandle identifier) const {
+		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
+			return gSymbolTable.lookup(identifier, gSymbolTable.get_current_scope_handle(), &current_template_param_names_);
+		} else {
+			return gSymbolTable.lookup(identifier);
+		}
+	}
 
-            if (!sym.has_value()) {
-                // Not found in symbol table -> check member context
-                if (tryBindMemberContext()) return node;
-                return node; // Unresolved
-            }
+		// Overload for qualified lookups with vector of strings
+	std::optional<ASTNode> lookup_symbol_qualified(const std::vector<StringType<>>& namespaces, std::string_view identifier) const {
+		if (parsing_template_depth_ > 0 && !current_template_param_names_.empty()) {
+				// For qualified lookups, we still need template params for the base lookup
+				// But qualified lookups are less common in template bodies
+			return gSymbolTable.lookup_qualified(namespaces, identifier);
+		} else {
+			return gSymbolTable.lookup_qualified(namespaces, identifier);
+		}
+	}
 
-            // Template parameter reference
-            if (sym->is<TemplateParameterReferenceNode>()) {
-                node.set_binding(IdentifierBinding::TemplateParameter);
-                return node;
-            }
+		// Overload for qualified lookups with NamespaceHandle
+	std::optional<ASTNode> lookup_symbol_qualified(NamespaceHandle namespace_handle, std::string_view identifier) const {
+		return gSymbolTable.lookup_qualified(namespace_handle, identifier);
+	}
 
-            // Helper: record a Phase 1 violation if this declaration was added after
-            // the template body opening brace (C++20 [temp.res]/9).
-            auto checkPhase1 = [&](const Token& decl_tok) {
-                if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
-                    decl_tok.file_index() == phase1_cutoff_file_idx_ &&
-                    decl_tok.line() > phase1_cutoff_line_) {
-                    phase1_violation_token_ = token;
-                }
-            };
+		// Helper to get DeclarationNode from a symbol that could be either DeclarationNode or VariableDeclarationNode
+		// Returns nullptr if the symbol is neither type
+	static const DeclarationNode* get_decl_from_symbol(const ASTNode& symbol) {
+		if (symbol.is<DeclarationNode>()) {
+			return &symbol.as<DeclarationNode>();
+		} else if (symbol.is<VariableDeclarationNode>()) {
+			return &symbol.as<VariableDeclarationNode>().declaration();
+		}
+		return nullptr;
+	}
 
-            // Function or function-template -> Function binding
-            if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
-                if (sym->is<FunctionDeclarationNode>()) {
-                    checkPhase1(sym->as<FunctionDeclarationNode>().decl_node().identifier_token());
-                } else {
-                    checkPhase1(sym->as<TemplateFunctionDeclarationNode>().function_decl_node().decl_node().identifier_token());
-                }
-                node.set_binding(IdentifierBinding::Function);
-                return node;
-            }
+		// Create an IdentifierNode and perform ordinary unqualified lookup to classify its binding.
+		// Non-const because it may call instantiateLazyStaticMember.
+		// Returns Unresolved when the name cannot be classified (template-dependent names,
+		// 'this', unknown identifiers, etc.). Safe to call for any token; the Unresolved
+		// fallback preserves all existing codegen behaviour.
+	IdentifierNode createBoundIdentifier(Token token) {
+		IdentifierNode node(token);
 
-            // DeclarationNode
-            if (sym->is<DeclarationNode>()) {
-                const auto& decl = sym->as<DeclarationNode>();
-                // Check if this DeclarationNode is actually an enumerator constant
-                // (unscoped enum values are registered as DeclarationNode with Type::Enum).
-                // Variables/parameters of enum type are also DeclarationNode with Type::Enum,
-                // so we must verify via EnumTypeInfo::findEnumerator before classifying.
-                if (decl.type_node().is<TypeSpecifierNode>()) {
-                    const auto& ts = decl.type_node().as<TypeSpecifierNode>();
-                    if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
-                        if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
-                            const EnumTypeInfo* enum_info = ti->getEnumInfo();
-                            if (enum_info && enum_info->findEnumerator(token.handle())) {
-                                node.set_binding(IdentifierBinding::EnumConstant);
-                                return node;
-                            }
-                        }
-                    }
-                }
-                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
-                if (is_global_scope && tryBindMemberContext()) return node;
-                if (is_global_scope) {
-                    checkPhase1(decl.identifier_token());
-                    node.set_binding(IdentifierBinding::Global);
-                } else if (scope_type.has_value()) {
-                    node.set_binding(IdentifierBinding::Local);
-                }
-                return node;
-            }
+			// In template bodies with active template parameters, names may be dependent.
+		auto sym = lookup_symbol(token.handle());
 
-            // VariableDeclarationNode
-            if (sym->is<VariableDeclarationNode>()) {
-                const auto& var_decl = sym->as<VariableDeclarationNode>();
-                auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
-                bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
-                if (is_global_scope && tryBindMemberContext()) return node;
-                if (is_global_scope) {
-                    checkPhase1(var_decl.declaration().identifier_token());
-                    node.set_binding(IdentifierBinding::Global);
-                } else if (scope_type.has_value()) {
-                    if (var_decl.storage_class() == StorageClass::Static) {
-                        node.set_binding(IdentifierBinding::StaticLocal);
-                    } else {
-                        node.set_binding(IdentifierBinding::Local);
-                    }
-                }
-                return node;
-            }
+			// Lambda capture bindings: check lambda_capture_stack_ for explicit captures
+		if (sym.has_value() && sym->is<DeclarationNode>()) {
+			auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+			bool is_local = scope_type.has_value() &&
+							scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+			if (is_local && !lambda_capture_stack_.empty()) {
+				auto cap_it = lambda_capture_stack_.back().find(token.handle());
+				if (cap_it != lambda_capture_stack_.back().end()) {
+					if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+						node.set_binding(IdentifierBinding::CapturedByValue);
+					else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+						node.set_binding(IdentifierBinding::CapturedByRef);
+					return node;
+				}
+			}
+		}
+		if (sym.has_value() && sym->is<VariableDeclarationNode>()) {
+			const auto& var_decl = sym->as<VariableDeclarationNode>();
+			auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+			bool is_local = scope_type.has_value() &&
+							scope_type != ScopeType::Global && scope_type != ScopeType::Namespace;
+			if (is_local && var_decl.storage_class() != StorageClass::Static && !lambda_capture_stack_.empty()) {
+				auto cap_it = lambda_capture_stack_.back().find(token.handle());
+				if (cap_it != lambda_capture_stack_.back().end()) {
+					if (cap_it->second == LambdaCaptureNode::CaptureKind::ByValue)
+						node.set_binding(IdentifierBinding::CapturedByValue);
+					else if (cap_it->second == LambdaCaptureNode::CaptureKind::ByReference)
+						node.set_binding(IdentifierBinding::CapturedByRef);
+					return node;
+				}
+			}
+		}
 
-            // EnumeratorNode
-            if (sym->is<EnumeratorNode>()) {
-                node.set_binding(IdentifierBinding::EnumConstant);
-                return node;
-            }
+			// Helper lambdas for member context binding
+		auto bindStaticMemberFromStructInfo = [&](const StructTypeInfo* struct_info) -> bool {
+			if (!struct_info)
+				return false;
+			StringHandle member_handle = token.handle();
+			instantiateLazyStaticMember(struct_info->name, member_handle);
+			auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_handle);
+			if (!static_member || !owner_struct)
+				return false;
+			bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+			if (is_template_member_context && owner_struct != struct_info)
+				return false;
+			node.set_binding(IdentifierBinding::StaticMember);
+			node.set_resolved_name(StringTable::getOrInternStringHandle(
+				StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_handle).commit()));
+			return true;
+		};
 
-            return node; // Unresolved for other symbol types
-        }
+		auto bindNonStaticMemberFromContext = [&](TypeIndex struct_type_index, const StructTypeInfo* local_struct_info) -> bool {
+			const StructTypeInfo* current_struct_info = local_struct_info;
+			if (!current_struct_info) {
+				if (const TypeInfo* ti = tryGetTypeInfo(struct_type_index))
+					current_struct_info = ti->getStructInfo();
+			}
+			if (!current_struct_info)
+				return false;
+			bool is_template_member_context = parsing_template_depth_ > 0 && !current_template_param_names_.empty();
+				// When parsing a template body and the struct has dependent (deferred) base classes,
+				// skip gLazyMemberResolver which traverses concrete base classes — a dependent base
+				// may also provide the same name, making eager binding to a concrete base incorrect
+				// (C++20 [temp.res]/2: dependent names must not be bound at first-phase parse time).
+				// Only own-declared members are safe to bind eagerly; names inherited from concrete
+				// bases stay Unresolved so codegen's runtime lookup handles them at instantiation.
+			bool skip_base_traversal = is_template_member_context && current_struct_info->has_deferred_base_classes;
+			if (!skip_base_traversal && tryGetTypeInfo(struct_type_index)) {
+				auto member_result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, token.handle());
+				if (!member_result)
+					return false;
+				if (is_template_member_context && member_result.owner_struct != current_struct_info)
+					return false;
+				node.set_binding(IdentifierBinding::NonStaticMember);
+				return true;
+			}
+			for (const auto& member : current_struct_info->members) {
+				if (member.getName() == token.handle()) {
+					node.set_binding(IdentifierBinding::NonStaticMember);
+					return true;
+				}
+			}
+			return false;
+		};
 
-        SaveHandle save_token_position();
-        void restore_token_position(SaveHandle handle, const std::source_location location = std::source_location::current());
-        void restore_lexer_position_only(SaveHandle handle);  // Restore lexer without erasing AST nodes
-        void discard_saved_token(SaveHandle handle);
+		auto tryBindMemberContext = [&]() -> bool {
+			if (!member_function_context_stack_.empty()) {
+				const auto& member_ctx = member_function_context_stack_.back();
+				const StructTypeInfo* struct_info = member_ctx.local_struct_info;
+				if (!struct_info) {
+					if (const TypeInfo* ti = tryGetTypeInfo(member_ctx.struct_type_index))
+						struct_info = ti->getStructInfo();
+				}
+				if (bindStaticMemberFromStructInfo(struct_info))
+					return true;
+				if (bindNonStaticMemberFromContext(member_ctx.struct_type_index, member_ctx.local_struct_info))
+					return true;
+			}
+			if (!struct_parsing_context_stack_.empty()) {
+				const auto& struct_ctx = struct_parsing_context_stack_.back();
+				const StructTypeInfo* struct_info = struct_ctx.local_struct_info;
+				if (!struct_info) {
+					auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+					if (struct_it != getTypesByNameMap().end()) {
+						struct_info = struct_it->second->getStructInfo();
+					}
+				}
+				if (bindStaticMemberFromStructInfo(struct_info))
+					return true;
+				TypeIndex struct_type_index{};
+				if (!struct_ctx.struct_name.empty()) {
+					auto struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_ctx.struct_name));
+					if (struct_it != getTypesByNameMap().end()) {
+						struct_type_index = struct_it->second->type_index_;
+					}
+				}
+				if (bindNonStaticMemberFromContext(struct_type_index, struct_ctx.local_struct_info))
+					return true;
+			}
+			return false;
+		};
 
-        // Helper for delayed parsing
-        void skip_balanced_braces();  // Skip over a balanced brace block
-        void skip_balanced_parens();  // Skip over a balanced parentheses block
-        void skip_balanced_delimiters(TokenKind open, TokenKind close);  // Generic balanced delimiter skip
-        void skip_template_arguments();  // Skip over template arguments <...>
-        void skip_qualified_name_parts();  // Skip namespace-qualified name parts (e.g., ::Class after 'ns')
-        std::string_view consume_qualified_name_suffix(std::string_view base_name);  // Same but builds and returns full qualified name
-        void skip_member_declaration_to_semicolon();  // Skip member declaration until ';' or end of struct
-        void skip_function_body();  // Skip over '{...}' or function-try-block 'try {...} catch...'
-        void skip_catch_clauses();  // Skip over one or more 'catch(...){}' clauses
+		if (!sym.has_value()) {
+				// Not found in symbol table -> check member context
+			if (tryBindMemberContext())
+				return node;
+			return node; // Unresolved
+		}
 
-        // Finalize an out-of-line static member variable definition.
-        // Sets the initializer on the member and returns a VariableDeclarationNode.
-        // When init_expr is std::nullopt, creates a zero literal from the member's type (empty brace init).
-        ParseResult finalize_static_member_init(StructStaticMember* static_member,
-                                                std::optional<ASTNode> init_expr,
-                                                DeclarationNode& decl_node,
-                                                const Token& name_token,
-                                                ScopedTokenPosition& saved_position);
+			// Template parameter reference
+		if (sym->is<TemplateParameterReferenceNode>()) {
+			node.set_binding(IdentifierBinding::TemplateParameter);
+			return node;
+		}
 
-        // Parse a function type parameter list for template argument parsing
-        // Parses types separated by commas, handling pack expansion (...), C-style varargs,
-        // and pointer/reference modifiers. Used for bare function types and function pointer types.
-        // Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
-        bool parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types);
-        
-        // Helper to update angle bracket depth for template parsing
-        // Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates
-        inline void update_angle_depth(std::string_view tok, int& angle_depth) {
-            if (tok == "<") {
-                angle_depth++;
-            } else if (tok == ">>") {
-                angle_depth -= 2;  // Handle nested templates (e.g., vector<vector<int>>)
-            } else if (tok == ">") {
-                angle_depth--;
-            }
-        }
+			// Helper: record a Phase 1 violation if this declaration was added after
+			// the template body opening brace (C++20 [temp.res]/9).
+		auto checkPhase1 = [&](const Token& decl_tok) {
+			if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
+				decl_tok.file_index() == phase1_cutoff_file_idx_ &&
+				decl_tok.line() > phase1_cutoff_line_) {
+				phase1_violation_token_ = token;
+			}
+		};
 
-        // TokenKind-based overload — avoids string comparison
-        inline void update_angle_depth(TokenKind kind, int& angle_depth) {
-            if (kind == tok::Less) {
-                angle_depth++;
-            } else if (kind == tok::ShiftRight) {
-                angle_depth -= 2;
-            } else if (kind == tok::Greater) {
-                angle_depth--;
-            }
-        }
+			// Function or function-template -> Function binding
+		if (sym->is<FunctionDeclarationNode>() || sym->is<TemplateFunctionDeclarationNode>()) {
+			if (sym->is<FunctionDeclarationNode>()) {
+				checkPhase1(sym->as<FunctionDeclarationNode>().decl_node().identifier_token());
+			} else {
+				checkPhase1(sym->as<TemplateFunctionDeclarationNode>().function_decl_node().decl_node().identifier_token());
+			}
+			node.set_binding(IdentifierBinding::Function);
+			return node;
+		}
+
+			// DeclarationNode
+		if (sym->is<DeclarationNode>()) {
+			const auto& decl = sym->as<DeclarationNode>();
+				// Check if this DeclarationNode is actually an enumerator constant
+				// (unscoped enum values are registered as DeclarationNode with Type::Enum).
+				// Variables/parameters of enum type are also DeclarationNode with Type::Enum,
+				// so we must verify via EnumTypeInfo::findEnumerator before classifying.
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				const auto& ts = decl.type_node().as<TypeSpecifierNode>();
+				if (ts.category() == TypeCategory::Enum && !ts.is_reference() && ts.pointer_depth() == 0) {
+					if (const TypeInfo* ti = tryGetTypeInfo(ts.type_index())) {
+						const EnumTypeInfo* enum_info = ti->getEnumInfo();
+						if (enum_info && enum_info->findEnumerator(token.handle())) {
+							node.set_binding(IdentifierBinding::EnumConstant);
+							return node;
+						}
+					}
+				}
+			}
+			auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+			bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+			if (is_global_scope && tryBindMemberContext())
+				return node;
+			if (is_global_scope) {
+				checkPhase1(decl.identifier_token());
+				node.set_binding(IdentifierBinding::Global);
+			} else if (scope_type.has_value()) {
+				node.set_binding(IdentifierBinding::Local);
+			}
+			return node;
+		}
+
+			// VariableDeclarationNode
+		if (sym->is<VariableDeclarationNode>()) {
+			const auto& var_decl = sym->as<VariableDeclarationNode>();
+			auto scope_type = gSymbolTable.get_scope_type_of_symbol(token.value());
+			bool is_global_scope = (scope_type == ScopeType::Global || scope_type == ScopeType::Namespace);
+			if (is_global_scope && tryBindMemberContext())
+				return node;
+			if (is_global_scope) {
+				checkPhase1(var_decl.declaration().identifier_token());
+				node.set_binding(IdentifierBinding::Global);
+			} else if (scope_type.has_value()) {
+				if (var_decl.storage_class() == StorageClass::Static) {
+					node.set_binding(IdentifierBinding::StaticLocal);
+				} else {
+					node.set_binding(IdentifierBinding::Local);
+				}
+			}
+			return node;
+		}
+
+			// EnumeratorNode
+		if (sym->is<EnumeratorNode>()) {
+			node.set_binding(IdentifierBinding::EnumConstant);
+			return node;
+		}
+
+		return node; // Unresolved for other symbol types
+	}
+
+	SaveHandle save_token_position();
+	void restore_token_position(SaveHandle handle, const std::source_location location = std::source_location::current());
+	void restore_lexer_position_only(SaveHandle handle);	 // Restore lexer without erasing AST nodes
+	void discard_saved_token(SaveHandle handle);
+
+		// Helper for delayed parsing
+	void skip_balanced_braces();	 // Skip over a balanced brace block
+	void skip_balanced_parens();	 // Skip over a balanced parentheses block
+	void skip_balanced_delimiters(TokenKind open, TokenKind close);	// Generic balanced delimiter skip
+	void skip_template_arguments();	// Skip over template arguments <...>
+	void skip_qualified_name_parts();  // Skip namespace-qualified name parts (e.g., ::Class after 'ns')
+	std::string_view consume_qualified_name_suffix(std::string_view base_name);	// Same but builds and returns full qualified name
+	void skip_member_declaration_to_semicolon();	 // Skip member declaration until ';' or end of struct
+	void skip_function_body();  // Skip over '{...}' or function-try-block 'try {...} catch...'
+	void skip_catch_clauses();  // Skip over one or more 'catch(...){}' clauses
+
+		// Finalize an out-of-line static member variable definition.
+		// Sets the initializer on the member and returns a VariableDeclarationNode.
+		// When init_expr is std::nullopt, creates a zero literal from the member's type (empty brace init).
+	ParseResult finalize_static_member_init(StructStaticMember* static_member,
+											std::optional<ASTNode> init_expr,
+											DeclarationNode& decl_node,
+											const Token& name_token,
+											ScopedTokenPosition& saved_position);
+
+		// Parse a function type parameter list for template argument parsing
+		// Parses types separated by commas, handling pack expansion (...), C-style varargs,
+		// and pointer/reference modifiers. Used for bare function types and function pointer types.
+		// Returns true if parsing succeeded and ')' was NOT consumed (caller must consume it).
+	bool parse_function_type_parameter_list(std::vector<TypeIndex>& out_param_types);
+
+		// Helper to update angle bracket depth for template parsing
+		// Handles both '>' (decrement by 1) and '>>' (decrement by 2) for nested templates
+	inline void update_angle_depth(std::string_view tok, int& angle_depth) {
+		if (tok == "<") {
+			angle_depth++;
+		} else if (tok == ">>") {
+			angle_depth -= 2;  // Handle nested templates (e.g., vector<vector<int>>)
+		} else if (tok == ">") {
+			angle_depth--;
+		}
+	}
+
+		// TokenKind-based overload — avoids string comparison
+	inline void update_angle_depth(TokenKind kind, int& angle_depth) {
+		if (kind == tok::Less) {
+			angle_depth++;
+		} else if (kind == tok::ShiftRight) {
+			angle_depth -= 2;
+		} else if (kind == tok::Greater) {
+			angle_depth--;
+		}
+	}
 };
 
 struct TypedNumeric {
-        TypeCategory type = TypeCategory::Int;
-        TypeQualifier typeQualifier = TypeQualifier::None;
-        unsigned char sizeInBits = 0;
-        NumericLiteralValue value = 0ULL;
+	TypeCategory type = TypeCategory::Int;
+	TypeQualifier typeQualifier = TypeQualifier::None;
+	unsigned char sizeInBits = 0;
+	NumericLiteralValue value = 0ULL;
 };
 
 // =============================================================================
@@ -1582,10 +1613,7 @@ inline FlashCpp::FunctionParsingScopeGuard::FunctionParsingScopeGuard(
 	TypeIndex struct_type_index,
 	const std::vector<ASTNode>& params,
 	const FunctionDeclarationNode* current_function)
-	: parser_(parser)
-	, scope_(ScopeType::Function)
-	, pop_member_ctx_(is_member)
-	, saved_function_(parser.current_function_) {
+	: parser_(parser), scope_(ScopeType::Function), pop_member_ctx_(is_member), saved_function_(parser.current_function_) {
 	parser_.current_function_ = current_function;
 	if (is_member) {
 		parser_.setup_member_function_context(struct_node, struct_name, struct_type_index);

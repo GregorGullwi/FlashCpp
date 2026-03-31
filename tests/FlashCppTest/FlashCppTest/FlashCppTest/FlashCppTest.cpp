@@ -30,16 +30,16 @@ static FileTree file_tree;
 
 // Helper function to read test files from Reference directory
 std::string read_test_file(const std::string& filename) {
-    std::ifstream file("tests/" + filename);
-    if (!file.is_open()) {
+	std::ifstream file("tests/" + filename);
+	if (!file.is_open()) {
 		std::cerr << "Could not open test file: tests/" + filename;
-        assert(false && "Could not open test file");
+		assert(false && "Could not open test file");
 		return {};
-    }
+	}
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    return buffer.str();
+	std::stringstream buffer;
+	buffer << file.rdbuf();
+	return buffer.str();
 }
 
 // Helper function to run a test with a given source file
@@ -50,7 +50,7 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	test_context.setInputFile(filename);
 
 	FileTree file_tree;
-    FileReader file_reader(test_context, file_tree);
+	FileReader file_reader(test_context, file_tree);
 	const std::string& code = file_reader.get_result();
 
 	gTypeInfo.clear();
@@ -58,64 +58,65 @@ void run_test_from_file(const std::string& filename, const std::string& test_nam
 	gTypesByName.clear();  // Clear types by name map as well
 	gTemplateRegistry.clear();
 	gConceptRegistry.clear();  // Clear concept registry
-    Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
-    Parser parser(lexer, test_context);
+	Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
+	Parser parser(lexer, test_context);
 #if WITH_DEBUG_INFO
 	parser.break_at_line_ = break_at_line;
 #endif
-    auto parse_result = parser.parse();
+	auto parse_result = parser.parse();
 
 	if (parse_result.is_error()) {
-        std::printf("Parse error in %s: %s\n", test_name.c_str(), parse_result.error_message().c_str());
-    }
+		std::printf("Parse error in %s: %s\n", test_name.c_str(), parse_result.error_message().c_str());
+	}
 	CHECK(!parse_result.is_error());
-    if (parse_result.is_error()) {
+	if (parse_result.is_error()) {
 		return;
-    }
+	}
 
-    const auto& ast = parser.get_nodes();
+	const auto& ast = parser.get_nodes();
 
-    // Match the production pipeline: parser-side speculative member lookups on
-    // incomplete classes must not poison codegen's lazy member-resolution cache.
-    FlashCpp::gLazyMemberResolver.clearCache();
+	// Match the production pipeline: parser-side speculative member lookups on
+	// incomplete classes must not poison codegen's lazy member-resolution cache.
+	FlashCpp::gLazyMemberResolver.clearCache();
 
-    AstToIr converter(gSymbolTable, compile_context, parser);
-    for (auto& node_handle : ast) {
-        converter.visit(node_handle);
-    }
+	AstToIr converter(gSymbolTable, compile_context, parser);
+	for (auto& node_handle : ast) {
+		converter.visit(node_handle);
+	}
 
-    const auto& ir = converter.getIr();
+	const auto& ir = converter.getIr();
 
-    std::printf("\n=== Test: %s ===\n", test_name.c_str());
+	std::printf("\n=== Test: %s ===\n", test_name.c_str());
 
-    for (const auto& instruction : ir.getInstructions()) {
-        std::puts(instruction.getReadableString().c_str());
-    }
+	for (const auto& instruction : ir.getInstructions()) {
+		std::puts(instruction.getReadableString().c_str());
+	}
 
-    std::puts("=== End Test ===\n");
+	std::puts("=== End Test ===\n");
 
-    if (generate_obj) {
-        IrToObjConverter irConverter;
-        std::string obj_filename = "tests/Reference/x64/" + filename.substr(0, filename.find_last_of('.')) + ".obj";
-        irConverter.convert(ir, obj_filename.c_str(), filename);
-    }
+	if (generate_obj) {
+		IrToObjConverter irConverter;
+		std::string obj_filename = "tests/Reference/x64/" + filename.substr(0, filename.find_last_of('.')) + ".obj";
+		irConverter.convert(ir, obj_filename.c_str(), filename);
+	}
 
-    // For now, don't fail tests due to parsing issues while we're developing
+	// For now, don't fail tests due to parsing issues while we're developing
 }
 
 static bool compare_lexers_ignore_whitespace(Lexer& lexer1, Lexer& lexer2) {
 	Token token1, token2;
 
 	while (true) {
-		token1 = lexer1.next_token();;
+		token1 = lexer1.next_token();
+		;
 		token2 = lexer2.next_token();
 
-		// If both tokens are EndOfFile, the token sequences are identical
+	// If both tokens are EndOfFile, the token sequences are identical
 		if (token1.type() == Token::Type::EndOfFile && token2.type() == Token::Type::EndOfFile) {
 			return true;
 		}
 
-		// If the current tokens do not match, the token sequences are not identical
+	// If the current tokens do not match, the token sequences are not identical
 		if (token1.type() != token2.type() || token1.value() != token2.value()) {
 			return false;
 		}
@@ -124,7 +125,7 @@ static bool compare_lexers_ignore_whitespace(Lexer& lexer1, Lexer& lexer2) {
 
 static void run_test_case(const std::string& input, const std::string& expected_output) {
 	FileReader file_reader(compile_context, file_tree.reset());
-	file_reader.push_file_to_stack({ __FILE__, __LINE__ });
+	file_reader.push_file_to_stack({__FILE__, __LINE__});
 	CHECK(file_reader.preprocessFileContent(input));
 	const std::string& actual_output = file_reader.get_result();
 	Lexer lexer_expected(expected_output);
@@ -146,8 +147,7 @@ TEST_CASE("ChunkedVector") {
 		if (type == std::type_index(typeid(int32_t))) {
 			if (*reinterpret_cast<const int32_t*>(arg) == 10)
 				++count;
-		}
-		else if (type == std::type_index(typeid(std::string))) {
+		} else if (type == std::type_index(typeid(std::string))) {
 			if (*reinterpret_cast<const std::string*>(arg) == "banana")
 				++count;
 		}
@@ -157,7 +157,7 @@ TEST_CASE("ChunkedVector") {
 }
 
 TEST_CASE("ChunkedVector") {
-	ChunkedVector<int,2> vec;
+	ChunkedVector<int, 2> vec;
 	vec.push_back(1);
 	vec.push_back(2);
 	vec.push_back(3);
@@ -166,8 +166,7 @@ TEST_CASE("ChunkedVector") {
 	CHECK(vec[1] == 2);
 	CHECK(vec[2] == 3);
 
-	for (int check = 0; int i : vec)
-	{
+	for (int check = 0; int i : vec) {
 		++check;
 		CHECK(i == check);
 	}
@@ -233,8 +232,8 @@ TEST_CASE("preprocessor") {
 	}
 
 	SUBCASE("NestedConditionals") {
-		// Test that nested conditionals inside a skipped block don't trigger errors
-		// This was a bug where #error inside nested blocks would execute even when outer block was skipped
+	// Test that nested conditionals inside a skipped block don't trigger errors
+	// This was a bug where #error inside nested blocks would execute even when outer block was skipped
 		const std::string input = R"(
 			#ifdef OUTER_NOT_DEFINED
 			  #ifndef INNER_NOT_DEFINED
@@ -328,7 +327,7 @@ TEST_CASE("preprocessor") {
 	}
 
 	SUBCASE("__VA_OPT__") {
-		// Test __VA_OPT__ with variadic arguments present
+	// Test __VA_OPT__ with variadic arguments present
 		const std::string input1 = R"(
 			#define LOG(msg, ...) printf(msg __VA_OPT__(,) __VA_ARGS__)
 			void test() {
@@ -342,7 +341,7 @@ TEST_CASE("preprocessor") {
 		  )";
 		run_test_case(input1, expected_output1);
 
-		// Test __VA_OPT__ with no variadic arguments
+	// Test __VA_OPT__ with no variadic arguments
 		const std::string input2 = R"(
 			#define LOG(msg, ...) printf(msg __VA_OPT__(,) __VA_ARGS__)
 			void test() {
@@ -358,19 +357,19 @@ TEST_CASE("preprocessor") {
 	}
 
 	SUBCASE("#line directive") {
-		// Test #line with just line number
+	// Test #line with just line number
 		const std::string input1 = R"(
 			int x = 1;
 			#line 100
 			int y = 2;
 		  )";
-		// We can't easily test the line number change in output, but we can verify it doesn't break
+	// We can't easily test the line number change in output, but we can verify it doesn't break
 		run_test_case(input1, R"(
 			int x = 1;
 			int y = 2;
 		  )");
 
-		// Test #line with line number and filename
+	// Test #line with line number and filename
 		const std::string input2 = R"(
 			int x = 1;
 			#line 50 "test.cpp"
@@ -386,13 +385,13 @@ TEST_CASE("preprocessor") {
 		const std::string input = R"(
 			const char* timestamp = __TIMESTAMP__;
 		  )";
-		// We can't predict the exact timestamp, but we can verify it expands to a string
+	// We can't predict the exact timestamp, but we can verify it expands to a string
 		CompileContext compile_context;
 		FileTree file_tree;
 		FileReader file_reader(compile_context, file_tree);
 		file_reader.preprocessFileContent(input);
 		const std::string& output = file_reader.get_result();
-		// Check that __TIMESTAMP__ was replaced with something (should contain quotes)
+	// Check that __TIMESTAMP__ was replaced with something (should contain quotes)
 		CHECK(output.find("__TIMESTAMP__") == std::string::npos);
 		CHECK(output.find("timestamp = \"") != std::string::npos);
 	}
@@ -453,24 +452,24 @@ TEST_SUITE("Lexer") {
 
 		Lexer lexer(input);
 		std::vector<std::pair<Token::Type, std::string>> expected_tokens{
-		  {Token::Type::Keyword, "void"},
-		  {Token::Type::Identifier, "foo"},
-		  {Token::Type::Punctuator, "("},
-		  {Token::Type::Punctuator, ")"},
-		  {Token::Type::Punctuator, ";"},
-		  {Token::Type::Keyword, "int"},
-		  {Token::Type::Identifier, "main"},
-		  {Token::Type::Punctuator, "("},
-		  {Token::Type::Punctuator, ")"},
-		  {Token::Type::Punctuator, "{"},
-		  {Token::Type::Identifier, "foo"},
-		  {Token::Type::Punctuator, "("},
-		  {Token::Type::Punctuator, ")"},
-		  {Token::Type::Punctuator, ";"},
-		  {Token::Type::Keyword, "return"},
-		  {Token::Type::Literal, "0"},
-		  {Token::Type::Punctuator, ";"},
-		  {Token::Type::Punctuator, "}"},
+			{Token::Type::Keyword, "void"},
+			{Token::Type::Identifier, "foo"},
+			{Token::Type::Punctuator, "("},
+			{Token::Type::Punctuator, ")"},
+			{Token::Type::Punctuator, ";"},
+			{Token::Type::Keyword, "int"},
+			{Token::Type::Identifier, "main"},
+			{Token::Type::Punctuator, "("},
+			{Token::Type::Punctuator, ")"},
+			{Token::Type::Punctuator, "{"},
+			{Token::Type::Identifier, "foo"},
+			{Token::Type::Punctuator, "("},
+			{Token::Type::Punctuator, ")"},
+			{Token::Type::Punctuator, ";"},
+			{Token::Type::Keyword, "return"},
+			{Token::Type::Literal, "0"},
+			{Token::Type::Punctuator, ";"},
+			{Token::Type::Punctuator, "}"},
 		};
 
 		for (const auto& expected_token : expected_tokens) {
@@ -523,21 +522,21 @@ TEST_SUITE("Parser") {
 				return 0;
 			})";
 
-		// Test with function return type
+	// Test with function return type
 		Lexer lexer1(code_with_return_type);
 		Parser parser1(lexer1, compile_context);
 		auto parse_result1 = parser1.parse();
 		CHECK(!parse_result1.is_error());
 		const auto& ast1 = parser1.get_nodes();
 
-		// Test with auto and trailing return type
+	// Test with auto and trailing return type
 		Lexer lexer2(code_with_auto_return_type);
 		Parser parser2(lexer2, compile_context);
 		auto parse_result2 = parser2.parse();
 		CHECK(!parse_result2.is_error());
 		const auto& ast2 = parser2.get_nodes();
 
-		// Compare AST nodes
+	// Compare AST nodes
 		CHECK(ast1.size() == ast2.size());
 		for (std::size_t i = 0; i < ast1.size(); ++i) {
 			CHECK(typeid(ast1[i].type_name()) == typeid(ast2[i].type_name()));
@@ -545,8 +544,8 @@ TEST_SUITE("Parser") {
 	}
 
 	TEST_CASE("Function returning pointer to array") {
-		// Test the pattern: char (*func(params))[size]
-		// This is used by Windows SDK __countof_helper
+	// Test the pattern: char (*func(params))[size]
+	// This is used by Windows SDK __countof_helper
 		std::string_view code = R"(
 			template <typename T, int N>
 			char (*helper(T (&arr)[N]))[N];
@@ -567,14 +566,14 @@ TEST_SUITE("Parser") {
 		CHECK(!parse_result.is_error());
 
 		const auto& ast = parser.get_nodes();
-		// Should have at least one node (the template function declaration)
+	// Should have at least one node (the template function declaration)
 		CHECK(ast.size() >= 1);
 		std::printf("Parsed %zu AST nodes for function returning pointer to array\n", ast.size());
 	}
 
 	TEST_CASE("Reference to array parameter") {
-		// Test the pattern: T (&arr)[N]
-		// This is used in function parameters for array references
+	// Test the pattern: T (&arr)[N]
+	// This is used in function parameters for array references
 		std::string_view code = R"(
 			template <typename T, int N>
 			void process(T (&arr)[N]) {}
@@ -619,12 +618,12 @@ TEST_SUITE("Code gen") {
 			converter.visit(node_handle);
 		}
 
-		// Now converter.ir should contain the IR for the code.
+	// Now converter.ir should contain the IR for the code.
 		const auto& ir = converter.getIr();
 
 		std::puts("\n=== Test: Empty main() C++17 source string ===");
 
-		// Let's just print the IR for now.
+	// Let's just print the IR for now.
 		for (const auto& instruction : ir.getInstructions()) {
 			std::puts(instruction.getReadableString().c_str());
 		}
@@ -638,22 +637,22 @@ TEST_SUITE("Code gen") {
 		COFFI::coffi obj;
 		obj.load("return1.obj");
 
-		//CHECK(compare_obj(ref, obj));
+	//CHECK(compare_obj(ref, obj));
 	}
 }
 
 bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const std::string& file1_path = "", const std::string& file2_path = "") {
-	// Compare section characteristics and flags
+ // Compare section characteristics and flags
 	const COFFI::sections& sections1 = reader1.get_sections();
 	const COFFI::sections& sections2 = reader2.get_sections();
 
-	// Create a map of sections by name for the second reader
+ // Create a map of sections by name for the second reader
 	std::map<std::string, const COFFI::section*> sections2_by_name;
 	for (const auto& sec : sections2) {
 		sections2_by_name[sec.get_name()] = &sec;
 	}
 
-	// Compare symbol table
+ // Compare symbol table
 	auto* symbols1 = reader1.get_symbols();
 	auto* symbols2 = reader2.get_symbols();
 	if (!symbols1 || !symbols2) {
@@ -661,13 +660,13 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 		return false;
 	}
 
-	// Create a map of symbols by name for the second reader
+ // Create a map of symbols by name for the second reader
 	std::map<std::string, const COFFI::symbol*> symbols2_by_name;
 	for (const auto& sym : *symbols2) {
 		symbols2_by_name[sym.get_name()] = &sym;
 	}
 
-	// Check that all symbols from reader1 exist in reader2
+ // Check that all symbols from reader1 exist in reader2
 	bool all_symbols_found = true;
 	for (const auto& sym1 : *symbols1) {
 		const std::string& name = sym1.get_name();
@@ -679,7 +678,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 		}
 		const auto& sym2 = *it->second;
 
-		// Compare symbol types and storage classes
+	// Compare symbol types and storage classes
 		if (sym1.get_type() != sym2.get_type()) {
 			std::printf("Symbol %s has different types: %d vs %d\n", name.c_str(), sym1.get_type(), sym2.get_type());
 			all_symbols_found = false;
@@ -690,7 +689,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 		}
 	}
 
-	// Compare relocation entries for .text section
+ // Compare relocation entries for .text section
 	auto find_section = [](const COFFI::coffi& reader, const std::string& name) -> const COFFI::section* {
 		const auto& sections = reader.get_sections();
 		for (const auto& sec : sections) {
@@ -715,7 +714,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 			const auto& reloc1 = relocs1[i];
 			const auto& reloc2 = relocs2[i];
 
-			// Compare relocation types and addresses
+	// Compare relocation types and addresses
 			if (reloc1.get_type() != reloc2.get_type()) {
 				std::printf("Relocation %zu has different types: %d vs %d\n", i, reloc1.get_type(), reloc2.get_type());
 				return false;
@@ -723,7 +722,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 		}
 	}
 
-	// Compare .drectve section content (linker directives)
+ // Compare .drectve section content (linker directives)
 	auto drectve1 = find_section(reader1, ".drectve");
 	auto drectve2 = find_section(reader2, ".drectve");
 	if (drectve1 && drectve2) {
@@ -753,10 +752,10 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 		}
 	}
 
-	// Parse and compare debug information structures
+ // Parse and compare debug information structures
 	std::printf("\n=== Debug Information Comparison ===\n");
 
-	// Helper function to parse and display debug symbols
+ // Helper function to parse and display debug symbols
 	auto parse_debug_symbols = [](const char* data, size_t size, const std::string& file_name) {
 		if (!data || size < 4) {
 			std::printf("%s: No debug data or too small\n", file_name.c_str());
@@ -765,19 +764,19 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 
 		std::printf("\n--- %s Debug Symbols ---\n", file_name.c_str());
 
-		// Skip 4-byte signature
+	// Skip 4-byte signature
 		const uint8_t* start = reinterpret_cast<const uint8_t*>(data + 4);
 		const uint8_t* ptr = start;
 		const uint8_t* end = reinterpret_cast<const uint8_t*>(data + size);
 
 		while (ptr < end - 8) { // Need at least 8 bytes for subsection header
-			// Read subsection header
+	// Read subsection header
 			uint32_t kind = *reinterpret_cast<const uint32_t*>(ptr);
 			uint32_t length = *reinterpret_cast<const uint32_t*>(ptr + 4);
 
 			std::printf("Subsection Kind: %u, Length: %u\n", kind, length);
 
-			// Sanity check subsection length
+	// Sanity check subsection length
 			if (length == 0 || length > (end - ptr - 8)) {
 				std::printf("  Invalid subsection length, stopping parse\n");
 				break;
@@ -792,19 +791,19 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 				while (ptr < subsection_end - 4) {
 					size_t offset_in_subsection = ptr - subsection_start;
 
-					// Read symbol record header
+		// Read symbol record header
 					uint16_t record_length = *reinterpret_cast<const uint16_t*>(ptr);
 					uint16_t record_kind = *reinterpret_cast<const uint16_t*>(ptr + 2);
 
-					// Show hex bytes for debugging
+		// Show hex bytes for debugging
 					std::printf("  Symbol %zu at offset %zu: Length=%u, Kind=0x%04x [hex: ",
-						symbol_count++, offset_in_subsection, record_length, record_kind);
+								symbol_count++, offset_in_subsection, record_length, record_kind);
 					for (int i = 0; i < 8 && ptr + i < subsection_end; i++) {
 						std::printf("%02x ", ptr[i]);
 					}
 					std::printf("]");
 
-					// Sanity check the record length
+		// Sanity check the record length
 					if (record_length == 0 || record_length > 1000) {
 						std::printf(" (INVALID LENGTH - stopping parse)\n");
 						std::printf("    Raw hex around this location: ");
@@ -821,7 +820,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 						std::printf(" (S_OBJNAME)");
 						if (ptr + 4 < subsection_end) {
 							const uint8_t* name_ptr = ptr + 4; // Skip signature
-							// Read null-terminated string without advancing main ptr
+		// Read null-terminated string without advancing main ptr
 							std::string name;
 							while (name_ptr < subsection_end && *name_ptr != 0) {
 								name += static_cast<char>(*name_ptr++);
@@ -834,7 +833,7 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 							uint32_t offset = *reinterpret_cast<const uint32_t*>(ptr + 28);
 							uint16_t segment = *reinterpret_cast<const uint16_t*>(ptr + 32);
 							const uint8_t* name_ptr = ptr + 35; // Skip to name
-							// Read null-terminated string without advancing main ptr
+		// Read null-terminated string without advancing main ptr
 							std::string name;
 							while (name_ptr < subsection_end && *name_ptr != 0) {
 								name += static_cast<char>(*name_ptr++);
@@ -852,13 +851,13 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 							uint32_t type_index = *reinterpret_cast<const uint32_t*>(ptr + 4);
 							uint16_t register_id = *reinterpret_cast<const uint16_t*>(ptr + 8);
 							const uint8_t* name_ptr = ptr + 10;
-							// Read null-terminated string without advancing main ptr
+		// Read null-terminated string without advancing main ptr
 							std::string name;
 							while (name_ptr < subsection_end && *name_ptr != 0) {
 								name += static_cast<char>(*name_ptr++);
 							}
 							std::printf(": offset=0x%08x, type=0x%08x, reg=0x%04x, name=%s",
-								offset, type_index, register_id, name.c_str());
+										offset, type_index, register_id, name.c_str());
 						}
 					} else if (record_kind == 0x113C) { // S_COMPILE3
 						std::printf(" (S_COMPILE3)");
@@ -871,13 +870,13 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 					} else if (record_kind == 0x1142) { // S_DEFRANGE_FRAMEPOINTER_REL
 						std::printf(" (S_DEFRANGE_FRAMEPOINTER_REL)");
 					} else {
-						// Skip unknown record
+		// Skip unknown record
 						std::printf(" (Unknown record type)");
 					}
 					std::printf("\n");
 
-					// Advance to next record: record_length includes the length field itself
-					// So we need to advance by (record_length + 2) total, but we already advanced by 4
+		// Advance to next record: record_length includes the length field itself
+		// So we need to advance by (record_length + 2) total, but we already advanced by 4
 					size_t total_record_size = record_length + 2; // +2 for the length field itself
 					size_t bytes_to_advance = total_record_size - 4; // -4 because we already read length+kind
 
@@ -889,14 +888,14 @@ bool compare_obj(const COFFI::coffi& reader2, const COFFI::coffi& reader1, const
 					ptr += bytes_to_advance;
 				}
 			} else {
-				// Skip other subsections
+	// Skip other subsections
 				std::printf("  (Skipping non-symbol subsection)\n");
 			}
 
-			// Always advance to the end of this subsection
+	// Always advance to the end of this subsection
 			ptr = subsection_start + length;
 
-			// Align to 4-byte boundary
+	// Align to 4-byte boundary
 			while ((reinterpret_cast<uintptr_t>(ptr) & 3) != 0 && ptr < end) {
 				ptr++;
 			}
@@ -961,7 +960,7 @@ TEST_SUITE("Code gen") {
 		COFFI::coffi obj;
 		obj.load("return2func.obj");
 
-		//CHECK(compare_obj(ref, obj));
+	//CHECK(compare_obj(ref, obj));
 	}
 }
 
@@ -999,21 +998,21 @@ TEST_SUITE("Code gen") {
 		IrToObjConverter irConverter;
 		irConverter.convert(ir, "call_function_with_argument.obj");
 
-		// Load reference object file
+	// Load reference object file
 		COFFI::coffi ref;
 		ref.load("tests/reference/call_function_with_argument_ref.obj");
 
-		// Load generated object file
+	// Load generated object file
 		COFFI::coffi obj;
 		obj.load("call_function_with_argument.obj");
 
-		// Compare reference and generated object files
-		//CHECK(compare_obj(ref, obj));
+	// Compare reference and generated object files
+	//CHECK(compare_obj(ref, obj));
 	}
 }
 
-TEST_SUITE("Code gen") {
-	TEST_CASE("Addition function") {
+TEST_SUITE("Code gen"){
+	TEST_CASE("Addition function"){
 		std::string_view code = R"(
 		 int add(int a, int b) {
             return a + b;
@@ -1023,44 +1022,45 @@ TEST_SUITE("Code gen") {
             return add(3, 5);
          })";
 
-		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
-		auto parse_result = parser.parse();
-		CHECK(!parse_result.is_error());
+Lexer lexer(code);
+Parser parser(lexer, compile_context);
+auto parse_result = parser.parse();
+CHECK(!parse_result.is_error());
 
-		const auto& ast = parser.get_nodes();
+const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		for (auto& node_handle : ast) {
-			converter.visit(node_handle);
-		}
+AstToIr converter(gSymbolTable, compile_context, parser);
+for (auto& node_handle : ast) {
+	converter.visit(node_handle);
+}
 
-		const auto& ir = converter.getIr();
+const auto& ir = converter.getIr();
 
-		std::puts("\n=== Test: Addition function ===");
+std::puts("\n=== Test: Addition function ===");
 
-		for (const auto& instruction : ir.getInstructions()) {
-			std::puts(instruction.getReadableString().c_str());
-		}
+for (const auto& instruction : ir.getInstructions()) {
+	std::puts(instruction.getReadableString().c_str());
+}
 
-		IrToObjConverter irConverter;
-		irConverter.convert(ir, "add_function.obj");
+IrToObjConverter irConverter;
+irConverter.convert(ir, "add_function.obj");
 
-		// Load reference object file
-		COFFI::coffi ref;
-		ref.load("tests/reference/add_function_ref.obj");
+  // Load reference object file
+COFFI::coffi ref;
+ref.load("tests/reference/add_function_ref.obj");
 
-		// Load generated object file
-		COFFI::coffi obj;
-		obj.load("add_function.obj");
+  // Load generated object file
+COFFI::coffi obj;
+obj.load("add_function.obj");
 
-		// Compare reference and generated object files
-		//CHECK(compare_obj(ref, obj));
-	}
-};
+  // Compare reference and generated object files
+  //CHECK(compare_obj(ref, obj));
+}
+}
+;
 
-TEST_SUITE("Code gen") {
-	TEST_CASE("Function returning local variable") {
+TEST_SUITE("Code gen"){
+	TEST_CASE("Function returning local variable"){
 		std::string_view code = R"(
 		 int add(int a, int b) {
 			int c = a + b;
@@ -1071,30 +1071,31 @@ TEST_SUITE("Code gen") {
             return add(3, 5);
          })";
 
-		Lexer lexer(code);
-		Parser parser(lexer, compile_context);
-		auto parse_result = parser.parse();
-		CHECK(!parse_result.is_error());
+Lexer lexer(code);
+Parser parser(lexer, compile_context);
+auto parse_result = parser.parse();
+CHECK(!parse_result.is_error());
 
-		const auto& ast = parser.get_nodes();
+const auto& ast = parser.get_nodes();
 
-		AstToIr converter(gSymbolTable, compile_context, parser);
-		for (auto& node_handle : ast) {
-			converter.visit(node_handle);
-		}
+AstToIr converter(gSymbolTable, compile_context, parser);
+for (auto& node_handle : ast) {
+	converter.visit(node_handle);
+}
 
-		const auto& ir = converter.getIr();
+const auto& ir = converter.getIr();
 
-		std::puts("\n=== Test: Function returning local variable ===");
+std::puts("\n=== Test: Function returning local variable ===");
 
-		for (const auto& instruction : ir.getInstructions()) {
-			std::puts(instruction.getReadableString().c_str());
-		}
+for (const auto& instruction : ir.getInstructions()) {
+	std::puts(instruction.getReadableString().c_str());
+}
 
-		IrToObjConverter irConverter;
-		irConverter.convert(ir, "add_function_with_local_var.obj");
-	}
-};
+IrToObjConverter irConverter;
+irConverter.convert(ir, "add_function_with_local_var.obj");
+}
+}
+;
 
 TEST_CASE("Arithmetic operations and nested function calls") {
 	std::string_view code = R"(
@@ -1153,16 +1154,16 @@ TEST_CASE("Arithmetic operations and nested function calls") {
 	IrToObjConverter irConverter;
 	irConverter.convert(ir, "arithmetic_test.obj");
 
-	// Load reference object file
+ // Load reference object file
 	COFFI::coffi ref;
 	ref.load("tests/reference/arithmetic_test_ref.obj");
 
-	// Load generated object file
+ // Load generated object file
 	COFFI::coffi obj;
 	obj.load("arithmetic_test.obj");
 
-	// Compare reference and generated object files
-	//CHECK(compare_obj(ref, obj));
+ // Compare reference and generated object files
+ //CHECK(compare_obj(ref, obj));
 }
 
 TEST_CASE("Variadic functions") {
@@ -1390,7 +1391,7 @@ void test_function() {
 	test_function_name = __FUNCTION__;
 }
 
-#if 0	// Disabled until we get a preprocessor refactor that works with source text and not just files
+#if 0 // Disabled until we get a preprocessor refactor that works with source text and not just files
 TEST_CASE("Parser:FunctionNameIdentifiers") {
 	SUBCASE("__FUNCTION__, __func__, __PRETTY_FUNCTION__ inside function") {
 		// Test that these identifiers work inside a function and expand to the function name
@@ -1472,7 +1473,7 @@ TEST_CASE("Implicit copy assignment operator generation") {
 }
 
 TEST_SUITE("= default and = delete special member functions") {
-	// C++20 Rule: Explicitly defaulted functions behave as if they were implicitly declared
+ // C++20 Rule: Explicitly defaulted functions behave as if they were implicitly declared
 	TEST_CASE("Defaulted default constructor") {
 		const std::string code = R"(
 			struct Point {
@@ -1594,7 +1595,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: Deleted functions participate in overload resolution but cause compilation error if selected
+ // C++20 Rule: Deleted functions participate in overload resolution but cause compilation error if selected
 	TEST_CASE("Deleted copy constructor - NonCopyable pattern") {
 		const std::string code = R"(
 			struct NonCopyable {
@@ -1675,7 +1676,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: Deleting copy operations prevents implicit move generation
+ // C++20 Rule: Deleting copy operations prevents implicit move generation
 	TEST_CASE("Deleted copy constructor suppresses implicit move constructor") {
 		const std::string code = R"(
 			struct Test {
@@ -1697,7 +1698,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: All special member functions can be defaulted or deleted
+ // C++20 Rule: All special member functions can be defaulted or deleted
 	TEST_CASE("All special member functions explicitly defaulted") {
 		const std::string code = R"(
 			struct AllDefaulted {
@@ -1725,7 +1726,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: Deleted default constructor prevents object creation
+ // C++20 Rule: Deleted default constructor prevents object creation
 	TEST_CASE("Deleted default constructor") {
 		const std::string code = R"(
 			struct NoDefault {
@@ -1746,7 +1747,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: Deleted destructor prevents object destruction
+ // C++20 Rule: Deleted destructor prevents object destruction
 	TEST_CASE("Deleted destructor") {
 		const std::string code = R"(
 			struct NoDestroy {
@@ -1767,7 +1768,7 @@ TEST_SUITE("= default and = delete special member functions") {
 		CHECK(!parse_result.is_error());
 	}
 
-	// C++20 Rule: Mix of defaulted and user-defined special members
+ // C++20 Rule: Mix of defaulted and user-defined special members
 	TEST_CASE("Mix of defaulted and user-defined special members") {
 		const std::string code = R"(
 			struct Mixed {
@@ -1824,7 +1825,7 @@ TEST_SUITE("new and delete operators") {
 			std::puts(instruction.getReadableString().c_str());
 		}
 
-		// Check that we have HeapAlloc and HeapFree instructions
+	// Check that we have HeapAlloc and HeapFree instructions
 		bool has_heap_alloc = false;
 		bool has_heap_free = false;
 		for (const auto& instruction : ir.getInstructions()) {
@@ -1869,7 +1870,7 @@ TEST_SUITE("new and delete operators") {
 			std::puts(instruction.getReadableString().c_str());
 		}
 
-		// Check that we have HeapAllocArray and HeapFreeArray instructions
+	// Check that we have HeapAllocArray and HeapFreeArray instructions
 		bool has_heap_alloc_array = false;
 		bool has_heap_free_array = false;
 		for (const auto& instruction : ir.getInstructions()) {
@@ -1918,7 +1919,7 @@ TEST_SUITE("new and delete operators") {
 			std::puts(instruction.getReadableString().c_str());
 		}
 
-		// Check that we have HeapAlloc and ConstructorCall instructions
+	// Check that we have HeapAlloc and ConstructorCall instructions
 		bool has_heap_alloc = false;
 		bool has_heap_dealloc = false;
 		bool has_constructor_call = false;
@@ -1937,8 +1938,8 @@ TEST_SUITE("new and delete operators") {
 				has_heap_dealloc = true;
 			}
 		}
-		//CHECK(has_heap_alloc);
-		//CHECK(has_constructor_call);
+	//CHECK(has_heap_alloc);
+	//CHECK(has_constructor_call);
 	}
 }
 
@@ -2069,8 +2070,8 @@ TEST_SUITE("Namespaces") {
 }
 
 TEST_SUITE("Delayed parsing - forward references in member functions") {
-	// C++20 Rule: Inline member function bodies are parsed in complete-class context
-	// This means they can reference members declared later in the class
+ // C++20 Rule: Inline member function bodies are parsed in complete-class context
+ // This means they can reference members declared later in the class
 
 	TEST_CASE("Member function references later member variable") {
 		run_test_from_file("test_delayed_parsing_member_var.cpp", "Delayed parsing: member variable forward reference", false);
@@ -2136,7 +2137,7 @@ TEST_SUITE("Templates") {
 		run_test_from_file("template_declaration.cpp", "Templates:Declaration", false);
 	}
 
-	// Template instantiation tests (Phase 2)
+ // Template instantiation tests (Phase 2)
 	TEST_CASE("Templates:InstantiationDecl") {
 		run_test_from_file("template_inst_decl.cpp", "Templates:InstantiationDecl", false);
 	}
@@ -2149,7 +2150,7 @@ TEST_SUITE("Templates") {
 		run_test_from_file("template_inst_multi.cpp", "Templates:InstantiationMultipleTypes", false);
 	}
 
-	// Template function body tests (Phase 3)
+ // Template function body tests (Phase 3)
 	TEST_CASE("Templates:WithBody") {
 		run_test_from_file("template_with_body.cpp", "Templates:WithBody", false);
 	}
@@ -2158,42 +2159,42 @@ TEST_SUITE("Templates") {
 		run_test_from_file("template_body_test.cpp", "Templates:BodyTest", false);
 	}
 
-	// Explicit template arguments tests (Phase 4)
+ // Explicit template arguments tests (Phase 4)
 	TEST_CASE("Templates:ExplicitArgs") {
 		run_test_from_file("template_explicit_args.cpp", "Templates:ExplicitArgs", false);
 	}
 
-	// Multiple template parameters tests (Phase 5)
+ // Multiple template parameters tests (Phase 5)
 	TEST_CASE("Templates:MultipleParams") {
 		run_test_from_file("template_multi_param.cpp", "Templates:MultipleParams", false);
 	}
 
-	// Class template tests (Phase 6)
+ // Class template tests (Phase 6)
 	TEST_CASE("Templates:ClassSimple") {
 		run_test_from_file("template_class_simple.cpp", "Templates:ClassSimple", false);
 	}
 
-	// Class template instantiation tests (Phase 7)
+ // Class template instantiation tests (Phase 7)
 	TEST_CASE("Templates:ClassInst") {
 		run_test_from_file("template_class_inst.cpp", "Templates:ClassInst", false);
 	}
 
-	// Class template member function tests (Phase 8)
+ // Class template member function tests (Phase 8)
 	TEST_CASE("Templates:ClassMethods") {
 		run_test_from_file("template_class_methods.cpp", "Templates:ClassMethods", false);
 	}
 
-	// Out-of-line template member function definitions
+ // Out-of-line template member function definitions
 	TEST_CASE("Templates:OutOfLine") {
 		run_test_from_file("template_out_of_line.cpp", "Templates:OutOfLine", false);
 	}
 
-	// Template template parameter tests
+ // Template template parameter tests
 	TEST_CASE("Templates:TemplateTemplateParams") {
 		run_test_from_file("template_template_params.cpp", "Templates:TemplateTemplateParams", false);
 	}
 
-	// Additional template tests from TEMPLATE_FEATURES_SUMMARY.md
+ // Additional template tests from TEMPLATE_FEATURES_SUMMARY.md
 	TEST_CASE("Templates:ImplicitCtor") {
 		run_test_from_file("test_template_implicit_ctor.cpp", "Templates:ImplicitCtor", false);
 	}
@@ -2274,7 +2275,7 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_nested_simple.cpp", "Templates:NestedSimple", false);
 	}
 
-	// Code generation tests for template features
+ // Code generation tests for template features
 	TEST_CASE("Templates:VariadicCodegen") {
 		run_test_from_file("test_variadic_codegen.cpp", "Templates:VariadicCodegen", false);
 	}
@@ -2287,7 +2288,7 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_template_template_codegen.cpp", "Templates:TemplateTemplateCodegen", false);
 	}
 
-	// SFINAE and type traits tests
+ // SFINAE and type traits tests
 	TEST_CASE("SFINAE:EnableIf") {
 		run_test_from_file("test_sfinae_enable_if.cpp", "SFINAE:EnableIf", false);
 	}
@@ -2462,15 +2463,15 @@ TEST_CASE("ConstExpr:VarRef") {
 }
 
 TEST_CASE("ConstExpr:UB") {
-	// This test is expected to fail compilation, but for now we just run it to ensure it doesn't crash the compiler
-	// In a real scenario, we would want to assert that compilation fails with specific errors
+ // This test is expected to fail compilation, but for now we just run it to ensure it doesn't crash the compiler
+ // In a real scenario, we would want to assert that compilation fails with specific errors
 	run_test_from_file("test_ub_fail.cpp", "Constexpr UB detection", false);
 }
 
 TEST_CASE("ConstExpr:InheritedStaticMember") {
-	// Regression test for bug where evaluate_static_member_from_struct used the
-	// derived class name instead of the base class name for the symbol table fallback
-	// lookup when a static member is inherited and has no inline initializer.
+ // Regression test for bug where evaluate_static_member_from_struct used the
+ // derived class name instead of the base class name for the symbol table fallback
+ // lookup when a static member is inherited and has no inline initializer.
 	run_test_from_file("test_constexpr_inherited_static_member_ret42.cpp", "Constexpr inherited static member lookup", false);
 }
 
@@ -2537,27 +2538,27 @@ TEST_CASE("Exceptions:Noexcept") {
 TEST_CASE("Log:LogCategoryBitOperations") {
 	using namespace FlashCpp;
 
-	// Test OR operation
+ // Test OR operation
 	LogCategory combined = LogCategory::Parser | LogCategory::Lexer;
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
 	CHECK((static_cast<uint32_t>(combined) & static_cast<uint32_t>(LogCategory::Templates)) == 0);
 
-	// Test AND operation
+ // Test AND operation
 	LogCategory andResult = combined & LogCategory::Parser;
 	CHECK(static_cast<uint32_t>(andResult) == static_cast<uint32_t>(LogCategory::Parser));
 
-	// Test None
+ // Test None
 	CHECK(static_cast<uint32_t>(LogCategory::None) == 0);
 
-	// Test All
+ // Test All
 	CHECK(static_cast<uint32_t>(LogCategory::All) == 0xFFFFFFFF);
 }
 
 TEST_CASE("Log:LogLevelValues") {
 	using namespace FlashCpp;
 
-	// Verify log levels are in correct order (lower value = higher priority)
+ // Verify log levels are in correct order (lower value = higher priority)
 	CHECK(static_cast<uint8_t>(LogLevel::Error) < static_cast<uint8_t>(LogLevel::Warning));
 	CHECK(static_cast<uint8_t>(LogLevel::Warning) < static_cast<uint8_t>(LogLevel::Info));
 	CHECK(static_cast<uint8_t>(LogLevel::Info) < static_cast<uint8_t>(LogLevel::Debug));
@@ -2567,23 +2568,23 @@ TEST_CASE("Log:LogLevelValues") {
 TEST_CASE("Log:LogConfigRuntimeSettings") {
 	using namespace FlashCpp;
 
-	// Save original values
+ // Save original values
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 
-	// Test setLevel
+ // Test setLevel
 	LogConfig::setLevel(LogLevel::Trace);
 	CHECK(LogConfig::runtimeLevel == LogLevel::Trace);
 
 	LogConfig::setLevel(LogLevel::Error);
 	CHECK(LogConfig::runtimeLevel == LogLevel::Error);
 
-	// Test setCategories
+ // Test setCategories
 	LogConfig::setCategories(LogCategory::Parser);
 	CHECK(static_cast<uint32_t>(LogConfig::runtimeCategories) == static_cast<uint32_t>(LogCategory::Parser));
 
-	// Test enableCategory
+ // Test enableCategory
 	LogConfig::setCategories(LogCategory::None);
 	LogConfig::enableCategory(LogCategory::Lexer);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
@@ -2592,19 +2593,19 @@ TEST_CASE("Log:LogConfigRuntimeSettings") {
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) != 0);
 
-	// Test disableCategory
+ // Test disableCategory
 	LogConfig::disableCategory(LogCategory::Lexer);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Lexer)) == 0);
 	CHECK((static_cast<uint32_t>(LogConfig::runtimeCategories) & static_cast<uint32_t>(LogCategory::Parser)) != 0);
 
-	// Test stream setters
+ // Test stream setters
 	LogConfig::setOutputToStdout();
 	CHECK(LogConfig::output_stream == &std::cout);
 
 	LogConfig::setOutputToStderr();
 	CHECK(LogConfig::output_stream == &std::cerr);
 
-	// Restore original values
+ // Restore original values
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
@@ -2637,22 +2638,22 @@ TEST_CASE("Log:LoggerCategoryName") {
 TEST_CASE("Log:LogOutputCapture") {
 	using namespace FlashCpp;
 
-	// Save original config
+ // Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 	bool originalColors = LogConfig::use_colors;
 
-	// Disable colors for testing (avoid ANSI escape codes in output)
+ // Disable colors for testing (avoid ANSI escape codes in output)
 	LogConfig::setUseColors(false);
 
-	// Setup capture
+ // Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
 
-	// Log a message (use Info level since Error goes to stderr)
+ // Log a message (use Info level since Error goes to stderr)
 	FLASH_LOG(Parser, Info, "Test message ", 42);
 
 	std::string output = captureStream.str();
@@ -2660,7 +2661,7 @@ TEST_CASE("Log:LogOutputCapture") {
 	CHECK(output.find("[Parser]") != std::string::npos);
 	CHECK(output.find("Test message 42") != std::string::npos);
 
-	// Clear and test different category
+ // Clear and test different category
 	captureStream.str("");
 	FLASH_LOG(Lexer, Warning, "Lexer warning");
 
@@ -2668,32 +2669,32 @@ TEST_CASE("Log:LogOutputCapture") {
 	CHECK(output.find("[WARN ]") != std::string::npos);
 	CHECK(output.find("[Lexer]") != std::string::npos);
 
-	// Test category filtering - disable Parser
+ // Test category filtering - disable Parser
 	captureStream.str("");
 	LogConfig::setCategories(LogCategory::Lexer);  // Only enable Lexer
 
 	FLASH_LOG(Parser, Info, "Should not appear");
 	output = captureStream.str();
-	// Note: compile-time check may prevent this from being filtered at runtime
-	// if the category is disabled at compile time. Only check if the logger is
-	// compile-time enabled (all categories enabled by default).
+ // Note: compile-time check may prevent this from being filtered at runtime
+ // if the category is disabled at compile time. Only check if the logger is
+ // compile-time enabled (all categories enabled by default).
 	if (Logger<LogLevel::Info, LogCategory::Parser>::enabled) {
 		CHECK(output.empty());  // Runtime filtering should block it
 	}
 
-	// Test level filtering
+ // Test level filtering
 	captureStream.str("");
 	LogConfig::setCategories(LogCategory::All);
-	LogConfig::setLevel(LogLevel::Warning);  // Only Warning and Error
+	LogConfig::setLevel(LogLevel::Warning);	// Only Warning and Error
 
 	FLASH_LOG(Parser, Debug, "Debug should not appear");
 	output = captureStream.str();
-	// Only check if Debug level is enabled at compile time
+ // Only check if Debug level is enabled at compile time
 	if (Logger<LogLevel::Debug, LogCategory::Parser>::enabled) {
 		CHECK(output.empty());  // Runtime filtering should block it
 	}
 
-	// Restore original config
+ // Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
@@ -2703,22 +2704,22 @@ TEST_CASE("Log:LogOutputCapture") {
 TEST_CASE("Log:LogMacroVariadicArgs") {
 	using namespace FlashCpp;
 
-	// Save original config
+ // Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 	bool originalColors = LogConfig::use_colors;
 
-	// Disable colors for testing
+ // Disable colors for testing
 	LogConfig::setUseColors(false);
 
-	// Setup capture
+ // Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
 
-	// Test with multiple arguments
+ // Test with multiple arguments
 	FLASH_LOG(Parser, Info, "Value: ", 123, ", String: ", "test", ", Float: ", 3.14);
 
 	std::string output = captureStream.str();
@@ -2726,7 +2727,7 @@ TEST_CASE("Log:LogMacroVariadicArgs") {
 	CHECK(output.find("String: test") != std::string::npos);
 	CHECK(output.find("Float: 3.14") != std::string::npos);
 
-	// Restore original config
+ // Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
@@ -2736,18 +2737,18 @@ TEST_CASE("Log:LogMacroVariadicArgs") {
 TEST_CASE("Log:GeneralCategoryNoPrefix") {
 	using namespace FlashCpp;
 
-	// Save original config
+ // Save original config
 	LogLevel originalLevel = LogConfig::runtimeLevel;
 	LogCategory originalCategories = LogConfig::runtimeCategories;
 	std::ostream* originalStream = LogConfig::output_stream;
 
-	// Setup capture
+ // Setup capture
 	std::ostringstream captureStream;
 	LogConfig::setOutputStream(&captureStream);
 	LogConfig::setLevel(LogLevel::Trace);
 	LogConfig::setCategories(LogCategory::All);
 
-	// Test General category - should have no prefix
+ // Test General category - should have no prefix
 	FLASH_LOG(General, Info, "User message without prefix");
 
 	std::string output = captureStream.str();
@@ -2755,10 +2756,10 @@ TEST_CASE("Log:GeneralCategoryNoPrefix") {
 	CHECK(output.find("User message without prefix") != std::string::npos);
 	CHECK(output == "User message without prefix\n");
 
-	// General category should always be enabled
+ // General category should always be enabled
 	CHECK(Logger<LogLevel::Info, LogCategory::General>::enabled == true);
 
-	// Restore original config
+ // Restore original config
 	LogConfig::setLevel(originalLevel);
 	LogConfig::setCategories(originalCategories);
 	LogConfig::setOutputStream(originalStream);
@@ -2778,7 +2779,7 @@ TEST_CASE("Parser:ParameterList:Variadic") {
 	CHECK(!parse_result.is_error());
 
 	const auto& ast = parser.get_nodes();
-	// Should parse successfully with variadic functions
+ // Should parse successfully with variadic functions
 }
 
 TEST_CASE("Parser:MemberFunction:ConstVolatile") {

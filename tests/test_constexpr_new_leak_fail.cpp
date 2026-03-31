@@ -3,8 +3,8 @@
 // must be freed before the constant expression ends.
 
 constexpr int leak() {
-    int* p = new int(42);
-    return *p;  // forgot delete p — ill-formed per C++20
+	int* p = new int(42);
+	return *p;  // forgot delete p — ill-formed per C++20
 }
 static_assert(leak() == 42);
 

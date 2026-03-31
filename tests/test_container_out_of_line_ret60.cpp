@@ -20,11 +20,11 @@ int main() {
 	container.data[0] = 10;
 	container.data[1] = 20;
 	container.data[2] = 30;
-	
+
 	int sum = 0;
 	for (int x : container) {
 		sum += x;
 	}
-	
-	return sum;  // Expected: 60
+
+	return sum;	// Expected: 60
 }

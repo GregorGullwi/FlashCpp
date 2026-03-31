@@ -178,6 +178,6 @@ static_assert(!c_style_from_int, "(bool)0 should be false");
 // - Various literal formats (decimal, hex, binary, negative)
 
 int main() {
-    // If this compiles and links, all constexpr tests passed!
-    return 0;
+	// If this compiles and links, all constexpr tests passed!
+	return 0;
 }

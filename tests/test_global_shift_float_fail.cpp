@@ -6,6 +6,6 @@ int g = 8;
 double d = 3.0;
 
 int main() {
-	g >>= d;  // ill-formed: floating-point shift count
+	g >>= d;	 // ill-formed: floating-point shift count
 	return g;
 }
