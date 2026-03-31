@@ -3243,17 +3243,6 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 		return *resolve_error;
 	}
 
-	// Phase C: if the object was materialized from pre-packed constant bytes,
-	// extract the member value directly from object_member_bindings.
-	if (resolved_object.materialized_value.has_value()) {
-		const EvalResult& mat = *resolved_object.materialized_value;
-		auto it = mat.object_member_bindings.find(member_name);
-		if (it != mat.object_member_bindings.end()) {
-			return it->second;
-		}
-		return EvalResult::error("Member '" + std::string(member_name) + "' not found in pre-materialized constant bytes");
-	}
-
 	if (resolved_object.initializer == nullptr) {
 		return EvalResult::error("Internal error: unresolved member access object source");
 	}
@@ -3567,19 +3556,6 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 			context,
 			CurrentStructStaticLookupMode::BoundOnly);
 		static_member_result.static_member) {
-	// Phase C: if pre-packed bytes are available, materialize the struct and
-	// provide the result directly so member access can read fields from bytes.
-		if (static_member_result.static_member->normalized_init.has_value() &&
-			static_member_result.static_member->normalized_init->isConstant()) {
-			EvalResult materialized = materializeFromConstantBytes(
-				static_member_result.static_member->normalized_init->constant_bytes,
-				static_member_result.static_member->type_index);
-			if (materialized.success()) {
-				resolved_object.declared_type_index = static_member_result.static_member->type_index;
-				resolved_object.materialized_value = materialized;
-				return std::nullopt;
-			}
-		}
 		resolved_object.initializer = &static_member_result.static_member->initializer;
 		resolved_object.declared_type_index = static_member_result.static_member->type_index;
 		return std::nullopt;
