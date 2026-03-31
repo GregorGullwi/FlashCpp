@@ -71,7 +71,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
  // Initialize each array element with the provided initializers
 			const auto& array_inits = newExpr.constructor_args();
 			if (array_inits.size() > 0) {
-	// For struct types, call constructor for each element
+ // For struct types, call constructor for each element
 				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
@@ -79,20 +79,20 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 							const StructTypeInfo* struct_info = type_info->struct_info_.get();
 							size_t element_size = struct_info->total_size;
 
-	// Generate initialization for each element
+ // Generate initialization for each element
 							for (size_t i = 0; i < array_inits.size(); ++i) {
 								const ASTNode& init = array_inits[i];
 
-	// Skip if the initializer is not supported
+ // Skip if the initializer is not supported
 								if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
 									FLASH_LOG(Codegen, Warning, "Unsupported array initializer type, skipping element ", i);
 									continue;
 								}
 
-	// Calculate offset for this element: base_pointer + i * element_size
+ // Calculate offset for this element: base_pointer + i * element_size
 								TempVar element_ptr = var_counter.next();
 
-	// Generate: element_ptr = result_var + (i * element_size)
+ // Generate: element_ptr = result_var + (i * element_size)
 								BinaryOp offset_op{
 									.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
 									.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
@@ -100,20 +100,20 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 								};
 								ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 
-	// Check if initializer is a brace initializer list
+ // Check if initializer is a brace initializer list
 								if (init.is<InitializerListNode>()) {
 									const InitializerListNode& init_list = init.as<InitializerListNode>();
 
-	// If struct has a constructor, call it with initializer list elements
+ // If struct has a constructor, call it with initializer list elements
 									if (struct_info->hasAnyConstructor()) {
 										ConstructorCallOp ctor_op;
 										ctor_op.struct_name = type_info->name();
 										ctor_op.object = element_ptr;
 										ctor_op.is_heap_allocated = true;
 
-	// Add each initializer as a constructor argument
+ // Add each initializer as a constructor argument
 										for (const auto& elem_init : init_list.initializers()) {
-	// Safety check: ensure elem_init is an ExpressionNode
+ // Safety check: ensure elem_init is an ExpressionNode
 											if (!elem_init.is<ExpressionNode>()) {
 												FLASH_LOG(Codegen, Warning, "Element initializer is not an ExpressionNode, skipping");
 												continue;
@@ -127,7 +127,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 									}
 								} else if (init.is<ExpressionNode>()) {
-	// Handle direct expression initializer
+ // Handle direct expression initializer
 									FLASH_LOG(Codegen, Warning, "Array element initialized with expression, not initializer list");
 								} else {
 									FLASH_LOG(Codegen, Warning, "Unexpected array initializer type");
@@ -136,17 +136,17 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						}
 					}
 				} else {
-	// For primitive types, initialize each element
+ // For primitive types, initialize each element
 					size_t element_size = size_in_bits / 8;
 
 					for (size_t i = 0; i < array_inits.size(); ++i) {
 						const ASTNode& init = array_inits[i];
 
 						if (init.is<ExpressionNode>()) {
-	// Calculate offset for this element
+ // Calculate offset for this element
 							TempVar element_ptr = var_counter.next();
 
-	// Generate: element_ptr = result_var + (i * element_size)
+ // Generate: element_ptr = result_var + (i * element_size)
 							BinaryOp offset_op{
 								.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
 								.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, static_cast<unsigned long long>(i * element_size)),
@@ -154,7 +154,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 							};
 							ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(offset_op), Token()));
 
-	// Evaluate the initializer expression
+ // Evaluate the initializer expression
 							ExprResult init_operands = visitExpressionNode(init.as<ExpressionNode>());
 							TypedValue init_value = toTypedValue(init_operands);
 							emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, element_ptr, Token());
@@ -194,7 +194,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
  // Handle array initializers for heap-allocated arrays
 			const auto& array_inits = newExpr.constructor_args();
 			if (array_inits.size() > 0) {
-	// For struct types, call constructor for each element
+ // For struct types, call constructor for each element
 				if (type_cat == TypeCategory::Struct) {
 					TypeIndex type_index = type_spec.type_index();
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
@@ -205,7 +205,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 							for (size_t i = 0; i < array_inits.size(); ++i) {
 								const ASTNode& init = array_inits[i];
 
-	// Skip if the initializer is not supported
+ // Skip if the initializer is not supported
 								if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
 									FLASH_LOG(Codegen, Warning, "Unsupported array initializer type in heap array, skipping element ", i);
 									continue;
@@ -227,7 +227,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 									ctor_op.is_heap_allocated = true;
 
 									for (const auto& elem_init : init_list.initializers()) {
-	// Safety check: ensure elem_init is an ExpressionNode
+ // Safety check: ensure elem_init is an ExpressionNode
 										if (!elem_init.is<ExpressionNode>()) {
 											FLASH_LOG(Codegen, Warning, "Element initializer in heap array is not an ExpressionNode, skipping");
 											continue;
@@ -244,7 +244,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						}
 					}
 				} else {
-	// For primitive types, initialize each element
+ // For primitive types, initialize each element
 					size_t element_size = size_in_bits / 8;
 					for (size_t i = 0; i < array_inits.size(); ++i) {
 						const ASTNode& init = array_inits[i];
@@ -264,7 +264,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					}
 				}
 			} else if (needs_ctor_loop && array_struct_info) {
-	// No explicit initializers: emit a loop calling the default constructor for each element
+ // No explicit initializers: emit a loop calling the default constructor for each element
 				static size_t new_array_counter = 0;
 				size_t loop_id = new_array_counter++;
 				size_t elem_sz = array_struct_info->total_size;
@@ -272,7 +272,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				auto loop_start = StringTable::createStringHandle(StringBuilder().append("new_arr_start_").append(loop_id));
 				auto loop_end = StringTable::createStringHandle(StringBuilder().append("new_arr_end_").append(loop_id));
 
-	// i_var = 0
+ // i_var = 0
 				TempVar i_var = var_counter.next();
 				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 																		   .result = i_var,
@@ -283,7 +283,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
 
-	// cmp = (i_var < count)
+ // cmp = (i_var < count)
 				TempVar cmp_var = var_counter.next();
 				ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, BinaryOp{
 																				 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
@@ -296,14 +296,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				cond.label_true = loop_start;  // placeholder - will immediately follow with body inline
 				cond.label_false = loop_end;
 				cond.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_var);
-	// We use a body label right after the branch
+ // We use a body label right after the branch
 				auto loop_body = StringTable::createStringHandle(StringBuilder().append("new_arr_body_").append(loop_id));
 				cond.label_true = loop_body;
 				ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond), Token()));
 
 				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
-	// offset_var = i_var * elem_sz
+ // offset_var = i_var * elem_sz
 				TempVar offset_var = var_counter.next();
 				ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
 																		 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
@@ -312,7 +312,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 																	 },
 												 Token()));
 
-	// elem_ptr = result_var + offset_var
+ // elem_ptr = result_var + offset_var
 				TempVar elem_ptr = var_counter.next();
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
 																	.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, result_var),
@@ -321,14 +321,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 																},
 												 Token()));
 
-	// Call default constructor
+ // Call default constructor
 				ConstructorCallOp ctor_op;
 				ctor_op.struct_name = array_struct_name_handle;
 				ctor_op.object = elem_ptr;
 				ctor_op.is_heap_allocated = true;
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
-	// i_var = i_var + 1  (write back to same TempVar slot)
+ // i_var = i_var + 1  (write back to same TempVar slot)
 				ir_.addInstruction(IrInstruction(IrOpcode::Add, BinaryOp{
 																	.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
 																	.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 1ULL),
@@ -361,20 +361,20 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			TypeIndex type_index = type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 				if (type_info->struct_info_) {
-	// Check if this is an abstract class
+ // Check if this is an abstract class
 					if (type_info->struct_info_->is_abstract) {
 						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
 					if (type_info->struct_info_->hasAnyConstructor()) {
-	// Generate constructor call on the placement address
+ // Generate constructor call on the placement address
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
 
-	// Add constructor arguments
+ // Add constructor arguments
 						const auto& ctor_args = newExpr.constructor_args();
 						for (size_t i = 0; i < ctor_args.size(); ++i) {
 							ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
@@ -404,20 +404,20 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 			TypeIndex type_index = type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 				if (type_info->struct_info_) {
-	// Check if this is an abstract class
+ // Check if this is an abstract class
 					if (type_info->struct_info_->is_abstract) {
 						std::cerr << "Error: Cannot instantiate abstract class '" << type_info->name() << "'\n";
 						throw CompileError("Cannot instantiate abstract class");
 					}
 
 					if (type_info->struct_info_->hasAnyConstructor()) {
-	// Generate constructor call on the newly allocated object
+ // Generate constructor call on the newly allocated object
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
 
-	// Add constructor arguments
+ // Add constructor arguments
 						const auto& ctor_args = newExpr.constructor_args();
 						for (size_t i = 0; i < ctor_args.size(); ++i) {
 							ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
@@ -466,8 +466,8 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 				} else if (const auto* string = std::get_if<StringHandle>(&ptr_value)) {
 					dtor_op.object = *string;
 				} else {
-	// ptr_value is a literal (unsigned long long or double) - skip destructor call
-	// ptr_value is a literal (unsigned long long or double) - skip destructor call
+ // ptr_value is a literal (unsigned long long or double) - skip destructor call
+ // ptr_value is a literal (unsigned long long or double) - skip destructor call
 				}
 				ir_.addInstruction(IrInstruction(IrOpcode::DestructorCall, std::move(dtor_op), Token()));
 			}
@@ -485,7 +485,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 					has_dtor_loop = true;
 					size_t elem_sz = struct_info->total_size;
 
-	// Read count from cookie: raw_ptr = ptr - 8
+ // Read count from cookie: raw_ptr = ptr - 8
 					TempVar raw_ptr = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
 																			 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, ptr_value),
@@ -494,7 +494,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 																		 },
 													 Token()));
 
-	// count_var = *raw_ptr  (load 64-bit cookie)
+ // count_var = *raw_ptr  (load 64-bit cookie)
 					TempVar count_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, DereferenceOp{
 																				.result = count_var,
@@ -502,7 +502,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 																			},
 													 Token()));
 
-	// Emit reverse-order destructor loop: i = count-1 down to 0
+ // Emit reverse-order destructor loop: i = count-1 down to 0
 					static size_t del_array_counter = 0;
 					size_t loop_id = del_array_counter++;
 
@@ -510,7 +510,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 					auto loop_body = StringTable::createStringHandle(StringBuilder().append("del_arr_body_").append(loop_id));
 					auto loop_end = StringTable::createStringHandle(StringBuilder().append("del_arr_end_").append(loop_id));
 
-	// i_var = count_var  (will decrement before use, so start at count)
+ // i_var = count_var  (will decrement before use, so start at count)
 					TempVar i_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, AssignmentOp{
 																			   .result = i_var,
@@ -521,7 +521,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_start}, Token()));
 
-	// if i_var == 0 goto loop_end
+ // if i_var == 0 goto loop_end
 					TempVar cmp_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::NotEqual, BinaryOp{
 																			 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
@@ -537,7 +537,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_body}, Token()));
 
-	// i_var = i_var - 1  (decrement first, so index runs count-1..0)
+ // i_var = i_var - 1  (decrement first, so index runs count-1..0)
 					ir_.addInstruction(IrInstruction(IrOpcode::Subtract, BinaryOp{
 																			 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
 																			 .rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 1ULL),
@@ -545,7 +545,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 																		 },
 													 Token()));
 
-	// elem_ptr = ptr + i_var * elem_sz
+ // elem_ptr = ptr + i_var * elem_sz
 					TempVar offset_var = var_counter.next();
 					ir_.addInstruction(IrInstruction(IrOpcode::Multiply, BinaryOp{
 																			 .lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, i_var),
@@ -570,7 +570,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 					ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = loop_start}, Token()));
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = loop_end}, Token()));
 
-	// Free using the raw (cookie) pointer — raw_ptr already points to start of allocation
+ // Free using the raw (cookie) pointer — raw_ptr already points to start of allocation
 					HeapFreeArrayOp free_op;
 					free_op.pointer = raw_ptr;
 					free_op.has_cookie = false;
@@ -745,27 +745,6 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory source_type = expr_operands.typeEnum();
 	int source_size = expr_operands.size_in_bits.value;
 	TypeIndex source_type_index = expr_operands.type_index;
-	auto isExactComparisonCategoryType = [](TypeIndex type_index) {
-		if (!type_index.is_valid()) {
-			return false;
-		}
-
-		constexpr std::string_view comparison_category_names[] = {
-			"std::strong_ordering",
-			"std::weak_ordering",
-			"std::partial_ordering",
-			"strong_ordering",
-			"weak_ordering",
-			"partial_ordering",
-		};
-		for (std::string_view name : comparison_category_names) {
-			const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
-			if (type_info && type_info->type_index_ == type_index) {
-				return true;
-			}
-		}
-		return false;
-	};
 	auto source_has_semantic_identity = [&]() {
 		if (!source_type_index.is_valid() || source_type_index.index() >= getTypeInfoCount()) {
 			return false;
@@ -834,7 +813,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 						  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
 				return arg;
 			} else {
-	// This shouldn't happen for expression values, but default to 0
+ // This shouldn't happen for expression values, but default to 0
 				throw InternalError("Couldn't match IrValue to a known type");
 				return 0ULL;
 			}

@@ -1931,20 +1931,20 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (needs_binary_type_inference) {
 					lhs_type_id = inferExpressionType(e.get_lhs());
 					rhs_type_id = inferExpressionType(e.get_rhs());
-	// C++20: scoped enums do not participate in implicit arithmetic
-	// conversions. Diagnose before annotation so the error fires
-	// early with a clear message.
+ // C++20: scoped enums do not participate in implicit arithmetic
+ // conversions. Diagnose before annotation so the error fires
+ // early with a clear message.
 					diagnoseScopedEnumBinaryOperands(e, lhs_type_id, rhs_type_id);
 				}
 				if (is_shift && needs_binary_type_inference) {
 					tryAnnotateShiftOperandPromotions(e, lhs_type_id, rhs_type_id);
-	// C++20 [expr.ass]/7: shift compound assignment back-conversion
-	// from promoted LHS type to original LHS type.
+ // C++20 [expr.ass]/7: shift compound assignment back-conversion
+ // from promoted LHS type to original LHS type.
 					if (is_compound_assign && lhs_type_id) {
 						const CanonicalTypeDesc& lhs_desc = type_context_.get(lhs_type_id);
 						if (!lhs_desc.pointer_levels.empty() || lhs_desc.category() == TypeCategory::Struct ||
 							lhs_desc.category() == TypeCategory::Invalid || isPlaceholderAutoType(lhs_desc.category())) {
-	// Skip non-primitive types
+ // Skip non-primitive types
 						} else {
 							const TypeCategory lhs_cat = resolveEnumUnderlyingTypeCategory(lhs_desc.type_index);
 							const TypeCategory promoted_cat = promote_integer_type(lhs_cat);
@@ -1963,8 +1963,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 							(is_compound_assign && !is_shift)) &&
 						   needs_binary_type_inference) {
 					tryAnnotateBinaryOperandConversions(e, lhs_type_id, rhs_type_id);
-	// C++20 [expr.ass]/7: compound assignment back-conversion
-	// from common type to LHS type. Annotate so codegen can verify.
+ // C++20 [expr.ass]/7: compound assignment back-conversion
+ // from common type to LHS type. Annotate so codegen can verify.
 					if (is_compound_assign) {
 						tryAnnotateCompoundAssignBackConversion(e, lhs_type_id, rhs_type_id);
 					}
@@ -2068,8 +2068,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 			} else if constexpr (std::is_same_v<T, LambdaExpressionNode>) {
 				for (const auto& capture : e.captures()) {
-	// Non-init captures are stored as identifier tokens only; the
-	// initializer is the only child expression carried by the node.
+ // Non-init captures are stored as identifier tokens only; the
+ // initializer is the only child expression carried by the node.
 					if (capture.has_initializer()) {
 						normalizeExpression(*capture.initializer(), ctx);
 					}
@@ -2429,7 +2429,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					if (!operand_id)
 						return {};
 					const CanonicalTypeDesc& operand_desc = type_context_.get(operand_id);
-	// Resolve enum to underlying type
+ // Resolve enum to underlying type
 					const TypeCategory operand_cat = resolveEnumUnderlyingTypeCategory(operand_desc.type_index);
 					const bool is_small_int =
 						(isIntegralType(operand_cat) || operand_cat == TypeCategory::Bool) && get_integer_rank(operand_cat) < 3; // rank of int
@@ -2463,11 +2463,11 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						const CanonicalTypeDesc& l = type_context_.get(lhs_id);
 						const CanonicalTypeDesc& r = type_context_.get(rhs_id);
 
-	// For struct types, the result type depends on the user-defined operator<=>.
-	// For built-in types, C++20 [expr.spaceship]:
-	//   - integral types -> std::strong_ordering
-	//   - floating-point types -> std::partial_ordering
-	//   - bool -> std::strong_ordering
+ // For struct types, the result type depends on the user-defined operator<=>.
+ // For built-in types, C++20 [expr.spaceship]:
+ //   - integral types -> std::strong_ordering
+ //   - floating-point types -> std::partial_ordering
+ //   - bool -> std::strong_ordering
 						if (l.category() != TypeCategory::Struct && r.category() != TypeCategory::Struct) {
 							const bool is_float_cmp = is_floating_point_type(l.category()) || is_floating_point_type(r.category());
 							const char* qualified_name = is_float_cmp ? "std::partial_ordering" : "std::strong_ordering";
@@ -2488,7 +2488,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 						}
 					}
 
-	// Fallback: if ordering types are not found, leave the type unknown.
+ // Fallback: if ordering types are not found, leave the type unknown.
 					return {};
 				}
 
@@ -3175,28 +3175,6 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 	}
 	if (!best_non_explicit) {
 		if (found_explicit_viable || best_any) {
-			auto isExactComparisonCategoryType = [](TypeIndex type_index) {
-				if (!type_index.is_valid()) {
-					return false;
-				}
-
-				constexpr std::string_view comparison_category_names[] = {
-					"std::strong_ordering",
-					"std::weak_ordering",
-					"std::partial_ordering",
-					"strong_ordering",
-					"weak_ordering",
-					"partial_ordering",
-				};
-				for (std::string_view name : comparison_category_names) {
-					const TypeInfo* type_info = findTypeByName(StringTable::getOrInternStringHandle(name));
-					if (type_info && type_info->type_index_ == type_index) {
-						return true;
-					}
-				}
-				return false;
-			};
-
 	// Special case: don't error for integer -> comparison category conversions.
  // In deferred template bodies, inferExpressionType may not fully resolve
  // built-in <=> results as comparison category types, so semantic analysis
@@ -3828,24 +3806,24 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 					if (struct_it != getTypesByNameMap().end()) {
 						searchStructMembers(struct_it->second->getStructInfo());
 					}
-	// Phase 17: if direct name lookup failed, scan getTypesByNameMap() for
-	// entries whose name ends with the struct name fragment. Template
-	// specializations may be registered under different namespace-qualified
-	// or template-argument-decorated keys.
+ // Phase 17: if direct name lookup failed, scan getTypesByNameMap() for
+ // entries whose name ends with the struct name fragment. Template
+ // specializations may be registered under different namespace-qualified
+ // or template-argument-decorated keys.
 					if (!func_decl) {
 						for (const auto& [handle, ti] : getTypesByNameMap()) {
 							if (!ti)
 								continue;
 							const std::string_view registered_name = handle.view();
-	// Match if the registered name equals or ends with the struct name
-	// (handles namespace prefix differences).
+ // Match if the registered name equals or ends with the struct name
+ // (handles namespace prefix differences).
 							if (registered_name == struct_name_sv) {
 								if (searchStructMembers(ti->getStructInfo()))
 									break;
 							} else if (registered_name.size() > struct_name_sv.size() + 1) {
-	// Check suffix match: registered name ends with struct name
-	// preceded by '::' or '<' (namespace or template boundary).
-	// e.g., "Ns::MyStruct" matches struct_name "MyStruct".
+ // Check suffix match: registered name ends with struct name
+ // preceded by '::' or '<' (namespace or template boundary).
+ // e.g., "Ns::MyStruct" matches struct_name "MyStruct".
 								const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 								if (registered_name.substr(prefix_end) == struct_name_sv &&
 									(registered_name[prefix_end - 1] == ':' ||
@@ -3854,10 +3832,10 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 										break;
 								}
 							}
-	// Check prefix match: registered name starts with struct name
-	// followed by '<' (handles template specializations like
-	// MyStruct<int> where caller uses undecorated name MyStruct).
-	// e.g., "MyStruct<int>" matches struct_name "MyStruct".
+ // Check prefix match: registered name starts with struct name
+ // followed by '<' (handles template specializations like
+ // MyStruct<int> where caller uses undecorated name MyStruct).
+ // e.g., "MyStruct<int>" matches struct_name "MyStruct".
 							if (registered_name.size() > struct_name_sv.size() &&
 								registered_name[struct_name_sv.size()] == '<' &&
 								registered_name.starts_with(struct_name_sv)) {
