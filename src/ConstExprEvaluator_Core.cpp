@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "BuiltinListInitNarrowing.h"
 
 namespace ConstExpr {
 
@@ -1475,7 +1476,25 @@ EvalResult Evaluator::evaluate_constructor_call(const ConstructorCallNode& ctor_
 		return EvalResult::error("Constructor call must have 0 or 1 arguments for constant evaluation");
 	}
 
-	return evaluate_expr_node(type_spec, args[0], context, "Unsupported type in constructor call for constant evaluation");
+	EvalResult arg_result = evaluate(args[0], context);
+	if (!arg_result.success()) {
+		return arg_result;
+	}
+
+	if (BuiltinListInitNarrowing::isBraceConstructedBuiltin(ctor_call)) {
+		TypeCategory source_category = BuiltinListInitNarrowing::effectiveScalarCategory(arg_result);
+		TypeCategory target_category = BuiltinListInitNarrowing::effectiveScalarCategory(type_spec);
+		if (BuiltinListInitNarrowing::isNarrowingConversion(source_category, target_category, arg_result)) {
+			return EvalResult::error(
+				"Narrowing conversion in direct-list-initialization",
+				EvalErrorType::NotConstantExpression);
+		}
+	}
+
+	return convertEvalResultToTargetType(
+		type_spec,
+		arg_result,
+		"Unsupported type in constructor call for constant evaluation");
 }
 
 bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs) {

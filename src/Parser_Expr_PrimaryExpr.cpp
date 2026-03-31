@@ -384,12 +384,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			std::string_view type_kw = current_token_.value();
 			advance(); // consume the type keyword
 
-			// Check if followed by '(' for functional cast
-			if (current_token_.value() == "(") {
-				ParseResult cast_result = parse_functional_cast(type_kw, type_token);
-				if (!cast_result.is_error() && cast_result.node().has_value()) {
-					return cast_result;
-				}
+			// Check if followed by '(' or '{' for built-in type construction
+			if (current_token_.value() == "(" || current_token_.value() == "{") {
+				return parse_functional_cast(type_kw, type_token);
 			} else {
 				// Not a functional cast - restore and continue with normal keyword handling
 				// Actually, we can't easily restore here. This is a problem.
@@ -1143,19 +1140,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// NOTE: Only treat BUILT-IN types as functional casts here.
 		// User-defined types with Type(args) syntax are constructor calls, not casts,
 		// and should be handled by the normal identifier/function call path below.
-		if (current_token_.value() == "(" &&
-			!current_token_.value().starts_with("::")) {
+		if (current_token_.value() == "(" || current_token_.value() == "{") {
 			std::string_view id_name = identifier_token.value();
 
 			// Only check for built-in type names (not user-defined types)
 			// User-defined Type(args) is a constructor call, not a functional cast
 			auto type_info = get_builtin_type_info(id_name);
 			if (type_info.has_value()) {
-				// This is a built-in type followed by '(' - parse as functional cast
-				ParseResult cast_result = parse_functional_cast(id_name, identifier_token);
-				if (!cast_result.is_error() && cast_result.node().has_value()) {
-					return cast_result;
-				}
+				// This is a built-in type followed by '(' or '{' - parse as built-in type construction
+				return parse_functional_cast(id_name, identifier_token);
 			}
 		}
 
