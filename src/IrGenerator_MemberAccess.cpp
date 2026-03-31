@@ -783,6 +783,33 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 			return true;
 		}
 
+		// Check if this is an unqualified reference to a static member of the current struct.
+		// This happens in default member initializers like: int value = payload.a;
+		// where 'payload' is a static constexpr member of the same struct.
+		if (current_struct_name_.isValid()) {
+			auto struct_type_it = getTypesByNameMap().find(current_struct_name_);
+			if (struct_type_it != getTypesByNameMap().end()) {
+				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+				if (struct_info) {
+					const StructStaticMember* static_member = struct_info->findStaticMember(
+						StringTable::getOrInternStringHandle(object_name));
+					if (static_member && is_struct_type(static_member->type_index.category())) {
+						// Found: set up for member access on a struct-typed static member.
+						// Use the qualified global name so codegen can resolve it.
+						StringBuilder qname_builder;
+						StringHandle qualified_name = StringTable::getOrInternStringHandle(
+							qname_builder.append(current_struct_name_).append("::"sv).append(object_name).commit());
+						FLASH_LOG(Codegen, Debug, "Resolved unqualified static member '", object_name,
+							"' to global '", StringTable::getStringView(qualified_name), "'");
+						base_object = qualified_name;
+						base_type_index = static_member->type_index;
+						is_pointer_dereference = false;
+						return true;
+					}
+				}
+			}
+		}
+
 		FLASH_LOG(Codegen, Error, "object '", object_name, "' not found in symbol table or type registry");
 		return false;
 	}

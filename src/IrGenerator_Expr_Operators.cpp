@@ -137,6 +137,17 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
 			static_member = findStaticMemberInStruct(current_struct_name_);
 		}
+		// When a static member reference was resolved during template parsing against
+		// the pattern struct (e.g., "Outer::Inner::payload"), but we're generating
+		// code for the instantiated struct (e.g., "Outer$hash::Inner"), update the
+		// store_name to use the instantiated qualification.  This ensures the correct
+		// global symbol is referenced at link time.
+		if (static_member && current_struct_name_.isValid() && owner_name.isValid() && current_struct_name_ != owner_name) {
+			std::string_view member_name_part = resolved_name.substr(last_scope_pos + 2);
+			StringBuilder sb;
+			info.store_name = StringTable::getOrInternStringHandle(
+				sb.append(current_struct_name_).append("::"sv).append(member_name_part).commit());
+		}
 		if (static_member) {
 			info.type_index = nativeTypeIndex(static_member->memberType());
 			info.size_in_bits = SizeInBits{static_cast<int>(static_member->size * 8)};

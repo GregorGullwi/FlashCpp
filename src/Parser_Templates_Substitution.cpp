@@ -955,6 +955,53 @@ ASTNode Parser::substituteTemplateParameters(
 			}
 		}
 
+		// Remap nested struct types from template pattern to instantiated version.
+		// When a member function body references a nested type like Inner{}, the
+		// TypeSpecifierNode still carries the pattern's type_index (e.g., "Outer::Inner").
+		// We need to remap it to the instantiated version (e.g., "Outer$hash::Inner").
+		if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				std::string_view type_name = StringTable::getStringView(type_info->name());
+				auto sep_pos = type_name.find("::");
+				if (sep_pos != std::string_view::npos) {
+					std::string_view parent_name = type_name.substr(0, sep_pos);
+					std::string_view nested_name = type_name.substr(sep_pos + 2);
+					// Only remap if parent is a template pattern (not already instantiated)
+					if (parent_name.find('$') == std::string_view::npos) {
+						auto template_opt = gTemplateRegistry.lookupTemplate(parent_name);
+						if (template_opt.has_value()) {
+							std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
+							std::string_view inst_parent = FlashCpp::generateInstantiatedNameFromArgs(parent_name, args_vec);
+							StringBuilder sb;
+							StringHandle inst_nested_handle = StringTable::getOrInternStringHandle(
+								sb.append(inst_parent).append("::"sv).append(nested_name).commit());
+							auto it = getTypesByNameMap().find(inst_nested_handle);
+							if (it != getTypesByNameMap().end()) {
+								const TypeInfo* inst_type_info = it->second;
+								int inst_size_bits = static_cast<int>(inst_type_info->type_size_);
+								Token inst_token(Token::Type::Identifier,
+									StringTable::getStringView(inst_type_info->name()),
+									type_spec.token().line(),
+									type_spec.token().column(),
+									type_spec.token().file_index());
+								TypeSpecifierNode substituted_spec(
+									inst_type_info->type_index_,
+									inst_size_bits,
+									inst_token,
+									type_spec.cv_qualifier(),
+									type_spec.reference_qualifier());
+								substituted_spec.copy_indirection_from(type_spec);
+								FLASH_LOG(Templates, Debug,
+									"Remapped nested struct type '", type_name,
+									"' -> '", StringTable::getStringView(inst_type_info->name()), "'");
+								return emplace_node<TypeSpecifierNode>(substituted_spec);
+							}
+						}
+					}
+				}
+			}
+		}
+
 		return node;
 
 	} else if (node.is<InitializerListNode>()) {
