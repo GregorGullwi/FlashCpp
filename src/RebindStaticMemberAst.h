@@ -130,6 +130,28 @@ std::optional<ASTNode> tryRebindExpressionChildren(
 			cast->cast_token()));
 	}
 
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(MemberAccessNode(
+			recurse(member_access->object()),
+			member_access->member_token(),
+			member_access->is_arrow()));
+	}
+
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(ArraySubscriptNode(
+			recurse(subscript->array_expr()),
+			recurse(subscript->index_expr()),
+			subscript->bracket_token()));
+	}
+
+	if (const auto* member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+			recurse(member_access->object()),
+			recurse(member_access->member_pointer()),
+			member_access->operator_token(),
+			member_access->is_arrow()));
+	}
+
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
 		ChunkedVector<ASTNode> rebound_args;
@@ -224,6 +246,23 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 			recurse(do_while_stmt.get_condition()));
 	}
 
+	if (node.is<RangedForStatementNode>()) {
+		const auto& ranged_for = node.as<RangedForStatementNode>();
+		std::optional<ASTNode> rebound_init;
+		if (ranged_for.has_init_statement()) {
+			rebound_init = recurse(ranged_for.get_init_statement().value());
+		}
+
+		ASTNode rebound_ranged_for = ASTNode::emplace_node<RangedForStatementNode>(
+			recurse(ranged_for.get_loop_variable_decl()),
+			recurse(ranged_for.get_range_expression()),
+			recurse(ranged_for.get_body_statement()),
+			std::move(rebound_init));
+		rebound_ranged_for.as<RangedForStatementNode>().set_resolved_dereference_function(
+			ranged_for.resolved_dereference_function());
+		return rebound_ranged_for;
+	}
+
 	if (node.is<SwitchStatementNode>()) {
 		const auto& switch_stmt = node.as<SwitchStatementNode>();
 		return ASTNode::emplace_node<SwitchStatementNode>(
@@ -259,6 +298,44 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 		return ASTNode::emplace_node<ThrowStatementNode>(
 			recurse(throw_stmt.expression().value()),
 			throw_stmt.throw_token());
+	}
+
+	if (node.is<CatchClauseNode>()) {
+		const auto& catch_clause = node.as<CatchClauseNode>();
+		std::optional<ASTNode> rebound_exception_decl;
+		if (catch_clause.exception_declaration().has_value()) {
+			rebound_exception_decl = recurse(catch_clause.exception_declaration().value());
+		}
+
+		if (catch_clause.is_catch_all()) {
+			return ASTNode::emplace_node<CatchClauseNode>(
+				recurse(catch_clause.body()),
+				catch_clause.catch_token(),
+				true);
+		}
+
+		return ASTNode::emplace_node<CatchClauseNode>(
+			std::move(rebound_exception_decl),
+			recurse(catch_clause.body()),
+			catch_clause.catch_token());
+	}
+
+	if (node.is<TryStatementNode>()) {
+		const auto& try_stmt = node.as<TryStatementNode>();
+		std::vector<ASTNode> rebound_catches;
+		rebound_catches.reserve(try_stmt.catch_clauses().size());
+		for (const auto& catch_clause : try_stmt.catch_clauses()) {
+			rebound_catches.push_back(recurse(catch_clause));
+		}
+
+		ASTNode rebound_try = ASTNode::emplace_node<TryStatementNode>(
+			recurse(try_stmt.try_block()),
+			std::move(rebound_catches),
+			try_stmt.try_token());
+		if (try_stmt.is_ctor_dtor_function_try()) {
+			rebound_try.as<TryStatementNode>().set_is_ctor_dtor_function_try();
+		}
+		return rebound_try;
 	}
 
 	if (node.is<VariableDeclarationNode>()) {
@@ -369,6 +446,17 @@ void visitAST(const ASTNode& node, Fn&& visitor) {
 			return;
 		}
 
+		if (current.is<RangedForStatementNode>()) {
+			const auto& ranged_for = current.as<RangedForStatementNode>();
+			if (ranged_for.has_init_statement()) {
+				visit_child(ranged_for.get_init_statement().value());
+			}
+			visit_child(ranged_for.get_loop_variable_decl());
+			visit_child(ranged_for.get_range_expression());
+			visit_child(ranged_for.get_body_statement());
+			return;
+		}
+
 		if (current.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = current.as<SwitchStatementNode>();
 			visit_child(switch_stmt.get_condition());
@@ -397,6 +485,24 @@ void visitAST(const ASTNode& node, Fn&& visitor) {
 			const auto& throw_stmt = current.as<ThrowStatementNode>();
 			if (!throw_stmt.is_rethrow()) {
 				visit_child(throw_stmt.expression().value());
+			}
+			return;
+		}
+
+		if (current.is<CatchClauseNode>()) {
+			const auto& catch_clause = current.as<CatchClauseNode>();
+			if (catch_clause.exception_declaration().has_value()) {
+				visit_child(catch_clause.exception_declaration().value());
+			}
+			visit_child(catch_clause.body());
+			return;
+		}
+
+		if (current.is<TryStatementNode>()) {
+			const auto& try_stmt = current.as<TryStatementNode>();
+			visit_child(try_stmt.try_block());
+			for (const auto& catch_clause : try_stmt.catch_clauses()) {
+				visit_child(catch_clause);
 			}
 			return;
 		}

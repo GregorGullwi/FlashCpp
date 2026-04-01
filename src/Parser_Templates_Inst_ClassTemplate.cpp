@@ -314,6 +314,20 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 		return staticMemberInitializerContainsFunctionCall(cast->expr());
 	}
 
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(member_access->object());
+	}
+
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(subscript->array_expr()) ||
+			   staticMemberInitializerContainsFunctionCall(subscript->index_expr());
+	}
+
+	if (const auto* member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(member_access->object()) ||
+			   staticMemberInitializerContainsFunctionCall(member_access->member_pointer());
+	}
+
 	return false;
 }
 

@@ -104,6 +104,71 @@ Using a `nullptr` return from the helper avoids the crash, which suggests the
 remaining bug is in RTTI / `dynamic_cast` lowering or runtime support rather
 than in the static-member rebinding change itself.
 
+## Static member initializers can lose nested helper calls under `.` / `[]`
+
+Template static member initializers still mishandle some nested forms where an
+unqualified same-class static helper call sits underneath member access or array
+subscript. The helper call should bind to the instantiated class member, but in
+practice the initializer can silently fold to zero instead of evaluating the
+helper result:
+
+```cpp
+template <typename T>
+struct Box {
+    struct Payload { int value; };
+    static constexpr Payload payload = { int(sizeof(T)) + 38 };
+    static constexpr const Payload& helper() { return payload; }
+
+    static constexpr int value = helper().value; // expected 42 for T=int
+};
+```
+
+Likewise:
+
+```cpp
+template <typename T>
+struct Box {
+    static constexpr int values[2] = { 40, int(sizeof(T)) + 38 };
+    static constexpr const int* helper() { return values; }
+
+    static constexpr int value = helper()[1]; // expected 42 for T=int
+};
+```
+
+When reproduced locally, the instantiated storage for `payload`/`values` was
+correct, but the synthesized `value` variable still emitted as zero. This
+suggests the remaining problem is deeper than AST child traversal alone: the
+constexpr/static-initializer path is still not preserving or resolving the
+nested helper call correctly once wrapped in `MemberAccessNode` or
+`ArraySubscriptNode`.
+
+## Delayed static member bodies inside `try` statements can still call pattern owners
+
+Delayed parsing of template static member function bodies still has a remaining
+resolution bug when the helper call lives inside a `try` statement. A body like:
+
+```cpp
+template <typename T>
+struct Box {
+    static int helper() { return int(sizeof(T)) + 38; }
+
+    static int value() {
+        try {
+            return helper();
+        } catch (...) {
+            return 0;
+        }
+    }
+};
+```
+
+can still lower the instantiated `Box<int>::value()` body with a relocation to
+`Box::helper()` (the pattern owner) instead of `Box$hash::helper()`, leading to
+link failures such as `undefined reference to 'Box::helper()'`.
+
+The AST traversal/rebinding helpers now recurse through `TryStatementNode`, but
+there is still a later owner-resolution gap in this path.
+
 ## Copying a same-type `dynamic_cast` result into another local pointer can drop the value
 
 While trying to add focused regression coverage for recent Windows pointer/local

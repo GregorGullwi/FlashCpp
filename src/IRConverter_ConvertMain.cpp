@@ -11523,17 +11523,18 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				SizedRegister{source_reg, 64, false},  // source: 64-bit register
 				SizedStackSlot{lhs_offset, op.lhs.size_in_bits.value, isSignedType(lhs_type)}  // dest: sized stack slot
 			);
-				// Clear any stale register associations for this stack offset
-			regAlloc.clearStackVariableAssociations(lhs_offset);
-			if (copied_indirect_info.has_value() && !op.dereference_rhs_references) {
-				setIndirectStorageInfo(
-					lhs_offset,
-					copied_indirect_info->value_type_index,
-					copied_indirect_info->value_size_bits.value,
-					copied_indirect_info->is_rvalue_reference,
-					copied_indirect_info->holds_address_only,
-					lhs_temp_for_metadata);
-			}
+		}
+
+		// Clear any stale register associations for this stack offset
+		regAlloc.clearStackVariableAssociations(lhs_offset);
+		if (copied_indirect_info.has_value() && !op.dereference_rhs_references) {
+			setIndirectStorageInfo(
+				lhs_offset,
+				copied_indirect_info->value_type_index,
+				copied_indirect_info->value_size_bits.value,
+				copied_indirect_info->is_rvalue_reference,
+				copied_indirect_info->holds_address_only,
+				lhs_temp_for_metadata);
 		}
 	}
 }
