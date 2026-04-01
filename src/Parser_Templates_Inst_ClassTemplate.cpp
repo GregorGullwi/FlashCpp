@@ -190,7 +190,179 @@ static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info) {
-	if (!struct_info || !node.has_value() || !node.is<ExpressionNode>()) {
+	if (!struct_info || !node.has_value()) {
+		return node;
+	}
+
+	if (node.is<BlockNode>()) {
+		ASTNode rebound_block = ASTNode::emplace_node<BlockNode>(BlockNode());
+		auto& rebound_block_ref = rebound_block.as<BlockNode>();
+		const auto& block = node.as<BlockNode>();
+		rebound_block_ref.set_synthetic_decl_list(block.is_synthetic_decl_list());
+		for (const auto& statement : block.get_statements()) {
+			rebound_block_ref.add_statement_node(
+				rebindStaticMemberInitializerFunctionCalls(statement, struct_info));
+		}
+		return rebound_block;
+	}
+
+	if (node.is<ReturnStatementNode>()) {
+		const auto& return_stmt = node.as<ReturnStatementNode>();
+		std::optional<ASTNode> rebound_expr;
+		if (return_stmt.expression().has_value()) {
+			rebound_expr = rebindStaticMemberInitializerFunctionCalls(
+				return_stmt.expression().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<ReturnStatementNode>(
+			std::move(rebound_expr),
+			return_stmt.return_token());
+	}
+
+	if (node.is<IfStatementNode>()) {
+		const auto& if_stmt = node.as<IfStatementNode>();
+		std::optional<ASTNode> rebound_else;
+		if (if_stmt.has_else()) {
+			rebound_else = rebindStaticMemberInitializerFunctionCalls(
+				if_stmt.get_else_statement().value(),
+				struct_info);
+		}
+		std::optional<ASTNode> rebound_init;
+		if (if_stmt.has_init()) {
+			rebound_init = rebindStaticMemberInitializerFunctionCalls(
+				if_stmt.get_init_statement().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<IfStatementNode>(
+			rebindStaticMemberInitializerFunctionCalls(if_stmt.get_condition(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(if_stmt.get_then_statement(), struct_info),
+			std::move(rebound_else),
+			std::move(rebound_init),
+			if_stmt.is_constexpr());
+	}
+
+	if (node.is<ForStatementNode>()) {
+		const auto& for_stmt = node.as<ForStatementNode>();
+		std::optional<ASTNode> rebound_init;
+		if (for_stmt.has_init()) {
+			rebound_init = rebindStaticMemberInitializerFunctionCalls(
+				for_stmt.get_init_statement().value(),
+				struct_info);
+		}
+		std::optional<ASTNode> rebound_condition;
+		if (for_stmt.has_condition()) {
+			rebound_condition = rebindStaticMemberInitializerFunctionCalls(
+				for_stmt.get_condition().value(),
+				struct_info);
+		}
+		std::optional<ASTNode> rebound_update;
+		if (for_stmt.has_update()) {
+			rebound_update = rebindStaticMemberInitializerFunctionCalls(
+				for_stmt.get_update_expression().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<ForStatementNode>(
+			std::move(rebound_init),
+			std::move(rebound_condition),
+			std::move(rebound_update),
+			rebindStaticMemberInitializerFunctionCalls(for_stmt.get_body_statement(), struct_info));
+	}
+
+	if (node.is<WhileStatementNode>()) {
+		const auto& while_stmt = node.as<WhileStatementNode>();
+		return ASTNode::emplace_node<WhileStatementNode>(
+			rebindStaticMemberInitializerFunctionCalls(while_stmt.get_condition(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(while_stmt.get_body_statement(), struct_info));
+	}
+
+	if (node.is<DoWhileStatementNode>()) {
+		const auto& do_while_stmt = node.as<DoWhileStatementNode>();
+		return ASTNode::emplace_node<DoWhileStatementNode>(
+			rebindStaticMemberInitializerFunctionCalls(do_while_stmt.get_body_statement(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(do_while_stmt.get_condition(), struct_info));
+	}
+
+	if (node.is<SwitchStatementNode>()) {
+		const auto& switch_stmt = node.as<SwitchStatementNode>();
+		return ASTNode::emplace_node<SwitchStatementNode>(
+			rebindStaticMemberInitializerFunctionCalls(switch_stmt.get_condition(), struct_info),
+			rebindStaticMemberInitializerFunctionCalls(switch_stmt.get_body(), struct_info));
+	}
+
+	if (node.is<CaseLabelNode>()) {
+		const auto& case_label = node.as<CaseLabelNode>();
+		std::optional<ASTNode> rebound_stmt;
+		if (case_label.has_statement()) {
+			rebound_stmt = rebindStaticMemberInitializerFunctionCalls(
+				case_label.get_statement().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<CaseLabelNode>(
+			rebindStaticMemberInitializerFunctionCalls(case_label.get_case_value(), struct_info),
+			std::move(rebound_stmt));
+	}
+
+	if (node.is<DefaultLabelNode>()) {
+		const auto& default_label = node.as<DefaultLabelNode>();
+		std::optional<ASTNode> rebound_stmt;
+		if (default_label.has_statement()) {
+			rebound_stmt = rebindStaticMemberInitializerFunctionCalls(
+				default_label.get_statement().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<DefaultLabelNode>(std::move(rebound_stmt));
+	}
+
+	if (node.is<ThrowStatementNode>()) {
+		const auto& throw_stmt = node.as<ThrowStatementNode>();
+		if (throw_stmt.is_rethrow()) {
+			return node;
+		}
+		return ASTNode::emplace_node<ThrowStatementNode>(
+			rebindStaticMemberInitializerFunctionCalls(throw_stmt.expression().value(), struct_info),
+			throw_stmt.throw_token());
+	}
+
+	if (node.is<VariableDeclarationNode>()) {
+		const auto& var_decl = node.as<VariableDeclarationNode>();
+		std::optional<ASTNode> rebound_initializer;
+		if (var_decl.initializer().has_value()) {
+			rebound_initializer = rebindStaticMemberInitializerFunctionCalls(
+				var_decl.initializer().value(),
+				struct_info);
+		}
+		ASTNode rebound_var = ASTNode::emplace_node<VariableDeclarationNode>(
+			var_decl.declaration_node(),
+			std::move(rebound_initializer),
+			var_decl.storage_class());
+		auto& rebound_var_ref = rebound_var.as<VariableDeclarationNode>();
+		rebound_var_ref.set_is_constexpr(var_decl.is_constexpr());
+		rebound_var_ref.set_is_constinit(var_decl.is_constinit());
+		if (var_decl.has_outer_template_bindings()) {
+			rebound_var_ref.set_outer_template_bindings(
+				var_decl.outer_template_param_names(),
+				var_decl.outer_template_args());
+		}
+		return rebound_var;
+	}
+
+	if (node.is<InitializerListNode>()) {
+		const auto& init_list = node.as<InitializerListNode>();
+		InitializerListNode rebound_list;
+		for (size_t i = 0; i < init_list.size(); ++i) {
+			ASTNode rebound_init = rebindStaticMemberInitializerFunctionCalls(
+				init_list.initializers()[i],
+				struct_info);
+			if (init_list.is_designated(i)) {
+				rebound_list.add_designated_initializer(init_list.member_name(i), rebound_init);
+			} else {
+				rebound_list.add_initializer(rebound_init);
+			}
+		}
+		return ASTNode::emplace_node<InitializerListNode>(rebound_list);
+	}
+
+	if (!node.is<ExpressionNode>()) {
 		return node;
 	}
 
@@ -292,6 +464,18 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				return rebound_call;
 			}
 		}
+	}
+
+	if (std::holds_alternative<ConstructorCallNode>(expr)) {
+		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : ctor_call.arguments()) {
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+		}
+		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
+			ctor_call.type_node(),
+			std::move(rebound_args),
+			ctor_call.called_from()));
 	}
 
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -1861,7 +2045,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 					if (orig_func.get_definition().has_value()) {
-						new_func_ref.set_definition(substituteTemplateParameters(*orig_func.get_definition(), template_params, template_args));
+						ASTNode substituted_body = substituteTemplateParameters(
+							*orig_func.get_definition(),
+							template_params,
+							template_args);
+						if (orig_func.is_static()) {
+							substituted_body = rebindStaticMemberInitializerFunctionCalls(
+								substituted_body,
+								struct_info.get());
+						}
+						new_func_ref.set_definition(substituted_body);
 					}
 					pack_param_info_.resize(saved_pack_info);
 
@@ -2668,6 +2861,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								template_params,
 								template_args_for_pattern);
 						}
+						if (orig_func.is_static()) {
+							const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
+							substituted_body = rebindStaticMemberInitializerFunctionCalls(
+								substituted_body,
+								rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+						}
 						new_func.set_definition(substituted_body);
 					} else if (orig_func.has_template_body_position()) {
 						// Member struct template partial specializations store function bodies
@@ -2710,6 +2909,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								*block_result.node(),
 								template_params,
 								template_args_for_pattern);
+							if (orig_func.is_static()) {
+								const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
+								substituted_body = rebindStaticMemberInitializerFunctionCalls(
+									substituted_body,
+									rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+							}
 							new_func.set_definition(substituted_body);
 						}
 

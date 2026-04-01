@@ -4,6 +4,239 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunctionForDelayedBody(
+	const StructTypeInfo* struct_info,
+	StringHandle function_name) {
+	if (!struct_info) {
+		return {nullptr, nullptr};
+	}
+
+	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
+		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
+		if (!candidate_struct) {
+			return {nullptr, nullptr};
+		}
+
+		for (const auto& member_func : candidate_struct->member_functions) {
+			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (func_decl.is_static()) {
+				return {&func_decl, candidate_struct};
+			}
+		}
+
+		return {nullptr, nullptr};
+	};
+
+	if (auto found = find_in_struct(struct_info); found.first) {
+		return found;
+	}
+
+	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
+	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
+		const TypeInfo* struct_type = struct_type_it->second;
+		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
+		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
+			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
+				return found;
+			}
+		}
+	}
+
+	return {nullptr, nullptr};
+}
+
+ASTNode rebindDelayedStaticMemberFunctionCalls(
+	const ASTNode& node,
+	const StructTypeInfo* struct_info) {
+	if (!struct_info || !node.has_value()) {
+		return node;
+	}
+
+	if (node.is<BlockNode>()) {
+		ASTNode rebound_block = ASTNode::emplace_node<BlockNode>(BlockNode());
+		auto& rebound_block_ref = rebound_block.as<BlockNode>();
+		const auto& block = node.as<BlockNode>();
+		rebound_block_ref.set_synthetic_decl_list(block.is_synthetic_decl_list());
+		for (const auto& statement : block.get_statements()) {
+			rebound_block_ref.add_statement_node(
+				rebindDelayedStaticMemberFunctionCalls(statement, struct_info));
+		}
+		return rebound_block;
+	}
+
+	if (node.is<ReturnStatementNode>()) {
+		const auto& return_stmt = node.as<ReturnStatementNode>();
+		FLASH_LOG(Templates, Debug, "delayed rebind return statement for struct ", struct_info->name);
+		std::optional<ASTNode> rebound_expr;
+		if (return_stmt.expression().has_value()) {
+			rebound_expr = rebindDelayedStaticMemberFunctionCalls(
+				return_stmt.expression().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<ReturnStatementNode>(
+			std::move(rebound_expr),
+			return_stmt.return_token());
+	}
+
+	if (node.is<IfStatementNode>()) {
+		const auto& if_stmt = node.as<IfStatementNode>();
+		std::optional<ASTNode> rebound_else;
+		if (if_stmt.has_else()) {
+			rebound_else = rebindDelayedStaticMemberFunctionCalls(
+				if_stmt.get_else_statement().value(),
+				struct_info);
+		}
+		std::optional<ASTNode> rebound_init;
+		if (if_stmt.has_init()) {
+			rebound_init = rebindDelayedStaticMemberFunctionCalls(
+				if_stmt.get_init_statement().value(),
+				struct_info);
+		}
+		return ASTNode::emplace_node<IfStatementNode>(
+			rebindDelayedStaticMemberFunctionCalls(if_stmt.get_condition(), struct_info),
+			rebindDelayedStaticMemberFunctionCalls(if_stmt.get_then_statement(), struct_info),
+			std::move(rebound_else),
+			std::move(rebound_init),
+			if_stmt.is_constexpr());
+	}
+
+	if (!node.is<ExpressionNode>()) {
+		return node;
+	}
+
+	const auto& expr = node.as<ExpressionNode>();
+	if (std::holds_alternative<FunctionCallNode>(expr)) {
+		const auto& call = std::get<FunctionCallNode>(expr);
+		FLASH_LOG(Templates, Debug, "delayed rebind function call ", call.function_declaration().identifier_token().value(), " from token ", call.called_from().value());
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : call.arguments()) {
+			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
+		}
+
+		const FunctionDeclarationNode* rebound_function = nullptr;
+		const StructTypeInfo* rebound_owner = nullptr;
+		if (call.called_from().kind().is_identifier()) {
+			auto [found_function, found_owner] =
+				findStaticMemberFunctionForDelayedBody(struct_info, call.called_from().handle());
+			rebound_function = found_function;
+			rebound_owner = found_owner;
+		}
+
+		const DeclarationNode& target_decl = rebound_function ? rebound_function->decl_node() : call.function_declaration();
+		ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
+			FunctionCallNode(target_decl, std::move(rebound_args), call.called_from()));
+		auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+		rebound_call_ref.set_indirect_call(call.is_indirect_call());
+
+		if (rebound_function && rebound_function->has_mangled_name()) {
+			rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+		} else if (call.has_mangled_name()) {
+			rebound_call_ref.set_mangled_name(call.mangled_name());
+		}
+		if (!rebound_function && call.has_qualified_name()) {
+			rebound_call_ref.set_qualified_name(call.qualified_name());
+		} else if (rebound_function && rebound_owner) {
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
+			rebound_call_ref.set_qualified_name(qualified_handle.view());
+		}
+
+		return rebound_call;
+	}
+
+	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		FLASH_LOG(Templates, Debug, "delayed rebind member function call ", member_call.function_declaration().decl_node().identifier_token().value(), " from token ", member_call.called_from().value());
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : member_call.arguments()) {
+			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
+		}
+
+		bool is_implicit_this_call = false;
+		if (member_call.object().is<ExpressionNode>()) {
+			const auto& object_expr = member_call.object().as<ExpressionNode>();
+			is_implicit_this_call =
+				std::holds_alternative<IdentifierNode>(object_expr) &&
+				std::get<IdentifierNode>(object_expr).name() == "this";
+		}
+
+		if (is_implicit_this_call) {
+			const FunctionDeclarationNode* rebound_function = nullptr;
+			const StructTypeInfo* rebound_owner = nullptr;
+			if (member_call.called_from().kind().is_identifier()) {
+				auto [found_function, found_owner] =
+					findStaticMemberFunctionForDelayedBody(struct_info, member_call.called_from().handle());
+				rebound_function = found_function;
+				rebound_owner = found_owner;
+			}
+
+			if (rebound_function || member_call.function_declaration().is_static()) {
+				const DeclarationNode& target_decl =
+					rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();
+				ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
+					FunctionCallNode(target_decl, std::move(rebound_args), member_call.called_from()));
+				auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+
+				if (rebound_function && rebound_function->has_mangled_name()) {
+					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+				} else if (member_call.function_declaration().has_mangled_name()) {
+					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
+				}
+				if (rebound_function && rebound_owner) {
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
+					rebound_call_ref.set_qualified_name(qualified_handle.view());
+				}
+
+				return rebound_call;
+			}
+		}
+	}
+
+	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
+		const auto& binop = std::get<BinaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(BinaryOperatorNode(
+			binop.get_token(),
+			rebindDelayedStaticMemberFunctionCalls(binop.get_lhs(), struct_info),
+			rebindDelayedStaticMemberFunctionCalls(binop.get_rhs(), struct_info)));
+	}
+
+	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
+		const auto& unop = std::get<UnaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(
+			unop.get_token(),
+			rebindDelayedStaticMemberFunctionCalls(unop.get_operand(), struct_info),
+			unop.is_prefix(),
+			unop.is_builtin_addressof()));
+	}
+
+	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
+		const auto& ternary = std::get<TernaryOperatorNode>(expr);
+		return ASTNode::emplace_node<ExpressionNode>(TernaryOperatorNode(
+			rebindDelayedStaticMemberFunctionCalls(ternary.condition(), struct_info),
+			rebindDelayedStaticMemberFunctionCalls(ternary.true_expr(), struct_info),
+			rebindDelayedStaticMemberFunctionCalls(ternary.false_expr(), struct_info),
+			ternary.get_token()));
+	}
+
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(StaticCastNode(
+			cast->target_type(),
+			rebindDelayedStaticMemberFunctionCalls(cast->expr(), struct_info),
+			cast->cast_token()));
+	}
+
+	return node;
+}
+
+} // namespace
+
 // Phase 5: Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
 void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index) {
@@ -317,13 +550,19 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 
 	// Set the body on the appropriate node
 	if (block_result.node().has_value()) {
-		out_body = *block_result.node();
+		ASTNode parsed_body = *block_result.node();
+		if (func_node && func_node->is_static()) {
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(delayed.struct_type_index)) {
+				parsed_body = rebindDelayedStaticMemberFunctionCalls(parsed_body, struct_info);
+			}
+		}
+		out_body = parsed_body;
 		if (delayed.is_constructor && delayed.ctor_node) {
-			delayed.ctor_node->set_definition(*block_result.node());
+			delayed.ctor_node->set_definition(parsed_body);
 		} else if (delayed.is_destructor && delayed.dtor_node) {
-			delayed.dtor_node->set_definition(*block_result.node());
+			delayed.dtor_node->set_definition(parsed_body);
 		} else if (delayed.func_node) {
-			delayed.func_node->set_definition(*block_result.node());
+			delayed.func_node->set_definition(parsed_body);
 			finalize_function_after_definition(*delayed.func_node, true);
 		}
 	}
