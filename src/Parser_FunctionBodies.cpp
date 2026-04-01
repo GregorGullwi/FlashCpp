@@ -7,51 +7,6 @@
 
 namespace {
 
-std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunctionForDelayedBody(
-	const StructTypeInfo* struct_info,
-	StringHandle function_name) {
-	if (!struct_info) {
-		return {nullptr, nullptr};
-	}
-
-	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
-		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
-		if (!candidate_struct) {
-			return {nullptr, nullptr};
-		}
-
-		for (const auto& member_func : candidate_struct->member_functions) {
-			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.is_static()) {
-				return {&func_decl, candidate_struct};
-			}
-		}
-
-		return {nullptr, nullptr};
-	};
-
-	if (auto found = find_in_struct(struct_info); found.first) {
-		return found;
-	}
-
-	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
-	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
-		const TypeInfo* struct_type = struct_type_it->second;
-		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
-		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
-				return found;
-			}
-		}
-	}
-
-	return {nullptr, nullptr};
-}
-
 ASTNode rebindDelayedStaticMemberFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info) {
@@ -79,11 +34,17 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 		for (const auto& arg : call.arguments()) {
 			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
 		}
+		std::vector<ASTNode> rebound_template_args =
+			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(
+				call,
+				[struct_info](const ASTNode& child) {
+					return rebindDelayedStaticMemberFunctionCalls(child, struct_info);
+				});
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
 		if (call.called_from().kind().is_identifier()) {
 			auto [found_function, found_owner] =
-				findStaticMemberFunctionForDelayedBody(struct_info, call.called_from().handle());
+				RebindStaticMemberAst::findStaticMemberFunction(struct_info, call.called_from().handle());
 			rebound_function = found_function;
 			(void)found_owner;
 		}
@@ -92,6 +53,9 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 		ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
 			FunctionCallNode(target_decl, std::move(rebound_args), call.called_from()));
 		auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+		if (!rebound_template_args.empty()) {
+			rebound_call_ref.set_template_arguments(std::move(rebound_template_args));
+		}
 		rebound_call_ref.set_indirect_call(call.is_indirect_call());
 
 		if (rebound_function && rebound_function->has_mangled_name()) {
@@ -125,7 +89,7 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 			const FunctionDeclarationNode* rebound_function = nullptr;
 			if (member_call.called_from().kind().is_identifier()) {
 				auto [found_function, found_owner] =
-					findStaticMemberFunctionForDelayedBody(struct_info, member_call.called_from().handle());
+					RebindStaticMemberAst::findStaticMemberFunction(struct_info, member_call.called_from().handle());
 				rebound_function = found_function;
 				(void)found_owner;
 			}

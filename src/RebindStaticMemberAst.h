@@ -5,6 +5,67 @@
 
 namespace RebindStaticMemberAst {
 
+inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunction(
+	const StructTypeInfo* struct_info,
+	StringHandle function_name) {
+	if (!struct_info) {
+		return {nullptr, nullptr};
+	}
+
+	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
+		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
+		if (!candidate_struct) {
+			return {nullptr, nullptr};
+		}
+
+		for (const auto& member_func : candidate_struct->member_functions) {
+			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+
+			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (func_decl.is_static()) {
+				return {&func_decl, candidate_struct};
+			}
+		}
+
+		return {nullptr, nullptr};
+	};
+
+	if (auto found = find_in_struct(struct_info); found.first) {
+		return found;
+	}
+
+	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
+	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
+		const TypeInfo* struct_type = struct_type_it->second;
+		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
+		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
+			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
+				return found;
+			}
+		}
+	}
+
+	return {nullptr, nullptr};
+}
+
+template <typename RecurseFn>
+std::vector<ASTNode> rebindFunctionCallTemplateArguments(
+	const FunctionCallNode& call,
+	RecurseFn&& recurse) {
+	std::vector<ASTNode> rebound_template_args;
+	if (!call.has_template_arguments()) {
+		return rebound_template_args;
+	}
+
+	rebound_template_args.reserve(call.template_arguments().size());
+	for (const auto& template_arg : call.template_arguments()) {
+		rebound_template_args.push_back(recurse(template_arg));
+	}
+	return rebound_template_args;
+}
+
 template <typename RecurseFn>
 std::optional<ASTNode> tryRebindNonExpressionNode(
 	const ASTNode& node,
