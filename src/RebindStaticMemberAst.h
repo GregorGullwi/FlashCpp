@@ -144,12 +144,12 @@ std::optional<ASTNode> tryRebindExpressionChildren(
 			subscript->bracket_token()));
 	}
 
-	if (const auto* member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+	if (const auto* ptr_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
 		return ASTNode::emplace_node<ExpressionNode>(PointerToMemberAccessNode(
-			recurse(member_access->object()),
-			recurse(member_access->member_pointer()),
-			member_access->operator_token(),
-			member_access->is_arrow()));
+			recurse(ptr_member_access->object()),
+			recurse(ptr_member_access->member_pointer()),
+			ptr_member_access->operator_token(),
+			ptr_member_access->is_arrow()));
 	}
 
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {

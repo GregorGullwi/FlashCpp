@@ -323,9 +323,9 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 			   staticMemberInitializerContainsFunctionCall(subscript->index_expr());
 	}
 
-	if (const auto* member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(member_access->object()) ||
-			   staticMemberInitializerContainsFunctionCall(member_access->member_pointer());
+	if (const auto* ptr_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(ptr_member_access->object()) ||
+			   staticMemberInitializerContainsFunctionCall(ptr_member_access->member_pointer());
 	}
 
 	return false;
