@@ -277,58 +277,9 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 		return false;
 	}
 
-	const auto& expr = node.as<ExpressionNode>();
-	if (std::holds_alternative<FunctionCallNode>(expr) ||
-		std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		return true;
-	}
-
-	if (const auto* binop = std::get_if<BinaryOperatorNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(binop->get_lhs()) ||
-			   staticMemberInitializerContainsFunctionCall(binop->get_rhs());
-	}
-
-	if (const auto* unop = std::get_if<UnaryOperatorNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(unop->get_operand());
-	}
-
-	if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(ternary->condition()) ||
-			   staticMemberInitializerContainsFunctionCall(ternary->true_expr()) ||
-			   staticMemberInitializerContainsFunctionCall(ternary->false_expr());
-	}
-
-	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(cast->expr());
-	}
-
-	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(cast->expr());
-	}
-
-	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(cast->expr());
-	}
-
-	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(cast->expr());
-	}
-
-	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(member_access->object());
-	}
-
-	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(subscript->array_expr()) ||
-			   staticMemberInitializerContainsFunctionCall(subscript->index_expr());
-	}
-
-	if (const auto* ptr_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
-		return staticMemberInitializerContainsFunctionCall(ptr_member_access->object()) ||
-			   staticMemberInitializerContainsFunctionCall(ptr_member_access->member_pointer());
-	}
-
-	return false;
+	return RebindStaticMemberAst::visitASTUntil(node, [](const ASTNode& current) {
+		return current.is<FunctionCallNode>() || current.is<MemberFunctionCallNode>();
+	});
 }
 
 static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
