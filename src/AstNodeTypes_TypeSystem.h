@@ -1022,9 +1022,9 @@ class FunctionDeclarationNode;
 struct StructMemberFunction {
 	StringHandle name;
 	ASTNode function_decl;  // FunctionDeclarationNode, ConstructorDeclarationNode, or DestructorDeclarationNode
-	AccessSpecifier access; // Access level (public/protected/private)
-	bool is_constructor;	 // True if this is a constructor
-	bool is_destructor;		// True if this is a destructor
+	AccessSpecifier access = AccessSpecifier::Public; // Access level (public/protected/private)
+	bool is_constructor = false;	 // True if this is a constructor
+	bool is_destructor = false;		// True if this is a destructor
 	OverloadableOperator operator_kind = OverloadableOperator::None; // None for non-operators; non-None implies operator overload
 	TypeIndex conversion_target_type;	 // Canonical target type for conversion operators; invalid otherwise
 
