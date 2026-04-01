@@ -872,10 +872,33 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// This is a user-defined type (struct/class)
 				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info && struct_info->has_vtable &&
-					struct_info->members.empty() &&
-					struct_info->base_classes.empty() &&
-					!struct_info->vtable_symbol.empty()) {
+				auto isStaticVptrInitEligible = [&]() {
+					if (!struct_info || !struct_info->has_vtable ||
+						!struct_info->base_classes.empty() ||
+						struct_info->vtable_symbol.empty()) {
+						return false;
+					}
+
+					for (const auto& member : struct_info->members) {
+						if (member.default_initializer.has_value()) {
+							return false;
+						}
+						if (member.type_index.is_valid()) {
+							if (const TypeInfo* member_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
+								if (member_type_info->getStructInfo()) {
+									return false;
+								}
+							}
+						}
+					}
+
+					return true;
+				};
+				// A default-constructed polymorphic object still needs its vptr initialized even
+				// when it has only zero-initializable data members, no bases, and no nested
+				// struct members/default member initializers. In that case we can materialize the
+				// object in static storage with a direct vtable relocation.
+				if (isStaticVptrInitEligible()) {
 					op.is_initialized = true;
 					op.init_data.resize(struct_info->total_size, 0);
 					op.reloc_target = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
