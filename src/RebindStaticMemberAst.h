@@ -376,246 +376,265 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 	return std::nullopt;
 }
 
-template <typename Fn>
-void visitAST(const ASTNode& node, Fn&& visitor) {
+namespace Detail {
+
+template <typename VisitorFn>
+bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 	if (!node.has_value()) {
-		return;
+		return false;
 	}
 
 	auto visit_child = [&](const ASTNode& child) {
-		visitAST(child, visitor);
+		return visitASTImpl(child, visitor);
 	};
 
 	auto visit_direct_node = [&](const ASTNode& current) {
-		visitor(current);
+		if (visitor(current)) {
+			return true;
+		}
 
 		if (current.is<BlockNode>()) {
 			for (const auto& statement : current.as<BlockNode>().get_statements()) {
-				visit_child(statement);
+				if (visit_child(statement)) {
+					return true;
+				}
 			}
-			return;
+			return false;
 		}
 
 		if (current.is<ReturnStatementNode>()) {
 			const auto& return_stmt = current.as<ReturnStatementNode>();
 			if (return_stmt.expression().has_value()) {
-				visit_child(return_stmt.expression().value());
+				return visit_child(return_stmt.expression().value());
 			}
-			return;
+			return false;
 		}
 
 		if (current.is<IfStatementNode>()) {
 			const auto& if_stmt = current.as<IfStatementNode>();
-			if (if_stmt.has_init()) {
-				visit_child(if_stmt.get_init_statement().value());
+			if (if_stmt.has_init() && visit_child(if_stmt.get_init_statement().value())) {
+				return true;
 			}
-			visit_child(if_stmt.get_condition());
-			visit_child(if_stmt.get_then_statement());
-			if (if_stmt.has_else()) {
-				visit_child(if_stmt.get_else_statement().value());
+			if (visit_child(if_stmt.get_condition())) {
+				return true;
 			}
-			return;
+			if (visit_child(if_stmt.get_then_statement())) {
+				return true;
+			}
+			if (if_stmt.has_else() && visit_child(if_stmt.get_else_statement().value())) {
+				return true;
+			}
+			return false;
 		}
 
 		if (current.is<ForStatementNode>()) {
 			const auto& for_stmt = current.as<ForStatementNode>();
-			if (for_stmt.has_init()) {
-				visit_child(for_stmt.get_init_statement().value());
+			if (for_stmt.has_init() && visit_child(for_stmt.get_init_statement().value())) {
+				return true;
 			}
-			if (for_stmt.has_condition()) {
-				visit_child(for_stmt.get_condition().value());
+			if (for_stmt.has_condition() && visit_child(for_stmt.get_condition().value())) {
+				return true;
 			}
-			if (for_stmt.has_update()) {
-				visit_child(for_stmt.get_update_expression().value());
+			if (for_stmt.has_update() && visit_child(for_stmt.get_update_expression().value())) {
+				return true;
 			}
-			visit_child(for_stmt.get_body_statement());
-			return;
+			return visit_child(for_stmt.get_body_statement());
 		}
 
 		if (current.is<WhileStatementNode>()) {
 			const auto& while_stmt = current.as<WhileStatementNode>();
-			visit_child(while_stmt.get_condition());
-			visit_child(while_stmt.get_body_statement());
-			return;
+			return visit_child(while_stmt.get_condition()) ||
+				   visit_child(while_stmt.get_body_statement());
 		}
 
 		if (current.is<DoWhileStatementNode>()) {
 			const auto& do_while_stmt = current.as<DoWhileStatementNode>();
-			visit_child(do_while_stmt.get_body_statement());
-			visit_child(do_while_stmt.get_condition());
-			return;
+			return visit_child(do_while_stmt.get_body_statement()) ||
+				   visit_child(do_while_stmt.get_condition());
 		}
 
 		if (current.is<RangedForStatementNode>()) {
 			const auto& ranged_for = current.as<RangedForStatementNode>();
-			if (ranged_for.has_init_statement()) {
-				visit_child(ranged_for.get_init_statement().value());
+			if (ranged_for.has_init_statement() && visit_child(ranged_for.get_init_statement().value())) {
+				return true;
 			}
-			visit_child(ranged_for.get_loop_variable_decl());
-			visit_child(ranged_for.get_range_expression());
-			visit_child(ranged_for.get_body_statement());
-			return;
+			return visit_child(ranged_for.get_loop_variable_decl()) ||
+				   visit_child(ranged_for.get_range_expression()) ||
+				   visit_child(ranged_for.get_body_statement());
 		}
 
 		if (current.is<SwitchStatementNode>()) {
 			const auto& switch_stmt = current.as<SwitchStatementNode>();
-			visit_child(switch_stmt.get_condition());
-			visit_child(switch_stmt.get_body());
-			return;
+			return visit_child(switch_stmt.get_condition()) ||
+				   visit_child(switch_stmt.get_body());
 		}
 
 		if (current.is<CaseLabelNode>()) {
 			const auto& case_label = current.as<CaseLabelNode>();
-			visit_child(case_label.get_case_value());
-			if (case_label.has_statement()) {
-				visit_child(case_label.get_statement().value());
+			if (visit_child(case_label.get_case_value())) {
+				return true;
 			}
-			return;
+			return case_label.has_statement() &&
+				   visit_child(case_label.get_statement().value());
 		}
 
 		if (current.is<DefaultLabelNode>()) {
 			const auto& default_label = current.as<DefaultLabelNode>();
-			if (default_label.has_statement()) {
-				visit_child(default_label.get_statement().value());
-			}
-			return;
+			return default_label.has_statement() &&
+				   visit_child(default_label.get_statement().value());
 		}
 
 		if (current.is<ThrowStatementNode>()) {
 			const auto& throw_stmt = current.as<ThrowStatementNode>();
-			if (!throw_stmt.is_rethrow()) {
-				visit_child(throw_stmt.expression().value());
-			}
-			return;
+			return !throw_stmt.is_rethrow() && throw_stmt.expression().has_value() &&
+				   visit_child(throw_stmt.expression().value());
 		}
 
 		if (current.is<CatchClauseNode>()) {
 			const auto& catch_clause = current.as<CatchClauseNode>();
-			if (catch_clause.exception_declaration().has_value()) {
-				visit_child(catch_clause.exception_declaration().value());
+			if (catch_clause.exception_declaration().has_value() &&
+				visit_child(catch_clause.exception_declaration().value())) {
+				return true;
 			}
-			visit_child(catch_clause.body());
-			return;
+			return visit_child(catch_clause.body());
 		}
 
 		if (current.is<TryStatementNode>()) {
 			const auto& try_stmt = current.as<TryStatementNode>();
-			visit_child(try_stmt.try_block());
-			for (const auto& catch_clause : try_stmt.catch_clauses()) {
-				visit_child(catch_clause);
+			if (visit_child(try_stmt.try_block())) {
+				return true;
 			}
-			return;
+			for (const auto& catch_clause : try_stmt.catch_clauses()) {
+				if (visit_child(catch_clause)) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		if (current.is<VariableDeclarationNode>()) {
 			const auto& var_decl = current.as<VariableDeclarationNode>();
-			if (var_decl.initializer().has_value()) {
-				visit_child(var_decl.initializer().value());
-			}
-			return;
+			return var_decl.initializer().has_value() &&
+				   visit_child(var_decl.initializer().value());
 		}
 
 		if (current.is<InitializerListNode>()) {
 			const auto& init_list = current.as<InitializerListNode>();
 			for (const auto& initializer : init_list.initializers()) {
-				visit_child(initializer);
+				if (visit_child(initializer)) {
+					return true;
+				}
 			}
-			return;
+			return false;
 		}
 
 		if (current.is<BinaryOperatorNode>()) {
 			const auto& binop = current.as<BinaryOperatorNode>();
-			visit_child(binop.get_lhs());
-			visit_child(binop.get_rhs());
-			return;
+			return visit_child(binop.get_lhs()) ||
+				   visit_child(binop.get_rhs());
 		}
 
 		if (current.is<UnaryOperatorNode>()) {
-			visit_child(current.as<UnaryOperatorNode>().get_operand());
-			return;
+			return visit_child(current.as<UnaryOperatorNode>().get_operand());
 		}
 
 		if (current.is<TernaryOperatorNode>()) {
 			const auto& ternary = current.as<TernaryOperatorNode>();
-			visit_child(ternary.condition());
-			visit_child(ternary.true_expr());
-			visit_child(ternary.false_expr());
-			return;
+			return visit_child(ternary.condition()) ||
+				   visit_child(ternary.true_expr()) ||
+				   visit_child(ternary.false_expr());
 		}
 
 		if (current.is<StaticCastNode>()) {
-			visit_child(current.as<StaticCastNode>().expr());
-			return;
+			return visit_child(current.as<StaticCastNode>().expr());
 		}
 
 		if (current.is<DynamicCastNode>()) {
-			visit_child(current.as<DynamicCastNode>().expr());
-			return;
+			return visit_child(current.as<DynamicCastNode>().expr());
 		}
 
 		if (current.is<ConstCastNode>()) {
-			visit_child(current.as<ConstCastNode>().expr());
-			return;
+			return visit_child(current.as<ConstCastNode>().expr());
 		}
 
 		if (current.is<ReinterpretCastNode>()) {
-			visit_child(current.as<ReinterpretCastNode>().expr());
-			return;
+			return visit_child(current.as<ReinterpretCastNode>().expr());
 		}
 
 		if (current.is<FunctionCallNode>()) {
 			for (const auto& argument : current.as<FunctionCallNode>().arguments()) {
-				visit_child(argument);
+				if (visit_child(argument)) {
+					return true;
+				}
 			}
-			return;
+			return false;
 		}
 
 		if (current.is<MemberFunctionCallNode>()) {
 			const auto& member_call = current.as<MemberFunctionCallNode>();
-			visit_child(member_call.object());
-			for (const auto& argument : member_call.arguments()) {
-				visit_child(argument);
+			if (visit_child(member_call.object())) {
+				return true;
 			}
-			return;
+			for (const auto& argument : member_call.arguments()) {
+				if (visit_child(argument)) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		if (current.is<ConstructorCallNode>()) {
 			for (const auto& argument : current.as<ConstructorCallNode>().arguments()) {
-				visit_child(argument);
+				if (visit_child(argument)) {
+					return true;
+				}
 			}
-			return;
+			return false;
 		}
 
 		if (current.is<MemberAccessNode>()) {
-			visit_child(current.as<MemberAccessNode>().object());
-			return;
+			return visit_child(current.as<MemberAccessNode>().object());
 		}
 
 		if (current.is<ArraySubscriptNode>()) {
 			const auto& subscript = current.as<ArraySubscriptNode>();
-			visit_child(subscript.array_expr());
-			visit_child(subscript.index_expr());
-			return;
+			return visit_child(subscript.array_expr()) ||
+				   visit_child(subscript.index_expr());
 		}
 
 		if (current.is<PointerToMemberAccessNode>()) {
 			const auto& member_access = current.as<PointerToMemberAccessNode>();
-			visit_child(member_access.object());
-			visit_child(member_access.member_pointer());
-			return;
+			return visit_child(member_access.object()) ||
+				   visit_child(member_access.member_pointer());
 		}
+
+		return false;
 	};
 
 	if (node.is<ExpressionNode>()) {
-		std::visit(
+		return std::visit(
 			[&](const auto& expr_node) {
-				visit_direct_node(ASTNode(&expr_node));
+				return visit_direct_node(ASTNode(&expr_node));
 			},
 			node.as<ExpressionNode>());
-		return;
 	}
 
-	visit_direct_node(node);
+	return visit_direct_node(node);
+}
+
+} // namespace Detail
+
+template <typename Fn>
+void visitAST(const ASTNode& node, Fn&& visitor) {
+	Detail::visitASTImpl(node, [&](const ASTNode& current) {
+		visitor(current);
+		return false;
+	});
+}
+
+template <typename PredicateFn>
+bool visitASTUntil(const ASTNode& node, PredicateFn&& predicate) {
+	return Detail::visitASTImpl(node, std::forward<PredicateFn>(predicate));
 }
 
 } // namespace RebindStaticMemberAst
