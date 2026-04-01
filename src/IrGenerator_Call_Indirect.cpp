@@ -673,6 +673,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 	const StructMemberFunction* called_member_func = nullptr;
 	const StructTypeInfo* struct_info = nullptr;
+	const FunctionDeclarationNode* materialized_member_func_decl = nullptr;
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(object_type.type_index())) {
 		struct_info = type_info->getStructInfo();
@@ -754,6 +755,70 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					}
 				};
 				searchBaseClasses(searchBaseClasses, struct_info);
+			}
+
+			auto buildNamespaceStack = [](std::string_view qualified_name, std::vector<std::string>& out) {
+				size_t ns_end = qualified_name.rfind("::");
+				if (ns_end == std::string_view::npos)
+					return;
+				std::string_view ns_part = qualified_name.substr(0, ns_end);
+				size_t start = 0;
+				while (start < ns_part.size()) {
+					size_t pos = ns_part.find("::", start);
+					if (pos == std::string_view::npos) {
+						out.emplace_back(ns_part.substr(start));
+						break;
+					}
+					out.emplace_back(ns_part.substr(start, pos - start));
+					start = pos + 2;
+				}
+			};
+
+			auto instantiateLazySelectedMember = [&](StringHandle owner_name, StringHandle member_name, bool is_const_member) {
+				if (!parser_ ||
+					!type_info->isTemplateInstantiation() ||
+					!LazyMemberInstantiationRegistry::getInstance().needsInstantiation(owner_name, member_name, is_const_member)) {
+					return;
+				}
+				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(
+					owner_name,
+					member_name,
+					is_const_member);
+				if (!lazy_info_opt.has_value()) {
+					return;
+				}
+				auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
+					owner_name,
+					member_name,
+					lazy_info_opt->identity.is_const_method);
+				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+					materialized_member_func_decl = &instantiated_func->as<FunctionDeclarationNode>();
+					DeferredMemberFunctionInfo deferred_info;
+					deferred_info.struct_name = owner_name;
+					deferred_info.function_node = *instantiated_func;
+					buildNamespaceStack(StringTable::getStringView(owner_name), deferred_info.namespace_stack);
+					deferred_member_functions_.push_back(std::move(deferred_info));
+				}
+			};
+
+			if (!func_decl.get_definition().has_value()) {
+				instantiateLazySelectedMember(
+					type_info->name(),
+					func_decl_node.identifier_token().handle(),
+					func_decl.is_const_member_function());
+			}
+
+			if (parser_ &&
+				called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+				const auto& selected_member_func = called_member_func->function_decl.as<FunctionDeclarationNode>();
+				if (!selected_member_func.get_definition().has_value()) {
+					instantiateLazySelectedMember(
+						type_info->name(),
+						called_member_func->getName(),
+						called_member_func->is_const());
+				}
 			}
 
 			// Use declaring_struct instead of struct_info for mangled name generation
@@ -1148,7 +1213,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				// embedded func_decl may still reference the unsubstituted pattern declaration
 				// (e.g., with T& instead of int&) because MemberFunctionCallNode stores a
 				// const reference that cannot be rebound during template substitution.
-				const FunctionDeclarationNode* func_for_mangling = &func_decl;
+				const FunctionDeclarationNode* func_for_mangling =
+					materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
 				if (called_member_func &&
 					called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 					func_for_mangling = &called_member_func->function_decl.as<FunctionDeclarationNode>();
@@ -1409,7 +1475,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// carries any substituted default arguments from the outer class template
 		// bindings. struct_info may still point at the original uninstantiated
 		// template declaration.
-		const FunctionDeclarationNode* actual_func_decl = &func_decl;
+		const FunctionDeclarationNode* actual_func_decl =
+			materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
 		if (called_member_func &&
 			called_member_func->function_decl.is<FunctionDeclarationNode>()) {
 			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();

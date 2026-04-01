@@ -495,7 +495,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						// to name-based lookup because they are not represented by operator_kind.
 						const bool matches_lookup =
 							(desired_operator_kind != OverloadableOperator::None)
-								? (member_func.operator_kind == desired_operator_kind)
+								? (isAssignOperator(desired_operator_kind)
+									   ? isAssignOperator(member_func.operator_kind)
+									   : member_func.operator_kind == desired_operator_kind)
 								: (member_func.getName() == operator_name_handle);
 						if (!matches_lookup || !member_func.function_decl.is<FunctionDeclarationNode>()) {
 							continue;
