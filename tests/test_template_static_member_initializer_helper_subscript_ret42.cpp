@@ -10,5 +10,11 @@ struct Box {
 };
 
 int main() {
-	return Box<int>::value;
+	if (Box<int>::value != 42) {
+		return 1;
+	}
+	if (Box<char>::value != 39) {
+		return 2;
+	}
+	return 42;
 }

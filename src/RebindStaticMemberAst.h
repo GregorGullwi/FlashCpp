@@ -19,7 +19,7 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 			return {nullptr, nullptr};
 		}
 
-		const FunctionDeclarationNode* fallback_function = nullptr;
+		const FunctionDeclarationNode* function_decl_without_definition = nullptr;
 		for (const auto& member_func : candidate_struct->member_functions) {
 			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
 				continue;
@@ -30,13 +30,15 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 				if (func_decl.get_definition().has_value()) {
 					return {&func_decl, candidate_struct};
 				}
-				if (!fallback_function) {
-					fallback_function = &func_decl;
+				if (!function_decl_without_definition) {
+					function_decl_without_definition = &func_decl;
 				}
 			}
 		}
 
-		return {fallback_function, fallback_function ? candidate_struct : nullptr};
+		return {
+			function_decl_without_definition,
+			function_decl_without_definition ? candidate_struct : nullptr};
 	};
 
 	if (auto found = find_in_struct(struct_info); found.first) {
