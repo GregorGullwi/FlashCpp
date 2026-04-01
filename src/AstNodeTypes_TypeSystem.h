@@ -256,10 +256,11 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 }
 
 inline OverloadableOperator overloadableOperatorFromFunctionName(std::string_view function_name) {
-	if (!function_name.starts_with("operator")) {
+	static constexpr std::string_view kOperatorPrefix = "operator";
+	if (!function_name.starts_with(kOperatorPrefix)) {
 		return OverloadableOperator::None;
 	}
-	std::string_view suffix = function_name.substr(8);
+	std::string_view suffix = function_name.substr(kOperatorPrefix.size());
 	if (!suffix.empty() && suffix[0] == ' ') {
 		suffix.remove_prefix(1);
 	}

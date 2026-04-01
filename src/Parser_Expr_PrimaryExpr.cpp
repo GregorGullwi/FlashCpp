@@ -490,6 +490,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					const OverloadableOperator desired_operator_kind = overloadableOperatorFromFunctionName(operator_name);
 					// Search for the operator member function
 					for (auto& member_func : type_info->struct_info_->member_functions) {
+						// Overloadable operators have canonical operator_kind metadata.
+						// Conversion operators and other non-overloadable forms still fall back
+						// to name-based lookup because they are not represented by operator_kind.
 						const bool matches_lookup =
 							(desired_operator_kind != OverloadableOperator::None)
 								? (member_func.operator_kind == desired_operator_kind)
