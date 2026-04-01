@@ -117,6 +117,28 @@ member access with the real owner struct, but the underlying inherited-static
 definition path in `generateStaticMemberDeclarations()` still deserves cleanup
 so template-base aliases are emitted only under the instantiated owner.
 
+## Delayed static member function bodies can mis-handle same-class member template calls
+
+Explicit template arguments on rebuilt `FunctionCallNode`s are now preserved for
+delayed static member function bodies, but there is still a nearby unresolved
+bug for same-class member template helper calls in that path. While adding
+regression coverage for delayed-body rebinding, the following pattern returned
+the wrong result instead of calling the class's own member template:
+
+```cpp
+template <typename T>
+struct Box {
+    template <typename U>
+    static int helper() { return int(sizeof(T) + sizeof(U)) + 40; }
+
+    static int value() { return helper<int>(); }
+};
+```
+
+This indicates that delayed static-member-body rebinding / later resolution for
+class-scoped member template calls is still incomplete, even though equivalent
+non-template helper calls and non-member template calls are now covered.
+
 ## `constexpr`/`consteval` enforcement — partially implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;

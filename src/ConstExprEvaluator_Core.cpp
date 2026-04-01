@@ -2963,12 +2963,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		constexpr bool require_static_member = true;
 		auto current_match = find_current_struct_member_function_candidate(
 			func_name_handle,
 			arguments.size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
-			false,
+			require_static_member,
 			true);
 		if (current_match.ambiguous) {
 			return EvalResult::error("Ambiguous static member function overload in constant expression");

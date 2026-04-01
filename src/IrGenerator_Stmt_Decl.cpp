@@ -1848,6 +1848,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					throw CompileError("Cannot instantiate abstract class");
 				}
 
+				// needs_default_constructor covers implicit default constructors
+				// synthesized by generateTrivialDefaultConstructors() for template-
+				// instantiated structs that have member default initializers but no
+				// explicit user-declared constructors.
 				if (type_info->struct_info_->hasAnyConstructor() || type_info->struct_info_->needs_default_constructor) {
 					FLASH_LOG(Codegen, Debug, "Struct ", type_info->name(), " has constructor or needs default constructor");
 						// Check if we have a copy/move initializer like "Tiny t2 = t;"

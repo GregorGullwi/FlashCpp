@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
@@ -78,51 +79,6 @@ static StringHandle computeInstantiatedLookupName(
 	return original_name;
 }
 
-static std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunctionForInitializer(
-	const StructTypeInfo* struct_info,
-	StringHandle function_name) {
-	if (!struct_info) {
-		return {nullptr, nullptr};
-	}
-
-	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
-		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
-		if (!candidate_struct) {
-			return {nullptr, nullptr};
-		}
-
-		for (const auto& member_func : candidate_struct->member_functions) {
-			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.is_static()) {
-				return {&func_decl, candidate_struct};
-			}
-		}
-
-		return {nullptr, nullptr};
-	};
-
-	if (auto found = find_in_struct(struct_info); found.first) {
-		return found;
-	}
-
-	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
-	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
-		const TypeInfo* struct_type = struct_type_it->second;
-		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
-		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
-				return found;
-			}
-		}
-	}
-
-	return {nullptr, nullptr};
-}
-
 static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	int size_in_bytes = get_type_size_bits(arg.category()) / 8;
 	if (size_in_bytes > 0) {
@@ -189,7 +145,20 @@ static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
 	const StructTypeInfo* struct_info) {
-	if (!struct_info || !node.has_value() || !node.is<ExpressionNode>()) {
+	if (!struct_info || !node.has_value()) {
+		return node;
+	}
+
+	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
+			node,
+			[struct_info](const ASTNode& child) {
+				return rebindStaticMemberInitializerFunctionCalls(child, struct_info);
+			});
+		rebound_node.has_value()) {
+		return std::move(rebound_node.value());
+	}
+
+	if (!node.is<ExpressionNode>()) {
 		return node;
 	}
 
@@ -202,19 +171,18 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
 		}
 
-		std::vector<ASTNode> rebound_template_args;
-		if (call.has_template_arguments()) {
-			rebound_template_args.reserve(call.template_arguments().size());
-			for (const auto& template_arg : call.template_arguments()) {
-				rebound_template_args.push_back(rebindStaticMemberInitializerFunctionCalls(template_arg, struct_info));
-			}
-		}
+		std::vector<ASTNode> rebound_template_args =
+			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(
+				call,
+				[struct_info](const ASTNode& child) {
+					return rebindStaticMemberInitializerFunctionCalls(child, struct_info);
+				});
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
 		const StructTypeInfo* rebound_owner = nullptr;
 		if (call.called_from().kind().is_identifier()) {
 			auto [found_function, found_owner] =
-				findStaticMemberFunctionForInitializer(struct_info, call.called_from().handle());
+				RebindStaticMemberAst::findStaticMemberFunction(struct_info, call.called_from().handle());
 			rebound_function = found_function;
 			rebound_owner = found_owner;
 		}
@@ -265,7 +233,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			const StructTypeInfo* rebound_owner = nullptr;
 			if (member_call.called_from().kind().is_identifier()) {
 				auto [found_function, found_owner] =
-					findStaticMemberFunctionForInitializer(struct_info, member_call.called_from().handle());
+					RebindStaticMemberAst::findStaticMemberFunction(struct_info, member_call.called_from().handle());
 				rebound_function = found_function;
 				rebound_owner = found_owner;
 			}
@@ -291,6 +259,18 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				return rebound_call;
 			}
 		}
+	}
+
+	if (std::holds_alternative<ConstructorCallNode>(expr)) {
+		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : ctor_call.arguments()) {
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+		}
+		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
+			ctor_call.type_node(),
+			std::move(rebound_args),
+			ctor_call.called_from()));
 	}
 
 	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
@@ -328,6 +308,199 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	}
 
 	return node;
+}
+
+static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
+	if (!node.has_value() || !node.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const auto& expr = node.as<ExpressionNode>();
+	if (std::holds_alternative<FunctionCallNode>(expr) ||
+		std::holds_alternative<MemberFunctionCallNode>(expr)) {
+		return true;
+	}
+
+	if (const auto* binop = std::get_if<BinaryOperatorNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(binop->get_lhs()) ||
+			   staticMemberInitializerContainsFunctionCall(binop->get_rhs());
+	}
+
+	if (const auto* unop = std::get_if<UnaryOperatorNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(unop->get_operand());
+	}
+
+	if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(ternary->condition()) ||
+			   staticMemberInitializerContainsFunctionCall(ternary->true_expr()) ||
+			   staticMemberInitializerContainsFunctionCall(ternary->false_expr());
+	}
+
+	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	return false;
+}
+
+static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
+	const SymbolTable& symbol_table,
+	Parser* parser,
+	const StructTypeInfo* struct_info,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	ConstExpr::EvaluationContext eval_ctx(symbol_table);
+	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+	eval_ctx.parser = parser;
+	eval_ctx.struct_info = struct_info;
+	if (struct_info && struct_info->own_type_index_.has_value()) {
+		eval_ctx.struct_type_index = *struct_info->own_type_index_;
+	}
+	eval_ctx.template_args = template_args;
+	eval_ctx.template_param_names.reserve(template_params.size());
+	for (const auto& template_param : template_params) {
+		if (template_param.is<TemplateParameterNode>()) {
+			eval_ctx.template_param_names.push_back(
+				template_param.as<TemplateParameterNode>().name());
+		}
+	}
+	return eval_ctx;
+}
+
+static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitializer(
+	const ConstExpr::EvalResult& eval_result,
+	TypeIndex type_index,
+	size_t size_in_bytes,
+	ReferenceQualifier reference_qualifier,
+	int pointer_depth) {
+	if (!eval_result.success() || size_in_bytes == 0 ||
+		reference_qualifier != ReferenceQualifier::None || pointer_depth != 0 ||
+		eval_result.pointer_to_var.isValid()) {
+		return std::nullopt;
+	}
+
+	NormalizedInitializer normalized;
+	normalized.kind = NormalizedInitializer::Kind::ConstantBytes;
+	normalized.constant_bytes.reserve(size_in_bytes);
+
+	auto append_bytes = [&normalized](unsigned long long value, size_t byte_count) {
+		for (size_t i = 0; i < byte_count; ++i) {
+			normalized.constant_bytes.push_back(
+				static_cast<char>((value >> (i * 8)) & 0xFF));
+		}
+	};
+	auto append_object_bytes = [&normalized](const auto& object_value) {
+		const auto* raw_bytes = reinterpret_cast<const unsigned char*>(&object_value);
+		for (size_t i = 0; i < sizeof(object_value); ++i) {
+			normalized.constant_bytes.push_back(static_cast<char>(raw_bytes[i]));
+		}
+	};
+
+	switch (type_index.category()) {
+	case TypeCategory::Float: {
+		if (size_in_bytes != sizeof(float)) {
+			return std::nullopt;
+		}
+		float value = static_cast<float>(eval_result.as_double());
+		append_object_bytes(value);
+		break;
+	}
+	case TypeCategory::Double: {
+		if (size_in_bytes != sizeof(double)) {
+			return std::nullopt;
+		}
+		double value = eval_result.as_double();
+		append_object_bytes(value);
+		break;
+	}
+	case TypeCategory::LongDouble: {
+		// EvalResult stores floating values as double, so only materialize
+		// long double bytes early on targets where long double matches double.
+		// Otherwise return nullopt here and leave long double materialization to
+		// the later code path that already handles target-specific storage.
+		const bool has_expected_long_double_size = size_in_bytes == sizeof(long double);
+		const bool long_double_matches_double_representation =
+			sizeof(long double) == sizeof(double);
+		if (!has_expected_long_double_size ||
+			!long_double_matches_double_representation) {
+			return std::nullopt;
+		}
+		long double value = static_cast<long double>(eval_result.as_double());
+		append_object_bytes(value);
+		break;
+	}
+	default:
+		if (is_struct_type(type_index.category())) {
+			return std::nullopt;
+		}
+		append_bytes(eval_result.as_uint_raw(), size_in_bytes);
+		break;
+	}
+
+	if (normalized.constant_bytes.empty()) {
+		return std::nullopt;
+	}
+
+	return normalized;
+}
+
+static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMemberInitializer(
+	std::optional<ASTNode>& initializer,
+	const SymbolTable& symbol_table,
+	Parser* parser,
+	const StructTypeInfo* struct_info,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args,
+	TypeIndex type_index,
+	size_t size_in_bytes,
+	ReferenceQualifier reference_qualifier,
+	int pointer_depth) {
+	if (!initializer.has_value()) {
+		return std::nullopt;
+	}
+
+	initializer = rebindStaticMemberInitializerFunctionCalls(
+		initializer.value(),
+		struct_info);
+	if (!initializer->is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const bool contains_function_call =
+		staticMemberInitializerContainsFunctionCall(*initializer);
+	ConstExpr::EvaluationContext eval_ctx = makeStaticMemberInitializerEvaluationContext(
+		symbol_table,
+		parser,
+		struct_info,
+		template_params,
+		template_args);
+	auto eval_result = ConstExpr::Evaluator::evaluate(*initializer, eval_ctx);
+	if (!eval_result.success()) {
+		return std::nullopt;
+	}
+
+	if (is_integer_type(type_index.category()) || type_index.category() == TypeCategory::Enum) {
+		int64_t val = eval_result.as_int();
+		std::string_view val_str = StringBuilder().append(val).commit();
+		Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+		unsigned char literal_size = static_cast<unsigned char>(size_in_bytes * 8);
+		TypeCategory literal_type = type_index.category() == TypeCategory::Enum
+										? TypeCategory::Int
+										: type_index.category();
+		const char* log_message = contains_function_call
+									 ? "Early-normalized function-call static member initializer to: "
+									 : "Early-normalized static member initializer to: ";
+		initializer = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(num_token, static_cast<unsigned long long>(val), literal_type, TypeQualifier::None, literal_size));
+		FLASH_LOG(Templates, Debug, log_message, val);
+	}
+
+	return tryBuildConstantStaticMemberInitializer(
+		eval_result,
+		type_index,
+		size_in_bytes,
+		reference_qualifier,
+		pointer_depth);
 }
 
 std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager) {
@@ -1667,7 +1840,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					new_func_ref.set_is_const_member_function(mem_func.is_const());
 					new_func_ref.set_is_volatile_member_function(mem_func.is_volatile());
 					if (orig_func.get_definition().has_value()) {
-						new_func_ref.set_definition(substituteTemplateParameters(*orig_func.get_definition(), template_params, template_args));
+						ASTNode substituted_body = substituteTemplateParameters(
+							*orig_func.get_definition(),
+							template_params,
+							template_args);
+						if (orig_func.is_static()) {
+							substituted_body = rebindStaticMemberInitializerFunctionCalls(
+								substituted_body,
+								struct_info.get());
+						}
+						new_func_ref.set_definition(substituted_body);
 					}
 					pack_param_info_.resize(saved_pack_info);
 
@@ -2474,6 +2656,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								template_params,
 								template_args_for_pattern);
 						}
+						if (orig_func.is_static()) {
+							const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
+							substituted_body = rebindStaticMemberInitializerFunctionCalls(
+								substituted_body,
+								rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+						}
 						new_func.set_definition(substituted_body);
 					} else if (orig_func.has_template_body_position()) {
 						// Member struct template partial specializations store function bodies
@@ -2516,6 +2704,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								*block_result.node(),
 								template_params,
 								template_args_for_pattern);
+							if (orig_func.is_static()) {
+								const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
+								substituted_body = rebindStaticMemberInitializerFunctionCalls(
+									substituted_body,
+									rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+							}
 							new_func.set_definition(substituted_body);
 						}
 
@@ -4474,36 +4668,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
-				if (substituted_initializer.has_value()) {
-					substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
-						substituted_initializer.value(),
-						struct_info.get());
-				}
-
-				// Try to evaluate the substituted expression to a constant value
-				// This turns expressions like "1 + 2" into a single NumericLiteralNode(3)
-				if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					eval_ctx.parser = this;
-					eval_ctx.struct_info = struct_info.get();
-					eval_ctx.template_args = template_args_to_use;
-					eval_ctx.template_param_names.reserve(template_params.size());
-					for (const auto& template_param : template_params) {
-						if (template_param.is<TemplateParameterNode>()) {
-							eval_ctx.template_param_names.push_back(
-								template_param.as<TemplateParameterNode>().name());
-						}
-					}
-					auto eval_result = ConstExpr::Evaluator::evaluate(*substituted_initializer, eval_ctx);
-					if (eval_result.success()) {
-						int64_t val = eval_result.as_int();
-						std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
-						Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-						substituted_initializer = emplace_node<ExpressionNode>(
-							NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32));
-						FLASH_LOG(Templates, Debug, "Evaluated substituted static member initializer to: ", val);
-					}
-				}
 			}
 
 			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
@@ -4517,6 +4681,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Calculate the substituted size based on the substituted type
 			size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+			std::optional<NormalizedInitializer> normalized_initializer =
+				tryEarlyNormalizeTemplateStaticMemberInitializer(
+					substituted_initializer,
+					gSymbolTable,
+					this,
+					struct_info.get(),
+					template_params,
+					template_args_to_use,
+					substituted_type_index,
+					substituted_size,
+					static_member.reference_qualifier,
+					static_member.pointer_depth);
 
 			FLASH_LOG(Templates, Debug, "Static member type substitution: original type=", (int)static_member.memberType(),
 					  " -> substituted type=", (int)substituted_type_index.category(), ", size=", substituted_size);
@@ -4531,6 +4707,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.cv_qualifier,
 				static_member.reference_qualifier,
 				static_member.pointer_depth);
+			if (normalized_initializer.has_value()) {
+				if (StructStaticMember* instantiated_static_member =
+						struct_info->findStaticMember(static_member.getName())) {
+					instantiated_static_member->normalized_init = std::move(normalized_initializer);
+				}
+			}
 		}
 	}
 	// Fallback: Process static members from AST node (for patterns/specializations)
@@ -4596,6 +4778,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
+			std::optional<NormalizedInitializer> normalized_initializer =
+				tryEarlyNormalizeTemplateStaticMemberInitializer(
+					substituted_initializer,
+					gSymbolTable,
+					this,
+					struct_info.get(),
+					template_params,
+					template_args_to_use,
+					static_member.type_index,
+					static_member.size,
+					static_member.reference_qualifier,
+					static_member.pointer_depth);
+
 			struct_info->addStaticMember(
 				static_member.name,
 				static_member.type_index,
@@ -4606,6 +4801,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.cv_qualifier,
 				static_member.reference_qualifier,
 				static_member.pointer_depth);
+			if (normalized_initializer.has_value()) {
+				if (StructStaticMember* instantiated_static_member =
+						struct_info->findStaticMember(static_member.name)) {
+					instantiated_static_member->normalized_init = std::move(normalized_initializer);
+				}
+			}
 		}
 	}
 
