@@ -793,12 +793,12 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 				if (struct_info) {
 					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
 						StringTable::getOrInternStringHandle(object_name));
-					if (static_member && is_struct_type(static_member->type_index.category())) {
+					if (static_member && owner_struct && is_struct_type(static_member->type_index.category())) {
 						// Found: set up for member access on a struct-typed static member.
 						// Use the qualified global name so codegen can resolve it.
 						StringBuilder qname_builder;
 						StringHandle qualified_name = StringTable::getOrInternStringHandle(
-							qname_builder.append(current_struct_name_).append("::"sv).append(object_name).commit());
+							qname_builder.append(owner_struct->getName()).append("::"sv).append(object_name).commit());
 						FLASH_LOG(Codegen, Debug, "Resolved unqualified static member '", object_name,
 							"' to global '", StringTable::getStringView(qualified_name), "'");
 						base_object = qualified_name;

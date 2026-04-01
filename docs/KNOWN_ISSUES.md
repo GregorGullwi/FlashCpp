@@ -113,6 +113,35 @@ The proper fix is to fully resolve type aliases during template instantiation so
 that conversion operators always carry their canonical name and the
 `"operator user_defined"` workaround becomes unnecessary.
 
+## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
+
+When a non-template derived class inherits a struct-typed static member from a
+template base, codegen currently emits both the instantiated base symbol
+(`Base$hash::payload`) and an inherited alias on the pattern name
+(`Base::payload`). The derived-class default initializer can now be fixed to
+load from the actual owner (`Base$hash::payload`), but the extra pattern alias
+still indicates that inherited static-member emission is mixing instantiated and
+pattern-qualified names.
+
+Observed while adding regression coverage for:
+
+```cpp
+template <typename T, int N>
+struct Base {
+    struct Payload { int a; int b; };
+    static constexpr Payload payload = { N, int(sizeof(T)) };
+};
+
+struct Derived : Base<int, 9> {
+    int value = payload.a + payload.b;
+};
+```
+
+The narrowed non-template regression now passes after qualifying inherited
+member access with the real owner struct, but the underlying inherited-static
+definition path in `generateStaticMemberDeclarations()` still deserves cleanup
+so template-base aliases are emitted only under the instantiated owner.
+
 ## `constexpr`/`consteval` enforcement — partially implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;
