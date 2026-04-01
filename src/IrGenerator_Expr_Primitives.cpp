@@ -814,6 +814,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					op.global_name = qualified_name;
 					ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
 
+						// Preserve static-storage lvalue metadata so reference returns and
+						// compound assignments can recover the backing global address.
+					setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+												LValueInfo(LValueInfo::Kind::Global, qualified_name, 0),
+												static_member->type_index.category(), member_size_bits));
+
 					TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
 					return makeIdentifierResult(static_member->memberType(), member_size_bits, result_temp, type_index);
 				}

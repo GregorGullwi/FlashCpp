@@ -5986,12 +5986,17 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		//   RDX = target RTTI pointer
 		// Returns: RAX = 1 if cast is valid, 0 otherwise
 
+	int result_offset = getStackOffsetFromTempVar(op.result);
+
 		// Step 1: Load source pointer from stack
 	int source_offset = getStackOffsetFromTempVar(op.source);
 	emitMovFromFrame(X64Register::RAX, source_offset);
 
-		// Step 2: Save source pointer to R8 (we'll need it later if cast succeeds)
-	emitMovRegReg(X64Register::R8, X64Register::RAX);
+		// Step 2: Save the original source pointer in the result slot before the helper call.
+		// Windows x64 treats R8 as caller-saved, so keeping the value in a register here is not safe.
+	emitMovToFrameSized(
+		SizedRegister{X64Register::RAX, 64, false},
+		SizedStackSlot{result_offset, 64, false});
 
 		// Step 3: Check if source pointer is null
 	emitTestRegReg(X64Register::RAX);
@@ -6062,8 +6067,8 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-		// Step 9: Cast succeeded - return source pointer (which we saved in R8)
-	emitMovRegReg(X64Register::RAX, X64Register::R8);
+		// Step 9: Cast succeeded - reload the original source pointer.
+	emitMovFromFrame(X64Register::RAX, result_offset);
 
 		// JMP to end
 	textSectionData.push_back(0xEB); // JMP rel8
@@ -6110,7 +6115,6 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);
 
 		// Step 10: Store result to stack (pointer is always 64-bit)
-	int result_offset = getStackOffsetFromTempVar(op.result);
 	emitMovToFrameSized(
 		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
 		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
@@ -6290,7 +6294,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	[[maybe_unused]] bool is_array = op.is_array;
 	bool is_initialized = op.initializer.has_value();
 
-	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
+	FLASH_LOG(Codegen, Debug, "handleVariableDecl: var='", var_name_str, "', is_reference=", is_reference, ", pointer_depth=", op.pointer_depth.value, ", offset=", var_it->second.offset, ", is_initialized=", is_initialized, ", type=", static_cast<int>(var_type));
 
 		// Store mapping from variable name to offset for reference lookups
 	variable_name_to_offset_[var_name_str] = var_it->second.offset;
@@ -6316,7 +6320,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 
 			// If size_in_bits is 64 and the type is not a 64-bit type, we need to calculate the actual size
 			// This happens for structured bindings where size_in_bits is set to 64 (pointer size)
-		if (op.size_in_bits == SizeInBits{64}) {
+		if (op.size_in_bits == SizeInBits{64} && !op.pointer_depth.is_pointer()) {
 				// Try to get the actual size from the type
 			int calculated_size = get_type_size_bits(var_type);
 			if (calculated_size > 0 && calculated_size != 64) {
@@ -6626,7 +6630,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 				}
 			} else {
 					// Source is on the stack, load it to a temporary register and store to destination
-				if (var_type == TypeCategory::Struct) {
+				if (var_type == TypeCategory::Struct && !op.pointer_depth.is_pointer()) {
 						// For struct types, copy entire struct using 8-byte chunks
 					int struct_size_bytes = (op.size_in_bits.value + 7) / 8;
 
@@ -6733,7 +6737,7 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						}
 						regAlloc.release(copy_reg);
 					}
-				} else if (is_floating_point_type(var_type)) {
+				} else if (is_floating_point_type(var_type) && !op.pointer_depth.is_pointer()) {
 						// For floating-point types, use XMM register and float moves
 					allocated_reg_val = allocateXMMRegisterWithSpilling();
 					bool is_float = (var_type == TypeCategory::Float);
@@ -11368,6 +11372,11 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 		// Get RHS source
 	TypeCategory rhs_type = op.rhs.typeEnum();
 	X64Register source_reg = X64Register::RAX;
+	std::optional<IndirectStorageInfo> copied_indirect_info;
+	TempVar lhs_temp_for_metadata{};
+	if (std::holds_alternative<TempVar>(op.lhs.value)) {
+		lhs_temp_for_metadata = std::get<TempVar>(op.lhs.value);
+	}
 
 		// Load RHS value into a register
 	if (std::holds_alternative<StringHandle>(op.rhs.value)) {
@@ -11380,6 +11389,9 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 				// Check if RHS is a reference - if so, dereference it (unless explicitly disabled)
 				// Skip dereferencing if holds_address_only is true (AddressOf results)
 			auto rhs_ref_info = getIndirectStackInfo(rhs_offset);
+			if (rhs_ref_info.has_value() && !op.dereference_rhs_references) {
+				copied_indirect_info = rhs_ref_info;
+			}
 			if (rhs_ref_info.has_value() && op.dereference_rhs_references && shouldImplicitlyDeref(rhs_ref_info.value())) {
 					// RHS is a reference - load pointer and dereference
 				X64Register ptr_reg = allocateRegisterWithSpilling();
@@ -11438,6 +11450,8 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			int value_size_bytes = rhs_ref_info->value_size_bits.value / 8;
 			emitMovFromMemory(ptr_reg, ptr_reg, 0, value_size_bytes);
 			source_reg = ptr_reg;
+		} else if (rhs_ref_info.has_value() && !op.dereference_rhs_references) {
+			copied_indirect_info = rhs_ref_info;
 		} else if (auto rhs_reg = regAlloc.tryGetStackVariableRegister(rhs_offset); rhs_reg.has_value()) {
 				// Check if the value is already in a register
 			source_reg = rhs_reg.value();
@@ -11512,6 +11526,15 @@ void IrToObjConverter<TWriterClass>::handleAssignment(const IrInstruction& instr
 			);
 				// Clear any stale register associations for this stack offset
 			regAlloc.clearStackVariableAssociations(lhs_offset);
+			if (copied_indirect_info.has_value() && !op.dereference_rhs_references) {
+				setIndirectStorageInfo(
+					lhs_offset,
+					copied_indirect_info->value_type_index,
+					copied_indirect_info->value_size_bits.value,
+					copied_indirect_info->is_rvalue_reference,
+					copied_indirect_info->holds_address_only,
+					lhs_temp_for_metadata);
+			}
 		}
 	}
 }

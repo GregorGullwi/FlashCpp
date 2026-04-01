@@ -370,6 +370,18 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 					setTempVarMetadata(address_temp, std::move(address_meta));
 					operands.value = address_temp;
+				} else if (lv_info.kind == LValueInfo::Kind::Global &&
+						   std::holds_alternative<StringHandle>(lv_info.base)) {
+					TempVar address_temp = emitAddressOf(
+						currentFunctionReturnType(),
+						current_function_return_size_,
+						IrValue(std::get<StringHandle>(lv_info.base)),
+						node.return_token());
+					setTempVarMetadata(address_temp, TempVarMetadata::makeAddressOnly(
+						currentFunctionReturnTypeIndex(),
+						SizeInBits{current_function_return_size_},
+						ValueCategory::LValue));
+					operands.value = address_temp;
 				}
 			}
 		}

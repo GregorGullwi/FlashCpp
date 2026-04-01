@@ -104,6 +104,32 @@ Using a `nullptr` return from the helper avoids the crash, which suggests the
 remaining bug is in RTTI / `dynamic_cast` lowering or runtime support rather
 than in the static-member rebinding change itself.
 
+## Copying a same-type `dynamic_cast` result into another local pointer can drop the value
+
+While trying to add focused regression coverage for recent Windows pointer/local
+declaration fixes, the following simpler pattern compiled and linked but still
+returned the wrong result at runtime:
+
+```cpp
+struct Base {
+    virtual int get() { return 42; }
+    virtual ~Base() {}
+};
+
+int main() {
+    Base base;
+    Base* source = &base;
+    Base* rebound = dynamic_cast<Base*>(source);
+    Base* copied = rebound;
+    return copied ? 0 : 1; // FlashCpp returns 1
+}
+```
+
+The existing same-type cast regression (`test_dynamic_cast_debug_ret10.cpp`)
+still passes, so the remaining issue appears to be in local-pointer
+initialization/copy from the `dynamic_cast` result rather than in the RTTI
+classification of the cast itself.
+
 ## ~~Nested template static members of struct type can misbehave at runtime~~ (FIXED)
 
 **Fixed**: struct-typed static members inside nested template classes now work

@@ -122,12 +122,14 @@ void AstToIr::visitTryStatementNode(const TryStatementNode& node) {
 				decl_op.type_index = type_node.type_index();
 				decl_op.size_in_bits = SizeInBits{type_node.size_in_bits()};
 				decl_op.var_name = StringTable::getOrInternStringHandle(exception_var_name);
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 
 					// Create a TypedValue for the initializer
 				TypedValue init_value;
 				init_value.setType(type_node.type());
 				init_value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 				init_value.type_index = type_index;
+				init_value.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 				init_value.value = exception_temp;
 				if (type_node.is_rvalue_reference()) {
 					init_value.ref_qualifier = ReferenceQualifier::RValueReference;

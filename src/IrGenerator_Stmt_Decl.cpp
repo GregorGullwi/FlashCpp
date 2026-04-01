@@ -1000,6 +1000,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 				decl_op.is_array = false;
 
 					// Set the compile-time evaluated initializer
@@ -1125,6 +1126,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 				decl_op.is_array = decl.is_array();
 				if (operands.size() >= 11) {
 					TypedValue tv = toTypedValue(std::span<const IrOperand>(&operands[7], 4));
@@ -1144,6 +1146,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				decl_op.var_name = decl.identifier_token().handle();
 				decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 				decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 				decl_op.is_array = decl.is_array();
 				ir_.addInstruction(IrInstruction(IrOpcode::VariableDecl, std::move(decl_op), node.declaration().identifier_token()));
 
@@ -1700,6 +1703,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 	decl_op.var_name = decl.identifier_token().handle();
 	decl_op.custom_alignment = static_cast<unsigned long long>(decl.custom_alignment());
 	decl_op.ref_qualifier = ((type_node.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((type_node.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+	decl_op.pointer_depth = PointerDepth{static_cast<int>(type_node.pointer_depth())};
 	decl_op.is_array = decl.is_array();
 	if (decl.is_array() && operands.size() >= 10) {
 		decl_op.array_element_type_index = nativeTypeIndex(std::get<TypeCategory>(operands[7]));
@@ -2562,6 +2566,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 		hidden_decl_op.ref_qualifier = node.is_rvalue_reference()
 										   ? CVReferenceQualifier::RValueReference
 										   : CVReferenceQualifier::LValueReference;
+		hidden_decl_op.pointer_depth = init_operands.pointer_depth;
 
 			// Generate addressof for the initializer to get reference
 		if (initializer.is<ExpressionNode>()) {
@@ -2591,6 +2596,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 	} else {
 		hidden_decl_op.type_index = nativeTypeIndex(init_type);
 		hidden_decl_op.size_in_bits = SizeInBits{static_cast<int>(init_size)};
+		hidden_decl_op.pointer_depth = init_operands.pointer_depth;
 		hidden_decl_op.initializer = toTypedValue(init_operands);
 	}
 
@@ -3125,6 +3131,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			binding_var_decl.ref_qualifier = node.is_rvalue_reference()
 												 ? CVReferenceQualifier::RValueReference
 												 : CVReferenceQualifier::LValueReference;
+			binding_var_decl.pointer_depth = PointerDepth{static_cast<int>(member.pointer_depth)};
 			TypedValue init_val;
 			init_val.setType(member.memberType());
 			init_val.size_in_bits = SizeInBits{64};
@@ -3158,6 +3165,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 			binding_var_decl.var_name = binding_id;
 			binding_var_decl.type_index = member.type_index;
 			binding_var_decl.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
+			binding_var_decl.pointer_depth = PointerDepth{static_cast<int>(member.pointer_depth)};
 			TypedValue init_val2;
 			init_val2.setType(member.memberType());
 			init_val2.size_in_bits = SizeInBits{static_cast<int>(member_size_bits)};
