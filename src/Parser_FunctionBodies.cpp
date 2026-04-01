@@ -4,11 +4,6 @@
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
-
-namespace {
-
-} // namespace
-
 // Phase 5: Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
 void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index) {
