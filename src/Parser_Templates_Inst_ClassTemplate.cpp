@@ -302,6 +302,18 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 		return staticMemberInitializerContainsFunctionCall(cast->expr());
 	}
 
+	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
 	return false;
 }
 

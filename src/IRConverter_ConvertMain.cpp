@@ -6067,10 +6067,8 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 	textSectionData.push_back(0x00);
 	textSectionData.push_back(0x00);
 
-		// Step 9: Cast succeeded - reload the original source pointer.
-	emitMovFromFrame(X64Register::RAX, result_offset);
-
-		// JMP to end
+		// Step 9: Cast succeeded - result_offset already holds the original source pointer.
+		// Skip the failure-path null store.
 	textSectionData.push_back(0xEB); // JMP rel8
 	size_t success_jmp_offset = textSectionData.size();
 	textSectionData.push_back(0x00); // Placeholder
@@ -6095,6 +6093,13 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 		textSectionData.push_back(0xC0); // ModR/M: RAX, RAX
 	}
 
+		// Step 10: Store the null failure result to the stack (pointer is always 64-bit).
+		// The success path skips this because Step 2 already preserved the source pointer.
+	emitMovToFrameSized(
+		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
+		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
+	);
+
 		// end label:
 	size_t end_offset = textSectionData.size();
 
@@ -6113,12 +6118,6 @@ void IrToObjConverter<TWriterClass>::handleDynamicCast(const IrInstruction& inst
 
 	int8_t success_jmp_delta = static_cast<int8_t>(end_offset - success_jmp_offset - 1);
 	textSectionData[success_jmp_offset] = static_cast<uint8_t>(success_jmp_delta);
-
-		// Step 10: Store result to stack (pointer is always 64-bit)
-	emitMovToFrameSized(
-		SizedRegister{X64Register::RAX, 64, false},	// source: 64-bit register
-		SizedStackSlot{result_offset, 64, false}	 // dest: 64-bit for pointer
-	);
 
 	regAlloc.reset();
 }
