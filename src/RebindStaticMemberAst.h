@@ -485,9 +485,9 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 		}
 
 		if (current.is<ThrowStatementNode>()) {
+		if (current.is<ThrowStatementNode>()) {
 			const auto& throw_stmt = current.as<ThrowStatementNode>();
-			return !throw_stmt.is_rethrow() &&
-				   throw_stmt.expression().has_value() &&
+			return !throw_stmt.is_rethrow() && throw_stmt.expression().has_value() &&
 				   visit_child(throw_stmt.expression().value());
 		}
 
