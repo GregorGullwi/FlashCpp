@@ -1859,10 +1859,40 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 	}
 
 	std::string_view var_name = identifier.name();
-	StringHandle name_handle = identifier.nameHandle();
-	if (!name_handle.isValid()) {
-		name_handle = StringTable::getOrInternStringHandle(var_name);
-	}
+	StringHandle name_handle = identifier.getOrInternNameHandle();
+
+	auto try_materialize_current_struct_static = [&](
+		ResolvedCurrentStructStaticInitializer& resolved_static_initializer,
+		CurrentStructStaticLookupMode lookup_mode) -> std::optional<EvalResult> {
+		if (!resolved_static_initializer.found || !resolved_static_initializer.static_member) {
+			return std::nullopt;
+		}
+
+		if (resolved_static_initializer.static_member->normalized_init.has_value() &&
+			resolved_static_initializer.static_member->normalized_init->isConstant()) {
+			return materializeFromConstantBytes(
+				resolved_static_initializer.static_member->normalized_init->constant_bytes,
+				resolved_static_initializer.static_member->type_index);
+		}
+
+		if ((!resolved_static_initializer.initializer || !resolved_static_initializer.initializer->has_value()) &&
+			context.parser && context.struct_info &&
+			context.parser->instantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+			resolved_static_initializer = resolve_current_struct_static_initializer(
+				&identifier,
+				context,
+				lookup_mode);
+			if (resolved_static_initializer.static_member &&
+				resolved_static_initializer.static_member->normalized_init.has_value() &&
+				resolved_static_initializer.static_member->normalized_init->isConstant()) {
+				return materializeFromConstantBytes(
+					resolved_static_initializer.static_member->normalized_init->constant_bytes,
+					resolved_static_initializer.static_member->type_index);
+			}
+		}
+
+		return std::nullopt;
+	};
 
 	std::optional<ASTNode> symbol_opt;
 	if (identifier.binding() == IdentifierBinding::StaticMember) {
@@ -1872,13 +1902,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			CurrentStructStaticLookupMode::BoundOnly);
 		bool found_bound_static_member = bound_static_initializer.found;
 
- // Phase C: if the member has pre-materialized constant bytes, use them
-		if (found_bound_static_member && bound_static_initializer.static_member &&
-			bound_static_initializer.static_member->normalized_init.has_value() &&
-			bound_static_initializer.static_member->normalized_init->isConstant()) {
-			return materializeFromConstantBytes(
-				bound_static_initializer.static_member->normalized_init->constant_bytes,
-				bound_static_initializer.static_member->type_index);
+		if (auto materialized = try_materialize_current_struct_static(
+				bound_static_initializer,
+				CurrentStructStaticLookupMode::BoundOnly)) {
+			return *materialized;
 		}
 
 		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
@@ -1906,13 +1933,10 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			context,
 			CurrentStructStaticLookupMode::PreferCurrentStruct);
 		if (preferred_static_initializer.found) {
- // Phase C: if the member has pre-materialized constant bytes, use them
-			if (preferred_static_initializer.static_member &&
-				preferred_static_initializer.static_member->normalized_init.has_value() &&
-				preferred_static_initializer.static_member->normalized_init->isConstant()) {
-				return materializeFromConstantBytes(
-					preferred_static_initializer.static_member->normalized_init->constant_bytes,
-					preferred_static_initializer.static_member->type_index);
+			if (auto materialized = try_materialize_current_struct_static(
+					preferred_static_initializer,
+					CurrentStructStaticLookupMode::PreferCurrentStruct)) {
+				return *materialized;
 			}
 
 			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {

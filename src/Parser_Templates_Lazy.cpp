@@ -688,6 +688,21 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		return false;  // Not registered for lazy instantiation
 	}
 
+	StringHandle instantiation_key = StringTable::getOrInternStringHandle(
+		StringBuilder().append(instantiated_class_name).append("::"sv).append(member_name).commit());
+	static thread_local std::unordered_set<StringHandle> lazy_static_members_in_progress;
+	if (lazy_static_members_in_progress.contains(instantiation_key)) {
+		throw CompileError("Circular dependency between lazy static member initializers: " + std::string(instantiation_key.view()));
+	}
+	struct LazyStaticMemberInProgressGuard {
+		std::unordered_set<StringHandle>& in_progress;
+		StringHandle key;
+		~LazyStaticMemberInProgressGuard() {
+			in_progress.erase(key);
+		}
+	} inProgressGuard{lazy_static_members_in_progress, instantiation_key};
+	lazy_static_members_in_progress.insert(instantiation_key);
+
 	FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for static member: ",
 			  instantiated_class_name, "::", member_name);
 
@@ -863,6 +878,103 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 				substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
 					substituted_initializer.value(),
 					struct_info);
+			}
+
+			if (substituted_initializer.has_value()) {
+				std::unordered_set<StringHandle> referenced_lazy_members;
+				std::function<void(const ASTNode&)> collectLazyStaticDependencies = [&](const ASTNode& node) {
+					if (!node.has_value()) {
+						return;
+					}
+					if (node.is<InitializerListNode>()) {
+						for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
+							collectLazyStaticDependencies(initializer);
+						}
+						return;
+					}
+					if (!node.is<ExpressionNode>()) {
+						return;
+					}
+
+					const ExpressionNode& expr = node.as<ExpressionNode>();
+					if (const auto* id_node = std::get_if<IdentifierNode>(&expr)) {
+						StringHandle referenced_name = id_node->getOrInternNameHandle();
+						if (referenced_name != lazy_info.member_name &&
+							LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
+							referenced_lazy_members.insert(referenced_name);
+						}
+						return;
+					}
+					if (const auto* bin_op = std::get_if<BinaryOperatorNode>(&expr)) {
+						collectLazyStaticDependencies(bin_op->get_lhs());
+						collectLazyStaticDependencies(bin_op->get_rhs());
+						return;
+					}
+					if (const auto* unary_op = std::get_if<UnaryOperatorNode>(&expr)) {
+						collectLazyStaticDependencies(unary_op->get_operand());
+						return;
+					}
+					if (const auto* ternary = std::get_if<TernaryOperatorNode>(&expr)) {
+						collectLazyStaticDependencies(ternary->condition());
+						collectLazyStaticDependencies(ternary->true_expr());
+						collectLazyStaticDependencies(ternary->false_expr());
+						return;
+					}
+					if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
+						for (const auto& arg : func_call->arguments()) {
+							collectLazyStaticDependencies(arg);
+						}
+						if (func_call->has_template_arguments()) {
+							for (const auto& template_arg : func_call->template_arguments()) {
+								collectLazyStaticDependencies(template_arg);
+							}
+						}
+						return;
+					}
+					if (const auto* ctor_call = std::get_if<ConstructorCallNode>(&expr)) {
+						for (const auto& arg : ctor_call->arguments()) {
+							collectLazyStaticDependencies(arg);
+						}
+						return;
+					}
+					if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+						collectLazyStaticDependencies(member_access->object());
+						return;
+					}
+					if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
+						collectLazyStaticDependencies(member_call->object());
+						for (const auto& arg : member_call->arguments()) {
+							collectLazyStaticDependencies(arg);
+						}
+						return;
+					}
+					if (const auto* array_sub = std::get_if<ArraySubscriptNode>(&expr)) {
+						collectLazyStaticDependencies(array_sub->array_expr());
+						collectLazyStaticDependencies(array_sub->index_expr());
+						return;
+					}
+					if (const auto* static_cast_node = std::get_if<StaticCastNode>(&expr)) {
+						collectLazyStaticDependencies(static_cast_node->expr());
+						return;
+					}
+					if (const auto* dynamic_cast_node = std::get_if<DynamicCastNode>(&expr)) {
+						collectLazyStaticDependencies(dynamic_cast_node->expr());
+						return;
+					}
+					if (const auto* const_cast_node = std::get_if<ConstCastNode>(&expr)) {
+						collectLazyStaticDependencies(const_cast_node->expr());
+						return;
+					}
+					if (const auto* reinterpret_cast_node = std::get_if<ReinterpretCastNode>(&expr)) {
+						collectLazyStaticDependencies(reinterpret_cast_node->expr());
+						return;
+					}
+				};
+
+				collectLazyStaticDependencies(substituted_initializer.value());
+				for (StringHandle referenced_name : referenced_lazy_members) {
+					instantiateLazyStaticMember(instantiated_class_name, referenced_name);
+				}
 			}
 
 			// Try to evaluate the substituted expression to a constant value.
