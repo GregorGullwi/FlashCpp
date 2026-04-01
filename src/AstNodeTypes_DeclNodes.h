@@ -988,16 +988,34 @@ inline TypeCategory resolve_type_alias(TypeIndex type_index) {
 	return canonicalize_type_alias(type_index).typeEnum();
 }
 
+// Normalizes a conversion-operator target type into the canonical TypeIndex used
+// for lookup. This accepts both fully-populated TypeIndex values and legacy
+// category-only values (index 0, category set) that still appear in codegen/sema
+// call sites for primitive types, and it resolves alias chains for named types.
 inline TypeIndex canonicalize_conversion_target_type(TypeIndex type_index) {
 	if (!type_index.is_valid()) {
+		if (type_index.category() != TypeCategory::Invalid) {
+			return nativeTypeIndex(type_index.category());
+		}
 		return {};
 	}
 	if (type_index.category() == TypeCategory::Invalid) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 			type_index = type_index.withCategory(type_info->category());
 		}
+		if (type_index.category() == TypeCategory::Invalid) {
+			return {};
+		}
 	}
 	return canonicalize_type_alias(type_index).resolvedTypeIndex();
+}
+
+inline TypeIndex canonicalize_conversion_target_type(TypeIndex type_index, TypeCategory fallback_category) {
+	TypeIndex canonical_type = canonicalize_conversion_target_type(type_index);
+	if (!canonical_type.is_valid() && fallback_category != TypeCategory::Invalid) {
+		return nativeTypeIndex(fallback_category);
+	}
+	return canonical_type;
 }
 
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});

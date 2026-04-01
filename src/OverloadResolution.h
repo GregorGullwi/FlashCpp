@@ -202,10 +202,7 @@ inline TypeConversionResult can_convert_type(TypeCategory from, TypeCategory to)
 // Returns true if a conversion operator exists from source_type to target_type
 // This version searches both gTypeInfo (for CodeGen) and gSymbolTable (for Parser/overload resolution)
 inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory target_type, TypeIndex target_type_index) {
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index);
-	if (!canonical_target_type.is_valid() && target_type != TypeCategory::Invalid) {
-		canonical_target_type = nativeTypeIndex(target_type);
-	}
+	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index, target_type);
 	if (!canonical_target_type.is_valid()) {
 		return false;
 	}
@@ -228,8 +225,10 @@ inline bool hasConversionOperator(TypeIndex source_type_index, TypeCategory targ
 				if (member_func.template is<FunctionDeclarationNode>()) {
 					const auto& func_decl = member_func.template as<FunctionDeclarationNode>();
 					std::string_view func_name = func_decl.decl_node().identifier_token().value();
+					const ASTNode& type_node = func_decl.decl_node().type_node();
 					if (func_name.starts_with("operator ") &&
-						getCanonicalConversionTargetType(func_decl.decl_node().type_node().template as<TypeSpecifierNode>()) == canonical_target_type) {
+						type_node.template is<TypeSpecifierNode>() &&
+						getCanonicalConversionTargetType(type_node.template as<TypeSpecifierNode>()) == canonical_target_type) {
 						return true; // Found conversion operator in parsed struct
 					}
 				}

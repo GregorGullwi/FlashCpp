@@ -2889,10 +2889,7 @@ static bool structHasConversionOperatorTo(
 	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
 	if (!struct_info)
 		return false;
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index);
-	if (!canonical_target_type.is_valid() && to_desc.category() != TypeCategory::Invalid) {
-		canonical_target_type = nativeTypeIndex(to_desc.category());
-	}
+	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
 	if (!canonical_target_type.is_valid())
 		return false;
 

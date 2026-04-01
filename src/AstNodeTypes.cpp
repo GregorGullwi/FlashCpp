@@ -798,8 +798,11 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 			!mf.is_destructor &&
 			mf.operator_kind == OverloadableOperator::None &&
 			StringTable::getStringView(mf.getName()).starts_with("operator ")) {
-			mf.conversion_target_type = getCanonicalConversionTargetType(
-				fn->decl_node().type_node().as<TypeSpecifierNode>());
+			const ASTNode& type_node = fn->decl_node().type_node();
+			if (type_node.is<TypeSpecifierNode>()) {
+				mf.conversion_target_type = getCanonicalConversionTargetType(
+					type_node.as<TypeSpecifierNode>());
+			}
 		}
 	} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 		const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();

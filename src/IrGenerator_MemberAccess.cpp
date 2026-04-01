@@ -3521,7 +3521,7 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	if (!struct_info)
 		return nullptr;
 
-	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index);
+	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index, target_type_index.category());
 	if (!canonical_target_type.is_valid()) {
 		return nullptr;
 	}
