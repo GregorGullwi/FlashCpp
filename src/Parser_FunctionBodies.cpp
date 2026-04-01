@@ -118,12 +118,11 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 		}
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
-		const StructTypeInfo* rebound_owner = nullptr;
 		if (call.called_from().kind().is_identifier()) {
 			auto [found_function, found_owner] =
 				findStaticMemberFunctionForDelayedBody(struct_info, call.called_from().handle());
 			rebound_function = found_function;
-			rebound_owner = found_owner;
+			(void)found_owner;
 		}
 
 		const DeclarationNode& target_decl = rebound_function ? rebound_function->decl_node() : call.function_declaration();
@@ -161,12 +160,11 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 
 		if (is_implicit_this_call) {
 			const FunctionDeclarationNode* rebound_function = nullptr;
-			const StructTypeInfo* rebound_owner = nullptr;
 			if (member_call.called_from().kind().is_identifier()) {
 				auto [found_function, found_owner] =
 					findStaticMemberFunctionForDelayedBody(struct_info, member_call.called_from().handle());
 				rebound_function = found_function;
-				rebound_owner = found_owner;
+				(void)found_owner;
 			}
 
 			if (rebound_function || member_call.function_declaration().is_static()) {
