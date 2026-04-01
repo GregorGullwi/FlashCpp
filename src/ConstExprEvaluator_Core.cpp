@@ -1893,6 +1893,38 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 		return std::nullopt;
 	};
+	auto evaluate_current_struct_static_initializer = [&](
+		const ResolvedCurrentStructStaticInitializer& resolved_static_initializer) -> std::optional<EvalResult> {
+		if (!resolved_static_initializer.found ||
+			!resolved_static_initializer.initializer ||
+			!resolved_static_initializer.initializer->has_value()) {
+			return std::nullopt;
+		}
+
+		const ASTNode& initializer = resolved_static_initializer.initializer->value();
+		if (initializer.is<ConstructorCallNode>()) {
+			return evaluate_constructor_call(initializer.as<ConstructorCallNode>(), context);
+		}
+
+		if (initializer.is<InitializerListNode>() && resolved_static_initializer.static_member) {
+			const auto& init_list = initializer.as<InitializerListNode>();
+			const StructStaticMember& static_member = *resolved_static_initializer.static_member;
+			if (is_struct_type(static_member.type_index.category())) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(static_member.type_index);
+					const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+					return materialize_aggregate_object_value(
+						struct_info,
+						static_member.type_index,
+						init_list,
+						context);
+				}
+			}
+
+			return materialize_array_value(static_member.type_index, init_list, context, nullptr);
+		}
+
+		return evaluate(initializer, context);
+	};
 
 	std::optional<ASTNode> symbol_opt;
 	if (identifier.binding() == IdentifierBinding::StaticMember) {
@@ -1908,8 +1940,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return *materialized;
 		}
 
-		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
-			return evaluate(bound_static_initializer.initializer->value(), context);
+		if (auto evaluated_static_initializer = evaluate_current_struct_static_initializer(bound_static_initializer)) {
+			return *evaluated_static_initializer;
 		}
 
 		if (identifier.resolved_name().isValid()) {
@@ -1939,8 +1971,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				return *materialized;
 			}
 
-			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {
-				return evaluate(preferred_static_initializer.initializer->value(), context);
+			if (auto evaluated_static_initializer = evaluate_current_struct_static_initializer(preferred_static_initializer)) {
+				return *evaluated_static_initializer;
 			}
 			return EvalResult::error("Static member has no initializer: " + std::string(var_name));
 		}

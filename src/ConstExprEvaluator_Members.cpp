@@ -3276,6 +3276,14 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			// Check for FunctionCallNode - evaluate the return type and access static member
 			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
 				const FunctionCallNode& func_call = *function_call;
+				EvalResult object_result = evaluate(object_expr, context);
+				if (!object_result.success()) {
+					return object_result;
+				}
+				auto member_it = object_result.object_member_bindings.find(member_name);
+				if (member_it != object_result.object_member_bindings.end()) {
+					return member_it->second;
+				}
 				return evaluate_function_call_member_access(func_call, member_name, context);
 			}
 		}
