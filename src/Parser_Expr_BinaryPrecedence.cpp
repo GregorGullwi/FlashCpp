@@ -411,7 +411,6 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*left_type_spec,
 								*right_type_spec,
 								stringToOverloadableOperator(op_symbol),
-								op_symbol,
 								gSymbolTable);
 							if (overload_result.is_ambiguous) {
 								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
@@ -453,7 +452,6 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*left_type_spec,
 								*right_type_spec,
 								op_kind,
-								operator_token.value(),
 								gSymbolTable);
 						}
 

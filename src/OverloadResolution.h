@@ -1618,8 +1618,11 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	const TypeSpecifierNode& left_type_spec,
 	const TypeSpecifierNode& right_type_spec,
 	OverloadableOperator operator_kind,
-	std::string_view operator_symbol,
 	const SymbolTable& symbol_table) {
+	if (operator_kind == OverloadableOperator::None) {
+		return OperatorOverloadResult::no_overload();
+	}
+
 	// --- Unified candidate set per C++20 [over.match.oper]/2 ---
 	struct OperatorCandidate {
 		ConversionRank lhs_rank;
@@ -1690,7 +1693,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	gatherMemberCandidates(gatherMemberCandidates, left_type_index);
 
 	StringBuilder op_name_sb;
-	op_name_sb.append("operator").append(operator_symbol);
+	op_name_sb.append("operator").append(overloadableOperatorToString(operator_kind));
 	std::string_view op_func_name = op_name_sb.commit();
 	auto overloads = symbol_table.lookup_all(op_func_name);
 
@@ -1857,7 +1860,6 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 	TypeIndex left_type_index,
 	TypeIndex right_type_index,
 	OverloadableOperator operator_kind,
-	std::string_view operator_symbol,
 	const SymbolTable& symbol_table,
 	TypeCategory right_type) {
 	TypeCategory effective_right_type = right_type;
@@ -1871,7 +1873,6 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		makeBinaryOperatorTypeSpecifier(left_type_index.withCategory(TypeCategory::Invalid)),
 		makeBinaryOperatorTypeSpecifier(right_type_index.withCategory(effective_right_type)),
 		operator_kind,
-		operator_symbol,
 		symbol_table);
 }
 

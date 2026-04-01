@@ -4263,11 +4263,50 @@ ParseResult Parser::parse_friend_declaration() {
 	} else if (peek() == "="_tok) {
 		// Handle = default or = delete
 		advance(); // consume '='
+		bool is_defaulted_friend = false;
+		bool is_deleted_friend = false;
 		if (!peek().is_eof() && (peek() == "default"_tok || peek() == "delete"_tok)) {
+			is_defaulted_friend = peek() == "default"_tok;
+			is_deleted_friend = peek() == "delete"_tok;
 			advance(); // consume 'default' or 'delete'
 		}
 		if (!consume(";"_tok)) {
 			return ParseResult::error("Expected ';' after friend function declaration", current_token_);
+		}
+
+		if (last_qualifier.empty() && params_parsed_ok && (is_defaulted_friend || is_deleted_friend)) {
+			NamespaceHandle enclosing_ns = gSymbolTable.get_current_namespace_handle();
+
+			ASTNode return_type_node;
+			if (type_result.node().has_value() && type_result.node()->is<TypeSpecifierNode>()) {
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(type_result.node()->as<TypeSpecifierNode>());
+			} else {
+				return_type_node = ASTNode::emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Void), 0, Token(), CVQualifier::None, ReferenceQualifier::None);
+			}
+
+			auto [decl_node, decl_ref] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token);
+			auto [func_decl_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl_ref);
+			func_ref.set_namespace_handle(enclosing_ns);
+			for (const auto& param : param_list.parameters) {
+				func_ref.add_parameter_node(param);
+			}
+			func_ref.set_is_variadic(param_list.is_variadic);
+			func_ref.set_is_deleted(is_deleted_friend);
+
+			StringHandle func_name_handle = StringTable::getOrInternStringHandle(function_name);
+			gSymbolTable.insert_into_namespace(enclosing_ns, func_name_handle, func_decl_node, /*adl_only=*/true);
+
+			if (is_defaulted_friend) {
+				func_ref.set_is_implicit(true);
+				ASTNode block_node = create_defaulted_member_function_body(func_ref);
+				func_ref.set_definition(block_node);
+				finalize_function_after_definition(func_ref);
+				pending_hidden_friend_defs_.push_back(func_decl_node);
+			}
+
+			auto friend_node = emplace_node<FriendDeclarationNode>(FriendKind::Function, func_name_handle);
+			friend_node.as<FriendDeclarationNode>().set_function_declaration(func_decl_node);
+			return saved_position.success(friend_node);
 		}
 	} else if (!consume(";"_tok)) {
 		return ParseResult::error("Expected ';' after friend function declaration", current_token_);
