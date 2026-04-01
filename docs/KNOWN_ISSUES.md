@@ -74,36 +74,6 @@ This was observed while trying to add focused runtime coverage for virtual
 reference-return coverage passes; the virtual-reference-return caller path still
 needs dedicated investigation.
 
-## `dynamic_cast` from template static-member helper calls can crash at runtime
-
-While adding regression coverage for cast traversal in delayed static-member
-rebinding, a template static-member body that performed `dynamic_cast` on the
-result of another same-class static helper compiled and linked, but the produced
-program crashed at runtime when the helper returned the address of a local
-static object:
-
-```cpp
-struct Base {
-    virtual ~Base() {}
-};
-
-template <typename T>
-struct Box {
-    static Base* helperBasePtr() {
-        static Base value;
-        return &value;
-    }
-
-    static int value() {
-        return dynamic_cast<Base*>(helperBasePtr()) ? 42 : 0;
-    }
-};
-```
-
-Using a `nullptr` return from the helper avoids the crash, which suggests the
-remaining bug is in RTTI / `dynamic_cast` lowering or runtime support rather
-than in the static-member rebinding change itself.
-
 ## Static member initializers can lose nested helper calls under `.` / `[]`
 
 Template static member initializers still mishandle some nested forms where an
@@ -221,20 +191,6 @@ The existing same-type cast regression (`test_dynamic_cast_debug_ret10.cpp`)
 still passes, so the remaining issue appears to be in local-pointer
 initialization/copy from the `dynamic_cast` result rather than in the RTTI
 classification of the cast itself.
-
-## ~~Nested template static members of struct type can misbehave at runtime~~ (FIXED)
-
-**Fixed**: struct-typed static members inside nested template classes now work
-correctly.  The fix addressed two root causes:
-
-1. `generateTrivialDefaultConstructors()` did not set `current_struct_name_`,
-   so unqualified static member references (e.g., `payload.a`) in default
-   member initializers could not resolve to the struct's own static members.
-2. `resolveGlobalOrStaticBinding()` used the template pattern's store name
-   (e.g., `Outer::Inner::payload`) instead of the instantiated name
-   (`Outer$hash::Inner::payload`), reading from the wrong global.
-
-Covered by `test_template_nested_static_struct_member_ret45.cpp`.
 
 ## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
 

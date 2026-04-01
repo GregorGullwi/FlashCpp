@@ -609,6 +609,53 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		}
 	}
 
+	// Remap stale pattern-owner manglings when an unqualified member call is being lowered
+	// inside an instantiated template class body.
+	if (!matched_func_decl && has_precomputed_mangled && current_struct_name_.isValid() &&
+		!functionCallNode.has_qualified_name()) {
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
+			const StructTypeInfo* struct_info = current_struct_it->second->getStructInfo();
+			const size_t expected_param_count = functionCallNode.arguments().size();
+			auto findMemberInHierarchy = [&](auto&& self, const StructTypeInfo* current_struct) -> const FunctionDeclarationNode* {
+				if (!current_struct) {
+					return nullptr;
+				}
+
+				for (const auto& member_func : current_struct->member_functions) {
+					if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+						continue;
+					}
+
+					const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+					if (func_decl.decl_node().identifier_token().value() == func_name_view &&
+						func_decl.parameter_nodes().size() == expected_param_count) {
+						return &func_decl;
+					}
+				}
+
+				for (const auto& base_spec : current_struct->base_classes) {
+					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+						if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
+							if (const FunctionDeclarationNode* base_match = self(self, base_struct_info)) {
+								return base_match;
+							}
+						}
+					}
+				}
+
+				return nullptr;
+			};
+
+			if (const FunctionDeclarationNode* instantiated_member = findMemberInHierarchy(findMemberInHierarchy, struct_info)) {
+				matched_func_decl = instantiated_member;
+				has_precomputed_mangled = false;
+				resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
+				FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
+			}
+		}
+	}
+
 		// Fallback: if pointer comparison failed (e.g., for template instantiations),
 		// try to find the function by checking if there's only one overload with this name
 	if (!matched_func_decl && !has_precomputed_mangled && scoped_overloads.size() == 1 &&
