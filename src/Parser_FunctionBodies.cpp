@@ -72,7 +72,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 
 	if (node.is<ReturnStatementNode>()) {
 		const auto& return_stmt = node.as<ReturnStatementNode>();
-		FLASH_LOG(Templates, Debug, "delayed rebind return statement for struct ", struct_info->name);
 		std::optional<ASTNode> rebound_expr;
 		if (return_stmt.expression().has_value()) {
 			rebound_expr = rebindDelayedStaticMemberFunctionCalls(
@@ -113,7 +112,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 	const auto& expr = node.as<ExpressionNode>();
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& call = std::get<FunctionCallNode>(expr);
-		FLASH_LOG(Templates, Debug, "delayed rebind function call ", call.function_declaration().identifier_token().value(), " from token ", call.called_from().value());
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : call.arguments()) {
 			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
@@ -141,10 +139,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 		}
 		if (!rebound_function && call.has_qualified_name()) {
 			rebound_call_ref.set_qualified_name(call.qualified_name());
-		} else if (rebound_function && rebound_owner) {
-			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
-			rebound_call_ref.set_qualified_name(qualified_handle.view());
 		}
 
 		return rebound_call;
@@ -152,7 +146,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		FLASH_LOG(Templates, Debug, "delayed rebind member function call ", member_call.function_declaration().decl_node().identifier_token().value(), " from token ", member_call.called_from().value());
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : member_call.arguments()) {
 			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
@@ -187,11 +180,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
 				} else if (member_call.function_declaration().has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
-				}
-				if (rebound_function && rebound_owner) {
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
-					rebound_call_ref.set_qualified_name(qualified_handle.view());
 				}
 
 				return rebound_call;
