@@ -988,6 +988,18 @@ inline TypeCategory resolve_type_alias(TypeIndex type_index) {
 	return canonicalize_type_alias(type_index).typeEnum();
 }
 
+inline TypeIndex canonicalize_conversion_target_type(TypeIndex type_index) {
+	if (!type_index.is_valid()) {
+		return {};
+	}
+	if (type_index.category() == TypeCategory::Invalid) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			type_index = type_index.withCategory(type_info->category());
+		}
+	}
+	return canonicalize_type_alias(type_index).resolvedTypeIndex();
+}
+
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
@@ -1294,6 +1306,14 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
+	TypeIndex target_type_index = type_spec.type_index();
+	if (!target_type_index.is_valid() && type_spec.type() != TypeCategory::Invalid) {
+		target_type_index = nativeTypeIndex(type_spec.type());
+	}
+	return canonicalize_conversion_target_type(target_type_index);
+}
 
 // Placeholder-type deduction helper shared by parser and semantic analysis.
 // Plain `auto` follows template-argument-deduction-style stripping of top-level

@@ -1014,6 +1014,7 @@ struct StructMemberFunction {
 	bool is_constructor;	 // True if this is a constructor
 	bool is_destructor;		// True if this is a destructor
 	OverloadableOperator operator_kind; // None for non-operators; non-None implies operator overload
+	TypeIndex conversion_target_type;	 // Canonical target type for conversion operators; invalid otherwise
 
 	// Virtual function support (Phase 2)
 	bool is_virtual = false;		 // True if declared with 'virtual' keyword
@@ -1030,6 +1031,7 @@ struct StructMemberFunction {
 
 	// Convenience accessors
 	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
+	bool is_conversion_operator() const { return conversion_target_type.is_valid(); }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
 

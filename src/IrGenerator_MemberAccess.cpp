@@ -3521,129 +3521,34 @@ const StructMemberFunction* AstToIr::findConversionOperator(
 	if (!struct_info)
 		return nullptr;
 
-	// Build the operator name we are looking for (e.g., "operator int")
-	std::string_view target_type_name;
-	if (const TypeInfo* target_type_info = tryGetTypeInfo(target_type_index)) {
-		target_type_name = StringTable::getStringView(target_type_info->name());
-	} else {
-		// For primitive types, use the helper function to get the type name
-		target_type_name = getTypeName(target_type_index.category());
-		if (target_type_name.empty()) {
-			return nullptr;
-		}
+	TypeIndex canonical_target_type = canonicalize_conversion_target_type(target_type_index);
+	if (!canonical_target_type.is_valid()) {
+		return nullptr;
 	}
-
-	// Create the operator name string (e.g., "operator int")
-	StringBuilder sb;
-	sb.append("operator ").append(target_type_name);
-	std::string_view operator_name = sb.commit();
-	StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
 
 	// CV-aware lookup:
 	//   Pass 1 – exact match: const source → const op; non-const source → non-const op.
 	//   Pass 2 – fallback: non-const source may call const op; const source cannot call non-const op.
 	const StructMemberFunction* fallback_const_op = nullptr;
 	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.getName() == operator_name_handle) {
-			if (source_is_const) {
-				// const source: only const operators are viable; pick first const match
-				if (member_func.is_const())
-					return &member_func;
-			} else {
-				// non-const source: prefer non-const; remember const as fallback
-				if (!member_func.is_const())
-					return &member_func;
-				if (!fallback_const_op)
-					fallback_const_op = &member_func;
-			}
+		if (member_func.conversion_target_type != canonical_target_type) {
+			continue;
+		}
+		if (source_is_const) {
+			// const source: only const operators are viable; pick first const match
+			if (member_func.is_const())
+				return &member_func;
+		} else {
+			// non-const source: prefer non-const; remember const as fallback
+			if (!member_func.is_const())
+				return &member_func;
+			if (!fallback_const_op)
+				fallback_const_op = &member_func;
 		}
 	}
 	// Fallback: non-const source with only const overloads
 	if (fallback_const_op)
 		return fallback_const_op;
-
-	// WORKAROUND: Also look for "operator user_defined" which may be a conversion operator
-	// that was created with a typedef that wasn't resolved during template instantiation
-	// Check if the return type matches the target type
-	StringHandle user_defined_handle = StringTable::getOrInternStringHandle("operator user_defined");
-	const StructMemberFunction* fallback_user_defined = nullptr;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.getName() == user_defined_handle) {
-			// CV qualification check (same logic as primary search above)
-			if (source_is_const && !member_func.is_const())
-				continue;
-
-			// Check if this function's return type matches our target
-			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-				const auto& decl_node = func_decl.decl_node();
-				const auto& return_type_node = decl_node.type_node();
-				if (return_type_node.is<TypeSpecifierNode>()) {
-					const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-					TypeCategory resolved_type = type_spec.type();
-
-					// If the return type is UserDefined (a type alias), try to resolve it to the actual underlying type
-					// This handles cases like `operator value_type()` where `using value_type = T;`
-					// Use recursive resolution to handle chains of type aliases
-					if (resolved_type == TypeCategory::UserDefined && type_spec.type_index().is_valid()) {
-						TypeIndex current_type_index = type_spec.type_index();
-						int max_depth = 10; // Prevent infinite loops from circular aliases
-						while (resolved_type == TypeCategory::UserDefined && current_type_index.is_valid() && max_depth-- > 0) {
-							const TypeInfo* alias_type_info = tryGetTypeInfo(current_type_index);
-							if (!alias_type_info)
-								break;
-							if (!alias_type_info->isVoid() && alias_type_info->resolvedType() != TypeCategory::UserDefined) {
-								resolved_type = alias_type_info->resolvedType();
-								FLASH_LOG(Codegen, Debug, "Resolved type alias in conversion operator return type: UserDefined -> ", static_cast<int>(resolved_type));
-								break;
-							} else if (alias_type_info->resolvedType() == TypeCategory::UserDefined && alias_type_info->type_index_ != current_type_index) {
-								// Follow the chain of aliases
-								current_type_index = alias_type_info->type_index_;
-							} else {
-								break;
-							}
-						}
-					}
-
-					if (resolved_type == target_type_index.category()) {
-						// Prefer non-const match for non-const source; const for const source
-						if (source_is_const == member_func.is_const()) {
-							FLASH_LOG(Codegen, Debug, "Found conversion operator via 'operator user_defined' workaround");
-							return &member_func;
-						}
-						if (!fallback_user_defined)
-							fallback_user_defined = &member_func;
-						continue;
-					}
-
-					// FALLBACK: If the return type is still UserDefined (couldn't resolve via gTypeInfo),
-					// but the size matches the target primitive type, accept it as a match.
-					// This handles template type aliases like `using value_type = T;` where T is substituted
-					// but the return type wasn't fully updated in the AST.
-					// Note: target_type_index.category() can never be Struct, Enum, or UserDefined here — getTypeName()
-					// returns "" for those types, causing an early `return nullptr` above (line 3470-3472).
-					if (resolved_type == TypeCategory::UserDefined) {
-						int expected_size = get_type_size_bits(target_type_index.category());
-
-						if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size) {
-							if (source_is_const == member_func.is_const()) {
-								FLASH_LOG(Codegen, Debug, "Found conversion operator via size matching: UserDefined(size=",
-										  type_spec.size_in_bits(), ") matches target type ", static_cast<int>(target_type_index.category()), " (size=", expected_size, ")");
-								return &member_func;
-							}
-							if (!fallback_user_defined)
-								fallback_user_defined = &member_func;
-						}
-						// Note: We intentionally don't have a permissive fallback here because it would match
-						// conversion operators from pattern templates that don't have generated code, leading
-						// to linker errors (undefined reference to operator user_defined).
-					}
-				}
-			}
-		}
-	}
-	if (fallback_user_defined)
-		return fallback_user_defined;
 	// Search base classes recursively
 	for (const auto& base_spec : struct_info->base_classes) {
 		if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {

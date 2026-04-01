@@ -776,6 +776,7 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 // All parse and instantiation paths must call set_is_const_member_function()
 // on the FunctionDeclarationNode before calling add*().
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
+	mf.conversion_target_type = {};
 	if (const auto* fn = get_function_decl_node(mf.function_decl)) {
 		mf.is_noexcept = fn->is_noexcept();
 		// Auto-derive cv_qualifier from the stored const/volatile member function flags.
@@ -792,6 +793,14 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 			mf.cv_qualifier = CVQualifier::Volatile;
 		else
 			mf.cv_qualifier = CVQualifier::None;
+
+		if (!mf.is_constructor &&
+			!mf.is_destructor &&
+			mf.operator_kind == OverloadableOperator::None &&
+			StringTable::getStringView(mf.getName()).starts_with("operator ")) {
+			mf.conversion_target_type = getCanonicalConversionTargetType(
+				fn->decl_node().type_node().as<TypeSpecifierNode>());
+		}
 	} else if (mf.function_decl.is<ConstructorDeclarationNode>()) {
 		const auto& ctor = mf.function_decl.as<ConstructorDeclarationNode>();
 		mf.is_noexcept = ctor.is_noexcept();
