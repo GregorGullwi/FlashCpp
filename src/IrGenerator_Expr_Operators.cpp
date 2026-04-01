@@ -1683,6 +1683,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			FLASH_LOG_FORMAT(Codegen, Debug, "Resolving free-function operator{} overload", op);
 
 			const FunctionDeclarationNode& func_decl = *overload_result.free_function_overload;
+			if (func_decl.is_deleted()) {
+				throw CompileError("Call to deleted function 'operator" + std::string(op) + "'");
+			}
 			TypeSpecifierNode return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
 			// Get parameter types for mangling
@@ -1787,8 +1790,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					}
 				}
 			}
-			if (op == "=" && func_decl.is_deleted()) {
-				throw CompileError("Call to deleted function 'operator='");
+			if (func_decl.is_deleted()) {
+				throw CompileError("Call to deleted function 'operator" + std::string(op) + "'");
 			}
 
 			// Get struct name for mangling
