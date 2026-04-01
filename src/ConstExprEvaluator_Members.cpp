@@ -448,6 +448,27 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 									mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 	}
 
+	if (!func_call.has_qualified_name() && context.struct_info) {
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		auto current_struct_match = find_current_struct_member_function_candidate(
+			func_name_handle,
+			func_call.arguments().size(),
+			context,
+			MemberFunctionLookupMode::ConstexprEvaluable,
+			true,
+			true);
+		if (current_struct_match.ambiguous) {
+			return EvalResult::error("Ambiguous static member function overload in constant expression");
+		}
+		if (current_struct_match.function) {
+			return evaluate_function_call_with_bindings(
+				*current_struct_match.function,
+				func_call.arguments(),
+				bindings,
+				context);
+		}
+	}
+
 	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
 		if (func_call.has_template_arguments() && context.parser) {
