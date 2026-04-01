@@ -181,6 +181,18 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 			cast->cast_token()));
 	}
 
+	if (std::holds_alternative<ConstructorCallNode>(expr)) {
+		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : ctor_call.arguments()) {
+			rebound_args.push_back(rebindDelayedStaticMemberFunctionCalls(arg, struct_info));
+		}
+		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
+			ctor_call.type_node(),
+			std::move(rebound_args),
+			ctor_call.called_from()));
+	}
+
 	return node;
 }
 
