@@ -35,6 +35,10 @@ across the full test suite.
 - `resolveGlobalOrStaticBinding` updates the store name to use the instantiated
   struct qualification when the identifier was parsed against the template
   pattern but codegen runs in the instantiated context.
+- Lazy static member instantiation now recursively materializes same-struct
+  static-member identifier dependencies (e.g., `earlier = later;`) before
+  freezing the initializer, so forward references no longer collapse to zero
+  during codegen.
 
 ### What remains
 

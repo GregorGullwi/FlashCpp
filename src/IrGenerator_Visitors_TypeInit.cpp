@@ -557,11 +557,26 @@ void AstToIr::generateStaticMemberDeclarations() {
 						// Instantiated templates will have NumericLiteralNode or other concrete expressions
 						auto symbol = global_symbol_table_->lookup(id.name());
 						if (!symbol.has_value()) {
-							// Not found in global symbol table - likely a template parameter
-							FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-									  "' with identifier initializer '", id.name(),
-									  "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
-							unresolved_identifier_initializer = true;
+							bool is_current_struct_static_member = false;
+							if (struct_info != nullptr) {
+								StringHandle member_name_handle = id.nameHandle();
+								if (!member_name_handle.isValid()) {
+									member_name_handle = StringTable::getOrInternStringHandle(id.name());
+								}
+								is_current_struct_static_member =
+									struct_info->findStaticMemberRecursive(member_name_handle).first != nullptr;
+							}
+							if (is_current_struct_static_member) {
+								FLASH_LOG(Codegen, Debug, "Static member '", static_member.getName(),
+										  "' references same-struct static member '", id.name(),
+										  "' in type '", type_name, "'; deferring to constexpr evaluation");
+							} else {
+								// Not found in global symbol table - likely a template parameter
+								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+										  "' with identifier initializer '", id.name(),
+										  "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+								unresolved_identifier_initializer = true;
+							}
 						}
 					}
 				}
@@ -883,19 +898,67 @@ void AstToIr::generateStaticMemberDeclarations() {
 								}
 								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
 							} else {
-								// Evaluate the initializer expression
-								ExprResult init_operands = visitExpressionNode(init_expr);
-								{
-									unsigned long long value = 0;
-									if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
-										value = *ull_val;
-									} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
-										double d = *d_val;
-										std::memcpy(&value, &d, sizeof(double));
+								unsigned long long evaluated_value = 0;
+								StringHandle member_name_handle = id.nameHandle();
+								if (!member_name_handle.isValid()) {
+									member_name_handle = StringTable::getOrInternStringHandle(id.name());
+								}
+
+								const StructStaticMember* referenced_static_member = nullptr;
+								const StructTypeInfo* referenced_owner_struct = nullptr;
+								if (struct_info != nullptr) {
+									auto lookup = struct_info->findStaticMemberRecursive(member_name_handle);
+									referenced_static_member = lookup.first;
+									referenced_owner_struct = lookup.second;
+								}
+
+								if (referenced_static_member != nullptr &&
+									(!referenced_static_member->initializer.has_value()) &&
+									parser_ && struct_info != nullptr) {
+									parser_->instantiateLazyStaticMember(struct_info->name, member_name_handle);
+									auto refreshed_lookup = struct_info->findStaticMemberRecursive(member_name_handle);
+									referenced_static_member = refreshed_lookup.first;
+									referenced_owner_struct = refreshed_lookup.second;
+								}
+
+								bool handled_same_struct_static_member = false;
+								if (referenced_static_member != nullptr && referenced_static_member->initializer.has_value()) {
+									if (evaluate_static_initializer(*referenced_static_member->initializer, evaluated_value, referenced_owner_struct)) {
+										append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+										FLASH_LOG(Codegen, Debug, "  Evaluated same-struct static member initializer for '",
+												  qualified_name, "' via '", id.name(), "' = ", evaluated_value);
+										handled_same_struct_static_member = true;
 									}
-									size_t byte_count = op.size_in_bits.value / 8;
-									for (size_t i = 0; i < byte_count; ++i) {
-										op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+								}
+
+								bool handled_identifier_initializer = handled_same_struct_static_member;
+								if (!handled_identifier_initializer &&
+									evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
+									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
+									FLASH_LOG(Codegen, Debug, "  Evaluated identifier initializer for static member '",
+											  qualified_name, "' = ", evaluated_value);
+									handled_identifier_initializer = true;
+								}
+								if (!handled_identifier_initializer) {
+									if (referenced_static_member != nullptr) {
+										FLASH_LOG(Codegen, Debug, "  Same-struct static member identifier '", id.name(),
+												  "' is still unresolved for '", qualified_name,
+												  "'; zero-initializing in this pass");
+										zero_initialize();
+									} else {
+										// Fall back to generic expression lowering for non-constexpr/global cases.
+										ExprResult init_operands = visitExpressionNode(init_expr);
+										unsigned long long value = 0;
+										if (const auto* ull_val = std::get_if<unsigned long long>(&init_operands.value)) {
+											value = *ull_val;
+										} else if (const auto* d_val = std::get_if<double>(&init_operands.value)) {
+											double d = *d_val;
+											std::memcpy(&value, &d, sizeof(double));
+										}
+										size_t byte_count = op.size_in_bits.value / 8;
+										for (size_t i = 0; i < byte_count; ++i) {
+											op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
+										}
 									}
 								}
 							}

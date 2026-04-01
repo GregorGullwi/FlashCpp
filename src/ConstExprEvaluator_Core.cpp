@@ -1881,6 +1881,24 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				bound_static_initializer.static_member->type_index);
 		}
 
+		if (found_bound_static_member &&
+			(!bound_static_initializer.initializer || !bound_static_initializer.initializer->has_value()) &&
+			context.parser && context.struct_info) {
+			if (context.parser->instantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+				bound_static_initializer = resolve_current_struct_static_initializer(
+					&identifier,
+					context,
+					CurrentStructStaticLookupMode::BoundOnly);
+				if (bound_static_initializer.static_member &&
+					bound_static_initializer.static_member->normalized_init.has_value() &&
+					bound_static_initializer.static_member->normalized_init->isConstant()) {
+					return materializeFromConstantBytes(
+						bound_static_initializer.static_member->normalized_init->constant_bytes,
+						bound_static_initializer.static_member->type_index);
+				}
+			}
+		}
+
 		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
 			return evaluate(bound_static_initializer.initializer->value(), context);
 		}
@@ -1913,6 +1931,23 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				return materializeFromConstantBytes(
 					preferred_static_initializer.static_member->normalized_init->constant_bytes,
 					preferred_static_initializer.static_member->type_index);
+			}
+
+			if ((!preferred_static_initializer.initializer || !preferred_static_initializer.initializer->has_value()) &&
+				context.parser && context.struct_info) {
+				if (context.parser->instantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+					preferred_static_initializer = resolve_current_struct_static_initializer(
+						&identifier,
+						context,
+						CurrentStructStaticLookupMode::PreferCurrentStruct);
+					if (preferred_static_initializer.static_member &&
+						preferred_static_initializer.static_member->normalized_init.has_value() &&
+						preferred_static_initializer.static_member->normalized_init->isConstant()) {
+						return materializeFromConstantBytes(
+							preferred_static_initializer.static_member->normalized_init->constant_bytes,
+							preferred_static_initializer.static_member->type_index);
+					}
+				}
 			}
 
 			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {

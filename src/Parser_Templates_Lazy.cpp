@@ -865,6 +865,20 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 					struct_info);
 			}
 
+			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
+				const ExpressionNode& substituted_expr = substituted_initializer->as<ExpressionNode>();
+				if (const auto* id_node = std::get_if<IdentifierNode>(&substituted_expr)) {
+					StringHandle referenced_name = id_node->nameHandle();
+					if (!referenced_name.isValid()) {
+						referenced_name = StringTable::getOrInternStringHandle(id_node->name());
+					}
+					if (referenced_name != lazy_info.member_name &&
+						LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
+						instantiateLazyStaticMember(instantiated_class_name, referenced_name);
+					}
+				}
+			}
+
 			// Try to evaluate the substituted expression to a constant value.
 			// This turns expressions like "1 * __static_sign$hash::value / __static_gcd$hash::value"
 			// into a single NumericLiteralNode, enabling downstream constexpr evaluation.
