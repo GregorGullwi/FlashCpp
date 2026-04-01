@@ -339,7 +339,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 			if (struct_info->own_type_index_.has_value()) {
 				if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
 					ConstExpr::Evaluator::load_template_bindings_from_type(ti, ctx);
-					context_loaded = !ctx.template_param_names.empty() && !ctx.template_args.empty();
+					context_loaded = !ctx.template_param_names.empty() || !ctx.template_args.empty();
 				}
 			}
 
