@@ -109,6 +109,27 @@ std::optional<ASTNode> tryRebindExpressionChildren(
 			cast->cast_token()));
 	}
 
+	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(DynamicCastNode(
+			cast->target_type(),
+			recurse(cast->expr()),
+			cast->cast_token()));
+	}
+
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(ConstCastNode(
+			cast->target_type(),
+			recurse(cast->expr()),
+			cast->cast_token()));
+	}
+
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		return ASTNode::emplace_node<ExpressionNode>(ReinterpretCastNode(
+			cast->target_type(),
+			recurse(cast->expr()),
+			cast->cast_token()));
+	}
+
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
 		ChunkedVector<ASTNode> rebound_args;
@@ -418,6 +439,21 @@ void visitAST(const ASTNode& node, Fn&& visitor) {
 
 		if (current.is<StaticCastNode>()) {
 			visit_child(current.as<StaticCastNode>().expr());
+			return;
+		}
+
+		if (current.is<DynamicCastNode>()) {
+			visit_child(current.as<DynamicCastNode>().expr());
+			return;
+		}
+
+		if (current.is<ConstCastNode>()) {
+			visit_child(current.as<ConstCastNode>().expr());
+			return;
+		}
+
+		if (current.is<ReinterpretCastNode>()) {
+			visit_child(current.as<ReinterpretCastNode>().expr());
 			return;
 		}
 

@@ -193,15 +193,6 @@ void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<Strin
 	});
 }
 
-// Helper function to find all identifiers referenced in an AST node
-[[maybe_unused]] static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
-	RebindStaticMemberAst::visitAST(node, [&identifiers](const ASTNode& current) {
-		if (current.is<IdentifierNode>()) {
-			identifiers.insert(current.as<IdentifierNode>().nameHandle());
-		}
-	});
-}
-
 // Helper function to find capture candidates and detect implicit [this] usage in lambdas
 void collectLambdaCaptureCandidates(const ASTNode& node,
 									std::unordered_set<StringHandle>& capture_candidates,
