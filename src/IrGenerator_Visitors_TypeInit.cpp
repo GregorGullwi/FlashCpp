@@ -322,6 +322,13 @@ void AstToIr::generateStaticMemberDeclarations() {
 			target.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 		}
 	};
+	auto identifier_name_handle = [](const IdentifierNode& id) {
+		StringHandle member_name_handle = id.nameHandle();
+		if (!member_name_handle.isValid()) {
+			member_name_handle = StringTable::getOrInternStringHandle(id.name());
+		}
+		return member_name_handle;
+	};
 
 	auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
@@ -559,10 +566,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (!symbol.has_value()) {
 							bool is_current_struct_static_member = false;
 							if (struct_info != nullptr) {
-								StringHandle member_name_handle = id.nameHandle();
-								if (!member_name_handle.isValid()) {
-									member_name_handle = StringTable::getOrInternStringHandle(id.name());
-								}
+								StringHandle member_name_handle = identifier_name_handle(id);
 								is_current_struct_static_member =
 									struct_info->findStaticMemberRecursive(member_name_handle).first != nullptr;
 							}
@@ -899,10 +903,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
 							} else {
 								unsigned long long evaluated_value = 0;
-								StringHandle member_name_handle = id.nameHandle();
-								if (!member_name_handle.isValid()) {
-									member_name_handle = StringTable::getOrInternStringHandle(id.name());
-								}
+								StringHandle member_name_handle = identifier_name_handle(id);
 
 								const StructStaticMember* referenced_static_member = nullptr;
 								const StructTypeInfo* referenced_owner_struct = nullptr;
@@ -955,10 +956,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 											double d = *d_val;
 											std::memcpy(&value, &d, sizeof(double));
 										}
-										size_t byte_count = op.size_in_bits.value / 8;
-										for (size_t i = 0; i < byte_count; ++i) {
-											op.init_data.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
-										}
+										append_bytes(value, op.size_in_bits.value, op.init_data);
 									}
 								}
 							}

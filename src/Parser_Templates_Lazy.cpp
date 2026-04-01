@@ -683,6 +683,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 // This is called when a static member is accessed for the first time
 // Returns true if instantiation was performed, false if not needed or failed
 bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name) {
+	auto identifier_name_handle = [](const IdentifierNode& id) {
+		StringHandle handle = id.nameHandle();
+		if (!handle.isValid()) {
+			handle = StringTable::getOrInternStringHandle(id.name());
+		}
+		return handle;
+	};
+
 	// Check if this member needs lazy instantiation
 	if (!LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, member_name)) {
 		return false;  // Not registered for lazy instantiation
@@ -868,10 +876,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
 				const ExpressionNode& substituted_expr = substituted_initializer->as<ExpressionNode>();
 				if (const auto* id_node = std::get_if<IdentifierNode>(&substituted_expr)) {
-					StringHandle referenced_name = id_node->nameHandle();
-					if (!referenced_name.isValid()) {
-						referenced_name = StringTable::getOrInternStringHandle(id_node->name());
-					}
+					StringHandle referenced_name = identifier_name_handle(*id_node);
 					if (referenced_name != lazy_info.member_name &&
 						LazyStaticMemberRegistry::getInstance().needsInstantiation(instantiated_class_name, referenced_name)) {
 						instantiateLazyStaticMember(instantiated_class_name, referenced_name);
