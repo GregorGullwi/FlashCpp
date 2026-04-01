@@ -768,6 +768,22 @@ private:
 		return symbol.has_value() ? get_decl_from_symbol(*symbol) : nullptr;
 	}
 
+#ifndef NDEBUG
+	static bool hasInstantiationBindings(const TypeInfo* type_info) {
+		if (!type_info) {
+			return false;
+		}
+
+		for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
+			if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+#endif
+
 	/// Emit an AddressOf IR instruction and return the result TempVar holding the address.
 	TempVar emitAddressOf(TypeCategory type, int size_in_bits, IrValue source, Token token = Token());
 

@@ -1,24 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-#ifndef NDEBUG
-namespace {
-bool hasInstantiationBindings(const TypeInfo* type_info) {
-	if (!type_info) {
-		return false;
-	}
-
-	for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
-		if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
-			return true;
-		}
-	}
-
-	return false;
-}
-} // namespace
-#endif
-
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST

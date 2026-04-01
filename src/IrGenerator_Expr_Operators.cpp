@@ -38,7 +38,7 @@ bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
 }
 
 #ifndef NDEBUG
-bool hasInstantiationBindings(const TypeInfo* type_info) {
+bool hasResolveBindingInstantiationBindings(const TypeInfo* type_info) {
 	if (!type_info) {
 		return false;
 	}
@@ -166,7 +166,7 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		}
 #ifndef NDEBUG
 		if (used_current_struct_fallback) {
-			if (hasInstantiationBindings(current_struct_type)) {
+			if (hasResolveBindingInstantiationBindings(current_struct_type)) {
 				FLASH_LOG(Codegen, Debug,
 						  "[Phase E diag] static-member owner fallback used for '",
 						  resolved_name,
