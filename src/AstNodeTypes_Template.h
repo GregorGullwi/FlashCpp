@@ -661,13 +661,8 @@ struct StructMemberFunctionDecl {
 	// noexcept tracking for type traits
 	bool is_noexcept = false;		  // True if declared noexcept (e.g., void foo() noexcept)
 
-	// Convenience accessors
-	bool is_operator_overload() const { return operator_kind != OverloadableOperator::None; }
 	bool is_const() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Const)) != 0; }
 	bool is_volatile() const { return (static_cast<uint8_t>(cv_qualifier) & static_cast<uint8_t>(CVQualifier::Volatile)) != 0; }
-
-	// Convenience accessor for operator symbol string (for logging/mangling)
-	std::string_view operator_symbol() const { return overloadableOperatorToString(operator_kind); }
 
 	// Return the identifier name from the underlying function declaration AST node.
 	// For regular functions this is the lexical name; for conversion-operator stubs

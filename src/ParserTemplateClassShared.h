@@ -28,7 +28,7 @@ LazyMemberFunctionInfo buildLazyNestedMemberFunctionInfo(
 	id.instantiated_owner_name = qualified_name;
 	id.original_lookup_name = member_function_name;
 	id.operator_kind = mem_func.operator_kind;
-	id.is_operator = mem_func.is_operator_overload();
+	id.is_operator = mem_func.operator_kind != OverloadableOperator::None;
 	id.is_const_method = mem_func.is_const();
 	id.cv_qualifier = mem_func.cv_qualifier;
 	if (is_constructor)

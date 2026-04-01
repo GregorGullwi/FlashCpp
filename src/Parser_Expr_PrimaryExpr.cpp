@@ -4922,7 +4922,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// Check if struct has operator()
 								for (const auto& member_func : type_info->struct_info_->member_functions) {
 									FLASH_LOG_FORMAT(Parser, Debug, "Member function: is_operator={}, symbol='{}'",
-													 member_func.is_operator_overload(), member_func.operator_symbol());
+													 member_func.operator_kind != OverloadableOperator::None,
+													 overloadableOperatorToString(member_func.operator_kind));
 									if (member_func.operator_kind == OverloadableOperator::Call) {
 										has_operator_call = true;
 										break;

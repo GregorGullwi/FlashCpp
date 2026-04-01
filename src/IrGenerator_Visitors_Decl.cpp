@@ -328,21 +328,24 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Generate a unique name like "__param_0", "__param_1", etc. for unnamed parameters
 		std::string_view param_name = param_decl.identifier_token().value();
 		if (param_name.empty()) {
-				// For defaulted operators (operator=, operator<=>, and synthesized comparison operators),
-				// use "other" as the conventional name for the first parameter.
-			bool is_defaulted_operator = unnamed_param_counter == 0 &&
-										(function_operator_kind == OverloadableOperator::Assign ||
-										 function_operator_kind == OverloadableOperator::Spaceship ||
-										 function_operator_kind == OverloadableOperator::Equal ||
-										 function_operator_kind == OverloadableOperator::NotEqual ||
-										 function_operator_kind == OverloadableOperator::Less ||
-										 function_operator_kind == OverloadableOperator::Greater ||
-										 function_operator_kind == OverloadableOperator::LessEqual ||
-										 function_operator_kind == OverloadableOperator::GreaterEqual);
-			if (is_defaulted_operator) {
+			bool is_defaulted_comparison_operator =
+				function_operator_kind == OverloadableOperator::Spaceship ||
+				function_operator_kind == OverloadableOperator::Equal ||
+				function_operator_kind == OverloadableOperator::NotEqual ||
+				function_operator_kind == OverloadableOperator::Less ||
+				function_operator_kind == OverloadableOperator::Greater ||
+				function_operator_kind == OverloadableOperator::LessEqual ||
+				function_operator_kind == OverloadableOperator::GreaterEqual;
+			if (unnamed_param_counter == 0 &&
+				(function_operator_kind == OverloadableOperator::Assign ||
+				 (node.is_member_function() && is_defaulted_comparison_operator))) {
+				// For defaulted member operators, use the conventional "other" parameter name.
 				param_info.name = StringTable::getOrInternStringHandle("other");
+			} else if (!node.is_member_function() && is_defaulted_comparison_operator && unnamed_param_counter < 2) {
+				// For defaulted non-member comparisons, use stable lhs/rhs names for generated bodies.
+				param_info.name = StringTable::getOrInternStringHandle(unnamed_param_counter == 0 ? "lhs" : "rhs");
 			} else {
-					// Generate unique name for unnamed parameter
+				// Generate unique name for unnamed parameter
 				param_info.name = StringTable::getOrInternStringHandle(
 					StringBuilder().append("__param_").append(unnamed_param_counter).commit());
 			}
@@ -379,13 +382,17 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 		// Generate memberwise three-way comparison for defaulted operator<=>
 	if (function_operator_kind == OverloadableOperator::Spaceship && node.is_implicit()) {
+		const StructTypeInfo* struct_info = nullptr;
+		StringHandle lhs_object_handle;
+		StringHandle rhs_object_handle;
+
 			// Set up function scope and 'this' pointer
 		symbol_table.enter_scope(ScopeType::Function);
 		if (node.is_member_function()) {
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = type_it->second;
-				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+				struct_info = struct_type_info->getStructInfo();
 				if (struct_info) {
 					Token this_token = func_decl.identifier_token();
 					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
@@ -393,6 +400,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					this_type.as<TypeSpecifierNode>().add_pointer_level();
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 					symbol_table.insert("this"sv, this_decl);
+					lhs_object_handle = StringTable::getOrInternStringHandle("this");
 				}
 			}
 		}
@@ -400,30 +408,51 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			symbol_table.insert(param.as<DeclarationNode>().identifier_token().value(), param);
 		}
 
-			// Look up struct info
-		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-		if (type_it != getTypesByNameMap().end()) {
-			const TypeInfo* struct_type_info = type_it->second;
-			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-			if (struct_info && !struct_info->members.empty()) {
-				StringHandle this_handle = StringTable::getOrInternStringHandle("this");
-				StringHandle other_handle;
-				if (!node.parameter_nodes().empty()) {
-					std::string_view param_name = node.parameter_nodes()[0].as<DeclarationNode>().identifier_token().value();
-					if (!param_name.empty()) {
-						other_handle = StringTable::getOrInternStringHandle(param_name);
-					}
+		if (node.is_member_function()) {
+			if (!node.parameter_nodes().empty()) {
+				std::string_view param_name = node.parameter_nodes()[0].as<DeclarationNode>().identifier_token().value();
+				if (!param_name.empty()) {
+					rhs_object_handle = StringTable::getOrInternStringHandle(param_name);
 				}
-				if (!other_handle.isValid()) {
-					other_handle = StringTable::getOrInternStringHandle("other");
+				if (!rhs_object_handle.isValid()) {
+					rhs_object_handle = StringTable::getOrInternStringHandle("other");
 				}
+			}
+		} else if (node.parameter_nodes().size() >= 2) {
+			const auto& lhs_param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+			const auto& rhs_param_decl = node.parameter_nodes()[1].as<DeclarationNode>();
+			const auto& lhs_type = lhs_param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& rhs_type = rhs_param_decl.type_node().as<TypeSpecifierNode>();
+			if (lhs_type.category() == TypeCategory::Struct &&
+				rhs_type.category() == TypeCategory::Struct &&
+				lhs_type.type_index() == rhs_type.type_index()) {
+				if (const TypeInfo* struct_type_info = tryGetTypeInfo(lhs_type.type_index())) {
+					struct_info = struct_type_info->getStructInfo();
+				}
+			}
 
-				static size_t spaceship_counter = 0;
-				size_t current_spaceship = spaceship_counter++;
+			std::string_view lhs_param_name = lhs_param_decl.identifier_token().value();
+			if (!lhs_param_name.empty()) {
+				lhs_object_handle = StringTable::getOrInternStringHandle(lhs_param_name);
+			} else {
+				lhs_object_handle = StringTable::getOrInternStringHandle("lhs");
+			}
 
-				for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
-					const auto& member = struct_info->members[mi];
-					int member_bits = static_cast<int>(member.size * 8);
+			std::string_view rhs_param_name = rhs_param_decl.identifier_token().value();
+			if (!rhs_param_name.empty()) {
+				rhs_object_handle = StringTable::getOrInternStringHandle(rhs_param_name);
+			} else {
+				rhs_object_handle = StringTable::getOrInternStringHandle("rhs");
+			}
+		}
+
+		if (struct_info && !struct_info->members.empty()) {
+			static size_t spaceship_counter = 0;
+			size_t current_spaceship = spaceship_counter++;
+
+			for (size_t mi = 0; mi < struct_info->members.size(); ++mi) {
+				const auto& member = struct_info->members[mi];
+				int member_bits = static_cast<int>(member.size * 8);
 
 						// Labels for this member's comparison
 					auto diff_label = StringTable::createStringHandle(
@@ -464,7 +493,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							lhs_load.result.value = lhs_val;
 							lhs_load.result.setType(member.type_index.category());
 							lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
-							lhs_load.object = this_handle;
+							lhs_load.object = lhs_object_handle;
 							lhs_load.member_name = member.getName();
 							lhs_load.offset = static_cast<int>(member.offset);
 							lhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -476,7 +505,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 							rhs_load.result.value = rhs_val;
 							rhs_load.result.setType(member.type_index.category());
 							rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
-							rhs_load.object = other_handle;
+							rhs_load.object = rhs_object_handle;
 							rhs_load.member_name = member.getName();
 							rhs_load.offset = static_cast<int>(member.offset);
 							rhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -544,7 +573,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					lhs_load.result.value = lhs_val;
 					lhs_load.result.setType(member.type_index.category());
 					lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
-					lhs_load.object = this_handle;
+					lhs_load.object = lhs_object_handle;
 					lhs_load.member_name = member.getName();
 					lhs_load.offset = static_cast<int>(member.offset);
 					lhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -556,7 +585,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					rhs_load.result.value = rhs_val;
 					rhs_load.result.setType(member.type_index.category());
 					rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
-					rhs_load.object = other_handle;
+					rhs_load.object = rhs_object_handle;
 					rhs_load.member_name = member.getName();
 					rhs_load.offset = static_cast<int>(member.offset);
 					rhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
@@ -612,8 +641,6 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = next_label}, func_decl.identifier_token()));
 				}
 			}
-		}
-
 			// All members equal - return 0
 		emitReturn(IrValue{0ULL}, TypeCategory::Int, 32, func_decl.identifier_token());
 		symbol_table.exit_scope();
@@ -639,22 +666,54 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		}
 	}
 	if (synthesized_cmp_opcode) {
-			// Instead of processing the parser-generated body (which has auto return type issues),
-			// generate direct memberwise comparison. This calls operator<=> and compares result with 0.
+		// Instead of processing the parser-generated body (which has auto return type issues),
+		// generate direct memberwise comparison. For synthesized operators from operator<=> this
+		// calls operator<=> and compares the result with 0. For explicit defaulted operator== with
+		// no operator<=> available, synthesize direct memberwise equality.
 		symbol_table.enter_scope(ScopeType::Function);
+		const StructTypeInfo* compare_struct_info = nullptr;
+		StringHandle lhs_object_handle;
+		StringHandle rhs_object_handle;
 		if (node.is_member_function()) {
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
 			if (type_it != getTypesByNameMap().end()) {
 				const TypeInfo* struct_type_info = type_it->second;
-				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
-				if (struct_info) {
+				compare_struct_info = struct_type_info->getStructInfo();
+				if (compare_struct_info) {
 					Token this_token = func_decl.identifier_token();
 					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
 						struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
 					this_type.as<TypeSpecifierNode>().add_pointer_level();
 					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 					symbol_table.insert("this"sv, this_decl);
+					lhs_object_handle = StringTable::getOrInternStringHandle("this");
 				}
+			}
+		} else if (node.parameter_nodes().size() >= 2) {
+			const auto& lhs_param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+			const auto& rhs_param_decl = node.parameter_nodes()[1].as<DeclarationNode>();
+			const auto& lhs_type = lhs_param_decl.type_node().as<TypeSpecifierNode>();
+			const auto& rhs_type = rhs_param_decl.type_node().as<TypeSpecifierNode>();
+			if (lhs_type.category() == TypeCategory::Struct &&
+				rhs_type.category() == TypeCategory::Struct &&
+				lhs_type.type_index() == rhs_type.type_index()) {
+				if (const TypeInfo* struct_type_info = tryGetTypeInfo(lhs_type.type_index())) {
+					compare_struct_info = struct_type_info->getStructInfo();
+				}
+			}
+
+			std::string_view lhs_param_name = lhs_param_decl.identifier_token().value();
+			if (!lhs_param_name.empty()) {
+				lhs_object_handle = StringTable::getOrInternStringHandle(lhs_param_name);
+			} else {
+				lhs_object_handle = StringTable::getOrInternStringHandle("lhs");
+			}
+
+			std::string_view rhs_param_name = rhs_param_decl.identifier_token().value();
+			if (!rhs_param_name.empty()) {
+				rhs_object_handle = StringTable::getOrInternStringHandle(rhs_param_name);
+			} else {
+				rhs_object_handle = StringTable::getOrInternStringHandle("rhs");
 			}
 		}
 		for (const auto& param : node.parameter_nodes()) {
@@ -736,8 +795,139 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 				// Return the boolean result
 			emitReturn(IrValue{cmp_result}, TypeCategory::Bool, 8, func_decl.identifier_token());
+		} else if (function_operator_kind == OverloadableOperator::Equal && compare_struct_info && !compare_struct_info->members.empty()) {
+			static size_t equal_counter = 0;
+			size_t current_equal = equal_counter++;
+			auto equal_false_label = StringTable::createStringHandle(
+				StringBuilder().append("equal_false_").append(current_equal).commit());
+			for (const auto& member : compare_struct_info->members) {
+				int member_bits = static_cast<int>(member.size * 8);
+
+				if (member.type_index.category() == TypeCategory::Struct) {
+					const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
+					const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
+					StringHandle member_equal_mangled;
+					if (member_struct_info) {
+						for (const auto& mf : member_struct_info->member_functions) {
+							if (mf.operator_kind == OverloadableOperator::Equal && mf.function_decl.is<FunctionDeclarationNode>()) {
+								const auto& equal_func = mf.function_decl.as<FunctionDeclarationNode>();
+								std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
+								member_equal_mangled = StringTable::getOrInternStringHandle(
+									generateMangledNameForCall(equal_func, member_struct_name, {}));
+								break;
+							}
+						}
+					}
+
+					if (member_equal_mangled.isValid()) {
+						TempVar lhs_val = var_counter.next();
+						MemberLoadOp lhs_load;
+						lhs_load.result.value = lhs_val;
+						lhs_load.result.setType(member.type_index.category());
+						lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
+						lhs_load.object = lhs_object_handle;
+						lhs_load.member_name = member.getName();
+						lhs_load.offset = static_cast<int>(member.offset);
+						lhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						lhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+						TempVar rhs_val = var_counter.next();
+						MemberLoadOp rhs_load;
+						rhs_load.result.value = rhs_val;
+						rhs_load.result.setType(member.type_index.category());
+						rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
+						rhs_load.object = rhs_object_handle;
+						rhs_load.member_name = member.getName();
+						rhs_load.offset = static_cast<int>(member.offset);
+						rhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+						rhs_load.struct_type_info = nullptr;
+						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+						TempVar call_result = var_counter.next();
+						CallOp call_op;
+						call_op.function_name = member_equal_mangled;
+						call_op.is_member_function = true;
+						call_op.return_type_index = nativeTypeIndex(TypeCategory::Bool);
+						call_op.return_size_in_bits = SizeInBits{8};
+						call_op.result = call_result;
+
+						TypedValue lhs_arg;
+						lhs_arg.setType(TypeCategory::Struct);
+						lhs_arg.ir_type = IrType::Struct;
+						lhs_arg.size_in_bits = SizeInBits{64};
+						lhs_arg.value = lhs_val;
+						lhs_arg.pointer_depth = PointerDepth{1};
+						call_op.args.push_back(std::move(lhs_arg));
+
+						TypedValue rhs_arg;
+						rhs_arg.setType(TypeCategory::Struct);
+						rhs_arg.ir_type = IrType::Struct;
+						rhs_arg.size_in_bits = SizeInBits{64};
+						rhs_arg.value = rhs_val;
+						rhs_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+						call_op.args.push_back(std::move(rhs_arg));
+
+						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), func_decl.identifier_token()));
+
+						auto equal_next_label = StringTable::createStringHandle(
+							StringBuilder().append("equal_next_").append(current_equal).append("_").append(member.offset).commit());
+						CondBranchOp eq_branch;
+						eq_branch.label_true = equal_next_label;
+						eq_branch.label_false = equal_false_label;
+						eq_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue{call_result});
+						ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(eq_branch), func_decl.identifier_token()));
+						ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = equal_next_label}, func_decl.identifier_token()));
+						continue;
+					}
+				}
+
+				TempVar lhs_val = var_counter.next();
+				MemberLoadOp lhs_load;
+				lhs_load.result.value = lhs_val;
+				lhs_load.result.setType(member.type_index.category());
+				lhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
+				lhs_load.object = lhs_object_handle;
+				lhs_load.member_name = member.getName();
+				lhs_load.offset = static_cast<int>(member.offset);
+				lhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				lhs_load.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(lhs_load), func_decl.identifier_token()));
+
+				TempVar rhs_val = var_counter.next();
+				MemberLoadOp rhs_load;
+				rhs_load.result.value = rhs_val;
+				rhs_load.result.setType(member.type_index.category());
+				rhs_load.result.size_in_bits = SizeInBits{static_cast<int>(member_bits)};
+				rhs_load.object = rhs_object_handle;
+				rhs_load.member_name = member.getName();
+				rhs_load.offset = static_cast<int>(member.offset);
+				rhs_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+				rhs_load.struct_type_info = nullptr;
+				ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
+
+				TempVar eq_result = var_counter.next();
+				BinaryOp eq_op{
+					.lhs = TypedValue{.size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{lhs_val}, .is_signed = isSignedType(member.memberType()), .type_index = nativeTypeIndex(member.memberType()), .ir_type = toIrType(member.memberType())},
+					.rhs = TypedValue{.size_in_bits = SizeInBits{static_cast<int>(member_bits)}, .value = IrValue{rhs_val}, .is_signed = isSignedType(member.memberType()), .type_index = nativeTypeIndex(member.memberType()), .ir_type = toIrType(member.memberType())},
+					.result = IrValue{eq_result}};
+				ir_.addInstruction(IrInstruction(IrOpcode::Equal, std::move(eq_op), func_decl.identifier_token()));
+
+				auto equal_next_label = StringTable::createStringHandle(
+					StringBuilder().append("equal_next_").append(current_equal).append("_").append(member.offset).commit());
+				CondBranchOp eq_branch;
+				eq_branch.label_true = equal_next_label;
+				eq_branch.label_false = equal_false_label;
+				eq_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{8}, IrValue{eq_result});
+				ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(eq_branch), func_decl.identifier_token()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = equal_next_label}, func_decl.identifier_token()));
+			}
+
+			emitReturn(IrValue{1ULL}, TypeCategory::Bool, 8, func_decl.identifier_token());
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = equal_false_label}, func_decl.identifier_token()));
+			emitReturn(IrValue{0ULL}, TypeCategory::Bool, 8, func_decl.identifier_token());
 		} else {
-				// Fallback: operator<=> not found, return false for all synthesized operators
+			// Fallback: operator<=> not found, return false for synthesized comparison operators
 			emitReturn(IrValue{0ULL}, TypeCategory::Bool, 8, func_decl.identifier_token());
 		}
 
