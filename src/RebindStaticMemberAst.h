@@ -284,13 +284,12 @@ void visitAST(const ASTNode& node, Fn&& visitor) {
 		return;
 	}
 
-	auto&& visitor_ref = visitor;
 	auto visit_child = [&](const ASTNode& child) {
-		visitAST(child, visitor_ref);
+		visitAST(child, visitor);
 	};
 
 	auto visit_direct_node = [&](const ASTNode& current) {
-		visitor_ref(current);
+		visitor(current);
 
 		if (current.is<BlockNode>()) {
 			for (const auto& statement : current.as<BlockNode>().get_statements()) {
@@ -461,6 +460,7 @@ void visitAST(const ASTNode& node, Fn&& visitor) {
 			const auto& member_access = current.as<PointerToMemberAccessNode>();
 			visit_child(member_access.object());
 			visit_child(member_access.member_pointer());
+			return;
 		}
 	};
 

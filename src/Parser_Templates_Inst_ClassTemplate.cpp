@@ -150,20 +150,20 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		return node;
 	}
 
+	auto recurse = [struct_info, set_qualified_name](const ASTNode& child) {
+		return rebindStaticMemberInitializerFunctionCalls(child, struct_info, set_qualified_name);
+	};
+
 	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
 			node,
-			[struct_info, set_qualified_name](const ASTNode& child) {
-				return rebindStaticMemberInitializerFunctionCalls(child, struct_info, set_qualified_name);
-			});
+			recurse);
 		rebound_node.has_value()) {
 		return std::move(rebound_node.value());
 	}
 
 	if (auto rebound_node = RebindStaticMemberAst::tryRebindExpressionChildren(
 			node,
-			[struct_info, set_qualified_name](const ASTNode& child) {
-				return rebindStaticMemberInitializerFunctionCalls(child, struct_info, set_qualified_name);
-			});
+			recurse);
 		rebound_node.has_value()) {
 		return std::move(rebound_node.value());
 	}
@@ -184,9 +184,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		std::vector<ASTNode> rebound_template_args =
 			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(
 				call,
-				[struct_info, set_qualified_name](const ASTNode& child) {
-					return rebindStaticMemberInitializerFunctionCalls(child, struct_info, set_qualified_name);
-				});
+				recurse);
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
 		const StructTypeInfo* rebound_owner = nullptr;
