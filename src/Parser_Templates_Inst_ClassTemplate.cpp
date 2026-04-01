@@ -10,13 +10,12 @@
 
 // Compute the canonical instantiated lookup name for a member function.
 // For conversion operators (operator with an identifier suffix, e.g. "operator value_type"),
-// the return type after substitution gives the canonical name (e.g. "operator int").
+// the substituted return type gives the canonical name (e.g. "operator int").
 // For all other functions the original name is canonical.
 static StringHandle computeInstantiatedLookupName(
 	StringHandle original_name,
 	OverloadableOperator op_kind,
-	TypeCategory substituted_return_type,
-	TypeIndex substituted_return_type_index) {
+	const TypeSpecifierNode& substituted_return_type) {
 	if (op_kind == OverloadableOperator::None) {
 		std::string_view name = StringTable::getStringView(original_name);
 		if (name.starts_with("operator ")) {
@@ -24,21 +23,54 @@ static StringHandle computeInstantiatedLookupName(
 			// Conversion operators have a type-name suffix (starts with letter/underscore).
 			// Non-conversion operators start with punctuation (==, !=, <, etc.).
 			if (!suffix.empty() && (std::isalpha(static_cast<unsigned char>(suffix[0])) || static_cast<unsigned char>(suffix[0]) == '_')) {
-				// Try primitive type first
-				std::string_view type_name = getTypeName(substituted_return_type);
-				if (!type_name.empty()) {
-					return StringTable::getOrInternStringHandle(
-						StringBuilder().append("operator ").append(type_name).commit());
+				TypeIndex canonical_type_index = substituted_return_type.type_index();
+				TypeCategory canonical_type = substituted_return_type.type();
+				// Only alias-like categories need canonicalization here; pointer/reference
+				// layers are stored separately on TypeSpecifierNode and are appended below.
+				if ((canonical_type == TypeCategory::UserDefined || canonical_type == TypeCategory::TypeAlias) &&
+					canonical_type_index.is_valid()) {
+					const CanonicalTypeAlias canonical_alias = canonicalize_type_alias(canonical_type_index);
+					canonical_type = canonical_alias.typeEnum();
+					canonical_type_index = canonical_alias.resolvedTypeIndex();
 				}
-				// User-defined type (struct/enum/any named type with a valid TypeIndex)
-				if (substituted_return_type_index.is_valid()) {
-					if (const TypeInfo* rti = tryGetTypeInfo(substituted_return_type_index)) {
-						std::string_view udt_name = StringTable::getStringView(rti->name());
-						if (!udt_name.empty()) {
-							return StringTable::getOrInternStringHandle(
-								StringBuilder().append("operator ").append(udt_name).commit());
+
+				std::string_view type_name = getTypeName(canonical_type);
+				if (type_name.empty() && canonical_type_index.is_valid()) {
+					if (const TypeInfo* rti = tryGetTypeInfo(canonical_type_index)) {
+						type_name = StringTable::getStringView(rti->name());
+					}
+				}
+				if (!type_name.empty()) {
+					StringBuilder builder;
+					builder.append("operator ");
+
+					std::string base_cv = cvQualifierToString(substituted_return_type.cv_qualifier());
+					if (!base_cv.empty()) {
+						builder.append(base_cv).append(" ");
+					}
+					// Only prepend unsigned/signed when the canonical type_name
+					// doesn't already encode signedness (e.g. "unsigned int").
+					if (substituted_return_type.qualifier() == TypeQualifier::Unsigned &&
+						!type_name.starts_with("unsigned ")) {
+						builder.append("unsigned ");
+					} else if (substituted_return_type.qualifier() == TypeQualifier::Signed &&
+							   !type_name.starts_with("signed ")) {
+						builder.append("signed ");
+					}
+					builder.append(type_name);
+					for (const auto& ptr_level : substituted_return_type.pointer_levels()) {
+						builder.append("*");
+						std::string ptr_cv = cvQualifierToString(ptr_level.cv_qualifier);
+						if (!ptr_cv.empty()) {
+							builder.append(" ").append(ptr_cv);
 						}
 					}
+					if (substituted_return_type.is_lvalue_reference()) {
+						builder.append("&");
+					} else if (substituted_return_type.is_rvalue_reference()) {
+						builder.append("&&");
+					}
+					return StringTable::getOrInternStringHandle(builder.commit());
 				}
 			}
 		}
@@ -1608,10 +1640,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						orig_return_type.cv_qualifier(),
 						ReferenceQualifier::None);
 					substituted_return_node.as<TypeSpecifierNode>().copy_indirection_from(orig_return_type);
+					StringHandle effective_name = computeInstantiatedLookupName(
+						orig_decl.identifier_token().handle(),
+						mem_func.operator_kind,
+						substituted_return_node.as<TypeSpecifierNode>());
+					Token effective_identifier_token(
+						Token::Type::Identifier,
+						StringTable::getStringView(effective_name),
+						orig_decl.identifier_token().line(),
+						orig_decl.identifier_token().column(),
+						orig_decl.identifier_token().file_index());
 
 					auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
 						substituted_return_node,
-						orig_decl.identifier_token());
+						effective_identifier_token);
 					auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 						new_func_decl_ref,
 						instantiated_name);
@@ -1630,9 +1672,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					pack_param_info_.resize(saved_pack_info);
 
 					// Add the function to the struct info (with substituted signature)
-					StringHandle func_name_handle = orig_decl.identifier_token().handle();
 					struct_info->addMemberFunction(
-						func_name_handle,
+						effective_name,
 						new_func_node,
 						mem_func.access,
 						mem_func.is_virtual,
@@ -5219,22 +5260,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					return_type_index = subst_index;
 				}
 
-				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
-				lazy_info.identity.instantiated_lookup_name = computeInstantiatedLookupName(
-					lazy_info.identity.original_lookup_name,
-					lazy_info.identity.operator_kind,
-					return_type, return_type_index);
-
-				// Save the effective lookup name before moving lazy_info, since
-				// effectiveLookupName accesses lazy_info.identity which will be
-				// in a moved-from state after registerLazyMember.
-				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
-
-				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
-
-				FLASH_LOG(Templates, Debug, "Registered lazy member function: ",
-						  instantiated_name, "::", decl.identifier_token().value());
-
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type(
 					return_type,
@@ -5263,11 +5288,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 
+				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
+				lazy_info.identity.instantiated_lookup_name = computeInstantiatedLookupName(
+					lazy_info.identity.original_lookup_name,
+					lazy_info.identity.operator_kind,
+					substituted_return_type);
+
+				// Save the effective lookup name before moving lazy_info, since
+				// effectiveLookupName accesses lazy_info.identity which will be
+				// in a moved-from state after registerLazyMember.
+				StringHandle effective_name = effectiveLookupName(lazy_info.identity);
+
+				LazyMemberInstantiationRegistry::getInstance().registerLazyMember(std::move(lazy_info));
+
+				FLASH_LOG(Templates, Debug, "Registered lazy member function: ",
+						  instantiated_name, "::", decl.identifier_token().value());
+
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+				Token effective_identifier_token(
+					Token::Type::Identifier,
+					StringTable::getStringView(effective_name),
+					decl.identifier_token().line(),
+					decl.identifier_token().column(),
+					decl.identifier_token().file_index());
 
 				// Create a new function declaration with substituted return type but NO BODY
 				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-					substituted_return_node, decl.identifier_token());
+					substituted_return_node, effective_identifier_token);
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name);
 				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
@@ -5418,10 +5465,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+				StringHandle effective_name = computeInstantiatedLookupName(
+					decl.identifier_token().handle(),
+					mem_func.operator_kind,
+					substituted_return_type);
+				Token effective_identifier_token(
+					Token::Type::Identifier,
+					StringTable::getStringView(effective_name),
+					decl.identifier_token().line(),
+					decl.identifier_token().column(),
+					decl.identifier_token().file_index());
 
 				// Create a new function declaration with substituted return type
 				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-					substituted_return_node, decl.identifier_token());
+					substituted_return_node, effective_identifier_token);
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name);
 				setOuterTemplateBindingsFromParams(new_func_ref, template_params, template_args_to_use);
@@ -5609,11 +5666,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
-					StringHandle func_name_handle = decl.identifier_token().handle();
-					FLASH_LOG(Templates, Debug, "Adding member function '", StringTable::getStringView(func_name_handle),
+					FLASH_LOG(Templates, Debug, "Adding member function '", StringTable::getStringView(effective_name),
 							  "' to struct_info for ", instantiated_name, ", parent_struct_name='", new_func_ref.parent_struct_name(), "'");
 					struct_info_ptr->addMemberFunction(
-						func_name_handle,
+						effective_name,
 						new_func_node,
 						mem_func.access,
 						mem_func.is_virtual,
@@ -5699,10 +5755,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
+				StringHandle effective_name = computeInstantiatedLookupName(
+					decl.identifier_token().handle(),
+					mem_func.operator_kind,
+					substituted_return_type);
+				Token effective_identifier_token(
+					Token::Type::Identifier,
+					StringTable::getStringView(effective_name),
+					decl.identifier_token().line(),
+					decl.identifier_token().column(),
+					decl.identifier_token().file_index());
 
 				// Create a new function declaration with substituted return type
 				auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
-					substituted_return_node, decl.identifier_token());
+					substituted_return_node, effective_identifier_token);
 				auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(
 					new_func_decl_ref, instantiated_name);
 
@@ -5773,9 +5839,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info_ptr->addOperatorOverload(mem_func.operator_kind, new_func_node, mem_func.access,
 														 mem_func.is_virtual, mem_func.is_pure_virtual, mem_func.is_override, mem_func.is_final);
 				} else {
-					StringHandle func_name_handle = decl.identifier_token().handle();
 					struct_info_ptr->addMemberFunction(
-						func_name_handle,
+						effective_name,
 						new_func_node,
 						mem_func.access,
 						mem_func.is_virtual,
