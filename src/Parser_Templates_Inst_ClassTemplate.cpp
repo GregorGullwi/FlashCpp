@@ -207,7 +207,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 		if (rebound_function && rebound_function->has_mangled_name()) {
 			rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
-		} else if (call.has_mangled_name()) {
+		} else if (!rebound_function && call.has_mangled_name()) {
 			rebound_call_ref.set_mangled_name(call.mangled_name());
 		}
 		if (!rebound_function && call.has_qualified_name()) {
@@ -255,7 +255,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 				if (rebound_function && rebound_function->has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
-				} else if (member_call.function_declaration().has_mangled_name()) {
+				} else if (!rebound_function && member_call.function_declaration().has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
 				}
 				if (set_qualified_name && rebound_function && rebound_owner) {

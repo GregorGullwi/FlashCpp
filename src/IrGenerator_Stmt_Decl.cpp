@@ -872,7 +872,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					// This is a user-defined type (struct/class)
 				const TypeInfo& type_info = getTypeInfo(type_node.type_index());
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
-				if (struct_info && !struct_info->members.empty()) {
+				if (struct_info && struct_info->has_vtable &&
+					struct_info->members.empty() &&
+					struct_info->base_classes.empty() &&
+					!struct_info->vtable_symbol.empty()) {
+					op.is_initialized = true;
+					op.init_data.resize(struct_info->total_size, 0);
+					op.reloc_target = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
+				} else if (struct_info && !struct_info->members.empty()) {
 						// Check if any members have default initializers
 					bool has_default_inits = false;
 					for (const auto& member : struct_info->members) {
