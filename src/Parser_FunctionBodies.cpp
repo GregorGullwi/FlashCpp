@@ -61,7 +61,6 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 
 	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
 			node,
-			struct_info,
 			[struct_info](const ASTNode& child) {
 				return rebindDelayedStaticMemberFunctionCalls(child, struct_info);
 			});

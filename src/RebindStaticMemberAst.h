@@ -3,14 +3,11 @@
 #include "AstNodeTypes_Stmt.h"
 #include "AstNodeTypes_Template.h"
 
-class StructTypeInfo;
-
 namespace RebindStaticMemberAst {
 
 template <typename RecurseFn>
 std::optional<ASTNode> tryRebindNonExpressionNode(
 	const ASTNode& node,
-	const StructTypeInfo* struct_info,
 	RecurseFn&& recurse) {
 	if (node.is<BlockNode>()) {
 		ASTNode rebound_block = ASTNode::emplace_node<BlockNode>(BlockNode());

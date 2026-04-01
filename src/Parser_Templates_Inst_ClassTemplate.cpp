@@ -197,7 +197,6 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
 			node,
-			struct_info,
 			[struct_info](const ASTNode& child) {
 				return rebindStaticMemberInitializerFunctionCalls(child, struct_info);
 			});
