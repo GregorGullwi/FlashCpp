@@ -2232,9 +2232,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Check if this is an operator overload
 			std::string_view func_name = decl_node.identifier_token().value();
 			if (func_name.starts_with("operator")) {
-				// Extract the operator symbol (e.g., "operator=" -> "=") and convert to enum
-				std::string_view operator_symbol = func_name.substr(8); // Skip "operator"
-				OverloadableOperator op_kind = stringToOverloadableOperator(operator_symbol);
+				OverloadableOperator op_kind = overloadableOperatorFromFunctionName(func_name);
 				if (op_kind != OverloadableOperator::None) {
 					// Built-in operator overload (=, +, ==, etc.)
 					struct_ref.add_operator_overload(op_kind, member_func_node, current_access,
@@ -2767,7 +2765,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				func_decl.access,
 				func_decl.is_virtual);
 			has_user_defined_destructor = true;
-		} else if (func_decl.is_operator_overload()) {
+		} else if (func_decl.operator_kind != OverloadableOperator::None) {
 			// Refine generic Assign into CopyAssign or MoveAssign based on parameter type
 			OverloadableOperator refined_kind = func_decl.operator_kind;
 			if (refined_kind == OverloadableOperator::Assign) {
