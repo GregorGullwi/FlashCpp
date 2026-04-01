@@ -21,7 +21,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
 | `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Operator== not defined for operand types |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~4150ms (targeted retest 2026-03-31). Previous function-pointer mangling blocker fixed; now fails later on `Missing identifier: string`, missing `std::basic_string` primary template lookups, and explicit-constructor copy-init errors |
-| `<array>` | `test_std_array.cpp` | ❌ Parse Error | Aggregate brace initialization not supported for template types |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~750ms (targeted retest 2026-04-01). The aggregate brace-init blocker for `std::array<int, N>` is fixed; the header now parses and reaches later iterator/string-view codegen failures (`Operator!=`, `Operator==`, then fatal `Operator+`) |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2100ms (targeted retest 2026-03-31). No longer reproduces unresolved-`auto` mangling here; now fails later on explicit-constructor copy-init after concepts/ranges diagnostics |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
@@ -35,7 +35,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
 | `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
-| `<iostream>` | `test_std_iostream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
+| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~2967ms (targeted retest 2026-04-01). The earlier missing-InstantiationContext assertion is fixed; codegen now gets further, reports `_S_empty`/`_S_size`/`move` failures, and then crashes in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-03-31):** The table entries for `<compare>`, `<algorithm>`, `<string>`, and `<stdexcept>` were re-verified individually after the function-pointer signature fix below. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-01):** The table entries for `<array>` and `<iostream>` were re-verified individually after the fixes below. `<array>` now gets past the documented aggregate brace-init blocker and reaches later codegen errors; `<iostream>` no longer aborts on the missing-InstantiationContext assertion and now crashes later in IR lowering. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -122,7 +122,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 3. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-4. **Aggregate brace initialization for template types**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` fails because the struct member `_M_elems` (from `typename __array_traits<_Tp,_Nm>::_Type`) is not resolved as an array type, so brace-elision doesn't apply. Affects: `<array>`.
+4. **Iterator / string-view downstream codegen after the `std::array` parse fix**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` now parses, but `<array>` still dies later in codegen on unresolved iterator/string-view operators (`Operator!=`, `Operator==`, then fatal `Operator+`). Affects: `<array>`.
 
 5. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
 
@@ -132,7 +132,13 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 8. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
-9. **Static sibling member function calls in template deferred bodies**: In deferred template member function bodies, calls to other member functions of the same class fail because sibling functions are not registered in the codegen symbol table context. Affects: `<iostream>`, `<sstream>`, `<fstream>`.
+9. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-04-01)
+
+1. **Template alias array members now preserve array shape through instantiation**: array aliases such as `using type = T[N];` now keep their array metadata and original dimension expressions through template instantiation. This fixes the `std::array<int, N>` aggregate brace-init parser blocker: `typename __array_traits<_Tp, _Nm>::_Type _M_elems;` is now recognized as an array member during aggregate brace elision. Regression test: `tests/test_template_type_alias_array_member_brace_init_ret0.cpp`.
+
+2. **Dependent template placeholders now carry type-owned InstantiationContext metadata in more creation paths**: several placeholder/template-specialization creation sites now attach an InstantiationContext immediately after `setTemplateInstantiationInfo(...)`. This removes the earlier `<iostream>` abort in `ConstExprEvaluator_Core.cpp:3314`; the header now progresses to later codegen/IR-lowering failures instead of dying during constexpr binding reconstruction.
 
 ### Recent Fixes (2026-03-31)
 

@@ -116,6 +116,7 @@ TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNod
 	info.is_type_alias_ = true;
 	info.pointer_depth_ = type_spec.pointer_depth();
 	info.reference_qualifier_ = type_spec.reference_qualifier();
+	info.setArrayInfo(type_spec.is_array(), type_spec.array_dimensions());
 	if (type_spec.has_function_signature()) {
 		info.function_signature_ = type_spec.function_signature();
 	}

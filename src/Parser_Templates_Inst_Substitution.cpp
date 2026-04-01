@@ -808,6 +808,12 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 				qualified_alias_name,
 				alias_type_spec.type_index(),
 				alias_type_spec.size_in_bits());
+			alias_type_info.pointer_depth_ = alias_type_spec.pointer_depth();
+			alias_type_info.reference_qualifier_ = alias_type_spec.reference_qualifier();
+			alias_type_info.setArrayInfo(alias_type_spec.is_array(), alias_type_spec.array_dimensions());
+			if (alias_type_spec.has_function_signature()) {
+				alias_type_info.function_signature_ = alias_type_spec.function_signature();
+			}
 			if (alias_type_spec.category() == TypeCategory::Enum) {
 				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_type_spec.type_index());
 					source_alias_type_info && source_alias_type_info->getEnumInfo()) {
@@ -862,9 +868,11 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	TypeInfo& struct_type_info = add_struct_type(StringTable::getOrInternStringHandle(instantiated_name), decl_ns);
 
 	// Store template instantiation metadata for O(1) lookup (Phase 6)
+	auto template_args_info = convertToTemplateArgInfo(template_args);
 	struct_type_info.setTemplateInstantiationInfo(
 		QualifiedIdentifier::fromQualifiedName(template_name, decl_ns),
-		convertToTemplateArgInfo(template_args));
+		template_args_info);
+	struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
 	auto struct_info = std::make_unique<StructTypeInfo>(StringTable::getOrInternStringHandle(instantiated_name), spec_struct.default_access(), spec_struct.is_union(), decl_ns);
 

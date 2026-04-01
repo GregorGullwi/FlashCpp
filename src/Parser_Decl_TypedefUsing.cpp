@@ -366,6 +366,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						 StringTable::getStringView(alias_name), static_cast<int>(ref_qual));
 		type_spec.set_reference_qualifier(ref_qual);
 
+		std::vector<ASTNode> alias_array_dimensions;
+
 		// Parse array dimensions: using _Type = _Tp[_Nm]; or using _Type = _Tp[2][3];
 		while (peek() == "["_tok) {
 			advance(); // consume '['
@@ -376,6 +378,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 				auto dim_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 				if (dim_result.is_error()) {
 					return dim_result;
+				}
+				if (dim_result.node().has_value()) {
+					alias_array_dimensions.push_back(*dim_result.node());
 				}
 				auto dim_val = try_evaluate_constant_expression(*dim_result.node());
 				size_t dim_size = dim_val.has_value() ? static_cast<size_t>(dim_val->value) : 0;
@@ -393,7 +398,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 		// Store the alias in the struct (if struct_ref provided)
 		if (struct_ref) {
-			struct_ref->add_type_alias(alias_name, *type_result.node(), current_access);
+			struct_ref->add_type_alias(alias_name, *type_result.node(), std::move(alias_array_dimensions), current_access);
 		}
 
 		// Also register it globally with qualified name (e.g., WithType::type)
