@@ -89,7 +89,14 @@ initializers that do not contain `FunctionCallNode`.
 
 ### Phase D bug: `needs_default_constructor` missing for nested structs
 
-**Reproducer**:
+**Status**: The reproducer below now passes.  Although `needs_default_constructor`
+is never explicitly set to `true` in the codebase, the nested template struct
+case is handled through the eager class-template instantiation path which
+generates implicit constructors via a different mechanism.  The
+`generateTrivialDefaultConstructors()` code path (which checks the flag) is
+currently dead code.
+
+**Reproducer** (passing):
 
 ```cpp
 template <int N>
@@ -101,64 +108,9 @@ struct Outer {
 
 int main() {
     Outer<42>::Inner obj;
-    return obj.tag;  // Returns garbage instead of 42
+    return obj.tag;  // Returns 42
 }
 ```
-
-clang++ returns 42; FlashCpp returns a garbage value (e.g. 99 or 103).
-
-**Root cause analysis** (verified via `--log-level=Codegen:trace`):
-
-1. Template parameter substitution **works correctly**: the
-   `substituteTemplateParameters()` call at line 4651 of
-   `Parser_Templates_Inst_ClassTemplate.cpp` correctly replaces the
-   `TemplateParameterReferenceNode(N)` with `NumericLiteralNode(42)` in the
-   `default_initializer` stored on the `StructMember`.
-
-2. The bug is in **constructor generation**:
-   `needs_default_constructor` is set at line 6804 for the **outer** struct
-   and at line 1636 for **partial specialization** paths, but the **nested
-   class** processing path (lines 4582–4763) never sets it.
-
-3. `generateTrivialDefaultConstructors()` in
-   `IrGenerator_Visitors_TypeInit.cpp:1145` iterates all registered types
-   and only generates a trivial default constructor when
-   `struct_info->needs_default_constructor` is true (line 1178).  Because the
-   nested struct never has this flag set, no constructor is generated for it.
-
-4. The generated IR shows:
-   - `Outer$hash` gets a trivial constructor (but has 0 own members)
-   - `Inner` gets NO constructor at all
-   - `obj` is allocated on the stack but never initialized
-   - `obj.tag` reads uninitialized stack memory
-
-**Fix**: After finalizing the nested struct (line 4732) and registering it
-(line 4746), set `needs_default_constructor` on the nested StructTypeInfo:
-
-```cpp
-// After line 4747 (nested_type_info.setStructInfo)
-// Check if the nested class needs a default constructor
-{
-    const StructTypeInfo* nsi = nested_type_info.getStructInfo();
-    if (nsi && !nsi->hasAnyConstructor()) {
-        // Safe to const_cast here: we just moved this into nested_type_info
-        const_cast<StructTypeInfo*>(nsi)->needs_default_constructor = true;
-    }
-}
-```
-
-Alternatively, set it directly on `nested_struct_info` before the `std::move`
-at line 4747:
-
-```cpp
-// Before line 4747: set needs_default_constructor for nested class
-if (!nested_struct_info->hasAnyConstructor()) {
-    nested_struct_info->needs_default_constructor = true;
-}
-```
-
-This is the cleaner approach since `nested_struct_info` is still owned at that
-point.
 
 **Affected scope**: Any nested struct inside a template that:
 - has default member initializers (especially NTTP-dependent ones), AND
