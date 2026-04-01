@@ -410,27 +410,44 @@ static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitiali
 				static_cast<char>((value >> (i * 8)) & 0xFF));
 		}
 	};
+	auto append_object_bytes = [&normalized](const auto& object_value) {
+		const auto* raw_bytes = reinterpret_cast<const unsigned char*>(&object_value);
+		for (size_t i = 0; i < sizeof(object_value); ++i) {
+			normalized.constant_bytes.push_back(static_cast<char>(raw_bytes[i]));
+		}
+	};
 
 	switch (type_index.category()) {
 	case TypeCategory::Float: {
-		if (size_in_bytes != sizeof(uint32_t)) {
+		if (size_in_bytes != sizeof(float)) {
 			return std::nullopt;
 		}
 		float value = static_cast<float>(eval_result.as_double());
-		uint32_t bits;
-		std::memcpy(&bits, &value, sizeof(bits));
-		append_bytes(bits, size_in_bytes);
+		append_object_bytes(value);
 		break;
 	}
-	case TypeCategory::Double:
-	case TypeCategory::LongDouble: {
-		if (size_in_bytes != sizeof(unsigned long long)) {
+	case TypeCategory::Double: {
+		if (size_in_bytes != sizeof(double)) {
 			return std::nullopt;
 		}
 		double value = eval_result.as_double();
-		unsigned long long bits;
-		std::memcpy(&bits, &value, sizeof(bits));
-		append_bytes(bits, size_in_bytes);
+		append_object_bytes(value);
+		break;
+	}
+	case TypeCategory::LongDouble: {
+		// EvalResult stores floating values as double, so only materialize
+		// long double bytes early on targets where long double matches double.
+		// Otherwise return nullopt here and leave long double materialization to
+		// the later code path that already handles target-specific storage.
+		const bool has_expected_long_double_size = size_in_bytes == sizeof(long double);
+		const bool long_double_matches_double_representation =
+			sizeof(long double) == sizeof(double);
+		if (!has_expected_long_double_size ||
+			!long_double_matches_double_representation) {
+			return std::nullopt;
+		}
+		long double value = static_cast<long double>(eval_result.as_double());
+		append_object_bytes(value);
 		break;
 	}
 	default:

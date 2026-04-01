@@ -2963,12 +2963,13 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
 		const auto& arguments = func_call.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		constexpr bool require_static_member = true;
 		auto current_match = find_current_struct_member_function_candidate(
 			func_name_handle,
 			arguments.size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
-			false,
+			require_static_member,
 			true);
 		if (current_match.ambiguous) {
 			return EvalResult::error("Ambiguous static member function overload in constant expression");
@@ -3059,30 +3060,6 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// If we can't extract the type, return true as a fallback
 		FLASH_LOG(Templates, Debug, "__is_complete_or_unbounded: couldn't extract type, returning true as fallback");
 		return EvalResult::from_bool(true);
-	}
-
-	if (!func_call.has_qualified_name() && context.struct_info) {
-		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-		auto current_struct_match = find_current_struct_member_function_candidate(
-			func_name_handle,
-			func_call.arguments().size(),
-			context,
-			MemberFunctionLookupMode::ConstexprEvaluable,
-			true,
-			true);
-		if (current_struct_match.ambiguous) {
-			return EvalResult::error("Ambiguous static member function overload in constant expression");
-		}
-		if (current_struct_match.function) {
-			std::unordered_map<std::string_view, EvalResult> empty_bindings;
-			return evaluate_function_call_with_template_context(
-				*current_struct_match.function,
-				func_call.arguments(),
-				empty_bindings,
-				context,
-				nullptr,
-				FunctionCallTemplateBindingLoadMode::ForceCurrentStructIfAvailable);
-		}
 	}
 
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
