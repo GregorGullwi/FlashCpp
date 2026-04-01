@@ -61,6 +61,11 @@ static StringHandle computeInstantiatedLookupName(
 							builder.append(" ").append(ptr_cv);
 						}
 					}
+					if (substituted_return_type.is_lvalue_reference()) {
+						builder.append("&");
+					} else if (substituted_return_type.is_rvalue_reference()) {
+						builder.append("&&");
+					}
 					return StringTable::getOrInternStringHandle(builder.commit());
 				}
 			}
