@@ -713,10 +713,14 @@ private:
 struct TypeAliasDecl {
 	StringHandle alias_name;	 // The alias name
 	ASTNode type_node;			   // TypeSpecifierNode representing the aliased type
+	std::vector<ASTNode> array_dimensions; // Original array dimension expressions for dependent aliases
 	AccessSpecifier access;		// Access specifier (public/private/protected)
 
 	TypeAliasDecl(StringHandle name, ASTNode type, AccessSpecifier acc)
 		: alias_name(name), type_node(type), access(acc) {}
+
+	TypeAliasDecl(StringHandle name, ASTNode type, std::vector<ASTNode> dims, AccessSpecifier acc)
+		: alias_name(name), type_node(type), array_dimensions(std::move(dims)), access(acc) {}
 };
 
 // Static member declaration (for AST storage in templates/partial specializations)
@@ -853,6 +857,10 @@ public:
 	// Type alias support
 	void add_type_alias(StringHandle alias_name, ASTNode type_node, AccessSpecifier access) {
 		type_aliases_.emplace_back(alias_name, type_node, access);
+	}
+
+	void add_type_alias(StringHandle alias_name, ASTNode type_node, std::vector<ASTNode> array_dimensions, AccessSpecifier access) {
+		type_aliases_.emplace_back(alias_name, type_node, std::move(array_dimensions), access);
 	}
 
 	const std::vector<TypeAliasDecl>& type_aliases() const {

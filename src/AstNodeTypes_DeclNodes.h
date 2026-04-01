@@ -767,6 +767,10 @@ struct TypeInfo {
 	// For function pointer/reference type aliases, store the function signature
 	std::optional<FunctionSignature> function_signature_;
 
+	// For array type aliases, preserve the alias' array shape metadata.
+	bool is_array_ = false;
+	std::vector<size_t> array_dimensions_;
+
 	// For template instantiations: store metadata to avoid name parsing
 	// If base_template_ is valid, this type is a template instantiation
 	QualifiedIdentifier base_template_;	// e.g., {std, "vector"} for std::vector<int>
@@ -832,10 +836,17 @@ struct TypeInfo {
  // Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
 	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
+	bool isArrayAlias() const { return is_array_; }
+	const std::vector<size_t>& arrayDimensions() const { return array_dimensions_; }
 
 	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_ = base_template;
 		template_args_ = std::move(args);
+	}
+
+	void setArrayInfo(bool is_array, std::vector<size_t> array_dimensions) {
+		is_array_ = is_array;
+		array_dimensions_ = std::move(array_dimensions);
 	}
 
  // Set the type-owned instantiation context for template instantiations.

@@ -1352,9 +1352,25 @@ ParseResult Parser::parse_type_specifier() {
 						getTypesByNameMap()[type_handle] = &type_info;
 
 						auto template_args_info = convertToTemplateArgInfo(*template_args);
+						InlineVector<StringHandle, 4> placeholder_param_names;
+						if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+							placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
+							const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+							size_t count = std::min(placeholder_params.size(), template_args->size());
+							placeholder_param_names.reserve(count);
+							for (size_t i = 0; i < count; ++i) {
+								if (placeholder_params[i].is<TemplateParameterNode>()) {
+									placeholder_param_names.push_back(placeholder_params[i].as<TemplateParameterNode>().nameHandle());
+								}
+							}
+						}
 						type_info.setTemplateInstantiationInfo(
 							QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()),
 							template_args_info);
+						type_info.setInstantiationContext(
+							std::move(placeholder_param_names),
+							template_args_info,
+							nullptr);
 						FLASH_LOG_FORMAT(Templates, Debug, "Created dependent template-template placeholder '{}' with {} args",
 										 instantiated_name, template_args_info.size());
 
@@ -2003,7 +2019,23 @@ ParseResult Parser::parse_type_specifier() {
 					// Set template instantiation metadata so isTemplateInstantiation() returns true
 					// This is needed for deferred alias template detection
 					auto template_args_info = convertToTemplateArgInfo(template_args.value());
+					InlineVector<StringHandle, 4> placeholder_param_names;
+					if (auto placeholder_template_opt = gTemplateRegistry.lookupTemplate(type_name);
+						placeholder_template_opt.has_value() && placeholder_template_opt->is<TemplateClassDeclarationNode>()) {
+						const auto& placeholder_params = placeholder_template_opt->as<TemplateClassDeclarationNode>().template_parameters();
+						size_t count = std::min(placeholder_params.size(), template_args->size());
+						placeholder_param_names.reserve(count);
+						for (size_t i = 0; i < count; ++i) {
+							if (placeholder_params[i].is<TemplateParameterNode>()) {
+								placeholder_param_names.push_back(placeholder_params[i].as<TemplateParameterNode>().nameHandle());
+							}
+						}
+					}
 					type_info.setTemplateInstantiationInfo(QualifiedIdentifier::fromQualifiedName(type_name, gSymbolTable.get_current_namespace_handle()), template_args_info);
+					type_info.setInstantiationContext(
+						std::move(placeholder_param_names),
+						template_args_info,
+						nullptr);
 					FLASH_LOG_FORMAT(Templates, Debug, "Set template instantiation metadata for dependent placeholder: base='{}', args={}",
 									 type_name, template_args_info.size());
 
@@ -2271,6 +2303,9 @@ ParseResult Parser::parse_type_specifier() {
 
 			// Also preserve pointer depth if the alias has pointers
 			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(original_type_info->pointer_depth_);
+			if (original_type_info->isArrayAlias()) {
+				type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(original_type_info->arrayDimensions());
+			}
 
 			return ParseResult::success(type_spec_node);
 		}
@@ -2316,6 +2351,9 @@ ParseResult Parser::parse_type_specifier() {
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
+				if (type_info_ctx->isArrayAlias()) {
+					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(type_info_ctx->arrayDimensions());
+				}
 				// Add reference qualifiers from typedef
 				if (type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
 					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(type_info_ctx->reference_qualifier_);

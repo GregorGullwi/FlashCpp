@@ -1285,9 +1285,11 @@ ParseResult Parser::parse_template_declaration() {
 				TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 
 				// Store template instantiation metadata for O(1) lookup (Phase 6)
+				auto template_args_info = convertToTemplateArgInfo(template_args);
 				struct_type_info.setTemplateInstantiationInfo(
 					QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
-					convertToTemplateArgInfo(template_args));
+					template_args_info);
+				struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
 				// Register the specialization with the template registry
 				gTemplateRegistry.registerSpecialization(
@@ -1318,9 +1320,11 @@ ParseResult Parser::parse_template_declaration() {
 			TypeInfo& struct_type_info = add_struct_type(instantiated_name, gSymbolTable.get_current_namespace_handle());
 
 			// Store template instantiation metadata for O(1) lookup (Phase 6)
+			auto template_args_info = convertToTemplateArgInfo(template_args);
 			struct_type_info.setTemplateInstantiationInfo(
 				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
-				convertToTemplateArgInfo(template_args));
+				template_args_info);
+			struct_type_info.setInstantiationContext({}, template_args_info, nullptr);
 
 			// Create struct info for tracking members - required before parsing static members
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
@@ -2729,6 +2733,7 @@ ParseResult Parser::parse_template_declaration() {
 			// to find the base template name and match it against the constructor name
 			struct_type_info.setTemplateInstantiationInfo(
 				QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()), {});
+			struct_type_info.setInstantiationContext({}, {}, nullptr);
 
 			// Create StructTypeInfo for this specialization
 			auto struct_info = std::make_unique<StructTypeInfo>(instantiated_name, struct_ref.default_access(), is_union, gSymbolTable.get_current_namespace_handle());
