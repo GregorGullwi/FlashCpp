@@ -486,7 +486,7 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 	int64_t val = eval_result.as_int();
 	std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
 	Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-	initializer = emplace_node<ExpressionNode>(
+	initializer = ASTNode::emplace_node<ExpressionNode>(
 		NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32));
 	FLASH_LOG(Templates, Debug,
 			  contains_function_call
