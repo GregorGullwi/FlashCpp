@@ -89,12 +89,12 @@ initializers that do not contain `FunctionCallNode`.
 
 ### Phase D bug: `needs_default_constructor` missing for nested structs
 
-**Status**: The reproducer below now passes.  Although `needs_default_constructor`
-is never explicitly set to `true` in the codebase, the nested template struct
-case is handled through the eager class-template instantiation path which
-generates implicit constructors via a different mechanism.  The
-`generateTrivialDefaultConstructors()` code path (which checks the flag) is
-currently dead code.
+**Status**: The reproducer below now passes.  `needs_default_constructor` is set
+for instantiated nested structs without explicit constructors, and
+`generateTrivialDefaultConstructors()` consumes that flag before the main AST
+walk to emit the synthetic default-constructor bodies.  Variable initialization
+then lowers `Outer<42>::Inner obj;` through the normal `ConstructorCallOp`
+path, which is why these cases link and run correctly.
 
 **Reproducer** (passing):
 

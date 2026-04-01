@@ -5,7 +5,10 @@ AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Pars
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST
 	generateStaticMemberDeclarations();
-	// Generate trivial default constructors for structs that need them
+	// Materialize implicit default constructors for instantiated structs that were
+	// marked with needs_default_constructor during parsing/template instantiation.
+	// Variable initialization lowers default construction to ConstructorCallOp, so
+	// these synthetic ctor bodies must exist before the main AST walk starts.
 	generateTrivialDefaultConstructors();
 }
 
