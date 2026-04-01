@@ -142,11 +142,18 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		// code for the instantiated struct (e.g., "Outer$hash::Inner"), update the
 		// store_name to use the instantiated qualification.  This ensures the correct
 		// global symbol is referenced at link time.
+		// Guard: only rewrite when the owner is a template pattern name (no '$')
+		// and current_struct is the instantiated version (has '$').  This avoids
+		// incorrectly rewriting cross-struct accesses like A accessing B::x.
 		if (static_member && current_struct_name_.isValid() && owner_name.isValid() && current_struct_name_ != owner_name) {
-			std::string_view member_name_part = resolved_name.substr(last_scope_pos + 2);
-			StringBuilder sb;
-			info.store_name = StringTable::getOrInternStringHandle(
-				sb.append(current_struct_name_).append("::"sv).append(member_name_part).commit());
+			std::string_view owner_sv = StringTable::getStringView(owner_name);
+			std::string_view current_sv = StringTable::getStringView(current_struct_name_);
+			if (owner_sv.find('$') == std::string_view::npos && current_sv.find('$') != std::string_view::npos) {
+				std::string_view member_name_part = resolved_name.substr(last_scope_pos + 2);
+				StringBuilder sb;
+				info.store_name = StringTable::getOrInternStringHandle(
+					sb.append(current_struct_name_).append("::"sv).append(member_name_part).commit());
+			}
 		}
 		if (static_member) {
 			info.type_index = nativeTypeIndex(static_member->memberType());

@@ -791,7 +791,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 			if (struct_type_it != getTypesByNameMap().end()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
-					const StructStaticMember* static_member = struct_info->findStaticMember(
+					auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(
 						StringTable::getOrInternStringHandle(object_name));
 					if (static_member && is_struct_type(static_member->type_index.category())) {
 						// Found: set up for member access on a struct-typed static member.
@@ -803,7 +803,7 @@ bool AstToIr::validateAndSetupIdentifierMemberAccess(
 							"' to global '", StringTable::getStringView(qualified_name), "'");
 						base_object = qualified_name;
 						base_type_index = static_member->type_index;
-						is_pointer_dereference = false;
+						is_pointer_dereference = (static_member->pointer_depth > 0 || static_member->is_reference());
 						return true;
 					}
 				}

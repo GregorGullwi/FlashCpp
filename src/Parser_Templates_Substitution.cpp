@@ -978,7 +978,7 @@ ASTNode Parser::substituteTemplateParameters(
 							auto it = getTypesByNameMap().find(inst_nested_handle);
 							if (it != getTypesByNameMap().end()) {
 								const TypeInfo* inst_type_info = it->second;
-								int inst_size_bits = static_cast<int>(inst_type_info->type_size_);
+								int inst_size_bits = static_cast<int>(inst_type_info->type_size_ * 8);
 								Token inst_token(Token::Type::Identifier,
 									StringTable::getStringView(inst_type_info->name()),
 									type_spec.token().line(),
