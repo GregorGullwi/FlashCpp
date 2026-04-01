@@ -778,7 +778,10 @@ bool StructTypeInfo::hasUserDefinedConstructor() const {
 void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 	mf.conversion_target_type = {};
 	if (const auto* fn = get_function_decl_node(mf.function_decl)) {
-		mf.operator_kind = overloadableOperatorFromFunctionName(StringTable::getStringView(mf.getName()));
+		OverloadableOperator derived_kind = overloadableOperatorFromFunctionName(StringTable::getStringView(mf.getName()));
+		if (!isAssignOperator(mf.operator_kind) || mf.operator_kind == OverloadableOperator::None) {
+			mf.operator_kind = derived_kind;
+		}
 		mf.is_noexcept = fn->is_noexcept();
 		// Auto-derive cv_qualifier from the stored const/volatile member function flags.
 		// All parse and instantiation paths must call set_is_const_member_function() and
