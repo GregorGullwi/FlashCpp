@@ -1342,7 +1342,7 @@ ParseResult Parser::parse_type_specifier() {
 						auto existing = getTypesByNameMap().find(type_handle);
 						if (existing != getTypesByNameMap().end()) {
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								existing->second->type_index_.withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
+								existing->second->registeredTypeIndex().withCategory(TypeCategory::UserDefined), 0, type_name_token, CVQualifier::None, ReferenceQualifier::None));
 						}
 
 						// Create a new dependent placeholder with template instantiation metadata
@@ -2001,7 +2001,7 @@ ParseResult Parser::parse_type_specifier() {
 					} else {
 						// Return existing placeholder (UserDefined) - don't create duplicates
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(
-							existing_type->type_index_.withCategory(existing_type->typeEnum()), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							existing_type->registeredTypeIndex().withCategory(existing_type->typeEnum()), 0, type_name_token, cv_qualifier, ReferenceQualifier::None));
 					}
 				}
 
@@ -2295,16 +2295,17 @@ ParseResult Parser::parse_type_specifier() {
 			auto type_spec_node = emplace_node<TypeSpecifierNode>(
 				struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 
-			// If this is a type alias with reference qualifiers (e.g., using ReturnType = Value&&),
-			// we need to preserve those reference qualifiers on the returned TypeSpecifierNode
-			if (original_type_info->reference_qualifier_ != ReferenceQualifier::None) {
-				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(original_type_info->reference_qualifier_);
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				original_type_info->registeredTypeIndex().withCategory(original_type_info->typeEnum()));
+			if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 			}
-
-			// Also preserve pointer depth if the alias has pointers
-			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(original_type_info->pointer_depth_);
-			if (original_type_info->isArrayAlias()) {
-				type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(original_type_info->arrayDimensions());
+			type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+			if (resolved_alias.isArray()) {
+				type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
+			}
+			if (resolved_alias.function_signature.has_value()) {
+				type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 			}
 
 			return ParseResult::success(type_spec_node);
@@ -2331,7 +2332,9 @@ ParseResult Parser::parse_type_specifier() {
 		TypeIndex user_type_index{};
 		TypeCategory resolved_type = TypeCategory::UserDefined;
 		if (type_info_ctx) {
-			user_type_index = type_info_ctx->type_index_;
+			user_type_index = type_info_ctx->registeredTypeIndex();
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				user_type_index.withCategory(type_info_ctx->typeEnum()));
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
 							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
@@ -2345,22 +2348,22 @@ ParseResult Parser::parse_type_specifier() {
 				is_typedef = true;
 			}
 			if (is_typedef) {
-				resolved_type = type_info_ctx->typeEnum();
+				resolved_type = resolved_alias.typeEnum();
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
-				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(type_info_ctx->pointer_depth_);
-				if (type_info_ctx->isArrayAlias()) {
-					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(type_info_ctx->arrayDimensions());
+				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+				if (resolved_alias.isArray()) {
+					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
 				}
 				// Add reference qualifiers from typedef
-				if (type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
-					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(type_info_ctx->reference_qualifier_);
+				if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+					type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 				}
 				// Copy function signature for function pointer/reference type aliases
-				if (type_info_ctx->function_signature_.has_value()) {
-					type_spec_node.as<TypeSpecifierNode>().set_function_signature(type_info_ctx->function_signature_.value());
+				if (resolved_alias.function_signature.has_value()) {
+					type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
 				}
 				return ParseResult::success(type_spec_node);
 			} else {

@@ -807,13 +807,8 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			auto& alias_type_info = add_type_alias_copy(
 				qualified_alias_name,
 				alias_type_spec.type_index(),
-				alias_type_spec.size_in_bits());
-			alias_type_info.pointer_depth_ = alias_type_spec.pointer_depth();
-			alias_type_info.reference_qualifier_ = alias_type_spec.reference_qualifier();
-			alias_type_info.setArrayInfo(alias_type_spec.is_array(), alias_type_spec.array_dimensions());
-			if (alias_type_spec.has_function_signature()) {
-				alias_type_info.function_signature_ = alias_type_spec.function_signature();
-			}
+				alias_type_spec.size_in_bits(),
+				alias_type_spec);
 			if (alias_type_spec.category() == TypeCategory::Enum) {
 				if (const TypeInfo* source_alias_type_info = tryGetTypeInfo(alias_type_spec.type_index());
 					source_alias_type_info && source_alias_type_info->getEnumInfo()) {

@@ -63,7 +63,17 @@ MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& 
 
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-		return type_info->getStructInfo();
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			return struct_info;
+		}
+		if (type_info->isTypeAlias()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+			if (resolved_alias.type_index.index() != type_index.index()) {
+				if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_alias.type_index)) {
+					return resolved_type_info->getStructInfo();
+				}
+			}
+		}
 	}
 	return nullptr;
 }

@@ -809,6 +809,38 @@ TypeIndex Parser::substitute_template_parameter(
 
 		// Try to find which template parameter this is
 		bool found_match = false;
+		auto materializeTemplateInstantiationArgs = [&](const TypeInfo& placeholder_info) {
+			std::vector<TemplateTypeArg> concrete_args;
+			for (const auto& arg_info : placeholder_info.templateArgs()) {
+				TemplateTypeArg concrete_arg;
+				concrete_arg.setCategory(arg_info.category());
+				concrete_arg.type_index = arg_info.type_index;
+				concrete_arg.is_value = arg_info.is_value;
+				concrete_arg.value = arg_info.intValue();
+				concrete_arg.pointer_depth = arg_info.pointer_depth;
+				concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+				concrete_arg.ref_qualifier = arg_info.ref_qualifier;
+				concrete_arg.cv_qualifier = arg_info.cv_qualifier;
+				concrete_arg.array_size = arg_info.array_size;
+				concrete_arg.function_signature = arg_info.function_signature;
+				concrete_arg.dependent_name = arg_info.dependent_name;
+
+				if (arg_info.dependent_name.isValid()) {
+					std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+						if (!template_params[i].is<TemplateParameterNode>())
+							continue;
+						if (template_params[i].as<TemplateParameterNode>().name() == dep_name) {
+							concrete_arg = template_args[i];
+							break;
+						}
+					}
+				}
+
+				concrete_args.push_back(concrete_arg);
+			}
+			return concrete_args;
+		};
 		if (!type_name.empty()) {
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				if (template_params[i].is<TemplateParameterNode>()) {
@@ -840,99 +872,35 @@ TypeIndex Parser::substitute_template_parameter(
 				}
 			}
 
-			// Try to resolve dependent qualified member types (e.g., Helper_T::type)
+			// Try to resolve dependent qualified member types (e.g., Helper<T>::type)
 			if (!found_match && type_name.find("::") != std::string_view::npos) {
-				auto sep_pos = type_name.find("::");
-				std::string base_part(type_name.substr(0, sep_pos));
+				auto sep_pos = type_name.rfind("::");
 				std::string_view member_part = type_name.substr(sep_pos + 2);
-				auto build_resolved_handle = [](std::string_view base, std::string_view member) {
+				auto buildResolvedHandle = [](std::string_view base, std::string_view member) {
 					StringBuilder sb;
 					return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 				};
-
-				bool replaced = false;
-				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					if (!template_params[i].is<TemplateParameterNode>())
-						continue;
-					const auto& tparam = template_params[i].as<TemplateParameterNode>();
-					std::string_view tname = tparam.name();
-					auto pos = base_part.find(tname);
-					if (pos != std::string::npos) {
-						base_part.replace(pos, tname.size(), template_args[i].toString());
-						replaced = true;
-					}
-				}
-
-				if (replaced) {
-					StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
+				auto tryResolveQualifiedMember = [&](std::string_view base_name) -> const TypeInfo* {
+					StringHandle resolved_handle = buildResolvedHandle(base_name, member_part);
 					auto type_it = getTypesByNameMap().find(resolved_handle);
-					FLASH_LOG(Templates, Debug, "Dependent member type lookup for '",
-							  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
+					return type_it != getTypesByNameMap().end() ? type_it->second : nullptr;
+				};
 
-					// If not found, try instantiating the base template
-					// The base_part contains a mangled name like "enable_if_void_int"
-					// We need to find the actual template name, which could be "enable_if" not just "enable"
-					if (type_it == getTypesByNameMap().end()) {
-						std::string_view base_template_name = extract_base_template_name(base_part);
-
-						// Only try to instantiate if we found a class template (not a function template)
-						if (!base_template_name.empty()) {
-							auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-							if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-								try_instantiate_class_template(base_template_name, template_args);
-
-								std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-								resolved_handle = build_resolved_handle(instantiated_base, member_part);
-								type_it = getTypesByNameMap().find(resolved_handle);
-								FLASH_LOG(Templates, Debug, "After instantiating base template '", base_template_name, "', lookup for '",
-										  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
-							}
-						}
-					}
-
-					if (type_it != getTypesByNameMap().end()) {
-						const TypeInfo* resolved_info = type_it->second;
-						result_type = resolved_info->typeEnum();
-						result_type_index = resolved_info->type_index_;
-						found_match = true;
-					}
-				}
-			}
-
-			// Handle hash-based dependent qualified types like "Wrapper$hash::Nested"
-			// These come from parsing "typename Wrapper<T>::Nested" during template definition.
-			// The hash represents a dependent instantiation (Wrapper<T> with T not yet resolved).
-			// We need to extract the template name ("Wrapper"), re-instantiate with concrete args,
-			// and look up the nested type in the new instantiation.
-			if (!found_match && type_name.find("::") != std::string_view::npos) {
-				auto sep_pos = type_name.find("::");
-				std::string_view base_part_sv = type_name.substr(0, sep_pos);
-				std::string_view member_part = type_name.substr(sep_pos + 2);
-				// Hash-based mangled template name in base part
-				// (e.g., "Wrapper$a1b2c3d4" for dependent Wrapper<T>)
-				std::string_view base_template_name = extractBaseTemplateName(base_part_sv);
-
-				if (!base_template_name.empty()) {
-
+				if (const TypeInfo* resolved_info = tryResolveQualifiedMember(type_name.substr(0, sep_pos))) {
+					result_type = resolved_info->typeEnum();
+					result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
+					found_match = true;
+				} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
+						   placeholder_info && placeholder_info->isTemplateInstantiation()) {
+					std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-						// Re-instantiate with concrete args
-						try_instantiate_class_template(base_template_name, template_args);
-						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
-
-						StringBuilder sb;
-						StringHandle resolved_handle = StringTable::getOrInternStringHandle(
-							sb.append(instantiated_base).append("::").append(member_part).commit());
-						auto type_it = getTypesByNameMap().find(resolved_handle);
-
-						FLASH_LOG(Templates, Debug, "Dependent hash-qualified type: '", type_name,
-								  "' -> '", StringTable::getStringView(resolved_handle),
-								  "' found=", (type_it != getTypesByNameMap().end()));
-
-						if (type_it != getTypesByNameMap().end()) {
-							const TypeInfo* resolved_info = type_it->second;
+						std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
+						try_instantiate_class_template(base_template_name, concrete_args);
+						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
+						if (const TypeInfo* resolved_info = tryResolveQualifiedMember(instantiated_base)) {
 							result_type = resolved_info->typeEnum();
-							result_type_index = resolved_info->type_index_;
+							result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
 							found_match = true;
 						}
 					}
@@ -968,7 +936,7 @@ TypeIndex Parser::substitute_template_parameter(
 							if (type_it != getTypesByNameMap().end()) {
 								const TypeInfo* resolved_info = type_it->second;
 								result_type = resolved_info->typeEnum();
-								result_type_index = resolved_info->type_index_;
+								result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
 								found_match = true;
 								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
 							}
@@ -1075,7 +1043,7 @@ TypeIndex Parser::substitute_template_parameter(
 								auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 								if (inst_it != getTypesByNameMap().end()) {
 									result_type = inst_it->second->typeEnum();
-									result_type_index = inst_it->second->type_index_;
+									result_type_index = inst_it->second->registeredTypeIndex().withCategory(inst_it->second->typeEnum());
 									found_match = true;
 									FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 													 base_tpl_name, inst_name, concrete_tpl_name);

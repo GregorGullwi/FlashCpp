@@ -939,120 +939,36 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_dims;
 	};
 
-	auto resolve_array_dimensions_from_expressions = [&](
-											 const std::vector<ASTNode>& dimension_exprs,
-											 const auto& params,
-											 const auto& args) -> std::vector<size_t> {
-		std::vector<size_t> resolved_dims;
-		if (dimension_exprs.empty()) {
-			return resolved_dims;
-		}
-		std::unordered_map<TypeIndex, TemplateTypeArg> type_sub_map;
-		std::unordered_map<std::string_view, int64_t> nontype_sub_map;
-		for (size_t pi = 0; pi < params.size() && pi < args.size(); ++pi) {
-			if (!params[pi].template is<TemplateParameterNode>())
-				continue;
-			const auto& tparam = params[pi].template as<TemplateParameterNode>();
-			if (tparam.kind() == TemplateParameterKind::NonType && args[pi].is_value) {
-				nontype_sub_map[tparam.name()] = args[pi].value;
-			}
-		}
-		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-		for (const auto& dim_expr : dimension_exprs) {
-			ASTNode substituted = substitute_template_params_in_expression(dim_expr, type_sub_map, nontype_sub_map);
-			auto eval_result = ConstExpr::Evaluator::evaluate(substituted, eval_ctx);
-			if (eval_result.success() && eval_result.as_int() > 0) {
-				resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
-			}
-		}
-		return resolved_dims;
-	};
-
-	auto resolve_type_alias_array_dimensions = [&](
-										 const TypeAliasDecl& type_alias,
-										 const auto& params,
-										 const auto& args) -> std::vector<size_t> {
-		if (!type_alias.array_dimensions.empty()) {
-			return resolve_array_dimensions_from_expressions(type_alias.array_dimensions, params, args);
-		}
-		if (type_alias.type_node.is<TypeSpecifierNode>()) {
-			const auto& alias_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
-			if (alias_type_spec.is_array()) {
-				return alias_type_spec.array_dimensions();
-			}
-		}
-		return {};
-	};
-
-	auto resolve_array_alias_dimensions = [&](
-									 const TypeSpecifierNode& type_spec,
+	auto buildSubstitutedTypeAliasSpecifier = [&](
+									 const TypeAliasDecl& type_alias,
 									 const auto& params,
-									 const auto& args) -> std::vector<size_t> {
-		std::string_view type_name;
-		if (type_spec.token().type() != Token::Type::Uninitialized && !type_spec.token().value().empty()) {
-			type_name = type_spec.token().value();
+									 const auto& args) -> std::optional<TypeSpecifierNode> {
+		if (!type_alias.type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
 		}
-		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
-			if (type_info->isArrayAlias()) {
-				return type_info->arrayDimensions();
+
+		ASTNode substituted_type_node = substituteTemplateParameters(type_alias.type_node, params, args);
+		if (!substituted_type_node.is<TypeSpecifierNode>()) {
+			return std::nullopt;
+		}
+
+		TypeSpecifierNode substituted_type_spec = substituted_type_node.as<TypeSpecifierNode>();
+		if (type_alias.array_dimensions.empty()) {
+			return substituted_type_spec;
+		}
+
+		std::vector<size_t> resolved_dims;
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		for (const auto& dim_expr : type_alias.array_dimensions) {
+			ASTNode substituted_dim = substituteTemplateParameters(dim_expr, params, args);
+			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_dim, eval_ctx);
+			if (!eval_result.success() || eval_result.as_int() <= 0) {
+				return std::nullopt;
 			}
-			type_name = StringTable::getStringView(type_info->name());
+			resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
 		}
-		if (type_name.empty() || type_name.find("::") == std::string_view::npos) {
-			return {};
-		}
-
-		auto lookup_array_alias = [&](StringHandle qualified_name) -> std::vector<size_t> {
-			auto type_it = getTypesByNameMap().find(qualified_name);
-			if (type_it != getTypesByNameMap().end() && type_it->second->isArrayAlias()) {
-				return type_it->second->arrayDimensions();
-			}
-			return {};
-		};
-
-		auto sep_pos = type_name.find("::");
-		std::string base_part(type_name.substr(0, sep_pos));
-		std::string_view member_part = type_name.substr(sep_pos + 2);
-
-		bool replaced = false;
-		for (size_t i = 0; i < params.size() && i < args.size(); ++i) {
-			if (!params[i].template is<TemplateParameterNode>())
-				continue;
-			const auto& tparam = params[i].template as<TemplateParameterNode>();
-			std::string_view tname = tparam.name();
-			auto pos = base_part.find(tname);
-			if (pos != std::string::npos) {
-				base_part.replace(pos, tname.size(), args[i].toString());
-				replaced = true;
-			}
-		}
-
-		if (replaced) {
-			StringHandle resolved_handle = StringTable::getOrInternStringHandle(
-				StringBuilder().append(base_part).append("::").append(member_part).commit());
-			if (auto dims = lookup_array_alias(resolved_handle); !dims.empty()) {
-				return dims;
-			}
-		}
-
-		std::string_view base_template_name = extractBaseTemplateName(base_part);
-		if (base_template_name.empty()) {
-			base_template_name = extract_base_template_name(base_part);
-		}
-		if (base_template_name.empty()) {
-			return {};
-		}
-
-		auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-		if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
-			return {};
-		}
-
-		try_instantiate_class_template(base_template_name, args);
-		std::string_view instantiated_base = get_instantiated_class_name(base_template_name, args);
-		StringHandle resolved_handle = StringTable::getOrInternStringHandle(
-			StringBuilder().append(instantiated_base).append("::").append(member_part).commit());
-		return lookup_array_alias(resolved_handle);
+		substituted_type_spec.set_array_dimensions(resolved_dims);
+		return substituted_type_spec;
 	};
 
 	// 1) Full/Exact specialization lookup
@@ -1775,7 +1691,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				size_t ptr_depth = type_spec.pointer_depth();
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolve_array_alias_dimensions(type_spec, template_params, template_args);
+					resolved_array_dimensions = resolveAliasTypeInfo(member_type_index).array_dimensions;
 				}
 				bool is_array_member = !resolved_array_dimensions.empty();
 
@@ -2567,18 +2483,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Register the type alias globally with its qualified name
+				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
+					type_alias, template_params, template_args);
+				const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
+																		   ? substituted_alias_type_spec.value()
+																		   : alias_type_spec;
 				auto& alias_type_info = add_type_alias_copy(
 					qualified_alias_name,
 					TypeIndex{substituted_type_index},
-					substituted_size);
-				alias_type_info.pointer_depth_ = alias_type_spec.pointer_depth();
-				alias_type_info.reference_qualifier_ = alias_type_spec.reference_qualifier();
-				if (alias_type_spec.has_function_signature()) {
-					alias_type_info.function_signature_ = alias_type_spec.function_signature();
-				}
-				std::vector<size_t> alias_array_dimensions = resolve_type_alias_array_dimensions(type_alias, template_params, template_args);
-				if (!alias_array_dimensions.empty()) {
-					size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_type_spec, substituted_type_index).size;
+					substituted_size,
+					alias_registration_type_spec);
+				if (alias_registration_type_spec.is_array()) {
+					const std::vector<size_t>& alias_array_dimensions = alias_registration_type_spec.array_dimensions();
+					size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
 					substituted_size = static_cast<int>(element_size * std::accumulate(
 						alias_array_dimensions.begin(),
 						alias_array_dimensions.end(),
@@ -2586,7 +2503,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						std::multiplies<size_t>()) * 8);
 					alias_type_info.type_size_ = substituted_size;
 				}
-				alias_type_info.setArrayInfo(!alias_array_dimensions.empty(), std::move(alias_array_dimensions));
 				(void)alias_type_info;
 
 				// If this alias refers to an unscoped enum, track its TypeIndex so that
@@ -4243,7 +4159,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Calculate member size - for arrays, multiply element size by array size
 		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args_to_use);
 		if (resolved_array_dimensions.empty()) {
-			resolved_array_dimensions = resolve_array_alias_dimensions(type_spec, template_params, template_args_to_use);
+			resolved_array_dimensions = resolveAliasTypeInfo(member_type_index).array_dimensions;
 		}
 		bool is_array_member = !resolved_array_dimensions.empty();
 		size_t member_size;
@@ -4929,7 +4845,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_to_use);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolve_array_alias_dimensions(type_spec, template_params, template_args_to_use);
+					resolved_array_dimensions = resolveAliasTypeInfo(substituted_type_index).array_dimensions;
 				}
 				bool is_array_member = !resolved_array_dimensions.empty();
 
@@ -5286,15 +5202,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		// Register the type alias in getTypesByNameMap()
-		auto& alias_type_info = add_type_alias_copy(qualified_alias_name, TypeIndex{substituted_type_index}, substituted_size);
-		alias_type_info.pointer_depth_ = alias_type_spec.pointer_depth();
-		alias_type_info.reference_qualifier_ = alias_type_spec.reference_qualifier();
-		if (alias_type_spec.has_function_signature()) {
-			alias_type_info.function_signature_ = alias_type_spec.function_signature();
-		}
-		std::vector<size_t> alias_array_dimensions = resolve_type_alias_array_dimensions(type_alias, template_params, template_args_to_use);
-		if (!alias_array_dimensions.empty()) {
-			size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_type_spec, substituted_type_index).size;
+		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
+			type_alias, template_params, template_args_to_use);
+		const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
+																   ? substituted_alias_type_spec.value()
+																   : alias_type_spec;
+		auto& alias_type_info = add_type_alias_copy(
+			qualified_alias_name,
+			TypeIndex{substituted_type_index},
+			substituted_size,
+			alias_registration_type_spec);
+		if (alias_registration_type_spec.is_array()) {
+			const std::vector<size_t>& alias_array_dimensions = alias_registration_type_spec.array_dimensions();
+			size_t element_size = calculateResolvedMemberSizeAndAlignment(alias_registration_type_spec, substituted_type_index).size;
 			substituted_size = static_cast<int>(element_size * std::accumulate(
 				alias_array_dimensions.begin(),
 				alias_array_dimensions.end(),
@@ -5302,7 +5222,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::multiplies<size_t>()) * 8);
 			alias_type_info.type_size_ = substituted_size;
 		}
-		alias_type_info.setArrayInfo(!alias_array_dimensions.empty(), std::move(alias_array_dimensions));
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {
 			if (const TypeInfo* enum_alias_ti = tryGetTypeInfo(substituted_type_index)) {
 				if (const EnumTypeInfo* enum_info = enum_alias_ti->getEnumInfo()) {

@@ -2,6 +2,8 @@
 #include <cassert>
 #include "AstNodeTypes_TypeSystem.h"
 
+class TypeSpecifierNode;
+
 // Struct type information
 struct StructTypeInfo {
 	StringHandle name;
@@ -736,12 +738,14 @@ struct QualifiedIdentifier {
 
 struct TypeInfo {
 	TypeInfo() = default;
-	TypeInfo(StringHandle name, TypeIndex idx, int type_size) : name_(name), type_index_(idx), type_size_(type_size) {
+	TypeInfo(StringHandle name, TypeIndex idx, int type_size)
+		: name_(name), type_index_(idx), registered_type_index_(idx), type_size_(type_size) {
 	}
 
 	StringHandle name_;	// Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
 	NamespaceHandle namespace_handle_;  // Namespace this type was declared in (default: INVALID = not yet set)
 	TypeIndex type_index_;
+	TypeIndex registered_type_index_;
 
 	// True if this type was created with unresolved template args (set directly at placeholder creation sites)
 	bool is_incomplete_instantiation_ = false;
@@ -767,9 +771,9 @@ struct TypeInfo {
 	// For function pointer/reference type aliases, store the function signature
 	std::optional<FunctionSignature> function_signature_;
 
-	// For array type aliases, preserve the alias' array shape metadata.
-	bool is_array_ = false;
-	std::vector<size_t> array_dimensions_;
+	// For aliases, preserve the original aliased type specifier so consumers can
+	// recover array/pointer/reference metadata by following the alias chain.
+	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;
 
 	// For template instantiations: store metadata to avoid name parsing
 	// If base_template_ is valid, this type is a template instantiation
@@ -836,18 +840,16 @@ struct TypeInfo {
  // Access the type-owned instantiation context (may be null).
 	const InstantiationContext* instantiationContext() const { return instantiation_context_.get(); }
 	bool hasInstantiationContext() const { return instantiation_context_ != nullptr; }
-	bool isArrayAlias() const { return is_array_; }
-	const std::vector<size_t>& arrayDimensions() const { return array_dimensions_; }
+	TypeIndex registeredTypeIndex() const { return registered_type_index_.is_valid() ? registered_type_index_ : type_index_; }
+	const TypeSpecifierNode* aliasTypeSpecifier() const { return alias_type_spec_.get(); }
 
 	void setTemplateInstantiationInfo(QualifiedIdentifier base_template, InlineVector<TemplateArgInfo, 4> args) {
 		base_template_ = base_template;
 		template_args_ = std::move(args);
 	}
 
-	void setArrayInfo(bool is_array, std::vector<size_t> array_dimensions) {
-		is_array_ = is_array;
-		array_dimensions_ = std::move(array_dimensions);
-	}
+	void clearAliasTypeSpecifier();
+	void setAliasTypeSpecifier(const TypeSpecifierNode& type_spec);
 
  // Set the type-owned instantiation context for template instantiations.
 	void setInstantiationContext(InlineVector<StringHandle, 4> param_names,
@@ -1049,6 +1051,8 @@ TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t s
 
 // For adding an alias entry that copies type info from another TypeInfo
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits);
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec);
+TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_info, uint32_t size_bits);
 
 // For adding an empty/uninitialized TypeInfo entry (caller fills in fields manually)
 TypeCreationResult add_empty_type_entry();
@@ -1336,6 +1340,107 @@ public:
 	std::string_view concept_constraint() const { return concept_constraint_; }
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
+
+inline void TypeInfo::clearAliasTypeSpecifier() {
+	alias_type_spec_.reset();
+	pointer_depth_ = 0;
+	reference_qualifier_ = ReferenceQualifier::None;
+	function_signature_.reset();
+}
+
+inline void TypeInfo::setAliasTypeSpecifier(const TypeSpecifierNode& type_spec) {
+	alias_type_spec_ = std::make_unique<TypeSpecifierNode>(type_spec);
+	pointer_depth_ = type_spec.pointer_depth();
+	reference_qualifier_ = type_spec.reference_qualifier();
+	function_signature_ = type_spec.has_function_signature()
+							  ? std::optional<FunctionSignature>(type_spec.function_signature())
+							  : std::nullopt;
+}
+
+struct ResolvedAliasTypeInfo {
+	TypeIndex type_index{};
+	size_t pointer_depth = 0;
+	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
+	std::optional<FunctionSignature> function_signature;
+	std::vector<size_t> array_dimensions;
+	const TypeInfo* terminal_type_info = nullptr;
+
+	TypeCategory typeEnum() const { return type_index.category(); }
+	bool isArray() const { return !array_dimensions.empty(); }
+};
+
+inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
+	ResolvedAliasTypeInfo resolved;
+	resolved.type_index = type_index;
+	if (!type_index.is_valid()) {
+		return resolved;
+	}
+
+	auto prependArrayDimensions = [](std::vector<size_t>& dims, const std::vector<size_t>& prefix) {
+		if (prefix.empty()) {
+			return;
+		}
+		if (dims.empty()) {
+			dims = prefix;
+			return;
+		}
+		std::vector<size_t> combined;
+		combined.reserve(prefix.size() + dims.size());
+		combined.insert(combined.end(), prefix.begin(), prefix.end());
+		combined.insert(combined.end(), dims.begin(), dims.end());
+		dims = std::move(combined);
+	};
+
+	TypeIndex current_type_index = type_index;
+	size_t depth_limit = getTypeInfoCount();
+	while (current_type_index.is_valid() && depth_limit-- > 0) {
+		const TypeInfo* type_info = tryGetTypeInfo(current_type_index);
+		if (!type_info) {
+			break;
+		}
+
+		resolved.terminal_type_info = type_info;
+		if (type_info->isTypeAlias()) {
+			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				resolved.pointer_depth += alias_type_spec->pointer_depth();
+				if (resolved.reference_qualifier == ReferenceQualifier::None &&
+					alias_type_spec->reference_qualifier() != ReferenceQualifier::None) {
+					resolved.reference_qualifier = alias_type_spec->reference_qualifier();
+				}
+				if (!resolved.function_signature.has_value() && alias_type_spec->has_function_signature()) {
+					resolved.function_signature = alias_type_spec->function_signature();
+				}
+				if (alias_type_spec->is_array()) {
+					prependArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
+				}
+			} else {
+				resolved.pointer_depth += type_info->pointer_depth_;
+				if (resolved.reference_qualifier == ReferenceQualifier::None &&
+					type_info->reference_qualifier_ != ReferenceQualifier::None) {
+					resolved.reference_qualifier = type_info->reference_qualifier_;
+				}
+				if (!resolved.function_signature.has_value() && type_info->function_signature_.has_value()) {
+					resolved.function_signature = type_info->function_signature_;
+				}
+			}
+		}
+
+		if (!type_info->isTypeAlias() ||
+			!type_info->type_index_.is_valid() ||
+			type_info->type_index_.index() == current_type_index.index()) {
+			resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
+			return resolved;
+		}
+
+		current_type_index = type_info->type_index_;
+	}
+
+	if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {
+		resolved.terminal_type_info = type_info;
+		resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
+	}
+	return resolved;
+}
 
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
 	TypeIndex target_type_index = type_spec.type_index();
