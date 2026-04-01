@@ -1310,7 +1310,13 @@ void AstToIr::generateTrivialDefaultConstructors() {
 				}
 			}
 
-			// Initialize non-bitfield members with default initializers
+			// Initialize non-bitfield members with default initializers.
+			// Set current_struct_name_ so that unqualified identifier resolution
+			// can find static members of this struct (e.g., "payload" resolving
+			// to the struct's own static constexpr member).
+			StringHandle saved_struct_name = current_struct_name_;
+			current_struct_name_ = type_info->name();
+
 			for (const auto& member : struct_info->members) {
 				if (member.bitfield_width.has_value())
 					continue; // handled above
@@ -1351,6 +1357,8 @@ void AstToIr::generateTrivialDefaultConstructors() {
 					}
 				}
 			}
+
+			current_struct_name_ = saved_struct_name;
 
 			// Emit return
 			emitVoidReturn(Token());

@@ -909,6 +909,47 @@ ASTNode Parser::substituteTemplateParameters(
 
 	} else if (node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = node.as<TypeSpecifierNode>();
+		const auto makeTypeSpecifier = [&](const TypeInfo& target_type_info) -> ASTNode {
+			const bool is_struct_like = target_type_info.type_index_.category() == TypeCategory::Struct ||
+										target_type_info.getStructInfo() != nullptr;
+			int size_bits = 0;
+			if (is_struct_like) {
+				size_bits = static_cast<int>(target_type_info.type_size_ * 8);
+			} else {
+				size_bits = target_type_info.type_size_ > 0
+					? target_type_info.type_size_
+					: get_type_size_bits(target_type_info.type_index_.category());
+			}
+			Token substituted_token = type_spec.token();
+			if (target_type_info.type_index_.category() == TypeCategory::Struct ||
+				target_type_info.type_index_.category() == TypeCategory::UserDefined) {
+				substituted_token = Token(
+					Token::Type::Identifier,
+					StringTable::getStringView(target_type_info.name()),
+					type_spec.token().line(),
+					type_spec.token().column(),
+					type_spec.token().file_index());
+			} else {
+				std::string_view substituted_type_name = get_type_name(target_type_info.type_index_.category());
+				if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
+					substituted_token = Token(
+						Token::Type::Keyword,
+						substituted_type_name,
+						type_spec.token().line(),
+						type_spec.token().column(),
+						type_spec.token().file_index());
+				}
+			}
+			TypeSpecifierNode substituted_spec(
+				target_type_info.type_index_,
+				size_bits,
+				substituted_token,
+				type_spec.cv_qualifier(),
+				type_spec.reference_qualifier());
+			substituted_spec.copy_indirection_from(type_spec);
+			substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
+			return emplace_node<TypeSpecifierNode>(substituted_spec);
+		};
 
 		// Check if this is a user-defined type that matches a template parameter
 		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
@@ -917,31 +958,19 @@ ASTNode Parser::substituteTemplateParameters(
 				template_params,
 				template_args);
 			if (substituted_type_index.category() != type_spec.type() || substituted_type_index != type_spec.type_index()) {
-				int substituted_size_bits = get_type_size_bits(substituted_type_index.category());
-				if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index);
-					substituted_type_info && substituted_type_info->type_size_ > 0) {
-					substituted_size_bits = substituted_type_info->type_size_;
+				if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
+					return makeTypeSpecifier(*substituted_type_info);
 				}
+				int substituted_size_bits = get_type_size_bits(substituted_type_index.category());
 				Token substituted_token = type_spec.token();
-				if (substituted_type_index.category() == TypeCategory::Struct || substituted_type_index.category() == TypeCategory::UserDefined) {
-					if (const TypeInfo* substituted_type_info = tryGetTypeInfo(substituted_type_index)) {
-						substituted_token = Token(
-							Token::Type::Identifier,
-							StringTable::getStringView(substituted_type_info->name()),
-							type_spec.token().line(),
-							type_spec.token().column(),
-							type_spec.token().file_index());
-					}
-				} else {
-					std::string_view substituted_type_name = get_type_name(substituted_type_index.category());
-					if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
-						substituted_token = Token(
-							Token::Type::Keyword,
-							substituted_type_name,
-							type_spec.token().line(),
-							type_spec.token().column(),
-							type_spec.token().file_index());
-					}
+				std::string_view substituted_type_name = get_type_name(substituted_type_index.category());
+				if (!substituted_type_name.empty() && substituted_type_name != "unknown"sv) {
+					substituted_token = Token(
+						Token::Type::Keyword,
+						substituted_type_name,
+						type_spec.token().line(),
+						type_spec.token().column(),
+						type_spec.token().file_index());
 				}
 				TypeSpecifierNode substituted_spec(
 					substituted_type_index,
@@ -952,6 +981,54 @@ ASTNode Parser::substituteTemplateParameters(
 				substituted_spec.copy_indirection_from(type_spec);
 				substituted_spec.set_reference_qualifier(type_spec.reference_qualifier());
 				return emplace_node<TypeSpecifierNode>(substituted_spec);
+			}
+		}
+
+		// Remap nested struct types from template pattern to instantiated version.
+		// When a member function body references a nested type like Inner{}, the
+		// TypeSpecifierNode still carries the pattern's type_index (e.g., "Outer::Inner").
+		// We need to remap it to the instantiated version (e.g., "Outer$hash::Inner").
+		if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+				std::string_view type_name = StringTable::getStringView(type_info->name());
+				// Use the rightmost scope separator so namespaced patterns like
+				// "ns::Outer::Inner" split into parent="ns::Outer", nested="Inner".
+				auto sep_pos = type_name.rfind("::");
+				if (sep_pos != std::string_view::npos) {
+					std::string_view parent_name = type_name.substr(0, sep_pos);
+					std::string_view nested_name = type_name.substr(sep_pos + 2);
+					// Only remap if parent is a template pattern (not already instantiated)
+					if (parent_name.find('$') == std::string_view::npos) {
+						// Try both the fully-qualified template name ("ns::Outer") and
+						// the short name ("Outer"), because instantiated nested types
+						// are currently registered under the short instantiated parent.
+						std::vector<std::string_view> template_owner_candidates{parent_name};
+						size_t parent_sep_pos = parent_name.rfind("::");
+						if (parent_sep_pos != std::string_view::npos) {
+							template_owner_candidates.push_back(parent_name.substr(parent_sep_pos + 2));
+						}
+						std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
+						for (const std::string_view& parent_candidate : template_owner_candidates) {
+							auto template_opt = gTemplateRegistry.lookupTemplate(parent_candidate);
+							if (!template_opt.has_value()) {
+								continue;
+							}
+							std::string_view inst_parent = FlashCpp::generateInstantiatedNameFromArgs(parent_candidate, args_vec);
+							StringBuilder sb;
+							StringHandle inst_nested_handle = StringTable::getOrInternStringHandle(
+								sb.append(inst_parent).append("::"sv).append(nested_name).commit());
+							auto it = getTypesByNameMap().find(inst_nested_handle);
+							if (it == getTypesByNameMap().end()) {
+								continue;
+							}
+							const TypeInfo* inst_type_info = it->second;
+							FLASH_LOG(Templates, Debug,
+								"Remapped nested struct type '", type_name,
+								"' -> '", StringTable::getStringView(inst_type_info->name()), "'");
+							return makeTypeSpecifier(*inst_type_info);
+						}
+					}
+				}
 			}
 		}
 

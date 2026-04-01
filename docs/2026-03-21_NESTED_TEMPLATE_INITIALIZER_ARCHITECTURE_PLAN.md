@@ -2,8 +2,10 @@
 
 ## Current status
 
-**Phases A and B are implemented.**  Phase C (normalized initializer records)
-and Phase D (default member initializer normalization) remain future work.
+**Phases A, B, and D are implemented.**  Phase C (normalized initializer records)
+remains future work (blocked by constexpr scope issue documented below).
+Phase E (removing registry fallbacks) is deferred until the new model is proven
+across the full test suite.
 
 ### What is done
 
@@ -21,13 +23,25 @@ and Phase D (default member initializer normalization) remain future work.
   checks the enclosing type first.
 - Registry-based fallbacks are retained as safety nets but are no longer the
   primary lookup path for types that carry an InstantiationContext.
+- `needs_default_constructor` is now set for nested structs during class-
+  template instantiation (Phase D fix).
+- `substituteTemplateParameters` now remaps nested struct types from the
+  template pattern to the instantiated version (e.g., `Outer::Inner` →
+  `Outer$hash::Inner`) so that constructor calls in lazy member function
+  bodies reference the correct global symbol.
+- `generateTrivialDefaultConstructors` sets `current_struct_name_` so that
+  default member initializers can resolve unqualified static member references
+  (e.g., `payload.a` resolving to `StructName::payload.a`).
+- `resolveGlobalOrStaticBinding` updates the store name to use the instantiated
+  struct qualification when the identifier was parsed against the template
+  pattern but codegen runs in the instantiated context.
 
 ### What remains
 
 - Phase C: Add `NormalizedInitializer` for static-storage members so that
   constexpr aggregate byte-packing happens before codegen (eliminates the
-  retained-AST re-evaluation for common cases).
-- Phase D: Normalize default member initializers for instantiated structs.
+  retained-AST re-evaluation for common cases).  Blocked by the static member
+  function resolution issue documented below.
 - Phase E: Remove the registry/name-based compatibility fallbacks once the
   new owner model is proven across the full test suite.
 

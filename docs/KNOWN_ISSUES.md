@@ -74,36 +74,48 @@ This was observed while trying to add focused runtime coverage for virtual
 reference-return coverage passes; the virtual-reference-return caller path still
 needs dedicated investigation.
 
-## Nested template static members of struct type can misbehave at runtime
+## ~~Nested template static members of struct type can misbehave at runtime~~ (FIXED)
 
-Struct-typed static members inside nested template classes are still unreliable
-at runtime. Inline/`constexpr` forms can read back as zero-initialized even when
-their template-substituted initializer should produce non-zero field values, and
-mutable storage variants can crash when written through:
+**Fixed**: struct-typed static members inside nested template classes now work
+correctly.  The fix addressed two root causes:
+
+1. `generateTrivialDefaultConstructors()` did not set `current_struct_name_`,
+   so unqualified static member references (e.g., `payload.a`) in default
+   member initializers could not resolve to the struct's own static members.
+2. `resolveGlobalOrStaticBinding()` used the template pattern's store name
+   (e.g., `Outer::Inner::payload`) instead of the instantiated name
+   (`Outer$hash::Inner::payload`), reading from the wrong global.
+
+Covered by `test_template_nested_static_struct_member_ret45.cpp`.
+
+## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
+
+When a non-template derived class inherits a struct-typed static member from a
+template base, codegen currently emits both the instantiated base symbol
+(`Base$hash::payload`) and an inherited alias on the pattern name
+(`Base::payload`). The derived-class default initializer can now be fixed to
+load from the actual owner (`Base$hash::payload`), but the extra pattern alias
+still indicates that inherited static-member emission is mixing instantiated and
+pattern-qualified names.
+
+Observed while adding regression coverage for:
 
 ```cpp
-template<typename U, class C, int N>
-struct Outer {
+template <typename T, int N>
+struct Base {
     struct Payload { int a; int b; };
-    struct Inner {
-        static constexpr Payload payload = { int(sizeof(C) - sizeof(U)), N };
-        int value = payload.a + payload.b;
-    };
+    static constexpr Payload payload = { N, int(sizeof(T)) };
 };
 
-int main() {
-    Outer<char, int, 39>::Inner inner{};
-    return inner.value + Outer<char, int, 39>::Inner::payload.a; // observed 0, expected 45
-}
+struct Derived : Base<int, 9> {
+    int value = payload.a + payload.b;
+};
 ```
 
-Observed while trying to add focused validation around nested static-member
-substitution/layout. This looks like a remaining nested-class/static-object
-codegen/runtime bug rather than a parser/sema typing failure.
-
-**Workaround**: avoid struct-typed static members inside nested template
-classes; use scalar static members, move the object out of the nested template
-class, or materialize the value through another helper path.
+The narrowed non-template regression now passes after qualifying inherited
+member access with the real owner struct, but the underlying inherited-static
+definition path in `generateStaticMemberDeclarations()` still deserves cleanup
+so template-base aliases are emitted only under the instantiated owner.
 
 ## `constexpr`/`consteval` enforcement — partially implemented
 
