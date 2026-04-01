@@ -1596,9 +1596,11 @@ class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
 								ASTNode rhs_node)
-		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
+		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node),
+		  operator_kind_(stringToOverloadableOperator(identifier.value())) {}
 
 	std::string_view op() const { return identifier_.value(); }
+	OverloadableOperator operator_kind() const { return operator_kind_; }
 	const Token& get_token() const { return identifier_; }
 	auto get_lhs() const { return lhs_node_; }
 	auto get_rhs() const { return rhs_node_; }
@@ -1656,6 +1658,7 @@ private:
 	class Token identifier_;
 	ASTNode lhs_node_;
 	ASTNode rhs_node_;
+	OverloadableOperator operator_kind_ = OverloadableOperator::None;
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;

@@ -2148,7 +2148,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 
 				// Track deleted assignment operators to prevent their implicit use
-				if (struct_info && decl_node.identifier_token().value() == "operator=") {
+				if (struct_info && overloadableOperatorFromFunctionName(decl_node.identifier_token().value()) == OverloadableOperator::Assign) {
 					// Check if it's a move or copy assignment operator based on parameter type.
 					// Use computeMinRequiredArgs to handle operators with trailing defaults
 					// (e.g. Foo& operator=(const Foo&, int = 0) = delete;).

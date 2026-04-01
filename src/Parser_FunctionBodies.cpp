@@ -552,7 +552,7 @@ ASTNode Parser::create_defaulted_member_function_body(const FunctionDeclarationN
 	auto [block_node, block_ref] = create_node_ref(BlockNode());
 	const DeclarationNode& decl_node = func_node.decl_node();
 
-	if (decl_node.identifier_token().value() == "operator<=>") {
+	if (overloadableOperatorFromFunctionName(decl_node.identifier_token().value()) == OverloadableOperator::Spaceship) {
 		Token zero_token(Token::Type::Literal, "0"sv,
 						 decl_node.identifier_token().line(),
 						 decl_node.identifier_token().column(),

@@ -1613,7 +1613,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	} else if (!concrete_type_specs.has_value() && lhs_syntax_requires_user_defined.has_value() && rhs_syntax_requires_user_defined.has_value() && !lhs_has_user_defined_identity && !rhs_has_user_defined_identity) {
 		recorded_overload_still_relevant = false;
 	}
-	OverloadableOperator op_kind = stringToOverloadableOperator(op);
+	OverloadableOperator op_kind = binaryOperatorNode.operator_kind();
 	bool should_attempt_operator_overload = isOverloadableBinaryOperator(op_kind) && (concrete_type_specs.has_value()
 																						  ? concrete_operands_require_user_defined_operator
 																						  : (lhs_has_user_defined_identity || rhs_has_user_defined_identity || recorded_overload_still_relevant));

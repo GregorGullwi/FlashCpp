@@ -255,6 +255,17 @@ inline OverloadableOperator stringToOverloadableOperator(std::string_view symbol
 	return OverloadableOperator::None;
 }
 
+inline OverloadableOperator overloadableOperatorFromFunctionName(std::string_view function_name) {
+	if (!function_name.starts_with("operator")) {
+		return OverloadableOperator::None;
+	}
+	std::string_view suffix = function_name.substr(8);
+	if (!suffix.empty() && suffix[0] == ' ') {
+		suffix.remove_prefix(1);
+	}
+	return stringToOverloadableOperator(suffix);
+}
+
 inline std::string_view overloadableOperatorToString(OverloadableOperator op) {
 	switch (op) {
 	case OverloadableOperator::None:
