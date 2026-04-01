@@ -48,9 +48,13 @@ static StringHandle computeInstantiatedLookupName(
 					if (!base_cv.empty()) {
 						builder.append(base_cv).append(" ");
 					}
-					if (substituted_return_type.qualifier() == TypeQualifier::Unsigned) {
+					// Only prepend unsigned/signed when the canonical type_name
+					// doesn't already encode signedness (e.g. "unsigned int").
+					if (substituted_return_type.qualifier() == TypeQualifier::Unsigned &&
+						!type_name.starts_with("unsigned ")) {
 						builder.append("unsigned ");
-					} else if (substituted_return_type.qualifier() == TypeQualifier::Signed) {
+					} else if (substituted_return_type.qualifier() == TypeQualifier::Signed &&
+							   !type_name.starts_with("signed ")) {
 						builder.append("signed ");
 					}
 					builder.append(type_name);
