@@ -75,6 +75,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Set current function name for static local variable mangling
 	const DeclarationNode& func_decl = node.decl_node();
 	const std::string_view func_name_view = func_decl.identifier_token().value();
+	const OverloadableOperator function_operator_kind = overloadableOperatorFromFunctionName(func_name_view);
 	current_function_name_ = StringTable::getOrInternStringHandle(func_name_view);
 	current_function_mangled_name_ = StringHandle(); // will be set after mangled name is computed
 
@@ -329,15 +330,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		if (param_name.empty()) {
 				// For defaulted operators (operator=, operator<=>, and synthesized comparison operators),
 				// use "other" as the conventional name for the first parameter.
-			std::string_view func_name_for_param = func_decl.identifier_token().value();
-			bool is_defaulted_operator = unnamed_param_counter == 0 && (func_name_for_param == "operator=" ||
-																		func_name_for_param == "operator<=>" ||
-																		func_name_for_param == "operator==" ||
-																		func_name_for_param == "operator!=" ||
-																		func_name_for_param == "operator<" ||
-																		func_name_for_param == "operator>" ||
-																		func_name_for_param == "operator<=" ||
-																		func_name_for_param == "operator>=");
+			bool is_defaulted_operator = unnamed_param_counter == 0 &&
+										(function_operator_kind == OverloadableOperator::Assign ||
+										 function_operator_kind == OverloadableOperator::Spaceship ||
+										 function_operator_kind == OverloadableOperator::Equal ||
+										 function_operator_kind == OverloadableOperator::NotEqual ||
+										 function_operator_kind == OverloadableOperator::Less ||
+										 function_operator_kind == OverloadableOperator::Greater ||
+										 function_operator_kind == OverloadableOperator::LessEqual ||
+										 function_operator_kind == OverloadableOperator::GreaterEqual);
 			if (is_defaulted_operator) {
 				param_info.name = StringTable::getOrInternStringHandle("other");
 			} else {
@@ -377,7 +378,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionDecl, std::move(func_decl_op), func_decl.identifier_token()));
 
 		// Generate memberwise three-way comparison for defaulted operator<=>
-	if (func_name_view == "operator<=>" && node.is_implicit()) {
+	if (function_operator_kind == OverloadableOperator::Spaceship && node.is_implicit()) {
 			// Set up function scope and 'this' pointer
 		symbol_table.enter_scope(ScopeType::Function);
 		if (node.is_member_function()) {
@@ -623,17 +624,17 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Determine comparison opcode once from the operator name
 	std::optional<IrOpcode> synthesized_cmp_opcode;
 	if (node.is_implicit()) {
-		if (func_name_view == "operator==") {
+		if (function_operator_kind == OverloadableOperator::Equal) {
 			synthesized_cmp_opcode = IrOpcode::Equal;
-		} else if (func_name_view == "operator!=") {
+		} else if (function_operator_kind == OverloadableOperator::NotEqual) {
 			synthesized_cmp_opcode = IrOpcode::NotEqual;
-		} else if (func_name_view == "operator<") {
+		} else if (function_operator_kind == OverloadableOperator::Less) {
 			synthesized_cmp_opcode = IrOpcode::LessThan;
-		} else if (func_name_view == "operator>") {
+		} else if (function_operator_kind == OverloadableOperator::Greater) {
 			synthesized_cmp_opcode = IrOpcode::GreaterThan;
-		} else if (func_name_view == "operator<=") {
+		} else if (function_operator_kind == OverloadableOperator::LessEqual) {
 			synthesized_cmp_opcode = IrOpcode::LessEqual;
-		} else if (func_name_view == "operator>=") {
+		} else if (function_operator_kind == OverloadableOperator::GreaterEqual) {
 			synthesized_cmp_opcode = IrOpcode::GreaterEqual;
 		}
 	}
@@ -783,8 +784,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 		// Check if this is an implicit operator= that needs code generation
 	if (node.is_implicit() && node.is_member_function()) {
-		std::string_view func_name = func_decl.identifier_token().value();
-		if (func_name == "operator=") {
+		if (function_operator_kind == OverloadableOperator::Assign) {
 				// This is an implicit copy or move assignment operator
 				// Determine which one by checking the parameter type
 // 				bool is_move_assignment = false;

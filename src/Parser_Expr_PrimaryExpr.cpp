@@ -486,17 +486,27 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			const auto& member_ctx = member_function_context_stack_.back();
 			if (TypeInfo* type_info = tryGetTypeInfoMut(member_ctx.struct_type_index)) {
 				if (type_info->struct_info_) {
+					const StringHandle operator_name_handle = StringTable::getOrInternStringHandle(operator_name);
+					const OverloadableOperator desired_operator_kind = overloadableOperatorFromFunctionName(operator_name);
 					// Search for the operator member function
 					for (auto& member_func : type_info->struct_info_->member_functions) {
-						if (StringTable::getStringView(member_func.name) == operator_name) {
-							// Found the operator function - check if it's a FunctionDeclarationNode
-							if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-								FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-								result = emplace_node<ExpressionNode>(
-									MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
-								return ParseResult::success(*result);
-							}
+						// Overloadable operators have canonical operator_kind metadata.
+						// Conversion operators and other non-overloadable forms still fall back
+						// to name-based lookup because they are not represented by operator_kind.
+						const bool matches_lookup =
+							(desired_operator_kind != OverloadableOperator::None)
+								? (isAssignOperator(desired_operator_kind)
+									   ? isAssignOperator(member_func.operator_kind)
+									   : member_func.operator_kind == desired_operator_kind)
+								: (member_func.getName() == operator_name_handle);
+						if (!matches_lookup || !member_func.function_decl.is<FunctionDeclarationNode>()) {
+							continue;
 						}
+
+						FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+						result = emplace_node<ExpressionNode>(
+							MemberFunctionCallNode(this_node, func_decl, std::move(args), operator_name_token));
+						return ParseResult::success(*result);
 					}
 				}
 			}

@@ -2889,55 +2889,14 @@ static bool structHasConversionOperatorTo(
 	const StructTypeInfo* struct_info = from_type_info->getStructInfo();
 	if (!struct_info)
 		return false;
+	TypeIndex canonical_target_type = canonicalize_conversion_target_type(to_desc.type_index, to_desc.category());
+	if (!canonical_target_type.is_valid())
+		return false;
 
-	// Determine the expected "operator X" suffix.
-	std::string_view target_name;
-	if (to_desc.type_index.is_valid()) {
-		const TypeInfo* to_type_info = tryGetTypeInfo(to_desc.type_index);
-		if (!to_type_info)
-			return false;
-		target_name = StringTable::getStringView(to_type_info->name());
-	} else {
-		target_name = getTypeName(to_desc.category());
-		if (target_name.empty())
-			return false;
-	}
-
-	// Scan direct member functions for "operator TARGET".
-	static constexpr std::string_view kOpPrefix = "operator ";
-	// Fallback operator name emitted for type-aliased conversion targets.
-	// Mirrors the AstToIr::findConversionOperator workaround for type-aliased operators.
-	static constexpr std::string_view kUserDefinedOperator = "operator user_defined";
+	// Scan direct member functions for an exact conversion target match.
 	for (const auto& mf : struct_info->member_functions) {
-		const std::string_view mf_name = StringTable::getStringView(mf.getName());
-		// Direct match: "operator int", "operator float", "operator bool", etc.
-		// C++20 starts_with avoids the redundant explicit size check (Gemini Phase 5 review).
-		if (mf_name.starts_with(kOpPrefix) && mf_name.substr(kOpPrefix.size()) == target_name)
+		if (mf.conversion_target_type == canonical_target_type)
 			return true;
-		// Fallback: "operator user_defined" — a typedef-aliased conversion operator.
-		// Mirrors AstToIr::findConversionOperator: verify return type matches target before
-		// accepting, to avoid spurious annotations for unrelated type-aliased operators
-		// (Devin Phase 5 review: return-type verification for operator user_defined).
-		if (mf_name == kUserDefinedOperator) {
-			if (!mf.function_decl.is<FunctionDeclarationNode>())
-				continue;
-			const auto& func_decl = mf.function_decl.as<FunctionDeclarationNode>();
-			const auto& return_type_node = func_decl.decl_node().type_node();
-			if (!return_type_node.is<TypeSpecifierNode>())
-				continue;
-			const auto& type_spec = return_type_node.as<TypeSpecifierNode>();
-			const CanonicalTypeAlias canonical_return_type =
-				canonicalize_type_alias(type_spec.type_index());
-			TypeCategory resolved_type = canonical_return_type.typeEnum();
-			if (resolved_type == to_desc.category())
-				return true;
-			// Size-based fallback for still-unresolved UserDefined return types.
-			if (resolved_type == TypeCategory::UserDefined) {
-				const int expected_size = get_type_size_bits(to_desc.category());
-				if (expected_size > 0 && static_cast<int>(type_spec.size_in_bits()) == expected_size)
-					return true;
-			}
-		}
 	}
 
 	// Recurse into non-deferred base classes (inherited conversion operators).

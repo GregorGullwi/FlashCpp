@@ -494,7 +494,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 
 	const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
 	std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
-	if (func_name != "operator()") {
+	if (overloadableOperatorFromFunctionName(func_name) != OverloadableOperator::Call) {
 		return std::nullopt;
 	}
 
@@ -704,7 +704,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 
 	const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
 	std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
-	if (func_name == "operator()") {
+	if (overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call) {
 		return std::nullopt;
 	}
 
@@ -4264,7 +4264,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	std::string_view func_name = placeholder_func.decl_node().identifier_token().value();
 
 	// For lambda calls (operator()), we need special handling
-	const bool is_operator_call = (func_name == "operator()");
+	const bool is_operator_call = overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call;
 
 	if (is_operator_call) {
 		auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {

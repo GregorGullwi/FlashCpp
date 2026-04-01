@@ -988,6 +988,36 @@ inline TypeCategory resolve_type_alias(TypeIndex type_index) {
 	return canonicalize_type_alias(type_index).typeEnum();
 }
 
+// Normalizes a conversion-operator target type into the canonical TypeIndex used
+// for lookup. This accepts both fully-populated TypeIndex values and legacy
+// category-only values (index 0, category set) that still appear in codegen/sema
+// call sites for primitive types, and it resolves alias chains for named types.
+inline TypeIndex canonicalize_conversion_target_type(TypeIndex type_index) {
+	if (!type_index.is_valid()) {
+		if (type_index.category() != TypeCategory::Invalid) {
+			return nativeTypeIndex(type_index.category());
+		}
+		return {};
+	}
+	if (type_index.category() == TypeCategory::Invalid) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			type_index = type_index.withCategory(type_info->category());
+		}
+		if (type_index.category() == TypeCategory::Invalid) {
+			return {};
+		}
+	}
+	return canonicalize_type_alias(type_index).resolvedTypeIndex();
+}
+
+inline TypeIndex canonicalize_conversion_target_type(TypeIndex type_index, TypeCategory fallback_category) {
+	TypeIndex canonical_type = canonicalize_conversion_target_type(type_index);
+	if (!canonical_type.is_valid() && fallback_category != TypeCategory::Invalid) {
+		return nativeTypeIndex(fallback_category);
+	}
+	return canonical_type;
+}
+
 TypeCreationResult add_user_type(StringHandle name, int size_in_bits, NamespaceHandle ns = NamespaceHandle{});
 
 TypeCreationResult add_struct_type(StringHandle name, NamespaceHandle ns = NamespaceHandle{});
@@ -1295,6 +1325,14 @@ public:
 	void set_concept_constraint(std::string_view constraint) { concept_constraint_ = constraint; }
 };
 
+inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
+	TypeIndex target_type_index = type_spec.type_index();
+	if (!target_type_index.is_valid() && type_spec.type() != TypeCategory::Invalid) {
+		target_type_index = nativeTypeIndex(type_spec.type());
+	}
+	return canonicalize_conversion_target_type(target_type_index);
+}
+
 // Placeholder-type deduction helper shared by parser and semantic analysis.
 // Plain `auto` follows template-argument-deduction-style stripping of top-level
 // references/cv for value returns, while `decltype(auto)` preserves the exact
@@ -1558,9 +1596,11 @@ class BinaryOperatorNode {
 public:
 	explicit BinaryOperatorNode(Token identifier, ASTNode lhs_node,
 								ASTNode rhs_node)
-		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node) {}
+		: identifier_(identifier), lhs_node_(lhs_node), rhs_node_(rhs_node),
+		  operator_kind_(stringToOverloadableOperator(identifier.value())) {}
 
 	std::string_view op() const { return identifier_.value(); }
+	OverloadableOperator operator_kind() const { return operator_kind_; }
 	const Token& get_token() const { return identifier_; }
 	auto get_lhs() const { return lhs_node_; }
 	auto get_rhs() const { return rhs_node_; }
@@ -1618,6 +1658,7 @@ private:
 	class Token identifier_;
 	ASTNode lhs_node_;
 	ASTNode rhs_node_;
+	OverloadableOperator operator_kind_ = OverloadableOperator::None;
 	const StructMemberFunction* resolved_member_operator_overload_ = nullptr;
 	const FunctionDeclarationNode* resolved_free_function_operator_overload_ = nullptr;
 	BinaryOperatorSemanticResolutionState semantic_operator_resolution_state_ = BinaryOperatorSemanticResolutionState::Unresolved;
