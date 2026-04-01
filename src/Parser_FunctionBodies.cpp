@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "RebindStaticMemberAst.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
@@ -58,51 +59,14 @@ ASTNode rebindDelayedStaticMemberFunctionCalls(
 		return node;
 	}
 
-	if (node.is<BlockNode>()) {
-		ASTNode rebound_block = ASTNode::emplace_node<BlockNode>(BlockNode());
-		auto& rebound_block_ref = rebound_block.as<BlockNode>();
-		const auto& block = node.as<BlockNode>();
-		rebound_block_ref.set_synthetic_decl_list(block.is_synthetic_decl_list());
-		for (const auto& statement : block.get_statements()) {
-			rebound_block_ref.add_statement_node(
-				rebindDelayedStaticMemberFunctionCalls(statement, struct_info));
-		}
-		return rebound_block;
-	}
-
-	if (node.is<ReturnStatementNode>()) {
-		const auto& return_stmt = node.as<ReturnStatementNode>();
-		std::optional<ASTNode> rebound_expr;
-		if (return_stmt.expression().has_value()) {
-			rebound_expr = rebindDelayedStaticMemberFunctionCalls(
-				return_stmt.expression().value(),
-				struct_info);
-		}
-		return ASTNode::emplace_node<ReturnStatementNode>(
-			std::move(rebound_expr),
-			return_stmt.return_token());
-	}
-
-	if (node.is<IfStatementNode>()) {
-		const auto& if_stmt = node.as<IfStatementNode>();
-		std::optional<ASTNode> rebound_else;
-		if (if_stmt.has_else()) {
-			rebound_else = rebindDelayedStaticMemberFunctionCalls(
-				if_stmt.get_else_statement().value(),
-				struct_info);
-		}
-		std::optional<ASTNode> rebound_init;
-		if (if_stmt.has_init()) {
-			rebound_init = rebindDelayedStaticMemberFunctionCalls(
-				if_stmt.get_init_statement().value(),
-				struct_info);
-		}
-		return ASTNode::emplace_node<IfStatementNode>(
-			rebindDelayedStaticMemberFunctionCalls(if_stmt.get_condition(), struct_info),
-			rebindDelayedStaticMemberFunctionCalls(if_stmt.get_then_statement(), struct_info),
-			std::move(rebound_else),
-			std::move(rebound_init),
-			if_stmt.is_constexpr());
+	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
+			node,
+			struct_info,
+			[struct_info](const ASTNode& child) {
+				return rebindDelayedStaticMemberFunctionCalls(child, struct_info);
+			});
+		rebound_node.has_value()) {
+		return std::move(rebound_node.value());
 	}
 
 	if (!node.is<ExpressionNode>()) {
