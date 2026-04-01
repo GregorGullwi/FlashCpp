@@ -194,7 +194,7 @@ void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<Strin
 }
 
 // Helper function to find all identifiers referenced in an AST node
-static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
+[[maybe_unused]] static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
 	RebindStaticMemberAst::visitAST(node, [&identifiers](const ASTNode& current) {
 		if (current.is<IdentifierNode>()) {
 			identifiers.insert(current.as<IdentifierNode>().nameHandle());
