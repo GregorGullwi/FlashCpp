@@ -322,14 +322,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 			target.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 		}
 	};
-	auto identifier_name_handle = [](const IdentifierNode& id) {
-		StringHandle member_name_handle = id.nameHandle();
-		if (!member_name_handle.isValid()) {
-			member_name_handle = StringTable::getOrInternStringHandle(id.name());
-		}
-		return member_name_handle;
-	};
-
 	auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 		ctx.storage_duration = ConstExpr::StorageDuration::Static;
@@ -566,7 +558,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						if (!symbol.has_value()) {
 							bool is_current_struct_static_member = false;
 							if (struct_info != nullptr) {
-								StringHandle member_name_handle = identifier_name_handle(id);
+								StringHandle member_name_handle = id.getOrInternNameHandle();
 								is_current_struct_static_member =
 									struct_info->findStaticMemberRecursive(member_name_handle).first != nullptr;
 							}
@@ -601,6 +593,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				emitted_static_members_.insert(name_handle);
 
 				GlobalVariableDeclOp op;
+				bool allow_normalized_write_back = true;
 				op.type_index = static_member.type_index;
 				op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
 				// If size is 0 for struct types, look up from type info
@@ -640,6 +633,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				};
 				if (unresolved_identifier_initializer) {
 					FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+					allow_normalized_write_back = false;
 					zero_initialize();
 				} else if (op.is_initialized) {
 					if (static_member.initializer->is<InitializerListNode>()) {
@@ -697,6 +691,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									}
 							} else {
 								FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
+								allow_normalized_write_back = false;
 								zero_initialize();
 							}
 						} else {
@@ -710,6 +705,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									FLASH_LOG(Codegen, Debug, "Evaluated scalar brace initializer for static member '", qualified_name, "' = ", evaluated_value);
 								} else {
 									FLASH_LOG(Codegen, Debug, "Failed to evaluate scalar brace initializer for static member '", qualified_name, "', zero-initializing");
+									allow_normalized_write_back = false;
 									zero_initialize();
 								}
 							} else if (init_list.size() == 0) {
@@ -717,11 +713,13 @@ void AstToIr::generateStaticMemberDeclarations() {
 								zero_initialize();
 							} else {
 								FLASH_LOG(Codegen, Debug, "Multi-element initializer list for non-struct static member '", qualified_name, "', zero-initializing");
+								allow_normalized_write_back = false;
 								zero_initialize();
 							}
 						}
 					} else if (!static_member.initializer->is<ExpressionNode>()) {
 						FLASH_LOG(Codegen, Debug, "Static member initializer is not an expression for '", qualified_name, "', zero-initializing (actual type: ", static_member.initializer->type_name(), ")");
+						allow_normalized_write_back = false;
 						zero_initialize();
 					} else {
 						const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
@@ -831,6 +829,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							if (!evaluated_ctor) {
 								FLASH_LOG(Codegen, Debug, "Processing ConstructorCallNode initializer for static member '",
 										  qualified_name, "' - initializing to zero");
+								allow_normalized_write_back = false;
 								size_t byte_count = op.size_in_bits.value / 8;
 								for (size_t i = 0; i < byte_count; ++i) {
 									op.init_data.push_back(0);
@@ -903,7 +902,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								FLASH_LOG(Codegen, Debug, "  Set reloc_target='", id.name(), "' for reference static member");
 							} else {
 								unsigned long long evaluated_value = 0;
-								StringHandle member_name_handle = identifier_name_handle(id);
+								StringHandle member_name_handle = id.getOrInternNameHandle();
 
 								const StructStaticMember* referenced_static_member = nullptr;
 								const StructTypeInfo* referenced_owner_struct = nullptr;
@@ -945,6 +944,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 										FLASH_LOG(Codegen, Debug, "  Same-struct static member identifier '", id.name(),
 												  "' is still unresolved for '", qualified_name,
 												  "'; zero-initializing in this pass");
+										allow_normalized_write_back = false;
 										zero_initialize();
 									} else {
 										// Fall back to generic expression lowering for non-constexpr/global cases.
@@ -969,7 +969,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									const auto& target_id = std::get<IdentifierNode>(inner);
 									FLASH_LOG(Codegen, Debug, "Processing &", target_id.name(), " initializer for static member '",
 											  qualified_name, "'");
-									StringHandle target_handle = StringTable::getOrInternStringHandle(target_id.name());
+									StringHandle target_handle = target_id.getOrInternNameHandle();
 									op.reloc_target = target_handle;
 									// Zero-fill the pointer slot; the linker fills the actual address
 									size_t byte_count = op.size_in_bits.value / 8;
@@ -979,6 +979,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								} else {
 									FLASH_LOG(Codegen, Debug, "Address-of non-identifier for static member '",
 											  qualified_name, "' - zero-initializing");
+									allow_normalized_write_back = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							} else {
@@ -987,6 +988,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								if (evaluate_static_initializer(*static_member.initializer, evaluated_value, struct_info)) {
 									append_bytes(evaluated_value, op.size_in_bits.value, op.init_data);
 								} else {
+									allow_normalized_write_back = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							}
@@ -1018,6 +1020,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 											  qualified_name, "' - skipping evaluation");
 									// For unknown expression types, skip evaluation to avoid crashes
 									// Initialize to zero as a safe default
+									allow_normalized_write_back = false;
 									append_bytes(0, op.size_in_bits.value, op.init_data);
 								}
 							}
@@ -1032,7 +1035,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				FLASH_LOG(Codegen, Debug, "Phase C write-back check for '", qualified_name,
 						  "': init_data.size()=", op.init_data.size(),
 						  ", has_normalized=", static_member.normalized_init.has_value() ? "yes" : "no");
-				if (!op.init_data.empty() && !static_member.normalized_init.has_value()) {
+				if (!op.init_data.empty() && allow_normalized_write_back && !static_member.normalized_init.has_value()) {
 					if (StructStaticMember* mutable_member =
 							const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
 						NormalizedInitializer ni;
@@ -1046,6 +1049,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 						mutable_member->normalized_init = std::move(ni);
 						FLASH_LOG(Codegen, Debug, "Wrote back NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
 					}
+				} else if (!allow_normalized_write_back && !op.init_data.empty()) {
+					FLASH_LOG(Codegen, Debug, "Skipping Phase C write-back for '", qualified_name,
+							  "' because bytes came from a fallback zero-initialization path");
 				}
 
 				// static const/constexpr members with constant initializers go to .rodata (read-only).

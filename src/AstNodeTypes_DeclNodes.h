@@ -348,6 +348,7 @@ struct StructTypeInfo {
 		for (auto& static_member : static_members) {
 			if (static_member.name == member_name) {
 				static_member.initializer = initializer;
+				static_member.normalized_init.reset();
 				return true;
 			}
 		}
@@ -1476,6 +1477,13 @@ public:
 
 	std::string_view name() const { return identifier_.value(); }
 	StringHandle nameHandle() const { return identifier_.handle(); }
+	StringHandle getOrInternNameHandle() const {
+		StringHandle handle = identifier_.handle();
+		if (!handle.isValid()) {
+			handle = StringTable::getOrInternStringHandle(identifier_.value());
+		}
+		return handle;
+	}
 	const Token& identifier_token() const { return identifier_; }
 	std::optional<Token> try_get_parent_token() { return parent_token_; }
 
