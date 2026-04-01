@@ -3311,7 +3311,7 @@ void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, Ev
 
 #ifndef NDEBUG
 	if (source_type->isTemplateInstantiation()) {
-		assert(false && "Template instantiation missing type-owned InstantiationContext");
+		assert(false && "Template instantiation missing type-owned InstantiationContext; attach it during type creation");
 	}
 #endif
 }
