@@ -2,7 +2,8 @@
 
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
-	const StructTypeInfo* struct_info);
+	const StructTypeInfo* struct_info,
+	bool set_qualified_name);
 
 template <typename TDest, typename TSource>
 void appendLazyTemplateSequence(TDest& destination, const TSource& source) {

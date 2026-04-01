@@ -877,7 +877,8 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (substituted_initializer.has_value()) {
 				substituted_initializer = rebindStaticMemberInitializerFunctionCalls(
 					substituted_initializer.value(),
-					struct_info);
+					struct_info,
+					true);
 			}
 
 			if (substituted_initializer.has_value()) {

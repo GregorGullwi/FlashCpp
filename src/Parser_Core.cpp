@@ -8,6 +8,7 @@
 #include "TypeTraitEvaluator.h"
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
+#include "RebindStaticMemberAst.h"
 #include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
@@ -182,160 +183,23 @@ std::vector<std::string_view> splitQualifiedNamespace(std::string_view qualified
 
 // Helper function to find all local variable declarations in an AST node
 void findLocalVariableDeclarations(const ASTNode& node, std::unordered_set<StringHandle>& var_names) {
-	if (node.is<VariableDeclarationNode>()) {
-		const auto& var_decl = node.as<VariableDeclarationNode>();
-		const auto& decl = var_decl.declaration();
+	RebindStaticMemberAst::visitAST(node, [&var_names](const ASTNode& current) {
+		if (!current.is<VariableDeclarationNode>()) {
+			return;
+		}
+
+		const auto& decl = current.as<VariableDeclarationNode>().declaration();
 		var_names.insert(decl.identifier_token().handle());
-	} else if (node.is<BlockNode>()) {
-		const auto& block = node.as<BlockNode>();
-		const auto& stmts = block.get_statements();
-		for (size_t i = 0; i < stmts.size(); ++i) {
-			findLocalVariableDeclarations(stmts[i], var_names);
-		}
-	} else if (node.is<IfStatementNode>()) {
-		const auto& if_stmt = node.as<IfStatementNode>();
-		if (if_stmt.get_init_statement().has_value()) {
-			findLocalVariableDeclarations(*if_stmt.get_init_statement(), var_names);
-		}
-		findLocalVariableDeclarations(if_stmt.get_then_statement(), var_names);
-		if (if_stmt.get_else_statement().has_value()) {
-			findLocalVariableDeclarations(*if_stmt.get_else_statement(), var_names);
-		}
-	} else if (node.is<WhileStatementNode>()) {
-		const auto& while_stmt = node.as<WhileStatementNode>();
-		findLocalVariableDeclarations(while_stmt.get_body_statement(), var_names);
-	} else if (node.is<DoWhileStatementNode>()) {
-		const auto& do_while = node.as<DoWhileStatementNode>();
-		findLocalVariableDeclarations(do_while.get_body_statement(), var_names);
-	} else if (node.is<ForStatementNode>()) {
-		const auto& for_stmt = node.as<ForStatementNode>();
-		if (for_stmt.get_init_statement().has_value()) {
-			findLocalVariableDeclarations(*for_stmt.get_init_statement(), var_names);
-		}
-		findLocalVariableDeclarations(for_stmt.get_body_statement(), var_names);
-	}
+	});
 }
 
 // Helper function to find all identifiers referenced in an AST node
 static void findReferencedIdentifiers(const ASTNode& node, std::unordered_set<StringHandle>& identifiers) {
-	if (node.is<IdentifierNode>()) {
-		identifiers.insert(node.as<IdentifierNode>().nameHandle());
-	} else if (node.is<ExpressionNode>()) {
-		// ExpressionNode is a variant, so we need to check each alternative
-		const auto& expr = node.as<ExpressionNode>();
-		std::visit([&](const auto& inner_node) {
-			using T = std::decay_t<decltype(inner_node)>;
-			if constexpr (std::is_same_v<T, IdentifierNode>) {
-				identifiers.insert(inner_node.nameHandle());
-			} else if constexpr (std::is_same_v<T, BinaryOperatorNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-				findReferencedIdentifiers(inner_node.condition(), identifiers);
-				findReferencedIdentifiers(inner_node.true_expr(), identifiers);
-				findReferencedIdentifiers(inner_node.false_expr(), identifiers);
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-				for (const auto& argument : inner_node.arguments()) {
-					findReferencedIdentifiers(argument, identifiers);
-				}
-			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
-				findReferencedIdentifiers(ASTNode(&inner_node), identifiers);
-			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-								 std::is_same_v<T, ConstCastNode> ||
-								 std::is_same_v<T, ReinterpretCastNode> ||
-								 std::is_same_v<T, DynamicCastNode>) {
-				findReferencedIdentifiers(inner_node.expr(), identifiers);
-			}
-			// Add more types as needed
-		},
-				   expr);
-	} else if (node.is<BinaryOperatorNode>()) {
-		const auto& binop = node.as<BinaryOperatorNode>();
-		findReferencedIdentifiers(binop.get_lhs(), identifiers);
-		findReferencedIdentifiers(binop.get_rhs(), identifiers);
-	} else if (node.is<UnaryOperatorNode>()) {
-		const auto& unop = node.as<UnaryOperatorNode>();
-		findReferencedIdentifiers(unop.get_operand(), identifiers);
-	} else if (node.is<FunctionCallNode>()) {
-		const auto& call = node.as<FunctionCallNode>();
-		// Don't add the function name itself, just the arguments
-		const auto& args = call.arguments();
-		for (size_t i = 0; i < args.size(); ++i) {
-			findReferencedIdentifiers(args[i], identifiers);
+	RebindStaticMemberAst::visitAST(node, [&identifiers](const ASTNode& current) {
+		if (current.is<IdentifierNode>()) {
+			identifiers.insert(current.as<IdentifierNode>().nameHandle());
 		}
-	} else if (node.is<ReturnStatementNode>()) {
-		const auto& ret = node.as<ReturnStatementNode>();
-		if (ret.expression().has_value()) {
-			findReferencedIdentifiers(*ret.expression(), identifiers);
-		}
-	} else if (node.is<BlockNode>()) {
-		const auto& block = node.as<BlockNode>();
-		const auto& stmts = block.get_statements();
-		for (size_t i = 0; i < stmts.size(); ++i) {
-			findReferencedIdentifiers(stmts[i], identifiers);
-		}
-	} else if (node.is<IfStatementNode>()) {
-		const auto& if_stmt = node.as<IfStatementNode>();
-		findReferencedIdentifiers(if_stmt.get_condition(), identifiers);
-		findReferencedIdentifiers(if_stmt.get_then_statement(), identifiers);
-		if (if_stmt.get_else_statement().has_value()) {
-			findReferencedIdentifiers(*if_stmt.get_else_statement(), identifiers);
-		}
-	} else if (node.is<WhileStatementNode>()) {
-		const auto& while_stmt = node.as<WhileStatementNode>();
-		findReferencedIdentifiers(while_stmt.get_condition(), identifiers);
-		findReferencedIdentifiers(while_stmt.get_body_statement(), identifiers);
-	} else if (node.is<DoWhileStatementNode>()) {
-		const auto& do_while = node.as<DoWhileStatementNode>();
-		findReferencedIdentifiers(do_while.get_body_statement(), identifiers);
-		findReferencedIdentifiers(do_while.get_condition(), identifiers);
-	} else if (node.is<ForStatementNode>()) {
-		const auto& for_stmt = node.as<ForStatementNode>();
-		if (for_stmt.get_init_statement().has_value()) {
-			findReferencedIdentifiers(*for_stmt.get_init_statement(), identifiers);
-		}
-		if (for_stmt.get_condition().has_value()) {
-			findReferencedIdentifiers(*for_stmt.get_condition(), identifiers);
-		}
-		if (for_stmt.get_update_expression().has_value()) {
-			findReferencedIdentifiers(*for_stmt.get_update_expression(), identifiers);
-		}
-		findReferencedIdentifiers(for_stmt.get_body_statement(), identifiers);
-	} else if (node.is<MemberAccessNode>()) {
-		const auto& member = node.as<MemberAccessNode>();
-		findReferencedIdentifiers(member.object(), identifiers);
-		// Don't add the member name itself
-	} else if (node.is<PointerToMemberAccessNode>()) {
-		const auto& ptr_member = node.as<PointerToMemberAccessNode>();
-		findReferencedIdentifiers(ptr_member.object(), identifiers);
-		findReferencedIdentifiers(ptr_member.member_pointer(), identifiers);
-	} else if (node.is<MemberFunctionCallNode>()) {
-		const auto& member_call = node.as<MemberFunctionCallNode>();
-		findReferencedIdentifiers(member_call.object(), identifiers);
-		const auto& args = member_call.arguments();
-		for (size_t i = 0; i < args.size(); ++i) {
-			findReferencedIdentifiers(args[i], identifiers);
-		}
-	} else if (node.is<ArraySubscriptNode>()) {
-		const auto& subscript = node.as<ArraySubscriptNode>();
-		findReferencedIdentifiers(subscript.array_expr(), identifiers);
-		findReferencedIdentifiers(subscript.index_expr(), identifiers);
-	} else if (node.is<VariableDeclarationNode>()) {
-		const auto& var_decl = node.as<VariableDeclarationNode>();
-		if (var_decl.initializer().has_value()) {
-			findReferencedIdentifiers(*var_decl.initializer(), identifiers);
-		}
-	}
-	// Add more node types as needed
+	});
 }
 
 // Helper function to find capture candidates and detect implicit [this] usage in lambdas
