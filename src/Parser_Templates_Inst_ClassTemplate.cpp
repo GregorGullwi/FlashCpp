@@ -417,7 +417,7 @@ static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitiali
 			return std::nullopt;
 		}
 		float value = static_cast<float>(eval_result.as_double());
-		uint32_t bits = 0;
+		uint32_t bits;
 		std::memcpy(&bits, &value, sizeof(bits));
 		append_bytes(bits, size_in_bytes);
 		break;
@@ -428,7 +428,7 @@ static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitiali
 			return std::nullopt;
 		}
 		double value = eval_result.as_double();
-		unsigned long long bits = 0;
+		unsigned long long bits;
 		std::memcpy(&bits, &value, sizeof(bits));
 		append_bytes(bits, size_in_bytes);
 		break;
@@ -483,16 +483,21 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 		return std::nullopt;
 	}
 
-	int64_t val = eval_result.as_int();
-	std::string_view val_str = StringBuilder().append(static_cast<uint64_t>(val)).commit();
-	Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
-	initializer = ASTNode::emplace_node<ExpressionNode>(
-		NumericLiteralNode(num_token, static_cast<unsigned long long>(val), TypeCategory::Int, TypeQualifier::None, 32));
-	FLASH_LOG(Templates, Debug,
-			  contains_function_call
-				  ? "Early-normalized function-call static member initializer to: "
-				  : "Early-normalized static member initializer to: ",
-			  val);
+	if (is_integer_type(type_index.category()) || type_index.category() == TypeCategory::Enum) {
+		int64_t val = eval_result.as_int();
+		std::string_view val_str = StringBuilder().append(val).commit();
+		Token num_token(Token::Type::Literal, val_str, 0, 0, 0);
+		unsigned char literal_size = static_cast<unsigned char>(size_in_bytes * 8);
+		TypeCategory literal_type = type_index.category() == TypeCategory::Enum
+										? TypeCategory::Int
+										: type_index.category();
+		const char* log_message = contains_function_call
+									 ? "Early-normalized function-call static member initializer to: "
+									 : "Early-normalized static member initializer to: ";
+		initializer = ASTNode::emplace_node<ExpressionNode>(
+			NumericLiteralNode(num_token, static_cast<unsigned long long>(val), literal_type, TypeQualifier::None, literal_size));
+		FLASH_LOG(Templates, Debug, log_message, val);
+	}
 
 	return tryBuildConstantStaticMemberInitializer(
 		eval_result,
