@@ -617,8 +617,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
 			const StructTypeInfo* struct_info = current_struct_it->second->getStructInfo();
 			const size_t expected_param_count = functionCallNode.arguments().size();
-			std::function<const FunctionDeclarationNode*(const StructTypeInfo*)> findMemberInHierarchy =
-				[&](const StructTypeInfo* current_struct) -> const FunctionDeclarationNode* {
+			auto findMemberInHierarchy = [&](auto&& self, const StructTypeInfo* current_struct) -> const FunctionDeclarationNode* {
 				if (!current_struct) {
 					return nullptr;
 				}
@@ -638,7 +637,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 				for (const auto& base_spec : current_struct->base_classes) {
 					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
 						if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
-							if (const FunctionDeclarationNode* base_match = findMemberInHierarchy(base_struct_info)) {
+							if (const FunctionDeclarationNode* base_match = self(self, base_struct_info)) {
 								return base_match;
 							}
 						}
@@ -648,7 +647,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 				return nullptr;
 			};
 
-			if (const FunctionDeclarationNode* instantiated_member = findMemberInHierarchy(struct_info)) {
+			if (const FunctionDeclarationNode* instantiated_member = findMemberInHierarchy(findMemberInHierarchy, struct_info)) {
 				matched_func_decl = instantiated_member;
 				has_precomputed_mangled = false;
 				resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
