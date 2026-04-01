@@ -44,7 +44,9 @@ bool matchesPatternQualifiedName(StringHandle instantiated_name, StringHandle pa
 
 	std::string_view instantiated = StringTable::getStringView(instantiated_name);
 	std::string_view pattern = StringTable::getStringView(pattern_name);
-	bool saw_template_mangling = false;
+	if (instantiated.find('$') == std::string_view::npos) {
+		return false;
+	}
 
 	while (true) {
 		size_t instantiated_sep = instantiated.find("::");
@@ -54,14 +56,13 @@ bool matchesPatternQualifiedName(StringHandle instantiated_name, StringHandle pa
 		size_t dollar_pos = instantiated_segment.find('$');
 		if (dollar_pos != std::string_view::npos) {
 			instantiated_segment = instantiated_segment.substr(0, dollar_pos);
-			saw_template_mangling = true;
 		}
 		if (instantiated_segment != pattern_segment) {
 			return false;
 		}
 
 		if (instantiated_sep == std::string_view::npos || pattern_sep == std::string_view::npos) {
-			return instantiated_sep == pattern_sep && saw_template_mangling;
+			return instantiated_sep == pattern_sep;
 		}
 
 		instantiated.remove_prefix(instantiated_sep + 2);
