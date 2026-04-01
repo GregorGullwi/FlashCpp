@@ -886,9 +886,9 @@ TypeIndex Parser::substitute_template_parameter(
 					return type_it != getTypesByNameMap().end() ? type_it->second : nullptr;
 				};
 
-				if (const TypeInfo* resolved_info = tryResolveQualifiedMember(type_name.substr(0, sep_pos))) {
-					result_type = resolved_info->typeEnum();
-					result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
+				if (const TypeInfo* direct_resolved_info = tryResolveQualifiedMember(type_name.substr(0, sep_pos))) {
+					result_type = direct_resolved_info->typeEnum();
+					result_type_index = direct_resolved_info->registeredTypeIndex().withCategory(direct_resolved_info->typeEnum());
 					found_match = true;
 				} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
 						   placeholder_info && placeholder_info->isTemplateInstantiation()) {
@@ -898,9 +898,9 @@ TypeIndex Parser::substitute_template_parameter(
 						std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
 						try_instantiate_class_template(base_template_name, concrete_args);
 						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
-						if (const TypeInfo* resolved_info = tryResolveQualifiedMember(instantiated_base)) {
-							result_type = resolved_info->typeEnum();
-							result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
+						if (const TypeInfo* instantiated_resolved_info = tryResolveQualifiedMember(instantiated_base)) {
+							result_type = instantiated_resolved_info->typeEnum();
+							result_type_index = instantiated_resolved_info->registeredTypeIndex().withCategory(instantiated_resolved_info->typeEnum());
 							found_match = true;
 						}
 					}

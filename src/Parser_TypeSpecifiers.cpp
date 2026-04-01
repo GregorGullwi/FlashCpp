@@ -1750,6 +1750,23 @@ ParseResult Parser::parse_type_specifier() {
 							type_info.type_size_ = 0; // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
+							size_t sep_pos = qualified_type_name.rfind("::");
+							if (sep_pos != std::string_view::npos) {
+								StringHandle base_handle = StringTable::getOrInternStringHandle(qualified_type_name.substr(0, sep_pos));
+								auto base_type_it = getTypesByNameMap().find(base_handle);
+								if (base_type_it != getTypesByNameMap().end() && base_type_it->second->isTemplateInstantiation()) {
+									type_info.setTemplateInstantiationInfo(
+										base_type_it->second->base_template_,
+										base_type_it->second->templateArgs());
+									if (base_type_it->second->hasInstantiationContext()) {
+										const auto* base_ctx = base_type_it->second->instantiationContext();
+										type_info.setInstantiationContext(
+											base_ctx->param_names,
+											base_ctx->param_args,
+											base_ctx->parent);
+									}
+								}
+							}
 							getTypesByNameMap()[type_idx] = &type_info;
 
 							return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1776,9 +1793,22 @@ ParseResult Parser::parse_type_specifier() {
 								type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 						} else {
 							// This is a type alias - return the aliased type
+							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+								type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
 							type_size = static_cast<unsigned char>(type_info->type_size_);
-							return ParseResult::success(emplace_node<TypeSpecifierNode>(
-								type_info->type_index_.withCategory(type_info->typeEnum()), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(
+								resolved_alias.type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+							type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
+							if (resolved_alias.isArray()) {
+								type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);
+							}
+							if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+								type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
+							}
+							if (resolved_alias.function_signature.has_value()) {
+								type_spec_node.as<TypeSpecifierNode>().set_function_signature(*resolved_alias.function_signature);
+							}
+							return ParseResult::success(type_spec_node);
 						}
 					}
 
@@ -2291,12 +2321,14 @@ ParseResult Parser::parse_type_specifier() {
 				type_size = 0;
 			}
 
-			// Create the TypeSpecifierNode for the struct
-			auto type_spec_node = emplace_node<TypeSpecifierNode>(
-				struct_type_info->type_index_.withCategory(TypeCategory::Struct), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
-
 			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 				original_type_info->registeredTypeIndex().withCategory(original_type_info->typeEnum()));
+			// Create the TypeSpecifierNode for the struct
+			TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+											 ? resolved_alias.type_index
+											 : struct_type_info->type_index_.withCategory(TypeCategory::Struct);
+			auto type_spec_node = emplace_node<TypeSpecifierNode>(
+				resolved_type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 			if (resolved_alias.reference_qualifier != ReferenceQualifier::None) {
 				type_spec_node.as<TypeSpecifierNode>().set_reference_qualifier(resolved_alias.reference_qualifier);
 			}
@@ -2352,7 +2384,8 @@ ParseResult Parser::parse_type_specifier() {
 				type_size = type_info_ctx->type_size_;
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
-					user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
+					resolved_alias.type_index.is_valid() ? resolved_alias.type_index : user_type_index.withCategory(resolved_type),
+					type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 				type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
 				if (resolved_alias.isArray()) {
 					type_spec_node.as<TypeSpecifierNode>().set_array_dimensions(resolved_alias.array_dimensions);

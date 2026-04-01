@@ -941,18 +941,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 	auto buildSubstitutedTypeAliasSpecifier = [&](
 									 const TypeAliasDecl& type_alias,
+									 TypeIndex substituted_type_index,
+									 TypeCategory substituted_type,
 									 const auto& params,
 									 const auto& args) -> std::optional<TypeSpecifierNode> {
 		if (!type_alias.type_node.is<TypeSpecifierNode>()) {
 			return std::nullopt;
 		}
 
-		ASTNode substituted_type_node = substituteTemplateParameters(type_alias.type_node, params, args);
-		if (!substituted_type_node.is<TypeSpecifierNode>()) {
-			return std::nullopt;
-		}
-
-		TypeSpecifierNode substituted_type_spec = substituted_type_node.as<TypeSpecifierNode>();
+		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
+		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
+		substituted_type_spec.set_category(substituted_type);
 		if (type_alias.array_dimensions.empty()) {
 			return substituted_type_spec;
 		}
@@ -1689,14 +1688,17 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex member_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args);
 				size_t ptr_depth = type_spec.pointer_depth();
+				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolveAliasTypeInfo(member_type_index).array_dimensions;
+					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
 				bool is_array_member = !resolved_array_dimensions.empty();
+				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 
 				// Calculate member size accounting for pointer depth
-				size_t member_size = get_substituted_type_size_bytes(member_type_index);
+				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
+				size_t member_size = get_substituted_type_size_bytes(member_size_type_index);
 				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					// Pointers and references are always 8 bytes (64-bit)
 					member_size = 8;
@@ -1709,7 +1711,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
 				if (ptr_depth > 0 || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_alignment = 8; // Pointer/reference alignment on x64
-				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_index)) {
+				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 					member_alignment = member_struct_info->alignment;
 				}
 
@@ -1726,7 +1728,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				struct_info->addMember(
 					member_name_handle,
-					member_type_index,
+					stored_member_type_index,
 					member_size,
 					member_alignment,
 					member_decl.access,
@@ -2484,7 +2486,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Register the type alias globally with its qualified name
 				std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-					type_alias, template_params, template_args);
+					type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args);
 				const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
 																		   ? substituted_alias_type_spec.value()
 																		   : alias_type_spec;
@@ -4015,6 +4017,39 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// We need to instantiate TC with the concrete args when instantiating TD.
 		if (const TypeInfo* member_type_info = (is_struct_type(member_type_index.category())) ? tryGetTypeInfo(member_type_index) : nullptr) {
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
+			auto materializeMemberTemplateArgs = [&]() {
+				std::vector<TemplateTypeArg> concrete_args;
+				for (const auto& arg_info : member_type_info->templateArgs()) {
+					TemplateTypeArg concrete_arg;
+					concrete_arg.setCategory(arg_info.category());
+					concrete_arg.type_index = arg_info.type_index;
+					concrete_arg.is_value = arg_info.is_value;
+					concrete_arg.value = arg_info.intValue();
+					concrete_arg.pointer_depth = arg_info.pointer_depth;
+					concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+					concrete_arg.ref_qualifier = arg_info.ref_qualifier;
+					concrete_arg.cv_qualifier = arg_info.cv_qualifier;
+					concrete_arg.array_size = arg_info.array_size;
+					concrete_arg.function_signature = arg_info.function_signature;
+					concrete_arg.dependent_name = arg_info.dependent_name;
+
+					if (arg_info.dependent_name.isValid()) {
+						std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+						for (size_t arg_idx = 0; arg_idx < template_params.size() && arg_idx < template_args_to_use.size(); ++arg_idx) {
+							if (!template_params[arg_idx].is<TemplateParameterNode>()) {
+								continue;
+							}
+							if (template_params[arg_idx].as<TemplateParameterNode>().name() == dep_name) {
+								concrete_arg = template_args_to_use[arg_idx];
+								break;
+							}
+						}
+					}
+
+					concrete_args.push_back(concrete_arg);
+				}
+				return concrete_args;
+			};
 
 			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name,
 					  "', isTemplateInstantiation=", member_type_info->isTemplateInstantiation(),
@@ -4043,19 +4078,38 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			if (needs_instantiation) {
 				// Try to instantiate with the current template arguments
-				FLASH_LOG(Templates, Debug, "Instantiating member template: ", member_struct_name, " with ", template_args_to_use.size(), " args");
-				auto inst_result = try_instantiate_class_template(member_struct_name, template_args_to_use);
+				std::vector<TemplateTypeArg> member_template_args = materializeMemberTemplateArgs();
+				FLASH_LOG(Templates, Debug, "Instantiating member template: ", member_struct_name, " with ", member_template_args.size(), " args");
+				auto inst_result = try_instantiate_class_template(member_struct_name, member_template_args);
 
 				// If instantiation succeeded, look up the instantiated type
-				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, template_args_to_use);
+				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, member_template_args);
 				std::string inst_name(inst_name_view);
-				auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-				if (inst_type_it != getTypesByNameMap().end()) {
+				const std::string_view original_member_name = StringTable::getStringView(member_type_info->name());
+				bool resolved_member_placeholder = false;
+				if (size_t member_sep = original_member_name.rfind("::"); member_sep != std::string_view::npos) {
+					StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+						StringBuilder()
+							.append(inst_name_view)
+							.append("::")
+							.append(original_member_name.substr(member_sep + 2))
+							.commit());
+					auto qualified_member_it = getTypesByNameMap().find(qualified_member_handle);
+					if (qualified_member_it != getTypesByNameMap().end()) {
+						member_type_index = qualified_member_it->second->registeredTypeIndex();
+						member_type_index.setCategory(qualified_member_it->second->typeEnum());
+						resolved_member_placeholder = true;
+					}
+				}
+				if (!resolved_member_placeholder) {
+					auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+					if (inst_type_it != getTypesByNameMap().end()) {
 					// Update member_type_index to point to the instantiated type
-					member_type_index = inst_type_it->second->type_index_;
-					// Update member_type to match the instantiated type's actual type
-					// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
-					member_type_index.setCategory(inst_type_it->second->typeEnum());
+						member_type_index = inst_type_it->second->registeredTypeIndex();
+						// Update member_type to match the instantiated type's actual type
+						// This ensures codegen knows it's a struct type (fixes Type::UserDefined issue)
+						member_type_index.setCategory(inst_type_it->second->typeEnum());
+					}
 				}
 			}
 		}
@@ -4157,15 +4211,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// new_struct_ref.add_member(new_member_decl, member_decl.access, member_decl.default_initializer);
 
 		// Calculate member size - for arrays, multiply element size by array size
+		ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(member_type_index);
 		std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(decl, template_params, template_args_to_use);
 		if (resolved_array_dimensions.empty()) {
-			resolved_array_dimensions = resolveAliasTypeInfo(member_type_index).array_dimensions;
+			resolved_array_dimensions = resolved_member_alias.array_dimensions;
 		}
 		bool is_array_member = !resolved_array_dimensions.empty();
+		TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
+		TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : member_type_index;
 		size_t member_size;
 		if (is_array_member) {
 			// Compute per-element size, looking up struct sizes from gTypeInfo
-			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
+			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
 			for (size_t dim_size : resolved_array_dimensions) {
 				member_size *= dim_size;
 			}
@@ -4228,11 +4285,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				is_array_member = true;
 			}
 			// Compute per-element size, looking up struct sizes from gTypeInfo
-			size_t element_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
+			size_t element_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
 			member_size = element_size * total_elements;
 		} else {
 			// Check if the ORIGINAL type is a pointer or reference (use original type_spec, not substituted member_type)
-			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_type_index).size;
+			member_size = calculateResolvedMemberSizeAndAlignment(type_spec, member_size_type_index).size;
 			if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference() && member_type_index.category() == TypeCategory::Struct) {
 				if (const TypeInfo* member_type_info = tryGetTypeInfo(member_type_index);
 					member_type_info && member_type_info->getStructInfo()) {
@@ -4245,13 +4302,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 		}
-
 		// Calculate member alignment
 		// For pointers and references, use 8-byte alignment (pointer alignment on x64)
-		size_t member_alignment = get_type_alignment(member_type_index.category(), member_size);
+		size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
 		if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 			member_alignment = 8; // Pointer/reference alignment on x64
-		} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_index)) {
+		} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 			member_alignment = member_struct_info->alignment;
 		}
 		ReferenceQualifier ref_qual = type_spec.reference_qualifier();
@@ -4273,7 +4329,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		StringHandle member_name_handle = decl.identifier_token().handle();
 		struct_info->addMember(
 			member_name_handle,
-			member_type_index,
+			stored_member_type_index,
 			member_size,
 			member_alignment,
 			member_decl.access,
@@ -4842,12 +4898,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
+				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
 				std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_to_use);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolveAliasTypeInfo(substituted_type_index).array_dimensions;
+					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
 				bool is_array_member = !resolved_array_dimensions.empty();
+				TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
+				TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
 
 				TypeSpecifierNode substituted_type_spec(
 					substituted_type_index.category(),
@@ -4869,20 +4928,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					size_t element_size = calculateResolvedMemberSizeAndAlignment(
-											  substituted_type_spec, substituted_type_index)
+											  substituted_type_spec, member_size_type_index)
 											  .size;
 					member_size = element_size * total_elements;
 				} else if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_size = 8;
 				} else {
 					member_size = calculateResolvedMemberSizeAndAlignment(
-									  substituted_type_spec, substituted_type_index)
+									  substituted_type_spec, member_size_type_index)
 									  .size;
 				}
-				size_t member_alignment = get_type_alignment(substituted_type_index.category(), member_size);
+				size_t member_alignment = get_type_alignment(member_size_type_index.category(), member_size);
 				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
 					member_alignment = 8;
-				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
 					member_alignment = member_struct_info->alignment;
 				}
 
@@ -4900,7 +4959,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				StringHandle member_name_handle = decl.identifier_token().handle();
 				nested_struct_info->addMember(
 					member_name_handle,
-					substituted_type_spec.type_index(),
+					stored_member_type_index,
 					member_size,
 					member_alignment,
 					member_decl.access,
@@ -5203,7 +5262,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Register the type alias in getTypesByNameMap()
 		std::optional<TypeSpecifierNode> substituted_alias_type_spec = buildSubstitutedTypeAliasSpecifier(
-			type_alias, template_params, template_args_to_use);
+			type_alias, TypeIndex{substituted_type_index}, substituted_type, template_params, template_args_to_use);
 		const TypeSpecifierNode& alias_registration_type_spec = substituted_alias_type_spec.has_value()
 																   ? substituted_alias_type_spec.value()
 																   : alias_type_spec;

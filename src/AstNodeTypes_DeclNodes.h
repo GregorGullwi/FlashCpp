@@ -969,7 +969,13 @@ struct CanonicalTypeAlias {
 // (placeholder / parse-time fallback cases).
 inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	const size_t typeInfoCount = getTypeInfoCount();
-	if ((type_index.category() != TypeCategory::UserDefined && type_index.category() != TypeCategory::TypeAlias) || !type_index.is_valid()) {
+	if (!type_index.is_valid()) {
+		return CanonicalTypeAlias{type_index};
+	}
+	const TypeInfo* initial_type_info = tryGetTypeInfo(type_index);
+	const bool starts_from_alias_slot = initial_type_info && initial_type_info->isTypeAlias();
+	if (!starts_from_alias_slot &&
+		(type_index.category() != TypeCategory::UserDefined && type_index.category() != TypeCategory::TypeAlias)) {
 		return CanonicalTypeAlias{type_index};
 	}
 
@@ -979,6 +985,20 @@ inline CanonicalTypeAlias canonicalize_type_alias(TypeIndex type_index) {
 	while (current_type_index.is_valid() &&
 		   depthLimit-- > 0) {
 		const TypeInfo& type_info = getTypeInfo(current_type_index);
+		if (type_info.isTypeAlias()) {
+			if (!type_info.type_index_.is_valid()) {
+				TypeIndex resolved = nativeTypeIndex(type_info.typeEnum());
+				if (!resolved.is_valid()) {
+					resolved = current_type_index.withCategory(type_info.typeEnum());
+				}
+				return CanonicalTypeAlias{resolved};
+			}
+			if (type_info.type_index_ == current_type_index) {
+				break;
+			}
+			current_type_index = type_info.type_index_;
+			continue;
+		}
 		if (!type_info.isVoid() && type_info.category() != TypeCategory::UserDefined) {
 			TypeIndex resolved = type_info.type_index_;
 			if (resolved.category() == TypeCategory::Invalid)
@@ -1428,7 +1448,14 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		if (!type_info->isTypeAlias() ||
 			!type_info->type_index_.is_valid() ||
 			type_info->type_index_.index() == current_type_index.index()) {
-			resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
+			if (type_info->isTypeAlias() && !type_info->type_index_.is_valid() && type_info->typeEnum() != TypeCategory::Invalid) {
+				TypeIndex canonical_type_index = nativeTypeIndex(type_info->typeEnum());
+				resolved.type_index = canonical_type_index.is_valid()
+										  ? canonical_type_index
+										  : current_type_index.withCategory(type_info->typeEnum());
+			} else {
+				resolved.type_index = current_type_index.withCategory(type_info->typeEnum());
+			}
 			return resolved;
 		}
 

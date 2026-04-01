@@ -415,7 +415,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 				}
 			}
 		}
-		if (!arg.is_dependent && is_struct_type(arg.category())) {
+		if (!arg.is_dependent && arg.type_index.is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
 				StringHandle type_name = type_info->name();
 				for (const auto& subst : template_param_substitutions_) {
