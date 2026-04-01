@@ -37,6 +37,22 @@ bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
 	return false;
 }
 
+#ifndef NDEBUG
+bool hasInstantiationBindings(const TypeInfo* type_info) {
+	if (!type_info) {
+		return false;
+	}
+
+	for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
+		if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
+			return true;
+		}
+	}
+
+	return false;
+}
+#endif
+
 std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info, const FunctionDeclarationNode& func_decl) {
 	if (func_decl.parameter_nodes().empty() || !func_decl.parameter_nodes()[0].is<DeclarationNode>()) {
 		return std::nullopt;
@@ -132,11 +148,39 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
 											? StringHandle{}
 											: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
+#ifndef NDEBUG
+		const TypeInfo* current_struct_type = nullptr;
+		if (current_struct_name_.isValid()) {
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end()) {
+				current_struct_type = current_struct_it->second;
+			}
+		}
+#endif
 
 		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
+		bool used_current_struct_fallback = false;
 		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
 			static_member = findStaticMemberInStruct(current_struct_name_);
+			used_current_struct_fallback = static_member != nullptr;
 		}
+#ifndef NDEBUG
+		if (used_current_struct_fallback) {
+			if (hasInstantiationBindings(current_struct_type)) {
+				FLASH_LOG(Codegen, Debug,
+						  "[Phase E diag] static-member owner fallback used for '",
+						  resolved_name,
+						  "' even though the current type already has InstantiationContext bindings");
+			} else {
+				FLASH_LOG(Codegen, Debug,
+						  "[Phase E diag] static-member owner fallback used for '",
+						  resolved_name,
+						  "' because no type-owned InstantiationContext bindings were available for '",
+						  StringTable::getStringView(current_struct_name_),
+						  "'");
+			}
+		}
+#endif
 		// When a static member reference was resolved during template parsing against
 		// the pattern struct (e.g., "Outer::Inner::payload"), but we're generating
 		// code for the instantiated struct (e.g., "Outer$hash::Inner"), update the

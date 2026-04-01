@@ -1,6 +1,24 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
+#ifndef NDEBUG
+namespace {
+bool hasInstantiationBindings(const TypeInfo* type_info) {
+	if (!type_info) {
+		return false;
+	}
+
+	for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
+		if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
+			return true;
+		}
+	}
+
+	return false;
+}
+} // namespace
+#endif
+
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
 	// Generate static member declarations for template classes before processing AST
@@ -432,10 +450,18 @@ void AstToIr::generateStaticMemberDeclarations() {
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
-	// Try type-owned instantiation context first
+							StringBuilder qualified_name_builder;
+							StringHandle qualified_name = StringTable::getOrInternStringHandle(
+								qualified_name_builder
+									.append(member_function_decl->parent_struct_name())
+									.append("::")
+									.append(member_function_decl->decl_node().identifier_token().value())
+									.commit());
+							// Try type-owned instantiation context first
 							auto parent_struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_function_decl->parent_struct_name()));
+							const TypeInfo* parent_struct_type = parent_struct_it != getTypesByNameMap().end() ? parent_struct_it->second : nullptr;
 							if (parent_struct_it != getTypesByNameMap().end()) {
-								if (const auto* inst_ctx = parent_struct_it->second->instantiationContext()) {
+								if (const auto* inst_ctx = parent_struct_type->instantiationContext()) {
 									rebound_ctx.template_param_names.reserve(inst_ctx->param_names.size());
 									rebound_ctx.template_args.reserve(inst_ctx->param_args.size());
 									for (StringHandle h : inst_ctx->param_names) {
@@ -444,23 +470,36 @@ void AstToIr::generateStaticMemberDeclarations() {
 									for (const auto& arg_info : inst_ctx->param_args) {
 										rebound_ctx.template_args.push_back(toTemplateTypeArg(arg_info));
 									}
+#ifndef NDEBUG
+									if (!rebound_ctx.template_param_names.empty() || !rebound_ctx.template_args.empty()) {
+										FLASH_LOG(Codegen, Debug,
+												  "[Phase E diag] type-owned InstantiationContext provided outer-template bindings for '",
+												  StringTable::getStringView(qualified_name), "'");
+									}
+#endif
 								}
 							}
 
-	// Fallback: outer template binding registry lookup
+							// Fallback: outer template binding registry lookup
 							if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty()) {
-							StringBuilder qualified_name_builder;
-							StringHandle qualified_name = StringTable::getOrInternStringHandle(
-								qualified_name_builder
-									.append(member_function_decl->parent_struct_name())
-									.append("::")
-									.append(member_function_decl->decl_node().identifier_token().value())
-									.commit());
-							if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name)) {
-								rebound_ctx.template_args.assign(outer_binding->param_args.begin(), outer_binding->param_args.end());
-								rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
-								for (StringHandle param_name : outer_binding->param_names) {
-									rebound_ctx.template_param_names.push_back(StringTable::getStringView(param_name));
+								if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name)) {
+#ifndef NDEBUG
+									if (hasInstantiationBindings(parent_struct_type)) {
+										FLASH_LOG(Codegen, Debug,
+												  "[Phase E diag] registry outer-template fallback used for '",
+												  StringTable::getStringView(qualified_name),
+												  "' even though the parent type already has InstantiationContext bindings");
+									} else {
+										FLASH_LOG(Codegen, Debug,
+												  "[Phase E diag] registry outer-template fallback used for '",
+												  StringTable::getStringView(qualified_name),
+												  "' because no type-owned InstantiationContext bindings were available");
+									}
+#endif
+									rebound_ctx.template_args.assign(outer_binding->param_args.begin(), outer_binding->param_args.end());
+									rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
+									for (StringHandle param_name : outer_binding->param_names) {
+										rebound_ctx.template_param_names.push_back(StringTable::getStringView(param_name));
 									}
 								}
 							}
