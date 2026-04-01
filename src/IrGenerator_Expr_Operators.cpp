@@ -37,21 +37,37 @@ bool shouldPreferMoveAssignment(const ExprResult& rhs_expr_result) {
 	return false;
 }
 
-#ifndef NDEBUG
-bool hasResolveBindingInstantiationBindings(const TypeInfo* type_info) {
-	if (!type_info) {
+bool matchesPatternQualifiedName(StringHandle instantiated_name, StringHandle pattern_name) {
+	if (!instantiated_name.isValid() || !pattern_name.isValid()) {
 		return false;
 	}
 
-	for (const auto* inst_ctx = type_info->instantiationContext(); inst_ctx; inst_ctx = inst_ctx->parent) {
-		if (!inst_ctx->param_names.empty() || !inst_ctx->param_args.empty()) {
-			return true;
-		}
-	}
+	std::string_view instantiated = StringTable::getStringView(instantiated_name);
+	std::string_view pattern = StringTable::getStringView(pattern_name);
+	bool saw_template_mangling = false;
 
-	return false;
+	while (true) {
+		size_t instantiated_sep = instantiated.find("::");
+		size_t pattern_sep = pattern.find("::");
+		std::string_view instantiated_segment = instantiated.substr(0, instantiated_sep);
+		std::string_view pattern_segment = pattern.substr(0, pattern_sep);
+		size_t dollar_pos = instantiated_segment.find('$');
+		if (dollar_pos != std::string_view::npos) {
+			instantiated_segment = instantiated_segment.substr(0, dollar_pos);
+			saw_template_mangling = true;
+		}
+		if (instantiated_segment != pattern_segment) {
+			return false;
+		}
+
+		if (instantiated_sep == std::string_view::npos || pattern_sep == std::string_view::npos) {
+			return instantiated_sep == pattern_sep && saw_template_mangling;
+		}
+
+		instantiated.remove_prefix(instantiated_sep + 2);
+		pattern.remove_prefix(pattern_sep + 2);
+	}
 }
-#endif
 
 std::optional<bool> getSameTypeAssignmentKind(const StructTypeInfo& struct_info, const FunctionDeclarationNode& func_decl) {
 	if (func_decl.parameter_nodes().empty() || !func_decl.parameter_nodes()[0].is<DeclarationNode>()) {
@@ -148,7 +164,6 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 		const StringHandle owner_name = (last_scope_pos == std::string_view::npos)
 											? StringHandle{}
 											: StringTable::getOrInternStringHandle(resolved_name.substr(0, last_scope_pos));
-#ifndef NDEBUG
 		const TypeInfo* current_struct_type = nullptr;
 		if (current_struct_name_.isValid()) {
 			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
@@ -156,48 +171,28 @@ AstToIr::GlobalStaticBindingInfo AstToIr::resolveGlobalOrStaticBinding(const Ide
 				current_struct_type = current_struct_it->second;
 			}
 		}
-#endif
 
 		const StructStaticMember* static_member = findStaticMemberInStruct(owner_name);
-		bool used_current_struct_fallback = false;
-		if (!static_member && current_struct_name_.isValid() && current_struct_name_ != owner_name) {
-			static_member = findStaticMemberInStruct(current_struct_name_);
-			used_current_struct_fallback = static_member != nullptr;
-		}
+		const bool owner_matches_current_pattern =
+			current_struct_name_.isValid() && current_struct_name_ != owner_name &&
+			matchesPatternQualifiedName(current_struct_name_, owner_name);
+		if (!static_member && owner_matches_current_pattern) {
 #ifndef NDEBUG
-		if (used_current_struct_fallback) {
-			if (hasResolveBindingInstantiationBindings(current_struct_type)) {
-				FLASH_LOG(Codegen, Debug,
-						  "[Phase E diag] static-member owner fallback used for '",
-						  resolved_name,
-						  "' even though the current type already has InstantiationContext bindings");
-			} else {
-				FLASH_LOG(Codegen, Debug,
-						  "[Phase E diag] static-member owner fallback used for '",
-						  resolved_name,
-						  "' because no type-owned InstantiationContext bindings were available for '",
-						  StringTable::getStringView(current_struct_name_),
-						  "'");
-			}
-		}
+			assert(current_struct_type && hasInstantiationBindings(current_struct_type) &&
+				   "Template-instantiated current struct missing InstantiationContext for static member resolution");
 #endif
+			static_member = findStaticMemberInStruct(current_struct_name_);
+		}
 		// When a static member reference was resolved during template parsing against
 		// the pattern struct (e.g., "Outer::Inner::payload"), but we're generating
 		// code for the instantiated struct (e.g., "Outer$hash::Inner"), update the
 		// store_name to use the instantiated qualification.  This ensures the correct
 		// global symbol is referenced at link time.
-		// Guard: only rewrite when the owner is a template pattern name (no '$')
-		// and current_struct is the instantiated version (has '$').  This avoids
-		// incorrectly rewriting cross-struct accesses like A accessing B::x.
-		if (static_member && current_struct_name_.isValid() && owner_name.isValid() && current_struct_name_ != owner_name) {
-			std::string_view owner_sv = StringTable::getStringView(owner_name);
-			std::string_view current_sv = StringTable::getStringView(current_struct_name_);
-			if (owner_sv.find('$') == std::string_view::npos && current_sv.find('$') != std::string_view::npos) {
-				std::string_view member_name_part = resolved_name.substr(last_scope_pos + 2);
-				StringBuilder sb;
-				info.store_name = StringTable::getOrInternStringHandle(
-					sb.append(current_struct_name_).append("::"sv).append(member_name_part).commit());
-			}
+		if (static_member && owner_matches_current_pattern) {
+			std::string_view member_name_part = resolved_name.substr(last_scope_pos + 2);
+			StringBuilder sb;
+			info.store_name = StringTable::getOrInternStringHandle(
+				sb.append(current_struct_name_).append("::"sv).append(member_name_part).commit());
 		}
 		if (static_member) {
 			info.type_index = nativeTypeIndex(static_member->memberType());

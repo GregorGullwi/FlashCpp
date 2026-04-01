@@ -3294,7 +3294,7 @@ void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, Ev
 		return;
 	}
 
- // Prefer type-owned instantiation context — avoids registry-name lookups
+	// Prefer type-owned instantiation context — avoids registry-name lookups
 	if (const auto* inst_ctx = source_type->instantiationContext()) {
 		context.template_param_names.clear();
 		context.template_args.clear();
@@ -3309,34 +3309,11 @@ void Evaluator::load_template_bindings_from_type(const TypeInfo* source_type, Ev
 		return;
 	}
 
- // Fallback: registry-based lookup for types that don't yet have a context
-	if (!source_type->isTemplateInstantiation()) {
-		return;
+#ifndef NDEBUG
+	if (source_type->isTemplateInstantiation()) {
+		assert(false && "Template instantiation missing type-owned InstantiationContext");
 	}
-
-	StringHandle base_template_name = source_type->baseTemplateName();
-	auto param_handles = gTemplateRegistry.getTemplateParameters(base_template_name);
-	context.template_param_names.clear();
-	context.template_args.clear();
-	context.template_args.reserve(source_type->templateArgs().size());
-	if (param_handles.empty()) {
-		auto template_node_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-		if (template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
-			const auto& template_param_names = template_node_opt->as<TemplateClassDeclarationNode>().template_param_names();
-			context.template_param_names.reserve(template_param_names.size());
-			for (std::string_view param_name : template_param_names) {
-				context.template_param_names.push_back(param_name);
-			}
-		}
-	} else {
-		context.template_param_names.reserve(param_handles.size());
-		for (StringHandle param_handle : param_handles) {
-			context.template_param_names.push_back(StringTable::getStringView(param_handle));
-		}
-	}
-	for (const auto& arg_info : source_type->templateArgs()) {
-		context.template_args.push_back(toTemplateTypeArg(arg_info));
-	}
+#endif
 }
 
 bool Evaluator::try_load_current_struct_template_bindings(EvaluationContext& context) {

@@ -334,55 +334,24 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
 		ctx.struct_info = struct_info;
 		if (struct_info) {
- // Prefer type-owned instantiation context (avoids registry-name lookups)
+			// Prefer type-owned instantiation context (avoids registry-name lookups)
 			bool context_loaded = false;
 			if (struct_info->own_type_index_.has_value()) {
 				if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
-					if (const auto* inst_ctx = ti->instantiationContext()) {
-						ctx.template_param_names.reserve(inst_ctx->param_names.size());
-						ctx.template_args.reserve(inst_ctx->param_args.size());
-						for (StringHandle h : inst_ctx->param_names) {
-							ctx.template_param_names.push_back(StringTable::getStringView(h));
-						}
-						for (const auto& arg_info : inst_ctx->param_args) {
-							ctx.template_args.push_back(toTemplateTypeArg(arg_info));
-						}
-						context_loaded = true;
-					}
+					ConstExpr::Evaluator::load_template_bindings_from_type(ti, ctx);
+					context_loaded = !ctx.template_param_names.empty() || !ctx.template_args.empty();
 				}
 			}
 
- // Fallback: lazy class info or registry-based lookup
+			// Fallback: lazy class info while incomplete instantiations are still materializing
 			if (!context_loaded) {
-			if (const LazyClassInstantiationInfo* lazy_class_info =
-					LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
-				ctx.template_args = lazy_class_info->template_args;
-				ctx.template_param_names.reserve(lazy_class_info->template_params.size());
-				for (const auto& template_param : lazy_class_info->template_params) {
-					if (template_param.is<TemplateParameterNode>()) {
-						ctx.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
-					}
-				}
-			} else {
-				auto struct_type_it = getTypesByNameMap().find(struct_info->name);
-				if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
-					const TypeInfo* struct_type = struct_type_it->second;
-					auto param_handles = gTemplateRegistry.getTemplateParameters(struct_type->baseTemplateName());
-					if (param_handles.empty()) {
-						if (auto template_node_opt = gTemplateRegistry.lookupTemplate(struct_type->baseTemplateName());
-							template_node_opt.has_value() && template_node_opt->is<TemplateClassDeclarationNode>()) {
-							for (std::string_view param_name : template_node_opt->as<TemplateClassDeclarationNode>().template_param_names()) {
-								ctx.template_param_names.push_back(param_name);
-							}
-						}
-					}
-					ctx.template_param_names.reserve(ctx.template_param_names.size() + param_handles.size());
-					ctx.template_args.reserve(struct_type->templateArgs().size());
-					for (StringHandle param_handle : param_handles) {
-						ctx.template_param_names.push_back(StringTable::getStringView(param_handle));
-					}
-					for (const auto& arg_info : struct_type->templateArgs()) {
-						ctx.template_args.push_back(toTemplateTypeArg(arg_info));
+				if (const LazyClassInstantiationInfo* lazy_class_info =
+						LazyClassInstantiationRegistry::getInstance().getLazyClassInfo(struct_info->name)) {
+					ctx.template_args = lazy_class_info->template_args;
+					ctx.template_param_names.reserve(lazy_class_info->template_params.size());
+					for (const auto& template_param : lazy_class_info->template_params) {
+						if (template_param.is<TemplateParameterNode>()) {
+							ctx.template_param_names.push_back(template_param.as<TemplateParameterNode>().name());
 						}
 					}
 				}
@@ -432,59 +401,18 @@ void AstToIr::generateStaticMemberDeclarations() {
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
-							StringBuilder qualified_name_builder;
-							StringHandle qualified_name = StringTable::getOrInternStringHandle(
-								qualified_name_builder
-									.append(member_function_decl->parent_struct_name())
-									.append("::")
-									.append(member_function_decl->decl_node().identifier_token().value())
-									.commit());
 							// Try type-owned instantiation context first
 							auto parent_struct_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(member_function_decl->parent_struct_name()));
 							const TypeInfo* parent_struct_type = parent_struct_it != getTypesByNameMap().end() ? parent_struct_it->second : nullptr;
-							if (parent_struct_it != getTypesByNameMap().end()) {
-								if (const auto* inst_ctx = parent_struct_type->instantiationContext()) {
-									rebound_ctx.template_param_names.reserve(inst_ctx->param_names.size());
-									rebound_ctx.template_args.reserve(inst_ctx->param_args.size());
-									for (StringHandle h : inst_ctx->param_names) {
-										rebound_ctx.template_param_names.push_back(StringTable::getStringView(h));
-									}
-									for (const auto& arg_info : inst_ctx->param_args) {
-										rebound_ctx.template_args.push_back(toTemplateTypeArg(arg_info));
-									}
-#ifndef NDEBUG
-									if (!rebound_ctx.template_param_names.empty() || !rebound_ctx.template_args.empty()) {
-										FLASH_LOG(Codegen, Debug,
-												  "[Phase E diag] type-owned InstantiationContext provided outer-template bindings for '",
-												  StringTable::getStringView(qualified_name), "'");
-									}
-#endif
-								}
+							if (parent_struct_type) {
+								ConstExpr::Evaluator::load_template_bindings_from_type(parent_struct_type, rebound_ctx);
 							}
-
-							// Fallback: outer template binding registry lookup
-							if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty()) {
-								if (const OuterTemplateBinding* outer_binding = gTemplateRegistry.getOuterTemplateBinding(qualified_name)) {
 #ifndef NDEBUG
-									if (hasInstantiationBindings(parent_struct_type)) {
-										FLASH_LOG(Codegen, Debug,
-												  "[Phase E diag] registry outer-template fallback used for '",
-												  StringTable::getStringView(qualified_name),
-												  "' even though the parent type already has InstantiationContext bindings");
-									} else {
-										FLASH_LOG(Codegen, Debug,
-												  "[Phase E diag] registry outer-template fallback used for '",
-												  StringTable::getStringView(qualified_name),
-												  "' because no type-owned InstantiationContext bindings were available");
-									}
-#endif
-									rebound_ctx.template_args.assign(outer_binding->param_args.begin(), outer_binding->param_args.end());
-									rebound_ctx.template_param_names.reserve(outer_binding->param_names.size());
-									for (StringHandle param_name : outer_binding->param_names) {
-										rebound_ctx.template_param_names.push_back(StringTable::getStringView(param_name));
-									}
-								}
+							if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() &&
+								parent_struct_type && parent_struct_type->isTemplateInstantiation()) {
+								assert(false && "Static member rebound evaluation missing parent InstantiationContext");
 							}
+#endif
 						}
 
 						auto rebound_result = ConstExpr::Evaluator::evaluate(expr_node, rebound_ctx);
