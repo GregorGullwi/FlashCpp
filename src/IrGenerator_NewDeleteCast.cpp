@@ -1035,6 +1035,7 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 		// Get result type and size for metadata and return value
 	TypeCategory result_type = target_type_node.type_index().category();
 	int result_size = static_cast<int>(target_type_node.size_in_bits());
+	PointerDepth result_pointer_depth{static_cast<int>(target_type_node.pointer_depth())};
 
 		// For reference types, the result is a pointer (64 bits), not the struct size
 	bool is_reference_cast = target_type_node.is_reference() || target_type_node.is_rvalue_reference();
@@ -1051,7 +1052,7 @@ ExprResult AstToIr::generateDynamicCastIr(const DynamicCastNode& dynamicCastNode
 
 		// Return the casted pointer/reference
 	ValueStorage result_storage = is_reference_cast ? ValueStorage::ContainsAddress : ValueStorage::ContainsData;
-	return makeExprResult(nativeTypeIndex(result_type), SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, PointerDepth{}, result_storage);
+	return makeExprResult(nativeTypeIndex(result_type), SizeInBits{static_cast<int>(result_size)}, IrOperand{result_temp}, result_pointer_depth, result_storage);
 }
 
 ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {

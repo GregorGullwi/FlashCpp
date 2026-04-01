@@ -874,6 +874,7 @@ struct VariableDeclOp {
 	StringHandle var_name;  // Pure StringHandle
 	unsigned long long custom_alignment = 0;
 	CVReferenceQualifier ref_qualifier = CVReferenceQualifier::None;
+	PointerDepth pointer_depth = PointerDepth{};
 	bool is_array = false;
 	bool use_copy_constructor = false;
 	// Array info (if is_array)

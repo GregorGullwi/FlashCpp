@@ -144,16 +144,26 @@ static std::optional<FunctionSignature> resolveTemplateFunctionPointerSignature(
 
 ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const ASTNode& node,
-	const StructTypeInfo* struct_info) {
+	const StructTypeInfo* struct_info,
+	bool set_qualified_name) {
 	if (!struct_info || !node.has_value()) {
 		return node;
 	}
 
+	auto recurse = [struct_info, set_qualified_name](const ASTNode& child) {
+		return rebindStaticMemberInitializerFunctionCalls(child, struct_info, set_qualified_name);
+	};
+
 	if (auto rebound_node = RebindStaticMemberAst::tryRebindNonExpressionNode(
 			node,
-			[struct_info](const ASTNode& child) {
-				return rebindStaticMemberInitializerFunctionCalls(child, struct_info);
-			});
+			recurse);
+		rebound_node.has_value()) {
+		return std::move(rebound_node.value());
+	}
+
+	if (auto rebound_node = RebindStaticMemberAst::tryRebindExpressionChildren(
+			node,
+			recurse);
 		rebound_node.has_value()) {
 		return std::move(rebound_node.value());
 	}
@@ -168,15 +178,13 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		const auto& call = std::get<FunctionCallNode>(expr);
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : call.arguments()) {
-			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
 		}
 
 		std::vector<ASTNode> rebound_template_args =
 			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(
 				call,
-				[struct_info](const ASTNode& child) {
-					return rebindStaticMemberInitializerFunctionCalls(child, struct_info);
-				});
+				recurse);
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
 		const StructTypeInfo* rebound_owner = nullptr;
@@ -204,7 +212,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		}
 		if (!rebound_function && call.has_qualified_name()) {
 			rebound_call_ref.set_qualified_name(call.qualified_name());
-		} else if (rebound_function && rebound_owner) {
+		} else if (set_qualified_name && rebound_function && rebound_owner) {
 			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
 				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
 			rebound_call_ref.set_qualified_name(qualified_handle.view());
@@ -217,7 +225,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : member_call.arguments()) {
-			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
 		}
 
 		bool is_implicit_this_call = false;
@@ -250,7 +258,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				} else if (member_call.function_declaration().has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
 				}
-				if (rebound_function && rebound_owner) {
+				if (set_qualified_name && rebound_function && rebound_owner) {
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
 					rebound_call_ref.set_qualified_name(qualified_handle.view());
@@ -259,52 +267,6 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				return rebound_call;
 			}
 		}
-	}
-
-	if (std::holds_alternative<ConstructorCallNode>(expr)) {
-		const auto& ctor_call = std::get<ConstructorCallNode>(expr);
-		ChunkedVector<ASTNode> rebound_args;
-		for (const auto& arg : ctor_call.arguments()) {
-			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info));
-		}
-		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
-			ctor_call.type_node(),
-			std::move(rebound_args),
-			ctor_call.called_from()));
-	}
-
-	if (std::holds_alternative<BinaryOperatorNode>(expr)) {
-		const auto& binop = std::get<BinaryOperatorNode>(expr);
-		BinaryOperatorNode rebound_binop(
-			binop.get_token(),
-			rebindStaticMemberInitializerFunctionCalls(binop.get_lhs(), struct_info),
-			rebindStaticMemberInitializerFunctionCalls(binop.get_rhs(), struct_info));
-		return ASTNode::emplace_node<ExpressionNode>(rebound_binop);
-	}
-
-	if (std::holds_alternative<UnaryOperatorNode>(expr)) {
-		const auto& unop = std::get<UnaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(UnaryOperatorNode(
-			unop.get_token(),
-			rebindStaticMemberInitializerFunctionCalls(unop.get_operand(), struct_info),
-			unop.is_prefix(),
-			unop.is_builtin_addressof()));
-	}
-
-	if (std::holds_alternative<TernaryOperatorNode>(expr)) {
-		const auto& ternary = std::get<TernaryOperatorNode>(expr);
-		return ASTNode::emplace_node<ExpressionNode>(TernaryOperatorNode(
-			rebindStaticMemberInitializerFunctionCalls(ternary.condition(), struct_info),
-			rebindStaticMemberInitializerFunctionCalls(ternary.true_expr(), struct_info),
-			rebindStaticMemberInitializerFunctionCalls(ternary.false_expr(), struct_info),
-			ternary.get_token()));
-	}
-
-	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-		return ASTNode::emplace_node<ExpressionNode>(StaticCastNode(
-			cast->target_type(),
-			rebindStaticMemberInitializerFunctionCalls(cast->expr(), struct_info),
-			cast->cast_token()));
 	}
 
 	return node;
@@ -338,6 +300,32 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 
 	if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
 		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* cast = std::get_if<DynamicCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* cast = std::get_if<ConstCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* cast = std::get_if<ReinterpretCastNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(cast->expr());
+	}
+
+	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(member_access->object());
+	}
+
+	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(subscript->array_expr()) ||
+			   staticMemberInitializerContainsFunctionCall(subscript->index_expr());
+	}
+
+	if (const auto* ptr_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		return staticMemberInitializerContainsFunctionCall(ptr_member_access->object()) ||
+			   staticMemberInitializerContainsFunctionCall(ptr_member_access->member_pointer());
 	}
 
 	return false;
@@ -461,7 +449,8 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	initializer = rebindStaticMemberInitializerFunctionCalls(
 		initializer.value(),
-		struct_info);
+		struct_info,
+		true);
 	if (!initializer->is<ExpressionNode>()) {
 		return std::nullopt;
 	}
@@ -1847,7 +1836,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (orig_func.is_static()) {
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
 								substituted_body,
-								struct_info.get());
+								struct_info.get(),
+								true);
 						}
 						new_func_ref.set_definition(substituted_body);
 					}
@@ -2660,7 +2650,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
 							substituted_body = rebindStaticMemberInitializerFunctionCalls(
 								substituted_body,
-								rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+								rebound_type_info ? rebound_type_info->getStructInfo() : nullptr,
+								true);
 						}
 						new_func.set_definition(substituted_body);
 					} else if (orig_func.has_template_body_position()) {
@@ -2708,7 +2699,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
 								substituted_body = rebindStaticMemberInitializerFunctionCalls(
 									substituted_body,
-									rebound_type_info ? rebound_type_info->getStructInfo() : nullptr);
+									rebound_type_info ? rebound_type_info->getStructInfo() : nullptr,
+									true);
 							}
 							new_func.set_definition(substituted_body);
 						}
