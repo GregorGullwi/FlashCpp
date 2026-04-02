@@ -17,11 +17,11 @@ struct Box {
 };
 
 int main() {
-if (Box<int>::compute() != 42) {
-return 1;
-}
-if (Box<char>::compute() != 39) {
-return 2;
-}
-return 42;
+	if (Box<int>::compute() != 42) {
+		return 1;
+	}
+	if (Box<char>::compute() != 39) {
+		return 2;
+	}
+	return 42;
 }
