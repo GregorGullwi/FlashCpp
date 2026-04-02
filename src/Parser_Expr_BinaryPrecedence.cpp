@@ -47,7 +47,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 			OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
 		};
 
-		auto tryRankOperatorTemplateCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
+		auto tryRankOperatorTemplateCandidate = [&left_type_spec, &right_type_spec](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
 			const auto& params = func_decl.parameter_nodes();
 			if (params.size() < 2 || !params[0].is<DeclarationNode>() || !params[1].is<DeclarationNode>()) {
 				return false;
@@ -82,7 +82,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		bool has_ranked_candidate = false;
 		RankedOperatorTemplateCandidate single_candidate;
 		std::vector<RankedOperatorTemplateCandidate> ranked_candidates;
-		auto isDuplicateCandidate = [&](const FunctionDeclarationNode& func_decl) -> bool {
+		auto isDuplicateCandidate = [&has_ranked_candidate, &single_candidate, &ranked_candidates](const FunctionDeclarationNode& func_decl) -> bool {
 			if (!has_ranked_candidate) {
 				return false;
 			}
@@ -111,7 +111,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			return false;
 		};
-		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source) -> void {
+		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source) {
 			if (isDuplicateCandidate(func_decl)) {
 				return;
 			}
