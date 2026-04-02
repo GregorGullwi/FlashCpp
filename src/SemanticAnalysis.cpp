@@ -2032,6 +2032,7 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					normalizeExpression(arg, ctx);
 				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				tryResolveSubscriptOperator(e);
 				normalizeExpression(e.array_expr(), ctx);
 				normalizeExpression(e.index_expr(), ctx);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
@@ -2186,6 +2187,11 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
 	auto it = op_call_table_.find(key);
 	return it != op_call_table_.end() ? it->second : nullptr;
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
+	auto it = op_subscript_table_.find(key);
+	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const {
@@ -2399,6 +2405,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				}
 				return type_context_.intern(result_desc);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+				// If sema resolved this subscript to operator[], return the operator[]'s return type.
+				if (const FunctionDeclarationNode* op_subscript = getResolvedOpSubscript(&e)) {
+					const ASTNode& ret_type_node = op_subscript->decl_node().type_node();
+					if (ret_type_node.is<TypeSpecifierNode>())
+						return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+					return {};
+				}
 				// Array subscript: the result type is the element type of the array.
 				// Infer the array expression type and strip one array dimension.
 				const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr());
@@ -2419,7 +2432,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					elem_desc.pointer_levels.pop_back();
 					return type_context_.intern(elem_desc);
 				}
-				// Plain type subscript (e.g. overloaded operator[]) — return base type.
+				// Plain type subscript — return base type.
 				return array_type_id;
 			} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 				const std::string_view op = e.op();
@@ -3584,6 +3597,96 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 	FLASH_LOG_FORMAT(General, Debug,
 					 "SemanticAnalysis: resolved operator() for '{}' -> {} params",
 					 callee_decl.identifier_token().value(),
+					 best_match->parameter_nodes().size());
+}
+
+void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {
+	// Determine whether the array expression has struct type (no pointer, no array dims).
+	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.array_expr());
+	if (!object_type_id)
+		return;
+
+	const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
+	if (object_desc.category() != TypeCategory::Struct)
+		return;
+	if (!object_desc.pointer_levels.empty() || !object_desc.array_dimensions.empty())
+		return;
+
+	const TypeInfo* type_info = tryGetTypeInfo(object_desc.type_index);
+	if (!type_info)
+		return;
+
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (!struct_info)
+		return;
+
+	// Collect all operator[] candidates.
+	std::vector<ASTNode> candidates;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Subscript)
+			continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>())
+			continue;
+		candidates.push_back(member_func.function_decl);
+	}
+
+	// Also search base classes.
+	auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current) -> void {
+		for (const auto& base_spec : current->base_classes) {
+			if (!base_spec.type_index.is_valid())
+				continue;
+			const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
+			if (!base_info)
+				continue;
+			const StructTypeInfo* base_struct = base_info->getStructInfo();
+			if (!base_struct)
+				continue;
+			for (const auto& member_func : base_struct->member_functions) {
+				if (member_func.operator_kind != OverloadableOperator::Subscript)
+					continue;
+				if (!member_func.function_decl.is<FunctionDeclarationNode>())
+					continue;
+				candidates.push_back(member_func.function_decl);
+			}
+			self(self, base_struct);
+		}
+	};
+	searchBaseClasses(searchBaseClasses, struct_info);
+
+	if (candidates.empty())
+		return;
+
+	// Try overload resolution with the index argument type.
+	const CanonicalTypeId index_type_id = inferExpressionType(subscript_node.index_expr());
+	const FunctionDeclarationNode* best_match = nullptr;
+
+	if (index_type_id) {
+		const TypeSpecifierNode index_type_spec = materializeTypeSpecifier(type_context_.get(index_type_id));
+		std::vector<TypeSpecifierNode> arg_types = {index_type_spec};
+		const OverloadResolutionResult result = resolve_overload(candidates, arg_types);
+		if (result.has_match && !result.is_ambiguous)
+			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
+	}
+
+	if (!best_match) {
+		// Fallback: arity-based selection (single param matching).
+		for (const auto& candidate_node : candidates) {
+			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
+			if (candidate.parameter_nodes().size() == 1) {
+				best_match = &candidate;
+				break;
+			}
+		}
+	}
+
+	if (!best_match)
+		return;
+
+	op_subscript_table_[&subscript_node] = best_match;
+
+	FLASH_LOG_FORMAT(General, Debug,
+					 "SemanticAnalysis: resolved operator[] on struct '{}' -> {} params",
+					 StringTable::getStringView(type_info->name()),
 					 best_match->parameter_nodes().size());
 }
 
