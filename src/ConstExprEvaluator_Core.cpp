@@ -4497,7 +4497,9 @@ EvalResult Evaluator::materializeFromConstantBytes(
 
 	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
 		if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {
-			return toSizeT(type_info->sizeInBytes());
+			SizeInBytes size = type_info->sizeInBytes();
+			if (size.is_set())
+				return toSizeT(size);
 		}
 
 		return static_cast<size_t>(get_type_size_bits(current_type_index.category()) / 8);
