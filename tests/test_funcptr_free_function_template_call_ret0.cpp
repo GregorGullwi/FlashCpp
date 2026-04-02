@@ -12,7 +12,8 @@ int apply(F fn, int x) {
 }
 
 int main() {
+	int deduced_square = apply(square, 5);
 	int explicit_square = apply<int (*)(int)>(square, 5);
 	int explicit_increment = apply<int (*)(int)>(increment, 41);
-	return (explicit_square == 25 && explicit_increment == 42) ? 0 : 1;
+	return (deduced_square == 25 && explicit_square == 25 && explicit_increment == 42) ? 0 : 1;
 }

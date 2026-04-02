@@ -343,26 +343,3 @@ packs work correctly.
 **Suggested fix**: Instead of a parallel-index loop, consume variadic packs separately and
 maintain an independent arg cursor, similar to how `try_instantiate_template_explicit`
 (same file, line ~390) handles variadic packs with a dedicated `explicit_idx` counter.
-## Deduced free-function template instantiation still loses function-pointer type information
-
-Calling a free-function template parameter now works when the function pointer type is
-provided explicitly:
-
-```cpp
-template <typename F>
-int apply(F fn, int x) {
-	return fn(x);
-}
-
-int apply_ok = apply<int (*)(int)>(square, 5);
-```
-
-but the deduced form still instantiates the free function as if `F` were `int` instead of
-`int (*)(int)`:
-
-```cpp
-int apply_still_broken = apply(square, 5);
-```
-
-This leaves the instantiated body lowering to `operator()` even though the explicit
-instantiation path now emits the correct indirect call.
