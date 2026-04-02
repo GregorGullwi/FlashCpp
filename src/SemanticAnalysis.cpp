@@ -3620,19 +3620,17 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	if (!struct_info)
 		return;
 
-	// Collect all operator[] candidates.
+	// Collect all operator[] candidates from this struct and its base classes.
 	std::vector<ASTNode> candidates;
-	for (const auto& member_func : struct_info->member_functions) {
-		if (member_func.operator_kind != OverloadableOperator::Subscript)
-			continue;
-		if (!member_func.function_decl.is<FunctionDeclarationNode>())
-			continue;
-		candidates.push_back(member_func.function_decl);
-	}
-
-	// Also search base classes.
-	auto searchBaseClasses = [&](auto&& self, const StructTypeInfo* current) -> void {
-		for (const auto& base_spec : current->base_classes) {
+	auto collectCandidates = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
+		for (const auto& member_func : current_struct->member_functions) {
+			if (member_func.operator_kind != OverloadableOperator::Subscript)
+				continue;
+			if (!member_func.function_decl.is<FunctionDeclarationNode>())
+				continue;
+			candidates.push_back(member_func.function_decl);
+		}
+		for (const auto& base_spec : current_struct->base_classes) {
 			if (!base_spec.type_index.is_valid())
 				continue;
 			const TypeInfo* base_info = tryGetTypeInfo(base_spec.type_index);
@@ -3641,17 +3639,10 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 			const StructTypeInfo* base_struct = base_info->getStructInfo();
 			if (!base_struct)
 				continue;
-			for (const auto& member_func : base_struct->member_functions) {
-				if (member_func.operator_kind != OverloadableOperator::Subscript)
-					continue;
-				if (!member_func.function_decl.is<FunctionDeclarationNode>())
-					continue;
-				candidates.push_back(member_func.function_decl);
-			}
 			self(self, base_struct);
 		}
 	};
-	searchBaseClasses(searchBaseClasses, struct_info);
+	collectCandidates(collectCandidates, struct_info);
 
 	if (candidates.empty())
 		return;
@@ -3659,6 +3650,7 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 	// Try overload resolution with the index argument type.
 	const CanonicalTypeId index_type_id = inferExpressionType(subscript_node.index_expr());
 	const FunctionDeclarationNode* best_match = nullptr;
+	bool explicitly_ambiguous = false;
 
 	if (index_type_id) {
 		const TypeSpecifierNode index_type_spec = materializeTypeSpecifier(type_context_.get(index_type_id));
@@ -3666,9 +3658,11 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		const OverloadResolutionResult result = resolve_overload(candidates, arg_types);
 		if (result.has_match && !result.is_ambiguous)
 			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
+		if (result.is_ambiguous)
+			explicitly_ambiguous = true;
 	}
 
-	if (!best_match) {
+	if (!best_match && !explicitly_ambiguous) {
 		// Fallback: arity-based selection (single param matching).
 		for (const auto& candidate_node : candidates) {
 			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();

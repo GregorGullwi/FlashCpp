@@ -151,54 +151,6 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		}
 	}
 
-	// Fallback for template-instantiated or sema-unseen paths: if the object expression
-	// has struct type with no pointer depth, attempt runtime operator[] lookup.
-	{
-		const ExpressionNode* array_expr_ptr = nullptr;
-		if (arraySubscriptNode.array_expr().is<ExpressionNode>())
-			array_expr_ptr = &arraySubscriptNode.array_expr().as<ExpressionNode>();
-		if (array_expr_ptr) {
-			TypeSpecifierNode object_type_spec;
-			bool have_object_type = false;
-			if (std::holds_alternative<IdentifierNode>(*array_expr_ptr)) {
-				const auto& ident = std::get<IdentifierNode>(*array_expr_ptr);
-				if (const auto sym = lookupSymbol(ident.name())) {
-					if (const DeclarationNode* decl = get_decl_from_symbol(*sym)) {
-						object_type_spec = decl->type_node().as<TypeSpecifierNode>();
-						have_object_type = true;
-					}
-				}
-			}
-			if (have_object_type &&
-				is_struct_type(object_type_spec.type()) &&
-				!object_type_spec.is_array() &&
-				object_type_spec.pointer_depth() == 0) {
-				const TypeInfo* type_info = tryGetTypeInfo(object_type_spec.type_index());
-				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
-				if (struct_info) {
-					const FunctionDeclarationNode* subscript_op = nullptr;
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Subscript &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							subscript_op = &member_func.function_decl.as<FunctionDeclarationNode>();
-							break;
-						}
-					}
-					if (subscript_op) {
-						ChunkedVector<ASTNode> args;
-						args.push_back(arraySubscriptNode.index_expr());
-						MemberFunctionCallNode member_call(
-							arraySubscriptNode.array_expr(),
-							*subscript_op,
-							std::move(args),
-							arraySubscriptNode.bracket_token());
-						return generateMemberFunctionCallIr(member_call, context);
-					}
-				}
-			}
-		}
-	}
-
 	auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 		ExprResult result;
 		result.ir_type = toIrType(type);
