@@ -2370,13 +2370,19 @@ ParseResult Parser::parse_type_specifier() {
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
 							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
-			// Also consider function pointer/reference type aliases as typedefs (they may have size 0 but have function_signature)
-			if (!is_typedef && type_info_ctx->function_signature_.has_value()) {
+			bool has_alias_type_shape = resolved_alias.pointer_depth != 0 ||
+										resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+										resolved_alias.function_signature.has_value() ||
+										resolved_alias.isArray();
+			// Alias-applied pointer/reference/function metadata now comes from the alias chain.
+			if (!is_typedef && has_alias_type_shape) {
 				is_typedef = true;
 			}
-			// Also consider reference type aliases as typedefs (they may have size 0 but have reference qualifiers)
+			// Keep non-alias synthetic type entries (e.g. template parameter placeholders) working.
 			// This is critical for std::move's ReturnType which is typename remove_reference<T>::type&&
-			if (!is_typedef && type_info_ctx->reference_qualifier_ != ReferenceQualifier::None) {
+			if (!is_typedef &&
+				(type_info_ctx->reference_qualifier_ != ReferenceQualifier::None ||
+				 type_info_ctx->function_signature_.has_value())) {
 				is_typedef = true;
 			}
 			if (is_typedef) {

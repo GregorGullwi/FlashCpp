@@ -773,8 +773,6 @@ struct TypeInfo {
 
 	// For aliases, preserve the original aliased type specifier so consumers can
 	// recover array/pointer/reference metadata by following the alias chain.
-	// pointer_depth_, reference_qualifier_, and function_signature_ remain as a
-	// fallback for older alias entries that predate alias_type_spec_.
 	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;
 
 	// For template instantiations: store metadata to avoid name parsing
@@ -1365,18 +1363,10 @@ public:
 
 inline void TypeInfo::clearAliasTypeSpecifier() {
 	alias_type_spec_.reset();
-	pointer_depth_ = 0;
-	reference_qualifier_ = ReferenceQualifier::None;
-	function_signature_.reset();
 }
 
 inline void TypeInfo::setAliasTypeSpecifier(const TypeSpecifierNode& type_spec) {
 	alias_type_spec_ = std::make_unique<TypeSpecifierNode>(type_spec);
-	pointer_depth_ = type_spec.pointer_depth();
-	reference_qualifier_ = type_spec.reference_qualifier();
-	function_signature_ = type_spec.has_function_signature()
-							  ? std::optional<FunctionSignature>(type_spec.function_signature())
-							  : std::nullopt;
 }
 
 struct ResolvedAliasTypeInfo {
@@ -1431,17 +1421,6 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 				}
 				if (alias_type_spec->is_array()) {
 					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
-				}
-			} else {
-				resolved.pointer_depth += type_info->pointer_depth_;
-				if (type_info->reference_qualifier_ == ReferenceQualifier::LValueReference) {
-					resolved.reference_qualifier = ReferenceQualifier::LValueReference;
-				} else if (resolved.reference_qualifier == ReferenceQualifier::None &&
-						   type_info->reference_qualifier_ == ReferenceQualifier::RValueReference) {
-					resolved.reference_qualifier = ReferenceQualifier::RValueReference;
-				}
-				if (!resolved.function_signature.has_value() && type_info->function_signature_.has_value()) {
-					resolved.function_signature = type_info->function_signature_;
 				}
 			}
 		}

@@ -231,10 +231,6 @@ TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_inf
 		size_bits);
 	if (const TypeSpecifierNode* alias_type_spec = source_type_info.aliasTypeSpecifier()) {
 		type_info.setAliasTypeSpecifier(*alias_type_spec);
-	} else {
-		type_info.pointer_depth_ = source_type_info.pointer_depth_;
-		type_info.reference_qualifier_ = source_type_info.reference_qualifier_;
-		type_info.function_signature_ = source_type_info.function_signature_;
 	}
 	return type_info;
 }
