@@ -35,7 +35,104 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		// and ADL, then try each template candidate under SFINAE.  We must NOT
 		// short-circuit after the registry hit because an ADL-only hidden friend
 		// template could be a better (more-specialized) match.
-		const FunctionDeclarationNode* best_match = nullptr;
+		enum class OperatorTemplateCandidateSource {
+			Registry,
+			LookupAll,
+			AdlOnly,
+		};
+		struct RankedOperatorTemplateCandidate {
+			ConversionRank lhs_rank = ConversionRank::NoMatch;
+			ConversionRank rhs_rank = ConversionRank::NoMatch;
+			const FunctionDeclarationNode* function = nullptr;
+			OperatorTemplateCandidateSource source = OperatorTemplateCandidateSource::Registry;
+		};
+
+		auto tryRankOperatorTemplateCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source, RankedOperatorTemplateCandidate& ranked_candidate) -> bool {
+			const auto& params = func_decl.parameter_nodes();
+			if (params.size() < 2 || !params[0].is<DeclarationNode>() || !params[1].is<DeclarationNode>()) {
+				return false;
+			}
+
+			const auto& lhs_type_node = params[0].as<DeclarationNode>().type_node();
+			const auto& rhs_type_node = params[1].as<DeclarationNode>().type_node();
+			if (!lhs_type_node.is<TypeSpecifierNode>() || !rhs_type_node.is<TypeSpecifierNode>()) {
+				return false;
+			}
+
+			ConversionRank lhs_rank = rankBinaryOperatorOperandMatch(
+				left_type_spec,
+				lhs_type_node.as<TypeSpecifierNode>(),
+				left_type_spec.type_index());
+			if (lhs_rank == ConversionRank::NoMatch) {
+				return false;
+			}
+
+			ConversionRank rhs_rank = rankBinaryOperatorOperandMatch(
+				right_type_spec,
+				rhs_type_node.as<TypeSpecifierNode>(),
+				right_type_spec.type_index());
+			if (rhs_rank == ConversionRank::NoMatch) {
+				return false;
+			}
+
+			ranked_candidate = {lhs_rank, rhs_rank, &func_decl, source};
+			return true;
+		};
+
+		bool has_ranked_candidate = false;
+		RankedOperatorTemplateCandidate single_candidate;
+		std::vector<RankedOperatorTemplateCandidate> ranked_candidates;
+		auto isDuplicateCandidate = [&](const FunctionDeclarationNode& func_decl) -> bool {
+			if (!has_ranked_candidate) {
+				return false;
+			}
+
+			auto isSameFunction = [&](const RankedOperatorTemplateCandidate& candidate) -> bool {
+				if (candidate.function == &func_decl) {
+					return true;
+				}
+
+				if (candidate.function != nullptr && candidate.function->has_mangled_name() && func_decl.has_mangled_name()) {
+					return candidate.function->mangled_name() == func_decl.mangled_name();
+				}
+
+				return false;
+			};
+
+			if (isSameFunction(single_candidate)) {
+				return true;
+			}
+
+			for (const auto& candidate : ranked_candidates) {
+				if (isSameFunction(candidate)) {
+					return true;
+				}
+			}
+
+			return false;
+		};
+		auto addSuccessfulCandidate = [&](const FunctionDeclarationNode& func_decl, OperatorTemplateCandidateSource source) -> void {
+			if (isDuplicateCandidate(func_decl)) {
+				return;
+			}
+
+			RankedOperatorTemplateCandidate ranked_candidate;
+			if (!tryRankOperatorTemplateCandidate(func_decl, source, ranked_candidate)) {
+				return;
+			}
+
+			if (!has_ranked_candidate) {
+				single_candidate = ranked_candidate;
+				has_ranked_candidate = true;
+				return;
+			}
+
+			if (ranked_candidates.empty()) {
+				ranked_candidates.reserve(4);
+				ranked_candidates.push_back(single_candidate);
+			}
+			ranked_candidates.push_back(ranked_candidate);
+		};
 
 		// Phase 1: try the template registry (covers most non-ADL templates)
 		// Must set SFINAE context so substitution failures return nullopt
@@ -43,18 +140,22 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		bool previous_sfinae_phase1 = in_sfinae_context_;
 		in_sfinae_context_ = true;
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
-			best_match = get_function_decl_node(*instantiated);
+			if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+				addSuccessfulCandidate(*func_decl, OperatorTemplateCandidateSource::Registry);
+			}
 		}
 		in_sfinae_context_ = previous_sfinae_phase1;
 
 		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
 		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
+		size_t lookup_all_candidate_count = candidates.size();
 		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
 		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
 
 		constexpr int initial_template_instantiation_depth = 1;
 		int template_recursion_depth = initial_template_instantiation_depth;
-		for (const auto& candidate : candidates) {
+		for (size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
+			const auto& candidate = candidates[candidate_index];
 			if (!candidate.is<TemplateFunctionDeclarationNode>()) {
 				continue;
 			}
@@ -70,21 +171,51 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			if (instantiated.has_value()) {
 				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-					// C++20 [over.match.best]/1, [temp.func.order]: all candidates
-					// (registry, ordinary lookup, ADL) form a single overload set
-					// and the most specialized viable function wins.  Full partial
-					// ordering is not yet implemented; as an approximation, prefer
-					// ADL/lookup_all hits over the Phase 1 registry hit because
-					// hidden-friend templates (ADL-only) are defined inside the
-					// class body and are almost always more specialized than
-					// catch-all namespace-scope templates from the registry.
-					best_match = func_decl;
+					OperatorTemplateCandidateSource source = candidate_index < lookup_all_candidate_count
+						? OperatorTemplateCandidateSource::LookupAll
+						: OperatorTemplateCandidateSource::AdlOnly;
+					addSuccessfulCandidate(*func_decl, source);
 				}
 			}
 		}
 
-		if (best_match) {
-			return best_match;
+		if (!has_ranked_candidate) {
+			return nullptr;
+		}
+
+		if (ranked_candidates.empty()) {
+			return single_candidate.function;
+		}
+
+		std::vector<const RankedOperatorTemplateCandidate*> best_candidates;
+		best_candidates.reserve(ranked_candidates.size());
+
+		for (size_t i = 0; i < ranked_candidates.size(); ++i) {
+			const auto& candidate = ranked_candidates[i];
+			bool is_dominated = false;
+
+			for (size_t j = 0; j < ranked_candidates.size(); ++j) {
+				if (i == j) {
+					continue;
+				}
+
+				if (compareBinaryOperatorCandidateRanks(
+						ranked_candidates[j].lhs_rank,
+						ranked_candidates[j].rhs_rank,
+						candidate.lhs_rank,
+						candidate.rhs_rank) == BinaryOperatorCandidateComparison::Better) {
+					is_dominated = true;
+					break;
+				}
+			}
+
+			if (!is_dominated) {
+				best_candidates.push_back(&candidate);
+			}
+		}
+
+		if (best_candidates.size() == 1) {
+			return best_candidates[0]->function;
 		}
 
 		return nullptr;
