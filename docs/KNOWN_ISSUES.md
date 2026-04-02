@@ -363,7 +363,7 @@ gap in the call-expression path after template substitution rather than in templ
 binding or mangling.
 
 This was reproduced with both deduced and explicit free-function template instantiations
-while adding `tests/test_funcptr_free_function_template_instantiation_ret0.cpp`.
+while adding `tests/test_funcptr_free_function_template_signature_ret0.cpp`.
 
 ## Implicit function-name → function-pointer conversion for overload resolution
 

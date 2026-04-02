@@ -1,3 +1,9 @@
+// Regression test: free-function template substitution must preserve
+// function_signature for function-pointer template arguments in both
+// deduced and explicit instantiation paths. This intentionally avoids
+// calling the function-pointer parameter because that still hits a
+// separate lowered-call bug documented in KNOWN_ISSUES.md.
+
 int square(int x) {
 	return x * x;
 }
