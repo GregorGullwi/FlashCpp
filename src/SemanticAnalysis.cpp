@@ -725,6 +725,14 @@ private:
 				if (e.expression().has_value()) {
 					visit(*e.expression());
 				}
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				// Recurse into receiver and arguments like the other call nodes.
+				if (e.has_receiver()) {
+					visit(e.receiver());
+				}
+				for (const auto& arg : e.arguments()) {
+					visit(arg);
+				}
 			} else {
 				// Leaf expressions intentionally do not recurse.
 			}
@@ -2149,6 +2157,14 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (e.expression().has_value()) {
 					normalizeExpression(*e.expression(), ctx);
 				}
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				// Recurse into receiver and arguments like the other call nodes.
+				if (e.has_receiver()) {
+					normalizeExpression(e.receiver(), ctx);
+				}
+				for (const auto& arg : e.arguments()) {
+					normalizeExpression(arg, ctx);
+				}
 			}
 			// Leaf nodes (IdentifierNode, QualifiedIdentifierNode, StringLiteralNode,
 			// NumericLiteralNode, BoolLiteralNode, SizeofPackNode, OffsetofExprNode,
@@ -2753,6 +2769,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				CanonicalTypeDesc desc;
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				// Infer return type from the callee's declaration.
+				return inferExpressionType(e.callee().declaration().type_node());
 			}
 			return {};
 		},
