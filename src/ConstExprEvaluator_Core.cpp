@@ -2058,8 +2058,6 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				}
 				return std::nullopt;
 			}
-
-			return materialize_array_value(static_member.type_index, init_list, context, nullptr);
 		}
 
 		return evaluate(initializer, context);
