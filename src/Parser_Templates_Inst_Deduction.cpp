@@ -156,20 +156,27 @@ void Parser::populateTemplateParamSubstitutions(
 	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 		if (!template_params[i].is<TemplateParameterNode>())
 			continue;
+		const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
+		if (template_param.is_variadic()) {
+			// template_param_substitutions_ stores scalar substitutions only.
+			// Packs are replayed via pack_param_info_ and direct template_args access so
+			// fold expansion and pack indexing keep the full argument list intact.
+			continue;
+		}
 		const TemplateTypeArg& arg = template_args[i];
 		if (arg.is_template_template_arg) {
 			// Record template template parameter so that instantiation and type specifier
 			// parsing can redirect "Container" -> concrete template (e.g., "MyVec") when
 			// re-parsing the function body.
 			TemplateParamSubstitution subst;
-			subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
+			subst.param_name = template_param.nameHandle();
 			subst.is_template_template_param = true;
 			subst.concrete_template_name = arg.template_name_handle;
 			subs.push_back(subst);
 			continue;
 		}
 		TemplateParamSubstitution subst;
-		subst.param_name = template_params[i].as<TemplateParameterNode>().nameHandle();
+		subst.param_name = template_param.nameHandle();
 		if (arg.is_value) {
 			subst.is_value_param = true;
 			subst.value = arg.value;

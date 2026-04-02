@@ -4,6 +4,7 @@
 #pragma once
 
 #include "AstNodeTypes.h"
+#include "ParserInternal.h"
 #include <unordered_map>
 #include <unordered_set>
 #include <optional>
@@ -132,7 +133,7 @@ private:
 			return MemberResolutionResult();
 		}
 
-		const StructTypeInfo* struct_info = type_info->getStructInfo();
+		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
 
 		if (!struct_info) {
 			return MemberResolutionResult();
@@ -168,12 +169,8 @@ private:
 
 			// Add base classes to the queue
 			for (const auto& base : current_struct->base_classes) {
-				if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index)) {
-					const StructTypeInfo* base_info = base_type->getStructInfo();
-
-					if (base_info) {
-						to_visit.push({base_info, current_offset + base.offset});
-					}
+				if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index)) {
+					to_visit.push({base_info, current_offset + base.offset});
 				}
 			}
 		}

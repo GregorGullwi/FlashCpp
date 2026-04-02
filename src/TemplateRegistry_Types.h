@@ -674,3 +674,56 @@ inline std::string_view generateInstantiatedNameFromArgs(
 }
 
 } // namespace FlashCpp
+
+// Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting
+// dependent names from the provided template parameter/argument lists.
+// This is the single authoritative conversion point — all call sites that previously
+// had hand-rolled loops copying TemplateArgInfo fields should use this instead.
+template <typename ParamContainer, typename ArgContainer>
+inline TemplateTypeArg materializeTemplateArg(
+	const TypeInfo::TemplateArgInfo& arg_info,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	TemplateTypeArg concrete_arg;
+	concrete_arg.setCategory(arg_info.category());
+	concrete_arg.type_index = arg_info.type_index;
+	concrete_arg.is_value = arg_info.is_value;
+	concrete_arg.value = arg_info.intValue();
+	concrete_arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
+	concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+	concrete_arg.ref_qualifier = arg_info.ref_qualifier;
+	concrete_arg.cv_qualifier = arg_info.cv_qualifier;
+	concrete_arg.array_size = arg_info.array_size;
+	concrete_arg.is_array = arg_info.is_array;
+	concrete_arg.function_signature = arg_info.function_signature;
+	concrete_arg.dependent_name = arg_info.dependent_name;
+
+	if (arg_info.dependent_name.isValid()) {
+		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].template is<TemplateParameterNode>())
+				continue;
+			if (template_params[i].template as<TemplateParameterNode>().name() == dep_name) {
+				concrete_arg = template_args[i];
+				break;
+			}
+		}
+	}
+
+	return concrete_arg;
+}
+
+// Convenience: materialize all stored TemplateArgInfo entries from a TypeInfo
+// into a concrete TemplateTypeArg vector, substituting dependent names.
+template <typename ParamContainer, typename ArgContainer>
+inline std::vector<TemplateTypeArg> materializeTemplateArgs(
+	const TypeInfo& type_info,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	std::vector<TemplateTypeArg> result;
+	result.reserve(type_info.templateArgs().size());
+	for (const auto& arg_info : type_info.templateArgs()) {
+		result.push_back(materializeTemplateArg(arg_info, template_params, template_args));
+	}
+	return result;
+}

@@ -63,7 +63,59 @@ MemberSizeAndAlignment calculateMemberSizeAndAlignment(const TypeSpecifierNode& 
 
 const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-		return type_info->getStructInfo();
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			return struct_info;
+		}
+		if (type_info->isTypeAlias()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_index);
+			if (resolved_alias.type_index.index() != type_index.index()) {
+				if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_alias.type_index)) {
+					return resolved_type_info->getStructInfo();
+				}
+			}
+		}
+		std::string_view type_name = StringTable::getStringView(type_info->name());
+		size_t sep_pos = type_name.rfind("::");
+		if (sep_pos != std::string_view::npos) {
+			std::string_view parent_name = type_name.substr(0, sep_pos);
+			std::string_view nested_name = type_name.substr(sep_pos + 2);
+			std::string_view base_template_name = extractBaseTemplateName(parent_name);
+			if (!base_template_name.empty()) {
+				const StructTypeInfo* resolved_struct_info = nullptr;
+				for (const auto& [candidate_name, candidate_type_info] : getTypesByNameMap()) {
+					if (!candidate_type_info || !candidate_type_info->getStructInfo()) {
+						continue;
+					}
+					std::string_view candidate_view = StringTable::getStringView(candidate_name);
+					size_t candidate_sep = candidate_view.rfind("::");
+					if (candidate_sep == std::string_view::npos) {
+						continue;
+					}
+					std::string_view candidate_parent = candidate_view.substr(0, candidate_sep);
+					std::string_view candidate_nested = candidate_view.substr(candidate_sep + 2);
+					if (candidate_nested != nested_name) {
+						continue;
+					}
+					if (extractBaseTemplateName(candidate_parent) != base_template_name) {
+						continue;
+					}
+					if (candidate_parent.find('$') == std::string_view::npos) {
+						continue;
+					}
+					if (resolved_struct_info != nullptr) {
+						FLASH_LOG(Types, Warning,
+								  "Ambiguous nested instantiated struct lookup for alias-remapped type '",
+								  type_name, "' while matching nested name '", nested_name,
+								  "' under base template '", base_template_name, "'");
+						return nullptr;
+					}
+					resolved_struct_info = candidate_type_info->getStructInfo();
+				}
+				if (resolved_struct_info) {
+					return resolved_struct_info;
+				}
+			}
+		}
 	}
 	return nullptr;
 }

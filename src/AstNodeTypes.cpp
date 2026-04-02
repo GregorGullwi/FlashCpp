@@ -112,14 +112,10 @@ TypeCreationResult add_enum_type(StringHandle name, NamespaceHandle ns) {
 TypeCreationResult register_type_alias(StringHandle name, const TypeSpecifierNode& type_spec, NamespaceHandle ns) {
 	TypeIndex alias_idx{gTypeInfo.size(), TypeCategory::TypeAlias};
 	auto& info = gTypeInfo.emplace_back(name, type_spec.type_index(), type_spec.size_in_bits());
+	info.registered_type_index_ = alias_idx;
 	info.setNamespaceHandle(ns);
 	info.is_type_alias_ = true;
-	info.pointer_depth_ = type_spec.pointer_depth();
-	info.reference_qualifier_ = type_spec.reference_qualifier();
-	info.setArrayInfo(type_spec.is_array(), type_spec.array_dimensions());
-	if (type_spec.has_function_signature()) {
-		info.function_signature_ = type_spec.function_signature();
-	}
+	info.setAliasTypeSpecifier(type_spec);
 	if (type_spec.category() == TypeCategory::Enum && type_spec.type_index().index() < gTypeInfo.size()) {
 		if (const EnumTypeInfo* enum_info = gTypeInfo[type_spec.type_index().index()].getEnumInfo()) {
 			info.setEnumInfo(std::make_unique<EnumTypeInfo>(*enum_info));
@@ -214,9 +210,28 @@ TypeInfo& add_instantiated_type(StringHandle name, TypeCategory kind, uint32_t s
 }
 
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits) {
+	TypeIndex alias_idx{gTypeInfo.size(), TypeCategory::TypeAlias};
 	auto& type_info = gTypeInfo.emplace_back(name, source_type_index, size_bits);
+	type_info.registered_type_index_ = alias_idx;
 	type_info.is_type_alias_ = true;
 	gTypesByName.emplace(type_info.name(), &type_info);
+	return type_info;
+}
+
+TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec) {
+	auto& type_info = add_type_alias_copy(name, source_type_index, size_bits);
+	type_info.setAliasTypeSpecifier(alias_type_spec);
+	return type_info;
+}
+
+TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_info, uint32_t size_bits) {
+	auto& type_info = add_type_alias_copy(
+		name,
+		source_type_info.registeredTypeIndex().withCategory(source_type_info.typeEnum()),
+		size_bits);
+	if (const TypeSpecifierNode* alias_type_spec = source_type_info.aliasTypeSpecifier()) {
+		type_info.setAliasTypeSpecifier(*alias_type_spec);
+	}
 	return type_info;
 }
 
@@ -224,6 +239,7 @@ TypeCreationResult add_empty_type_entry() {
 	TypeIndex idx{gTypeInfo.size(), TypeCategory::UserDefined};
 	auto& type_info = gTypeInfo.emplace_back();
 	type_info.type_index_ = idx;
+	type_info.registered_type_index_ = idx;
 	return TypeCreationResult{type_info, idx};
 }
 

@@ -1204,6 +1204,18 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}
 		});
 	}
+	if ((!type_info || !type_info->getStructInfo()) && tryGetTypeInfo(base_type_index)) {
+		if (const StructTypeInfo* fallback_struct_info = tryGetStructTypeInfo(base_type_index)) {
+			forEachTypeInfo([&](const TypeInfo& ti) {
+				if (type_info) {
+					return;
+				}
+				if (ti.getStructInfo() == fallback_struct_info) {
+					type_info = &ti;
+				}
+			});
+		}
+	}
 
 	if (!type_info || !type_info->getStructInfo()) {
 		std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.index() << "\n";

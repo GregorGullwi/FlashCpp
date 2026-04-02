@@ -2945,9 +2945,37 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 
 					if (const TypeInfo* type_info = tryGetTypeInfo(input.type_index)) {
 						input.type_info = type_info;
-						input.pointer_depth = type_info->pointer_depth_;
-						input.ref_qualifier = type_info->reference_qualifier_;
-						input.struct_info = type_info->getStructInfo();
+						if (type_info->isTypeAlias()) {
+							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+								type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+							if (resolved_alias.type_index.is_valid()) {
+								input.type_index = resolved_alias.type_index;
+							}
+							// C++20 [temp.alias]/2: aliases are transparent, so accumulate
+							// the alias-resolved metadata on top of any explicit indirection
+							// already present on the template argument (e.g., Ptr* where Ptr = int*
+							// should yield pointer_depth 2, not 1).
+							input.pointer_depth += resolved_alias.pointer_depth;
+							// Reference collapsing (C++20 [dcl.ref]/6): & always wins.
+							if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
+								input.ref_qualifier = ReferenceQualifier::LValueReference;
+							} else if (input.ref_qualifier == ReferenceQualifier::None) {
+								input.ref_qualifier = resolved_alias.reference_qualifier;
+							}
+							if (resolved_alias.isArray()) {
+								input.is_array = true;
+								if (!input.array_size.has_value() && !resolved_alias.array_dimensions.empty()) {
+									input.array_size = resolved_alias.array_dimensions.front();
+								}
+							}
+							input.struct_info = resolved_alias.terminal_type_info
+													? resolved_alias.terminal_type_info->getStructInfo()
+													: nullptr;
+						} else {
+							input.pointer_depth = type_info->pointer_depth_;
+							input.ref_qualifier = type_info->reference_qualifier_;
+							input.struct_info = type_info->getStructInfo();
+						}
 					}
 
 					auto trait_result = evaluateTypeTraitFromInput(*trait_kind, input);
