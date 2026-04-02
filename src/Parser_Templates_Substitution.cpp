@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
@@ -47,6 +48,54 @@ ASTNode Parser::substituteTemplateParameters(
 			return "unknown";
 		}
 	};
+	auto substituteFunctionCallWithExpressionSubstitutor = [&](const FunctionCallNode& call) -> ASTNode {
+		ChunkedVector<ASTNode> substituted_args;
+		for (const auto& arg : call.arguments()) {
+			substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
+		}
+
+		FunctionCallNode& substituted_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+			call.function_declaration(),
+			std::move(substituted_args),
+			call.called_from());
+		substituteFunctionCallExtras(substituted_call, call, template_params, template_args);
+
+		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map;
+		size_t arg_index = 0;
+		for (size_t i = 0; i < template_params.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const auto& tparam = template_params[i].as<TemplateParameterNode>();
+			if (tparam.is_variadic()) {
+				size_t remaining_args = arg_index < template_args.size()
+											? template_args.size() - arg_index
+											: 0;
+				size_t required_after = countRequiredTemplateArgsAfter<InlineVector<ASTNode, 4>, InlineVector<TemplateTypeArg, 4>>(
+					template_params, i + 1);
+				size_t pack_size = remaining_args > required_after
+									   ? remaining_args - required_after
+									   : 0;
+				std::vector<TemplateTypeArg> pack_args;
+				pack_args.reserve(pack_size);
+				for (size_t pack_index = 0; pack_index < pack_size && (arg_index + pack_index) < template_args.size(); ++pack_index) {
+					pack_args.push_back(template_args[arg_index + pack_index]);
+				}
+				pack_map.emplace(tparam.nameHandle(), std::move(pack_args));
+				arg_index += pack_size;
+				continue;
+			}
+			if (arg_index >= template_args.size()) {
+				break;
+			}
+			param_map.emplace(tparam.name(), template_args[arg_index]);
+			++arg_index;
+		}
+
+		ExpressionSubstitutor substitutor(param_map, pack_map, *this);
+		return substitutor.substitute(ASTNode(&substituted_call));
+	};
 
 	// Handle different node types
 	if (node.is<ExpressionNode>()) {
@@ -57,39 +106,40 @@ ASTNode Parser::substituteTemplateParameters(
 		if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 			const TemplateParameterReferenceNode& tparam_ref = std::get<TemplateParameterReferenceNode>(expr);
 			std::string_view param_name = tparam_ref.param_name().view();
+			bool substituted_template_param_ref = false;
+			std::optional<ASTNode> substituted_node;
 
-			// Find which template parameter this is
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == param_name) {
-					const TemplateTypeArg& arg = template_args[i];
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+					if (substituted_template_param_ref || tparam.name() != param_name)
+						return;
 
 					// When a non-type param (e.g., _Size) receives a Type argument due to
 					// dependent expressions like sizeof(_Tp), skip the substitution to avoid
 					// creating broken identifiers like "user_defined".
-					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
-						break;  // Leave unsubstituted
-					}
+					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value)
+						return;
 
 					if (arg.isTypeArgument()) {
-						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()),
 										 tparam_ref.token().line(), tparam_ref.token().column(),
 										 tparam_ref.token().file_index());
-						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
+						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
+						substituted_template_param_ref = true;
 					} else if (arg.is_value) {
-						// Create a numeric literal node for the value with the correct type
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(),
 										  tparam_ref.token().line(), tparam_ref.token().column(),
 										  tparam_ref.token().file_index());
-						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
+						substituted_node = emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
+						substituted_template_param_ref = true;
 					}
-					// For template template parameters, not yet supported
-					break;
-				}
-			}
+				});
+			if (substituted_template_param_ref)
+				return *substituted_node;
 
 			// If we couldn't substitute, return the original node
 			return node;
@@ -100,32 +150,31 @@ ASTNode Parser::substituteTemplateParameters(
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
 			std::string_view id_name = id_node.name();
+			bool substituted_identifier = false;
+			std::optional<ASTNode> substituted_node;
 
-			// Check if this identifier matches a template parameter name
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-				if (tparam.name() == id_name) {
-					const TemplateTypeArg& arg = template_args[i];
-
-					// Skip substitution when non-type param gets a dependent Type argument
-					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value) {
-						break;  // Leave unsubstituted
-					}
-
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+					if (substituted_identifier || tparam.name() != id_name)
+						return;
+					if (tparam.kind() == TemplateParameterKind::NonType && !arg.is_value)
+						return;
 					if (arg.isTypeArgument()) {
-						// Create an identifier node for the concrete type
 						Token type_token(Token::Type::Identifier, get_type_name(arg.typeEnum()), 0, 0, 0);
-						return emplace_node<ExpressionNode>(IdentifierNode(type_token));
+						substituted_node = emplace_node<ExpressionNode>(IdentifierNode(type_token));
+						substituted_identifier = true;
 					} else if (arg.is_value) {
-						// Create a numeric literal node for the value with the correct type
 						TypeCategory value_type = arg.typeEnum();
 						int size_bits = get_type_size_bits(value_type);
 						Token value_token(Token::Type::Literal, StringBuilder().append(arg.value).commit(), 0, 0, 0);
-						return emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
+						substituted_node = emplace_node<ExpressionNode>(NumericLiteralNode(value_token, static_cast<unsigned long long>(arg.value), value_type, TypeQualifier::None, size_bits));
+						substituted_identifier = true;
 					}
-					break;
-				}
-			}
+				});
+			if (substituted_identifier)
+				return *substituted_node;
 		}
 
 		// Check if this IdentifierNode is a dependent template placeholder (e.g., __cmp_cat_id$hash)
@@ -224,87 +273,7 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
 		} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-			const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
-			ChunkedVector<ASTNode> substituted_args;
-			for (size_t i = 0; i < func_call.arguments().size(); ++i) {
-				substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
-			}
-
-			// Check if function name contains a dependent template hash (Base$hash::member)
-			// that needs to be resolved with concrete template arguments
-			std::string_view func_name = func_call.called_from().value();
-			if (func_name.empty())
-				func_name = func_call.function_declaration().identifier_token().value();
-			size_t scope_pos = func_name.empty() ? std::string_view::npos : func_name.find("::");
-			std::string_view base_template_name;
-			if (scope_pos != std::string_view::npos) {
-				base_template_name = extractBaseTemplateName(func_name.substr(0, scope_pos));
-			}
-			if (!base_template_name.empty() && scope_pos != std::string_view::npos) {
-				std::string_view member_name = func_name.substr(scope_pos + 2);
-
-				// Build concrete template arguments from the substitution context
-				std::vector<TemplateTypeArg> inst_args;
-				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					const TemplateTypeArg& arg = template_args[i];
-					if (arg.isTypeArgument()) {
-						TemplateTypeArg type_arg;
-						type_arg.setCategory(arg.category());
-						type_arg.type_index = arg.type_index;
-						type_arg.is_value = false;
-						inst_args.push_back(type_arg);
-					} else if (arg.is_value) {
-						TemplateTypeArg val_arg;
-						val_arg.is_value = true;
-						val_arg.value = arg.value;
-						val_arg.setCategory(arg.category());
-						inst_args.push_back(val_arg);
-					}
-				}
-
-				if (!inst_args.empty()) {
-					try_instantiate_class_template(base_template_name, inst_args, true);
-					std::string_view correct_inst_name = get_instantiated_class_name(base_template_name, inst_args);
-
-					if (correct_inst_name != func_name.substr(0, scope_pos)) {
-						// Build corrected function name
-						StringBuilder new_name_builder;
-						new_name_builder.append(correct_inst_name).append("::").append(member_name);
-						std::string_view new_func_name = new_name_builder.commit();
-
-						FLASH_LOG(Templates, Debug, "Resolved dependent qualified call: ", func_name, " -> ", new_func_name);
-
-						// Trigger lazy member function instantiation
-						StringHandle inst_handle = StringTable::getOrInternStringHandle(correct_inst_name);
-						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name);
-						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(inst_handle, member_handle)) {
-							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(inst_handle, member_handle);
-							if (lazy_info_opt.has_value()) {
-								instantiateLazyMemberFunction(*lazy_info_opt);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(inst_handle, member_handle, lazy_info_opt->identity.is_const_method);
-							}
-						}
-
-						// Create new forward declaration with corrected name.
-						// The placeholder return type (Int/32) is safe because the codegen
-						// resolves the actual return type from the matched FunctionDeclarationNode,
-						// not from this forward declaration's type node.
-						Token new_token(Token::Type::Identifier, new_func_name,
-										func_call.called_from().line(), func_call.called_from().column(), func_call.called_from().file_index());
-						auto type_node_ast = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
-						auto fwd_decl = emplace_node<DeclarationNode>(type_node_ast, new_token);
-						ASTNode new_func_call_node = emplace_node<ExpressionNode>(
-							FunctionCallNode(fwd_decl.as<DeclarationNode>(), std::move(substituted_args), new_token));
-						return new_func_call_node;
-					}
-				}
-			}
-
-			ASTNode new_func_call = emplace_node<ExpressionNode>(FunctionCallNode(func_call.function_declaration(), std::move(substituted_args), func_call.called_from()));
-			substituteFunctionCallExtras(
-				std::get<FunctionCallNode>(new_func_call.as<ExpressionNode>()),
-				func_call, template_params, template_args);
-			return new_func_call;
+			return substituteFunctionCallWithExpressionSubstitutor(std::get<FunctionCallNode>(expr));
 		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
 			const MemberAccessNode& member_access = *member_access_ptr;
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
@@ -317,6 +286,32 @@ ASTNode Parser::substituteTemplateParameters(
 				substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 			}
 			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
+		} else if (std::holds_alternative<TypeTraitExprNode>(expr)) {
+			const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
+			ASTNode substituted_type = substituteTemplateParameters(
+				trait_expr.type_node(), template_params, template_args);
+			if (trait_expr.has_second_type()) {
+				ASTNode substituted_second_type = substituteTemplateParameters(
+					trait_expr.second_type_node(), template_params, template_args);
+				return emplace_node<ExpressionNode>(
+					TypeTraitExprNode(trait_expr.kind(), substituted_type, substituted_second_type, trait_expr.trait_token()));
+			}
+			if (trait_expr.is_variadic_trait()) {
+				std::vector<ASTNode> substituted_additional_types;
+				substituted_additional_types.reserve(trait_expr.additional_type_nodes().size());
+				for (const auto& type_node : trait_expr.additional_type_nodes()) {
+					substituted_additional_types.push_back(
+						substituteTemplateParameters(type_node, template_params, template_args));
+				}
+				return emplace_node<ExpressionNode>(
+					TypeTraitExprNode(trait_expr.kind(), substituted_type, std::move(substituted_additional_types), trait_expr.trait_token()));
+			}
+			if (trait_expr.is_no_arg_trait()) {
+				return emplace_node<ExpressionNode>(
+					TypeTraitExprNode(trait_expr.kind(), trait_expr.trait_token()));
+			}
+			return emplace_node<ExpressionNode>(
+				TypeTraitExprNode(trait_expr.kind(), substituted_type, trait_expr.trait_token()));
 		} else if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr)) {
 			const ArraySubscriptNode& array_sub = *array_subscript;
 			ASTNode substituted_array = substituteTemplateParameters(array_sub.array_expr(), template_params, template_args);
@@ -797,30 +792,29 @@ ASTNode Parser::substituteTemplateParameters(
 					if ((is_struct_type(type_spec.category()))) {
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 							std::string_view type_name = StringTable::getStringView(type_info->name());
+							bool substituted_sizeof_type = false;
+							std::optional<ASTNode> substituted_sizeof_node;
 
-							// Check if this type name matches a template parameter
-							for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-								const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-								if (tparam.name() == type_name) {
-									const TemplateTypeArg& arg = template_args[i];
+							forEachNonPackTemplateParamArgBinding(
+								template_params,
+								template_args,
+								[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+									if (substituted_sizeof_type || tparam.name() != type_name || !arg.isTypeArgument())
+										return;
 
-									if (arg.isTypeArgument()) {
-										// Get the size of the concrete type in bytes
-										size_t type_size = get_type_size_bits(arg.category()) / 8;
-
-										// Create an integer literal with the type size
-										StringBuilder size_builder;
-										std::string_view size_str = size_builder.append(type_size).commit();
-										Token literal_token(Token::Type::Literal, size_str,
-															sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
-															sizeof_expr.sizeof_token().file_index());
-										return emplace_node<ExpressionNode>(
-											NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size),
-															   TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
-									}
-									break;
-								}
-							}
+									size_t type_size = get_type_size_bits(arg.category()) / 8;
+									StringBuilder size_builder;
+									std::string_view size_str = size_builder.append(type_size).commit();
+									Token literal_token(Token::Type::Literal, size_str,
+														sizeof_expr.sizeof_token().line(), sizeof_expr.sizeof_token().column(),
+														sizeof_expr.sizeof_token().file_index());
+									substituted_sizeof_node = emplace_node<ExpressionNode>(
+										NumericLiteralNode(literal_token, static_cast<unsigned long long>(type_size),
+														   TypeCategory::UnsignedLongLong, TypeQualifier::None, 64));
+									substituted_sizeof_type = true;
+								});
+							if (substituted_sizeof_type)
+								return *substituted_sizeof_node;
 						}
 					}
 
@@ -855,22 +849,7 @@ ASTNode Parser::substituteTemplateParameters(
 		return node;
 
 	} else if (node.is<FunctionCallNode>()) {
-		// Handle function calls that might contain template parameter references
-		const FunctionCallNode& func_call = node.as<FunctionCallNode>();
-
-		// Substitute arguments (with PackExpansionExprNode handling)
-		ChunkedVector<ASTNode> substituted_args;
-		for (size_t i = 0; i < func_call.arguments().size(); ++i) {
-			substituteArgWithPackExpansion(func_call.arguments()[i], template_params, template_args, substituted_args);
-		}
-
-		// For now, don't substitute the function declaration itself
-		// Create new function call with substituted arguments
-		ASTNode new_func_call = emplace_node<FunctionCallNode>(func_call.function_declaration(), std::move(substituted_args), func_call.called_from());
-		substituteFunctionCallExtras(
-			new_func_call.as<FunctionCallNode>(),
-			func_call, template_params, template_args);
-		return new_func_call;
+		return substituteFunctionCallWithExpressionSubstitutor(node.as<FunctionCallNode>());
 
 	} else if (node.is<BinaryOperatorNode>()) {
 		// Handle binary operators
@@ -1433,15 +1412,20 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			}
 			ASTNode new_call = emplace_node<ExpressionNode>(
 				FunctionCallNode(call.function_declaration(), std::move(new_args), call.called_from()));
+			FunctionCallNode& new_call_ref = std::get<FunctionCallNode>(new_call.as<ExpressionNode>());
+			new_call_ref.set_indirect_call(call.is_indirect_call());
 			if (call.has_template_arguments()) {
 				std::vector<ASTNode> new_template_args;
 				for (const auto& ta : call.template_arguments()) {
 					new_template_args.push_back(replacePackIdentifierInExpr(ta, pack_name, element_index));
 				}
-				std::get<FunctionCallNode>(new_call.as<ExpressionNode>()).set_template_arguments(std::move(new_template_args));
+				new_call_ref.set_template_arguments(std::move(new_template_args));
 			}
 			if (call.has_mangled_name()) {
-				std::get<FunctionCallNode>(new_call.as<ExpressionNode>()).set_mangled_name(call.mangled_name());
+				new_call_ref.set_mangled_name(call.mangled_name());
+			}
+			if (call.has_qualified_name()) {
+				new_call_ref.set_qualified_name(call.qualified_name());
 			}
 			return new_call;
 		}
@@ -1525,7 +1509,24 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 		}
-		return emplace_node<FunctionCallNode>(call.function_declaration(), std::move(new_args), call.called_from());
+		ASTNode new_call = emplace_node<FunctionCallNode>(call.function_declaration(), std::move(new_args), call.called_from());
+		FunctionCallNode& new_call_ref = new_call.as<FunctionCallNode>();
+		new_call_ref.set_indirect_call(call.is_indirect_call());
+		if (call.has_template_arguments()) {
+			std::vector<ASTNode> new_template_args;
+			new_template_args.reserve(call.template_arguments().size());
+			for (const auto& ta : call.template_arguments()) {
+				new_template_args.push_back(replacePackIdentifierInExpr(ta, pack_name, element_index));
+			}
+			new_call_ref.set_template_arguments(std::move(new_template_args));
+		}
+		if (call.has_mangled_name()) {
+			new_call_ref.set_mangled_name(call.mangled_name());
+		}
+		if (call.has_qualified_name()) {
+			new_call_ref.set_qualified_name(call.qualified_name());
+		}
+		return new_call;
 	}
 
 	return expr;

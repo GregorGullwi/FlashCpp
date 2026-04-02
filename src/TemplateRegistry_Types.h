@@ -590,17 +590,64 @@ inline TemplateTypeArg deduceArgFromPattern(const TemplateTypeArg& concrete_arg,
 // Templated on container types to avoid InlineVector -> std::vector conversion,
 // which would create temporaries and make the returned pointer dangle.
 template <typename ParamContainer, typename ArgContainer>
+inline size_t countRequiredTemplateArgsAfter(
+	const ParamContainer& template_params,
+	size_t start_index) {
+	size_t required_args = 0;
+	for (size_t i = start_index; i < template_params.size(); ++i) {
+		if (!template_params[i].template is<TemplateParameterNode>())
+			continue;
+		const auto& param = template_params[i].template as<TemplateParameterNode>();
+		if (param.is_variadic() || param.has_default())
+			continue;
+		++required_args;
+	}
+	return required_args;
+}
+
+template <typename ParamContainer, typename ArgContainer, typename Callback>
+inline void forEachNonPackTemplateParamArgBinding(
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	Callback&& callback) {
+	size_t arg_index = 0;
+	for (size_t i = 0; i < template_params.size(); ++i) {
+		if (!template_params[i].template is<TemplateParameterNode>())
+			continue;
+		const auto& param = template_params[i].template as<TemplateParameterNode>();
+		if (param.is_variadic()) {
+			size_t remaining_args = arg_index < template_args.size()
+										? template_args.size() - arg_index
+										: 0;
+			size_t required_after = countRequiredTemplateArgsAfter<ParamContainer, ArgContainer>(
+				template_params, i + 1);
+			size_t pack_size = remaining_args > required_after
+								   ? remaining_args - required_after
+								   : 0;
+			arg_index += pack_size;
+			continue;
+		}
+		if (arg_index >= template_args.size())
+			break;
+		callback(param, template_args[arg_index], arg_index);
+		++arg_index;
+	}
+}
+
+template <typename ParamContainer, typename ArgContainer>
 inline const TemplateTypeArg* findTemplateArgByName(
 	std::string_view param_name,
 	const ParamContainer& template_params,
 	const ArgContainer& template_args) {
-	for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-		if (!template_params[i].template is<TemplateParameterNode>())
-			continue;
-		if (template_params[i].template as<TemplateParameterNode>().name() == param_name)
-			return &template_args[i];
-	}
-	return nullptr;
+	const TemplateTypeArg* matched_arg = nullptr;
+	forEachNonPackTemplateParamArgBinding(
+		template_params,
+		template_args,
+		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
+			if (param.name() == param_name)
+				matched_arg = &arg;
+		});
+	return matched_arg;
 }
 
 // ============================================================================

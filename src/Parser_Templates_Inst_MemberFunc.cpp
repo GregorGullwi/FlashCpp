@@ -511,7 +511,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 
 	// Kind::Value and Kind::Template entries are intentionally skipped by registerTypeParamsInScope:
 	// registering them would poison getTypesByNameMap() with Invalid/garbage TypeInfo entries.
-	registerTypeParamsInScope(param_names, template_args, template_scope);
+	registerTypeParamsInScope(template_params, template_args, template_scope, false);
 
 	// Also add outer template parameter bindings (e.g., T→int from class template)
 	if (outer_binding) {
