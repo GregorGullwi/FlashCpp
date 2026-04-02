@@ -1731,7 +1731,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected '}' after brace initializer", current_token_);
 					}
 
-					int type_size = struct_info ? static_cast<int>(struct_info->total_size * 8) : 0;
+					int type_size = struct_info ? static_cast<int>(toBits(struct_info->total_size).value) : 0;
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 					return ParseResult::success(*result);
@@ -2416,7 +2416,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							TypeIndex type_index = type_info.type_index_;
 							int type_size = 0;
 							if (type_info.struct_info_) {
-								type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+								type_size = static_cast<int>(toBits(type_info.struct_info_->total_size).value);
 							}
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 
@@ -3944,7 +3944,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									TypeIndex type_index = type_info.type_index_;
 									int type_size = 0;
 									if (type_info.struct_info_) {
-										type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+										type_size = static_cast<int>(toBits(type_info.struct_info_->total_size).value);
 									}
 									auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
@@ -4013,7 +4013,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									TypeIndex inst_type_index = inst_type_info.type_index_;
 									int inst_type_size = 0;
 									if (inst_type_info.struct_info_) {
-										inst_type_size = static_cast<int>(inst_type_info.struct_info_->total_size * 8);
+										inst_type_size = static_cast<int>(toBits(inst_type_info.struct_info_->total_size).value);
 									}
 									type_spec_node = emplace_node<TypeSpecifierNode>(inst_type_index.withCategory(TypeCategory::Struct), inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
 								} else {

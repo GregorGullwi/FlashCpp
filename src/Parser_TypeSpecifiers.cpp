@@ -315,7 +315,7 @@ ParseResult Parser::parse_type_specifier() {
 			if (enum_type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
 				TypeCategory underlying = enum_info->underlying_type;
-				int underlying_size = enum_info->underlying_size;
+				int underlying_size = enum_info->underlying_size.value;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
@@ -327,7 +327,7 @@ ParseResult Parser::parse_type_specifier() {
 		if (type_info.enum_info_) {
 			const EnumTypeInfo* enum_info = type_info.enum_info_.get();
 			TypeCategory underlying = enum_info->underlying_type;
-			int underlying_size = enum_info->underlying_size;
+			int underlying_size = enum_info->underlying_size.value;
 			FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
@@ -662,7 +662,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
+				type_size = static_cast<int>(toBits(struct_info->total_size).value); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -767,7 +767,7 @@ ParseResult Parser::parse_type_specifier() {
 			if (type_info->isStruct()) {
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
-					type_size_bits = static_cast<int>(struct_info->total_size * 8);
+					type_size_bits = static_cast<int>(toBits(struct_info->total_size).value);
 				}
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					user_type_index.withCategory(TypeCategory::Struct), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
@@ -1785,7 +1785,7 @@ ParseResult Parser::parse_type_specifier() {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 							if (struct_info) {
-								type_size = static_cast<int>(struct_info->total_size * 8);
+								type_size = static_cast<int>(toBits(struct_info->total_size).value);
 							} else {
 								type_size = 0;
 							}
@@ -1851,7 +1851,7 @@ ParseResult Parser::parse_type_specifier() {
 								int member_type_size = 0;
 								if (member_type_info->isStruct()) {
 									if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo()) {
-										member_type_size = static_cast<int>(member_struct_info->total_size * 8);
+										member_type_size = static_cast<int>(toBits(member_struct_info->total_size).value);
 									}
 								}
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -2022,7 +2022,7 @@ ParseResult Parser::parse_type_specifier() {
 						// Return existing struct type
 						const StructTypeInfo* struct_info = existing_type->getStructInfo();
 						if (struct_info) {
-							type_size = static_cast<int>(struct_info->total_size * 8);
+							type_size = static_cast<int>(toBits(struct_info->total_size).value);
 						} else {
 							type_size = 0;
 						}
@@ -2188,7 +2188,7 @@ ParseResult Parser::parse_type_specifier() {
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+						type_size = static_cast<int>(toBits(struct_info->total_size).value);
 					} else {
 						type_size = 0;
 					}
@@ -2314,7 +2314,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
+				type_size = static_cast<int>(toBits(struct_info->total_size).value); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -2350,7 +2350,7 @@ ParseResult Parser::parse_type_specifier() {
 			const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 
 			if (enum_info) {
-				type_size = enum_info->underlying_size;
+				type_size = enum_info->underlying_size.value;
 			} else {
 				// Enum is being defined but not yet finalized
 				type_size = 32; // Default to int size
@@ -2412,7 +2412,7 @@ ParseResult Parser::parse_type_specifier() {
 				if (actual_type_info.isStruct()) {
 					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
 					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+						type_size = static_cast<int>(toBits(struct_info->total_size).value);
 					}
 				}
 			}

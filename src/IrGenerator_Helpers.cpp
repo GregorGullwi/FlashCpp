@@ -324,7 +324,7 @@ size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
 	if (isIrStructType(toIrType(type))) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-				return struct_info->total_size;
+				return toSizeT(struct_info->total_size);
 			}
 		}
 		// TypeCategory::Struct must always have a valid StructInfo; reaching here for
@@ -374,7 +374,7 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 	if (lowered_cat == TypeCategory::Enum) {
 		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
-				return static_cast<int>(enum_info->underlying_size);
+				return enum_info->underlying_size.value;
 			}
 			// Forward-declared enums / aliases may only have type_size_.
 			if (ti->type_size_ > 0) {
@@ -417,7 +417,7 @@ std::optional<ExprResult> AstToIr::tryMakeEnumeratorConstantExpr(const EnumTypeI
 		return std::nullopt;
 	}
 
-	return makeExprResult(nativeTypeIndex(enum_info.underlying_type), SizeInBits{static_cast<int>(enum_info.underlying_size)}, static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(nativeTypeIndex(enum_info.underlying_type), enum_info.underlying_size, static_cast<unsigned long long>(enumerator->value), PointerDepth{}, ValueStorage::ContainsData);
 }
 
 // ── inline private helpers (IrGenerator_Lambdas.cpp) ──

@@ -801,7 +801,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						const TypeInfo* member_type_info = tryGetTypeInfo(static_member->type_index);
 						const StructTypeInfo* member_si = member_type_info ? member_type_info->getStructInfo() : nullptr;
 						if (member_si) {
-							member_size_bits = static_cast<int>(member_si->total_size * 8);
+							member_size_bits = static_cast<int>(toBits(member_si->total_size).value);
 						}
 					}
 
@@ -1269,7 +1269,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 					// Qualified enum access is valid for both scoped and unscoped enums.
 				long long enum_value = enum_info->getEnumeratorValue(StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
 					// Return the enum value as a constant
-				return makeExprResult(nativeTypeIndex(enum_info->underlying_type), SizeInBits{static_cast<int>(enum_info->underlying_size)}, static_cast<unsigned long long>(enum_value), PointerDepth{}, ValueStorage::ContainsData);
+				return makeExprResult(nativeTypeIndex(enum_info->underlying_type), enum_info->underlying_size, static_cast<unsigned long long>(enum_value), PointerDepth{}, ValueStorage::ContainsData);
 			}
 		}
 
@@ -1474,7 +1474,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						const TypeInfo* qsm_type_info = tryGetTypeInfo(static_member->type_index);
 						const StructTypeInfo* qsm_si = qsm_type_info ? qsm_type_info->getStructInfo() : nullptr;
 						if (qsm_si) {
-							qsm_size_bits = static_cast<int>(qsm_si->total_size * 8);
+							qsm_size_bits = static_cast<int>(toBits(qsm_si->total_size).value);
 						}
 					}
 					TempVar result_temp = var_counter.next();

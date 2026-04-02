@@ -1080,7 +1080,7 @@ bool StructTypeInfo::finalizeWithBases() {
 		base.offset = current_offset;
 
 		// Advance offset by base class size
-		current_offset += base_info->total_size;
+		current_offset += toSizeT(base_info->total_size);
 
 		// Track maximum alignment
 		max_alignment = std::max(max_alignment, base_alignment);
@@ -1162,7 +1162,7 @@ bool StructTypeInfo::finalizeWithBases() {
 		vbase->offset = current_offset;
 
 		// Advance offset by base class size
-		current_offset += base_info->total_size;
+		current_offset += toSizeT(base_info->total_size);
 
 		// Track maximum alignment
 		max_alignment = std::max(max_alignment, base_alignment);
@@ -1175,7 +1175,7 @@ bool StructTypeInfo::finalizeWithBases() {
 
 	// Step 5: Pad to alignment
 	alignment = max_alignment;
-	total_size = (current_offset + alignment - 1) & ~(alignment - 1);
+	total_size = toSizeInBytes((current_offset + alignment - 1) & ~(alignment - 1));
 
 	return true;
 }

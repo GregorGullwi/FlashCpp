@@ -1063,7 +1063,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-					emitReturn(this_deref, TypeCategory::Struct, static_cast<int>(struct_info->total_size * 8), func_decl.identifier_token());
+					emitReturn(this_deref, TypeCategory::Struct, toBits(struct_info->total_size).value, func_decl.identifier_token());
 				}
 			}
 		}
@@ -1439,7 +1439,7 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 			// symbols, so no pre-check is needed — file-scope enums are naturally skipped.
 		Token type_token(Token::Type::Identifier, node.name(), 0, 0, 0);
 		ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			type_info->type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), type_token, CVQualifier::None, ReferenceQualifier::None);
+			type_info->type_index_.withCategory(TypeCategory::Enum), enum_info->underlying_size.value, type_token, CVQualifier::None, ReferenceQualifier::None);
 		ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, type_token);
 		symbol_table.insert(node.name(), decl_node);
 		return;
@@ -1452,7 +1452,7 @@ void AstToIr::visitEnumDeclarationNode(const EnumDeclarationNode& node) {
 		std::string_view enumerator_name = StringTable::getStringView(e.name);
 		Token enumerator_token(Token::Type::Identifier, enumerator_name, 0, 0, 0);
 		ASTNode type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-			type_info->type_index_.withCategory(TypeCategory::Enum), static_cast<int>(enum_info->underlying_size), enumerator_token, CVQualifier::None, ReferenceQualifier::None);
+			type_info->type_index_.withCategory(TypeCategory::Enum), enum_info->underlying_size.value, enumerator_token, CVQualifier::None, ReferenceQualifier::None);
 		ASTNode decl_node = ASTNode::emplace_node<DeclarationNode>(type_node, enumerator_token);
 		symbol_table.insert(enumerator_name, decl_node);
 	}
@@ -1815,7 +1815,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						TypedValue other_arg;
 						other_arg.setType(TypeCategory::Struct);	 // Parameter type (struct reference)
 						other_arg.ir_type = IrType::Struct;
-						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->total_size * 8 : struct_info->total_size * 8)};
+						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? toBits(base_type_info->struct_info_->total_size).value : toBits(struct_info->total_size).value)};
 						other_arg.value = StringTable::getOrInternStringHandle("other");	 // Parameter value ('other' object)
 						other_arg.type_index = base.type_index;	// Use BASE class type index for proper mangling
 						if (is_copy_constructor) {
@@ -2666,7 +2666,7 @@ ExprResult AstToIr::generateInitializerListConstructionIr(const InitializerListC
 		return ExprResult{};
 	}
 
-	int init_list_size_bits = static_cast<int>(init_list_struct_info->total_size * 8);
+	int init_list_size_bits = static_cast<int>(toBits(init_list_struct_info->total_size).value);
 
 	// Create a unique name for the initializer_list struct using the temp var number
 	TempVar init_list_var = var_counter.next();
@@ -2802,14 +2802,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	if (type_spec.category() == TypeCategory::Struct) {
 		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
 		if (type_info && type_info->struct_info_) {
-			actual_size_bits = static_cast<int>(type_info->struct_info_->total_size * 8);
+			actual_size_bits = static_cast<int>(toBits(type_info->struct_info_->total_size).value);
 			struct_info = type_info->struct_info_.get();
 		}
 	} else {
 		// Fallback: look up by name
 		auto type_it = getTypesByNameMap().find(constructor_name);
 		if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_) {
-			actual_size_bits = static_cast<int>(type_it->second->struct_info_->total_size * 8);
+			actual_size_bits = static_cast<int>(toBits(type_it->second->struct_info_->total_size).value);
 			struct_info = type_it->second->struct_info_.get();
 		}
 	}
@@ -2888,7 +2888,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 					member.type_index.category() == TypeCategory::Struct) {
 					const TypeInfo* nested_ti = tryGetTypeInfo(member.type_index);
 					if (nested_ti && nested_ti->getStructInfo()) {
-						int nested_bits = static_cast<int>(nested_ti->getStructInfo()->total_size * 8);
+						int nested_bits = toBits(nested_ti->getStructInfo()->total_size).value;
 						TypeSpecifierNode nested_spec(member.type_index.withCategory(member.memberType()), nested_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 						auto nested = generateDefaultStructArg(argument.as<InitializerListNode>(), nested_spec);
 						if (nested.has_value()) {

@@ -958,7 +958,7 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 								const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
 								const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
 								if (si)
-									param_size = si->total_size;
+									param_size = toSizeT(si->total_size);
 							}
 							if (param_size > 0) {
 								return EvalResult::from_int(static_cast<long long>(param_size));
@@ -4498,7 +4498,7 @@ EvalResult Evaluator::materializeFromConstantBytes(
 
 	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
 		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(current_type_index)) {
-			return struct_info->total_size;
+			return toSizeT(struct_info->total_size);
 		}
 
 		if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {

@@ -1287,7 +1287,7 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
 	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0)
+	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size.is_set())
 		return param_idx;
 	// param refers to an uninstantiated template (total_size==0); check name family
 	auto template_base_name = StringTable::getStringView(param_ti.name());
@@ -1351,7 +1351,7 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 		}
 
 		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-			size_bits = static_cast<int>(struct_info->total_size * 8);
+			size_bits = toBits(struct_info->total_size).value;
 		} else if (type_info->type_size_ > 0) {
 			size_bits = type_info->type_size_;
 		}

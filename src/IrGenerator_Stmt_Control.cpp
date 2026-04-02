@@ -694,7 +694,7 @@ void AstToIr::visitRangedForArray(const RangedForStatementNode& node, std::strin
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 			const StructTypeInfo* struct_info = type_info->getStructInfo();
 			if (struct_info) {
-				element_size_bits = static_cast<int>(struct_info->total_size * 8);
+				element_size_bits = static_cast<int>(toBits(struct_info->total_size).value);
 			} else {
 				element_size_bits = static_cast<int>(array_type.size_in_bits());
 			}

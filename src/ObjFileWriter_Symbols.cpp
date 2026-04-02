@@ -481,7 +481,7 @@ std::string ObjectFileWriter::get_or_create_exception_throw_info(const std::stri
 
 				uint32_t base_offset = current_offset + static_cast<uint32_t>(base.offset);
 				uint32_t base_properties = base.is_virtual || !base_struct_info->virtual_bases.empty() ? CT_HasVirtualBase : 0u;
-				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size == 0 ? throw_size : base_struct_info->total_size);
+				uint32_t base_size = static_cast<uint32_t>(base_struct_info->total_size.is_set() ? toSizeT(base_struct_info->total_size) : throw_size);
 
 				add_catchable_type(StringTable::getStringView(base_type_info->name()), base_properties, base_offset, -1, 0, base_size);
 

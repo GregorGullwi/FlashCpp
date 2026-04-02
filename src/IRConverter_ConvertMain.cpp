@@ -4769,7 +4769,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		if (struct_type_it != getTypesByNameMap().end()) {
 			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 			if (struct_info) {
-				struct_size_bits = static_cast<int>(struct_info->total_size * 8);  // Convert bytes to bits
+				struct_size_bits = static_cast<int>(toBits(struct_info->total_size).value);  // Convert bytes to bits
 				FLASH_LOG_FORMAT(Codegen, Debug,
 								 "Constructor for {} found struct_info with size {} bits",
 								 struct_name, struct_size_bits);
@@ -4806,7 +4806,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			if (struct_type_it != getTypesByNameMap().end()) {
 				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 				if (struct_info) {
-					size_t element_size = struct_info->total_size;
+					size_t element_size = toSizeT(struct_info->total_size);
 					size_t index = ctor_op.array_index.value();
 						// Adjust offset: base_offset + (index * element_size)
 					object_offset += static_cast<int>(index * element_size);

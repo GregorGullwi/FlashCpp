@@ -117,7 +117,7 @@ ParseResult Parser::parse_template_brace_initialization(
 	TypeIndex type_index = type_info.type_index_;
 	int type_size = 0;
 	if (type_info.struct_info_) {
-		type_size = static_cast<int>(type_info.struct_info_->total_size * 8);
+		type_size = static_cast<int>(toBits(type_info.struct_info_->total_size).value);
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name,
 					 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
@@ -1194,7 +1194,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			// Get closure size in bits from struct info
 			int closure_size_bits = 64; // Default to pointer size
 			if (closure_type->getStructInfo()) {
-				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
+				closure_size_bits = toBits(closure_type->getStructInfo()->total_size).value;
 			}
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
@@ -1499,7 +1499,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			// Get closure size in bits from struct info
 			int closure_size_bits = 64; // Default to pointer size
 			if (closure_type->getStructInfo()) {
-				closure_size_bits = closure_type->getStructInfo()->total_size * 8;
+				closure_size_bits = toBits(closure_type->getStructInfo()->total_size).value;
 			}
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
@@ -1558,7 +1558,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
 					const auto& member_ctx = member_function_context_stack_.back();
 					if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
-						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
+						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->type_size_, Token{}, CVQualifier::None, ReferenceQualifier::None);
 					}
 				}
 			}
@@ -1704,7 +1704,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				// can find functions in the enum's associated namespace.
 				const TypeInfo* enum_type_info = struct_type_it->second;
 				TypeSpecifierNode enum_type(TypeCategory::Enum, TypeQualifier::None,
-											enum_type_info->getEnumInfo()->underlying_size, Token{}, CVQualifier::None);
+											enum_type_info->getEnumInfo()->underlying_size.value, Token{}, CVQualifier::None);
 				enum_type.set_type_index(enum_type_info->type_index_);
 				return enum_type;
 			}

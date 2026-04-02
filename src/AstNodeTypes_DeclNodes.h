@@ -1,6 +1,7 @@
 #pragma once
 #include <cassert>
 #include "AstNodeTypes_TypeSystem.h"
+#include "SizeTypes.h"
 
 class TypeSpecifierNode;
 
@@ -12,7 +13,7 @@ struct StructTypeInfo {
 	std::vector<StructStaticMember> static_members;	// Static members
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
-	size_t total_size = 0;	   // Total size of struct in bytes
+	SizeInBytes total_size{};  // Total size of struct in bytes
 	size_t alignment = 1;		  // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
@@ -98,7 +99,7 @@ struct StructTypeInfo {
 
 		// Calculate offset with effective alignment
 		// For unions, all members are at offset 0
-		size_t offset = is_union ? 0 : ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+		size_t offset = is_union ? 0 : ((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
 
 		bool placed_in_active_bitfield_unit = false;
 		size_t bitfield_bit_offset = 0;
@@ -111,12 +112,12 @@ struct StructTypeInfo {
 
 			if (width == 0) {
 				// Zero-width bitfield forces alignment to next allocation unit boundary
-				total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+				total_size = toSizeInBytes((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
 				active_bitfield_unit_size = 0;
 				active_bitfield_bits_used = 0;
 				active_bitfield_unit_alignment = 0;
 				active_bitfield_type = TypeCategory::Invalid;
-				offset = total_size;
+				offset = toSizeT(total_size);
 			} else {
 				bool can_pack_into_active_unit =
 					active_bitfield_unit_size == member_size &&
@@ -125,13 +126,13 @@ struct StructTypeInfo {
 					(active_bitfield_bits_used + width) <= storage_bits;
 
 				if (!can_pack_into_active_unit) {
-					total_size = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
-					active_bitfield_unit_offset = total_size;
+					total_size = toSizeInBytes((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
+					active_bitfield_unit_offset = toSizeT(total_size);
 					active_bitfield_unit_size = member_size;
 					active_bitfield_unit_alignment = effective_alignment;
 					active_bitfield_bits_used = 0;
 					active_bitfield_type = type_index.category();
-					total_size += member_size;
+					total_size = toSizeInBytes(toSizeT(total_size) + member_size);
 				}
 
 				offset = active_bitfield_unit_offset;
@@ -154,7 +155,7 @@ struct StructTypeInfo {
 			active_bitfield_unit_alignment = 0;
 			active_bitfield_type = TypeCategory::Invalid;
 			if (!placed_in_active_bitfield_unit) {
-				offset = ((total_size + effective_alignment - 1) & ~(effective_alignment - 1));
+				offset = ((toSizeT(total_size) + effective_alignment - 1) & ~(effective_alignment - 1));
 			}
 		}
 
@@ -171,12 +172,12 @@ struct StructTypeInfo {
 
 		// Update struct size and alignment
 		if (is_union) {
-			total_size = std::max(total_size, member_size);
+			total_size = toSizeInBytes(std::max(toSizeT(total_size), member_size));
 		} else if (!bitfield_width.has_value()) {
 			if (placed_in_active_bitfield_unit) {
-				total_size = std::max(total_size, offset + member_size);
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), offset + member_size));
 			} else {
-				total_size = offset + member_size;
+				total_size = toSizeInBytes(offset + member_size);
 			}
 		}
 		alignment = std::max(alignment, effective_alignment);
@@ -288,12 +289,12 @@ struct StructTypeInfo {
 			for (auto& member : members) {
 				member.offset += 8;
 			}
-			total_size += 8;
+			total_size = toSizeInBytes(toSizeT(total_size) + 8);
 			alignment = std::max(alignment, size_t(8));	// At least pointer alignment
 		}
 
 		// Pad struct to its alignment
-		total_size = (total_size + alignment - 1) & ~(alignment - 1);
+		total_size = toSizeInBytes((toSizeT(total_size) + alignment - 1) & ~(alignment - 1));
 		return true;
 	}
 
@@ -662,15 +663,15 @@ struct EnumTypeInfo {
 	StringHandle name;
 	bool is_scoped;					// true for enum class, false for enum
 	TypeCategory underlying_type;	  // Underlying type category (default: Int)
-	unsigned char underlying_size;   // Size in bits of underlying type
+	SizeInBits underlying_size;	  // Size in bits of underlying type
 	std::vector<Enumerator> enumerators;
 
-	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, unsigned char size)
+	EnumTypeInfo(StringHandle n, bool scoped, TypeCategory underlying, SizeInBits size)
 		: name(n), is_scoped(scoped), underlying_type(underlying), underlying_size(size) {}
 
 	// Convenience: default underlying type is Int/32-bit
 	explicit EnumTypeInfo(StringHandle n, bool scoped)
-		: EnumTypeInfo(n, scoped, TypeCategory::Int, 32) {}
+		: EnumTypeInfo(n, scoped, TypeCategory::Int, SizeInBits{32}) {}
 
 	StringHandle getName() const {
 		return name;
@@ -766,7 +767,8 @@ struct TypeInfo {
 	// For enum types, store additional information
 	std::unique_ptr<EnumTypeInfo> enum_info_;
 
-	// For typedef, store the size in bits (for primitive types)
+	// Generic fallback size in bits for aliases, incomplete types, and forward declarations.
+	// Struct layout remains authoritative in StructTypeInfo::total_size.
 	int type_size_ = 0;	// Changed from unsigned char to int for large types
 
 	// For typedef of pointer types, store the pointer depth
@@ -892,9 +894,31 @@ struct TypeInfo {
 
 	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
 		if (info) {
-			type_size_ = info->underlying_size;
+			type_size_ = info->underlying_size.value;
 		}
 		enum_info_ = std::move(info);
+	}
+
+	SizeInBits sizeInBits() const {
+		if (struct_info_) {
+			return toBits(struct_info_->total_size);
+		}
+		if (enum_info_) {
+			return enum_info_->underlying_size;
+		}
+		return SizeInBits{type_size_};
+	}
+
+	SizeInBytes sizeInBytes() const {
+		if (struct_info_) {
+			return struct_info_->total_size;
+		}
+		SizeInBits bits = sizeInBits();
+		return bits.is_set() ? toBytesCeil(bits) : SizeInBytes{};
+	}
+
+	bool hasStoredSize() const {
+		return sizeInBits().is_set();
 	}
 
 	// Classification helpers delegated through type_index_.
@@ -1483,7 +1507,7 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
-// For Struct/UserDefined: authoritative lookup via StructTypeInfo::total_size * 8,
+// For Struct/UserDefined: authoritative lookup via toBits(StructTypeInfo::total_size).value,
 //   falling back to TypeInfo::type_size_ for typedefs/aliases.
 // For scalars: delegates to get_type_size_bits().
 // Final fallback: type_spec.size_in_bits() (set during parsing).
@@ -1498,10 +1522,10 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		TypeIndex idx = type_spec.type_index();
 		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
 			if (const StructTypeInfo* si = ti->getStructInfo()) {
-				return static_cast<int>(si->total_size * 8);
+				return toBits(si->total_size).value;
 			}
 			if (const EnumTypeInfo* ei = ti->getEnumInfo()) {
-				return static_cast<int>(ei->underlying_size);
+				return ei->underlying_size.value;
 			}
 			if (ti->type_size_ > 0) {
 				return ti->type_size_;

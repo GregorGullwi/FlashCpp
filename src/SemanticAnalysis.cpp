@@ -3137,7 +3137,7 @@ bool SemanticAnalysis::tryAnnotateCopyInitConvertingConstructor(const ASTNode& e
 			// can see "int -> strong_ordering" instead of the final target type.
 			// Codegen still produces the correct comparison category object.
 			const StructTypeInfo* target_struct = to_type_info->getStructInfo();
-			if (is_integer_type(from_desc.category()) && target_struct && target_struct->total_size == 1) {
+			if (is_integer_type(from_desc.category()) && target_struct && toSizeT(target_struct->total_size) == 1) {
 				const std::string_view target_name = StringTable::getStringView(to_type_info->name());
 				if (isExactComparisonCategoryType(to_type_info->type_index_)) {
 					FLASH_LOG(General, Debug, "Suppressed explicit-ctor error for comparison category type '",
