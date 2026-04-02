@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
 
 AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 	MultiDimMemberArrayAccess result;
@@ -136,6 +137,20 @@ AstToIr::MultiDimArrayAccess AstToIr::collectMultiDimArrayIndices(const ArraySub
 
 ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
 											 ExpressionContext context) {
+	// If sema resolved this subscript to operator[], dispatch to member function call IR.
+	if (sema_) {
+		if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
+			ChunkedVector<ASTNode> args;
+			args.push_back(arraySubscriptNode.index_expr());
+			MemberFunctionCallNode member_call(
+				arraySubscriptNode.array_expr(),
+				*op_subscript,
+				std::move(args),
+				arraySubscriptNode.bracket_token());
+			return generateMemberFunctionCallIr(member_call, context);
+		}
+	}
+
 	auto makeArrayResult = [](TypeCategory type, int size_bits, IrOperand value, TypeIndex type_index, PointerDepth pointer_depth, ValueStorage storage) -> ExprResult {
 		ExprResult result;
 		result.ir_type = toIrType(type);

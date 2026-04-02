@@ -16,6 +16,7 @@ class ConstructorDeclarationNode;
 class DestructorDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
+class ArraySubscriptNode;
 class BinaryOperatorNode;
 class UnaryOperatorNode;
 class FunctionCallNode;
@@ -92,6 +93,10 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
 	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
 	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
+
+	// Look up the pre-resolved operator[] for an ArraySubscriptNode.
+	// Returns nullptr when the subscript is a built-in pointer/array subscript (not operator[]).
+	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
 
 	// Instantiation-time semantic hook for generic lambda parameter normalization.
 	std::vector<ASTNode> normalizeGenericLambdaParams(
@@ -213,6 +218,14 @@ private:
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
 	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+
+	// Shared helper: annotate a single argument expression against a single parameter type.
+	// Handles reference binding, converting constructors, primitive conversions, and
+	// scoped-enum diagnostics.  Used by call-arg, member-call-arg, and subscript-operator
+	// annotation paths.
+	void tryAnnotateSingleArgConversion(const ASTNode& arg,
+										const TypeSpecifierNode& param_type,
+										const char* context_description);
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
 																			const TypeSpecifierNode& param_type,
 																			const char* context_description);
@@ -232,6 +245,11 @@ private:
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.
 	void tryResolveCallableOperator(const FunctionCallNode& call_node);
+
+	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
+	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
+	// can dispatch to the member function call path instead of pointer arithmetic.
+	void tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node);
 
 	// Scope stack for local variable type tracking (used by inferExpressionType).
 	// Keys are StringHandles from the string pool (stable for the compilation lifetime).
@@ -276,6 +294,11 @@ private:
 	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const FunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> function_call_ref_bindings_;
 	std::unordered_map<const MemberFunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> member_call_ref_bindings_;
+
+	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
+	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
+	// Empty entry means built-in pointer/array subscript (handled by pointer arithmetic codegen).
+	std::unordered_map<const ArraySubscriptNode*, const FunctionDeclarationNode*> op_subscript_table_;
 
 	// Track which function body ASTNode pointers sema has normalized.
 	// Codegen uses this to skip Phase 15 warnings for functions sema never visited
