@@ -509,6 +509,57 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// For immediate lambda invocation, object_decl can be nullptr
 	// In that case, we still need object_type to be set correctly
 
+	std::string_view current_struct_name_sv;
+	std::string_view base_template_name;
+	if (current_struct_name_.isValid()) {
+		current_struct_name_sv = StringTable::getStringView(current_struct_name_);
+		base_template_name = extractBaseTemplateName(current_struct_name_sv);
+	}
+
+	auto isSameClassAsCurrentInstantiation = [&](std::string_view candidate_name) {
+		if (candidate_name.empty() || current_struct_name_sv.empty()) {
+			return false;
+		}
+
+		if (candidate_name == current_struct_name_sv) {
+			return true;
+		}
+
+		if (base_template_name.empty()) {
+			return false;
+		}
+
+		if (candidate_name == base_template_name) {
+			return true;
+		}
+
+		size_t sep_pos = base_template_name.rfind("::");
+		return sep_pos != std::string_view::npos &&
+			   candidate_name == base_template_name.substr(sep_pos + 2);
+	};
+
+	// Injected-class-name inside an instantiated member body can leave the object
+	// expression typed as the template pattern (e.g. `Box`) instead of the current
+	// instantiation (e.g. `Box$hash`). Remap same-class member-call receivers to
+	// the active instantiated owner so later overload/mangling picks the concrete
+	// member definition instead of emitting stale `Box::member` references.
+	if (object_type.type_index().is_valid() &&
+		memberFunctionCallNode.function_declaration().is_member_function() &&
+		isSameClassAsCurrentInstantiation(memberFunctionCallNode.function_declaration().parent_struct_name())) {
+		if (const TypeInfo* object_type_info = tryGetTypeInfo(object_type.type_index())) {
+			if (object_type_info->isStruct() &&
+				isSameClassAsCurrentInstantiation(StringTable::getStringView(object_type_info->name()))) {
+				auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+				if (current_struct_it != getTypesByNameMap().end() &&
+					current_struct_it->second->isStruct()) {
+					const TypeInfo* current_struct_type_info = current_struct_it->second;
+					object_type.set_type_index(current_struct_type_info->type_index_.withCategory(TypeCategory::Struct));
+					object_type.set_size_in_bits(current_struct_type_info->sizeInBits());
+				}
+			}
+		}
+	}
+
 	// Special case: Handle namespace-qualified function calls that were incorrectly parsed as member function calls
 	// This can happen when std::function() is parsed and the object is a namespace identifier
 	if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
