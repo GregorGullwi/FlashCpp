@@ -810,37 +810,7 @@ TypeIndex Parser::substitute_template_parameter(
 		// Try to find which template parameter this is
 		bool found_match = false;
 		auto materializeTemplateInstantiationArgs = [&](const TypeInfo& placeholder_info) {
-			std::vector<TemplateTypeArg> concrete_args;
-			for (const auto& arg_info : placeholder_info.templateArgs()) {
-				TemplateTypeArg concrete_arg;
-				concrete_arg.setCategory(arg_info.category());
-				concrete_arg.type_index = arg_info.type_index;
-				concrete_arg.is_value = arg_info.is_value;
-				concrete_arg.value = arg_info.intValue();
-				concrete_arg.pointer_depth = arg_info.pointer_depth;
-				concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
-				concrete_arg.ref_qualifier = arg_info.ref_qualifier;
-				concrete_arg.cv_qualifier = arg_info.cv_qualifier;
-				concrete_arg.array_size = arg_info.array_size;
-				concrete_arg.is_array = arg_info.is_array;
-				concrete_arg.function_signature = arg_info.function_signature;
-				concrete_arg.dependent_name = arg_info.dependent_name;
-
-				if (arg_info.dependent_name.isValid()) {
-					std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
-					for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-						if (!template_params[i].is<TemplateParameterNode>())
-							continue;
-						if (template_params[i].as<TemplateParameterNode>().name() == dep_name) {
-							concrete_arg = template_args[i];
-							break;
-						}
-					}
-				}
-
-				concrete_args.push_back(concrete_arg);
-			}
-			return concrete_args;
+			return materializeTemplateArgs(placeholder_info, template_params, template_args);
 		};
 		if (!type_name.empty()) {
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -999,44 +969,26 @@ TypeIndex Parser::substitute_template_parameter(
 								// E.g., for Container<T> with Container=Box, T=int, the placeholder
 								// Container$xxx has stored arg T (dependent). We must replace T->int
 								// before instantiating Box, otherwise we get Box<T_dep> not Box<int>.
-								std::vector<TemplateTypeArg> concrete_args;
-								for (const auto& arg_info : placeholder_info->templateArgs()) {
-									TemplateTypeArg ta;
-									ta.setCategory(arg_info.category());
-									ta.type_index = arg_info.type_index;
-									ta.is_value = arg_info.is_value;
-									ta.value = arg_info.intValue();
-									// Substitute dependent type params by dependent_name first
-									bool substituted = false;
-									if (arg_info.dependent_name.isValid()) {
-										std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
-										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
-											if (!template_params[j].is<TemplateParameterNode>())
-												continue;
-											if (template_params[j].as<TemplateParameterNode>().name() == dep_name) {
-												ta = template_args[j];
-												substituted = true;
-												break;
-											}
-										}
-									}
-									// Fallback: match by type_index name against param names
-									if (!substituted && !arg_info.is_value &&
-										(is_struct_type(arg_info.category()))) {
-										const TypeInfo* arg_type_info = tryGetTypeInfo(arg_info.type_index);
-										if (!arg_type_info)
+								std::vector<TemplateTypeArg> concrete_args = materializeTemplateArgs(*placeholder_info, template_params, template_args);
+								// Fallback: match by type_index name against param names
+								// for args where dependent_name substitution didn't trigger.
+								for (auto& ta : concrete_args) {
+									if (ta.is_value || ta.dependent_name.isValid())
+										continue;
+									if (!is_struct_type(ta.category()))
+										continue;
+									const TypeInfo* arg_type_info = tryGetTypeInfo(ta.type_index);
+									if (!arg_type_info)
+										continue;
+									std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+									for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
+										if (!template_params[j].is<TemplateParameterNode>())
 											continue;
-										std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
-										for (size_t j = 0; j < template_params.size() && j < template_args.size(); ++j) {
-											if (!template_params[j].is<TemplateParameterNode>())
-												continue;
-											if (template_params[j].as<TemplateParameterNode>().name() == arg_type_name) {
-												ta = template_args[j];
-												break;
-											}
+										if (template_params[j].as<TemplateParameterNode>().name() == arg_type_name) {
+											ta = template_args[j];
+											break;
 										}
 									}
-									concrete_args.push_back(ta);
 								}
 								// Instantiate the concrete template with the preserved args
 								try_instantiate_class_template(concrete_tpl_name, concrete_args);

@@ -4030,37 +4030,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		if (const TypeInfo* member_type_info = (is_struct_type(member_type_index.category())) ? tryGetTypeInfo(member_type_index) : nullptr) {
 			std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
 			auto materializeMemberTemplateArgs = [&]() {
-				std::vector<TemplateTypeArg> concrete_args;
-				for (const auto& arg_info : member_type_info->templateArgs()) {
-					TemplateTypeArg concrete_arg;
-					concrete_arg.setCategory(arg_info.category());
-					concrete_arg.type_index = arg_info.type_index;
-					concrete_arg.is_value = arg_info.is_value;
-					concrete_arg.value = arg_info.intValue();
-					concrete_arg.pointer_depth = arg_info.pointer_depth;
-					concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
-					concrete_arg.ref_qualifier = arg_info.ref_qualifier;
-					concrete_arg.cv_qualifier = arg_info.cv_qualifier;
-					concrete_arg.array_size = arg_info.array_size;
-					concrete_arg.function_signature = arg_info.function_signature;
-					concrete_arg.dependent_name = arg_info.dependent_name;
-
-					if (arg_info.dependent_name.isValid()) {
-						std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
-						for (size_t arg_idx = 0; arg_idx < template_params.size() && arg_idx < template_args_to_use.size(); ++arg_idx) {
-							if (!template_params[arg_idx].is<TemplateParameterNode>()) {
-								continue;
-							}
-							if (template_params[arg_idx].as<TemplateParameterNode>().name() == dep_name) {
-								concrete_arg = template_args_to_use[arg_idx];
-								break;
-							}
-						}
-					}
-
-					concrete_args.push_back(concrete_arg);
-				}
-				return concrete_args;
+				return materializeTemplateArgs(*member_type_info, template_params, template_args_to_use);
 			};
 
 			FLASH_LOG(Templates, Debug, "Member type_info: name='", member_struct_name,
