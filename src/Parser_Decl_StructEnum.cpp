@@ -2308,9 +2308,45 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 				}
 			}
 
+			auto prepareArrayTypeForBraceInit = [&](TypeSpecifierNode& type_spec_for_init) {
+				if (!decl_node.is_array()) {
+					return;
+				}
+				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+				const auto& decl_dims = decl_node.array_dimensions();
+				if (decl_dims.size() > 1) {
+					std::vector<size_t> dim_sizes;
+					dim_sizes.reserve(decl_dims.size());
+					bool all_evaluated = true;
+					for (const auto& dim_expr : decl_dims) {
+						auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, eval_ctx);
+						if (!eval_result.success()) {
+							all_evaluated = false;
+							break;
+						}
+						dim_sizes.push_back(static_cast<size_t>(eval_result.as_int()));
+					}
+					if (all_evaluated && !dim_sizes.empty()) {
+						type_spec_for_init.set_array_dimensions(dim_sizes);
+					}
+					return;
+				}
+
+				std::optional<size_t> array_size_val;
+				if (decl_node.array_size().has_value()) {
+					auto eval_result = ConstExpr::Evaluator::evaluate(*decl_node.array_size(), eval_ctx);
+					if (eval_result.success()) {
+						array_size_val = static_cast<size_t>(eval_result.as_int());
+					}
+				}
+				type_spec_for_init.set_array(true, array_size_val);
+			};
+
 			// Check for direct brace initialization: C c1{ 1 };
 			if (peek() == "{"_tok) {
-				auto init_result = parse_brace_initializer(type_spec);
+				TypeSpecifierNode init_type_spec = type_spec;
+				prepareArrayTypeForBraceInit(init_type_spec);
+				auto init_result = parse_brace_initializer(init_type_spec);
 				if (init_result.is_error()) {
 					return init_result;
 				}
@@ -2324,7 +2360,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 				// Check if this is a brace initializer: B b = { .a = 1 }
 				if (peek() == "{"_tok) {
-					auto init_result = parse_brace_initializer(type_spec);
+					TypeSpecifierNode init_type_spec = type_spec;
+					prepareArrayTypeForBraceInit(init_type_spec);
+					auto init_result = parse_brace_initializer(init_type_spec);
 					if (init_result.is_error()) {
 						return init_result;
 					}

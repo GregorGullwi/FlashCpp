@@ -3,6 +3,55 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
+## Restored `operator[]` / alias-iterator regressions now compile but still return wrong values
+
+The stronger follow-up regressions below now both **compile and link**, but they
+still fail at runtime with wrong return values:
+
+```cpp
+struct Buffer {
+    int values[3] = {42, 7, 9};
+    int& operator[](int index) { return values[index]; }
+};
+```
+
+and
+
+```cpp
+template<typename It>
+int distance_like(It first, It last) {
+    return (last != first) ? static_cast<int>(last - first) : -1;
+}
+
+template<typename T, int N>
+struct Buffer {
+    using iterator = T*;
+    T values[N];
+    iterator begin() { return values; }
+    iterator end() { return begin() + N; }
+};
+```
+
+Current observed behavior with the restored tests:
+
+- `tests/test_member_subscript_operator_ret42.cpp` compiles, links, and returns
+  `215` instead of `42`
+- `tests/test_template_alias_iterator_ops_ret3.cpp` compiles, links, and returns
+  `116` instead of `3`
+
+The member-subscript test required a parser fix just to accept the in-class array
+brace initializer on a non-static data member. After that, both tests still
+misbehave at runtime, which suggests the remaining bug is later in lowering/codegen:
+
+- reference-return member calls (`int& Buffer::operator[](...)`) are still not
+  preserving the referenced object correctly through codegen, or
+- alias-based pointer arithmetic / pointer subtraction still loses canonical
+  pointer semantics somewhere after template instantiation.
+
+Because function-body IR conversion failures are currently non-fatal in some
+paths, future debugging should also check whether either test is silently
+producing partially broken object code instead of a clean frontend error.
+
 ## Parser recursion/iteration limits on deeply nested expressions
 
 - Extremely deep unary-expression nesting can still overflow the parser stack and crash
