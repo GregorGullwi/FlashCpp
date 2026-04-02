@@ -114,7 +114,7 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 	return makeExprResult(ret_spec.type_index().withCategory(ret_type), ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode) {
+ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(2 + functionCallNode.arguments().size() * 4);	 // ret_var + name + ~4 operands per arg
 	auto appendArgumentIrResult = [&](const ExprResult& result) {
@@ -326,7 +326,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 					*operator_call,
 					std::move(member_args),
 					functionCallNode.called_from());
-				return generateMemberFunctionCallIr(member_call);
+				return generateMemberFunctionCallIr(member_call, context);
 			}
 		}
 
@@ -1668,6 +1668,31 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
 		} else {
 			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
+		}
+
+		if (context != ExpressionContext::LValueAddress) {
+			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
+			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
+				return makeExprResult(
+					return_type.type_index().withCategory(return_type.type()),
+					SizeInBits{referenced_size_bits},
+					IrOperand{ret_var},
+					return_pointer_depth,
+					ValueStorage::ContainsAddress);
+			}
+
+			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
+			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
+			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
+			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), functionCallNode.called_from());
+			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
+			return makeExprResult(
+				return_type.type_index().withCategory(pointee_type),
+				SizeInBits{pointee_size_bits},
+				IrOperand{loaded_value},
+				return_pointer_depth,
+				ValueStorage::ContainsData);
 		}
 	}
 

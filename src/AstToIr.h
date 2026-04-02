@@ -259,8 +259,8 @@ private:
 	ExprResult generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode);
-	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
+	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
@@ -513,7 +513,7 @@ private:
 
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
-	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
 
 	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
 	// Returns nullptr if the type is not a struct.

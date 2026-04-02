@@ -1,7 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
-ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode) {
+ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
@@ -514,7 +514,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
 		// This is a namespace-qualified function call, not a member function call
 		// Treat it as a regular function call instead
-		return convertMemberCallToFunctionCall(memberFunctionCallNode);
+		return convertMemberCallToFunctionCall(memberFunctionCallNode, context);
 	}
 
 	// Verify this is a struct type BEFORE checking other cases
@@ -523,7 +523,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (!isIrStructType(toIrType(object_type.type()))) {
 		// The object is not a struct - this might be a namespace identifier or other non-struct type
 		// Treat this as a regular function call instead of a member function call
-		return convertMemberCallToFunctionCall(memberFunctionCallNode);
+		return convertMemberCallToFunctionCall(memberFunctionCallNode, context);
 	}
 
 	// Get the function declaration directly from the node (no need to look it up)
@@ -1739,6 +1739,31 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		} else {
 			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
 		}
+
+		if (context != ExpressionContext::LValueAddress) {
+			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
+			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
+				return makeExprResult(
+					return_type.type_index().withCategory(return_type.type()),
+					SizeInBits{referenced_size_bits},
+					IrOperand{ret_var},
+					return_pointer_depth,
+					ValueStorage::ContainsAddress);
+			}
+
+			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
+			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
+			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
+			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), memberFunctionCallNode.called_from());
+			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
+			return makeExprResult(
+				return_type.type_index().withCategory(pointee_type),
+				SizeInBits{pointee_size_bits},
+				IrOperand{loaded_value},
+				return_pointer_depth,
+				ValueStorage::ContainsData);
+		}
 	}
 
 	// For pointer/reference return types, use 64 bits (pointer size on x64)
@@ -1765,7 +1790,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 // Used when a member function call syntax is used but the object is not a struct
-ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode) {
+ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 
@@ -1776,5 +1801,5 @@ ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode
 	});
 
 	FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
-	return generateFunctionCallIr(function_call);
+	return generateFunctionCallIr(function_call, context);
 }

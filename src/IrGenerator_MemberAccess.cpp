@@ -1105,7 +1105,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				is_pointer_dereference = true;
 			}
 		} else if (const MemberFunctionCallNode* call = get_member_func_call()) {
-			auto call_result = generateMemberFunctionCallIr(*call);
+			auto call_result = generateMemberFunctionCallIr(*call, ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
@@ -1228,7 +1228,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
 		} else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
-			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
+			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr), ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
 				throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}

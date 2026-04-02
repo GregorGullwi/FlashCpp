@@ -8324,6 +8324,87 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							}
 							break;
 						}
+						case LValueInfo::Kind::ArrayElement: {
+							const int element_size_bits = std::max(8, get_type_size_bits(ret_op.return_type_index.category()));
+							const int element_size_bytes = element_size_bits / 8;
+							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool is_pointer_to_array) -> bool {
+								if (const auto* base_name = std::get_if<StringHandle>(&base)) {
+									std::string_view base_view = StringTable::getStringView(*base_name);
+									if (size_t dot_pos = base_view.find('.'); dot_pos != std::string_view::npos) {
+										StringHandle object_name = StringTable::getOrInternStringHandle(base_view.substr(0, dot_pos));
+										int object_offset = 0;
+										if (object_name == StringTable::getOrInternStringHandle("this") && current_function_this_offset_ != 0) {
+											object_offset = current_function_this_offset_;
+										} else {
+											auto object_offset_opt = findIdentifierStackOffset(object_name);
+											if (!object_offset_opt.has_value()) {
+												return false;
+											}
+											object_offset = object_offset_opt.value();
+										}
+										if (isPointerBaseStorage(object_offset)) {
+											spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+											emitMovFromFrame(X64Register::RAX, object_offset);
+										} else {
+											spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+											emitLeaFromFrame(X64Register::RAX, object_offset);
+										}
+										return true;
+									}
+
+									auto base_offset_opt = findIdentifierStackOffset(*base_name);
+									if (!base_offset_opt.has_value()) {
+										return false;
+									}
+									spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+									if (is_pointer_to_array || isPointerBaseStorage(base_offset_opt.value())) {
+										emitMovFromFrame(X64Register::RAX, base_offset_opt.value());
+									} else {
+										emitLeaFromFrame(X64Register::RAX, base_offset_opt.value());
+									}
+									return true;
+								}
+
+								spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+								emitMovFromFrame(X64Register::RAX, getStackOffsetFromTempVar(std::get<TempVar>(base)));
+								return true;
+							};
+
+							if (loadArrayBaseAddress(lv_info.base, lv_info.is_pointer_to_array)) {
+								if (lv_info.offset != 0) {
+									emitAddImmToReg(textSectionData, X64Register::RAX, lv_info.offset);
+								}
+								if (lv_info.array_index.has_value()) {
+									if (std::holds_alternative<unsigned long long>(*lv_info.array_index)) {
+										const int64_t index_value = static_cast<int64_t>(std::get<unsigned long long>(*lv_info.array_index));
+										if (index_value != 0) {
+											emitAddImmToReg(textSectionData, X64Register::RAX, index_value * element_size_bytes);
+										}
+									} else if (std::holds_alternative<TempVar>(*lv_info.array_index)) {
+										TempVar index_var = std::get<TempVar>(*lv_info.array_index);
+										int64_t index_offset = getStackOffsetFromTempVar(index_var);
+										emitMovFromFrameSized(
+											SizedRegister{X64Register::RCX, 64, false},
+											SizedStackSlot{static_cast<int32_t>(index_offset), 64, true});
+										emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+										emitAddRAXRCX(textSectionData);
+									} else if (std::holds_alternative<StringHandle>(*lv_info.array_index)) {
+										auto index_name = std::get<StringHandle>(*lv_info.array_index);
+										auto index_offset_opt = findIdentifierStackOffset(index_name);
+										if (!index_offset_opt.has_value()) {
+											return;
+										}
+										emitMovFromFrameSized(
+											SizedRegister{X64Register::RCX, 64, false},
+											SizedStackSlot{static_cast<int32_t>(index_offset_opt.value()), 64, true});
+										emitMultiplyRCXByElementSize(textSectionData, element_size_bytes);
+										emitAddRAXRCX(textSectionData);
+									}
+								}
+								handled_reference_return = true;
+							}
+							break;
+						}
 						case LValueInfo::Kind::Member: {
 							bool base_is_pointer = lv_info.is_pointer_to_member;
 							if (loadBaseAddress(lv_info.base, base_is_pointer)) {
