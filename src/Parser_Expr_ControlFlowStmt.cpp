@@ -1212,7 +1212,7 @@ ParseResult Parser::parse_lambda_expression() {
 								AccessSpecifier::Public,
 								std::nullopt,						  // No initializer
 								ReferenceQualifier::None,			  // Not a reference
-								toBits(enclosing_struct->total_size).value	 // Size in bits
+								enclosing_struct->sizeInBits().value	 // Size in bits
 							);
 						}
 					}
@@ -1308,7 +1308,7 @@ ParseResult Parser::parse_lambda_expression() {
 				referenced_size_bits = var_type.size_in_bits();
 				if (referenced_size_bits == 0 && var_type.category() == TypeCategory::Struct) {
 					if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(var_type.type_index())) {
-						referenced_size_bits = toBits(member_struct_info->total_size).value;
+						referenced_size_bits = member_struct_info->sizeInBits().value;
 					}
 				}
 			}

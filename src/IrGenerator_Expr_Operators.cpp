@@ -279,7 +279,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			// initialize sub-aggregate members recursively.
 			if (const StructTypeInfo* nested_struct_info = tryGetStructTypeInfo(member.type_index)) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
-				int nested_size_bits = static_cast<int>(toBits(nested_struct_info->total_size).value);
+				int nested_size_bits = static_cast<int>(nested_struct_info->sizeInBits().value);
 				TypeSpecifierNode nested_type_spec(member.type_index.withCategory(member.memberType()), nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
@@ -313,7 +313,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
 	}
 
-	int actual_size_bits = static_cast<int>(toBits(struct_info->total_size).value);
+	int actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 	TypedValue result;
 	result.setType(TypeCategory::Struct);
 	result.ir_type = IrType::Struct;
@@ -331,7 +331,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid()) {
 		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index());
 		if (struct_info) {
-			value.size_in_bits = SizeInBits{static_cast<int>(toBits(struct_info->total_size).value)};
+			value.size_in_bits = SizeInBits{static_cast<int>(struct_info->sizeInBits().value)};
 		} else {
 			value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 		}
@@ -1514,7 +1514,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
 						const TypeInfo& alias_type_info = *alias_it->second;
-						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, alias_type_info.type_size_, type_spec.token(), type_spec.cv_qualifier());
+						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, static_cast<int>(alias_type_info.sizeInBits().value), type_spec.token(), type_spec.cv_qualifier());
 						resolved.set_type_index(alias_type_info.type_index_);
 						resolved.copy_indirection_from(type_spec);
 						resolved.set_reference_qualifier(type_spec.reference_qualifier());
@@ -1773,7 +1773,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			int actual_return_size = static_cast<int>(return_type.size_in_bits());
 			if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(toBits(ret_struct->total_size).value);
+					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
 				}
 			}
 			call_op.return_size_in_bits = SizeInBits{actual_return_size};
@@ -1920,7 +1920,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (actual_return_size == 0 && resolved_cat == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				// Look up struct size from type info
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(toBits(ret_struct->total_size).value);
+					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
 				}
 			}
 			call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
@@ -2198,7 +2198,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			if (ordering_type) {
 				const int ordering_size = static_cast<int>(ordering_type->struct_info_
-															   ? toBits(ordering_type->struct_info_->total_size).value
+															   ? ordering_type->struct_info_->sizeInBits().value
 															   : 8);
 
 				// Compute three-way result: (a > b) - (a < b) -> -1, 0, or 1.
@@ -4395,13 +4395,13 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-					inferred_size_bits = static_cast<int>(toBits(struct_info->total_size).value);
-				} else {
-					inferred_size_bits = static_cast<int>(type_info->type_size_);
+				if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info->sizeInBits().value);
+					}
 				}
-			}
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}
@@ -4629,13 +4629,13 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-					inferred_size_bits = static_cast<int>(toBits(struct_info->total_size).value);
-				} else {
-					inferred_size_bits = static_cast<int>(type_info->type_size_);
+				if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+						inferred_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+					} else {
+						inferred_size_bits = static_cast<int>(type_info->sizeInBits().value);
+					}
 				}
-			}
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}

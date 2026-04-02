@@ -801,7 +801,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						const TypeInfo* member_type_info = tryGetTypeInfo(static_member->type_index);
 						const StructTypeInfo* member_si = member_type_info ? member_type_info->getStructInfo() : nullptr;
 						if (member_si) {
-							member_size_bits = static_cast<int>(toBits(member_si->total_size).value);
+							member_size_bits = static_cast<int>(member_si->sizeInBits().value);
 						}
 					}
 
@@ -1474,7 +1474,7 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 						const TypeInfo* qsm_type_info = tryGetTypeInfo(static_member->type_index);
 						const StructTypeInfo* qsm_si = qsm_type_info ? qsm_type_info->getStructInfo() : nullptr;
 						if (qsm_si) {
-							qsm_size_bits = static_cast<int>(toBits(qsm_si->total_size).value);
+							qsm_size_bits = static_cast<int>(qsm_si->sizeInBits().value);
 						}
 					}
 					TempVar result_temp = var_counter.next();

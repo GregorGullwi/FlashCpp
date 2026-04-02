@@ -150,7 +150,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 			// Declare the closure variable with the target name
 		VariableDeclOp lambda_decl_op;
 		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
-		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(toBits(closure_type->getStructInfo()->total_size).value)};
+		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->sizeInBits().value)};
 		lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 		lambda_decl_op.custom_alignment = 0;
 		lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
@@ -166,7 +166,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 			// Declare the closure variable
 		VariableDeclOp lambda_decl_op;
 		lambda_decl_op.type_index = nativeTypeIndex(TypeCategory::Struct);
-		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(toBits(closure_type->getStructInfo()->total_size).value)};
+		lambda_decl_op.size_in_bits = SizeInBits{static_cast<int>(closure_type->getStructInfo()->sizeInBits().value)};
 		lambda_decl_op.var_name = StringTable::getOrInternStringHandle(closure_var_name);
 		lambda_decl_op.custom_alignment = 0;
 		lambda_decl_op.ref_qualifier = CVReferenceQualifier::None;
@@ -472,7 +472,7 @@ ExprResult AstToIr::generateLambdaExpressionIr(const LambdaExpressionNode& lambd
 		// - size: size of the closure in bits
 		// - value: closure_var_name (the allocated closure variable)
 		// - type_index: the type index for the closure struct
-	int closure_size_bits = static_cast<int>(toBits(closure_type->getStructInfo()->total_size).value);
+	int closure_size_bits = static_cast<int>(closure_type->getStructInfo()->sizeInBits().value);
 	TypeIndex closure_type_index = TypeIndex{closure_type->type_index_};
 	return makeExprResult(closure_type_index.withCategory(TypeCategory::Struct), SizeInBits{static_cast<int>(closure_size_bits)}, IrOperand{StringTable::getOrInternStringHandle(closure_var_name)}, PointerDepth{}, ValueStorage::ContainsData);
 }
@@ -1172,7 +1172,7 @@ std::optional<TypeSpecifierNode> AstToIr::deduceLambdaClosureType(const ASTNode&
 
 	const TypeInfo* closure_type = type_it->second;
 	int closure_size = closure_type->getStructInfo()
-						   ? toBits(closure_type->getStructInfo()->total_size).value
+						   ? closure_type->getStructInfo()->sizeInBits().value
 						   : 64;
 	return TypeSpecifierNode(
 		closure_type->type_index_.withCategory(TypeCategory::Struct),

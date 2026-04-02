@@ -1805,8 +1805,8 @@ bool AstToIr::tryEmitArrayMemberStores(
 
 	int element_size_bits = 0;
 	if (const TypeInfo* elem_type_info = tryGetTypeInfo(member.type_index)) {
-		if (elem_type_info->type_size_ > 0) {
-			element_size_bits = static_cast<int>(elem_type_info->type_size_);
+		if (elem_type_info->hasStoredSize()) {
+			element_size_bits = static_cast<int>(elem_type_info->sizeInBits().value);
 		}
 	}
 	if (element_size_bits <= 0) {

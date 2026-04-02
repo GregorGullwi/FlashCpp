@@ -650,7 +650,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			struct_type_info.setStructInfo(std::move(struct_info));
 			// Update type_size_ from the finalized struct's total size
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = toBits(struct_type_info.getStructInfo()->total_size).value;
+				struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Parse the typedef alias name
@@ -668,7 +668,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 			// Create type specifier for the typedef
 			int struct_size_bits = 0;
 			if (const StructTypeInfo* finalized_struct_info = struct_type_info.getStructInfo()) {
-				struct_size_bits = static_cast<int>(toBits(finalized_struct_info->total_size).value);
+				struct_size_bits = static_cast<int>(finalized_struct_info->sizeInBits().value);
 			}
 			TypeSpecifierNode type_spec(
 				struct_type_index.withCategory(TypeCategory::Struct),
@@ -1486,7 +1486,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 							// Create type specifier for the anonymous type
 							TypeSpecifierNode anon_type_spec(TypeCategory::Struct, TypeQualifier::None,
-															 static_cast<int>(toBits(anon_type_info.getStructInfo()->total_size).value), union_or_struct_keyword, CVQualifier::None);
+															 static_cast<int>(anon_type_info.getStructInfo()->sizeInBits().value), union_or_struct_keyword, CVQualifier::None);
 							anon_type_spec.set_type_index(anon_type_info.type_index_);
 							for (int i = 0; i < ptr_levels; i++) {
 								anon_type_spec.add_pointer_level(CVQualifier::None);
@@ -1840,7 +1840,7 @@ ParseResult Parser::parse_typedef_declaration() {
 			if (!member_type_spec.is_pointer() && !member_type_spec.is_reference() && !member_type_spec.is_rvalue_reference()) {
 				if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_spec.type_index())) {
 					member_size = toSizeT(member_struct_info->total_size);
-					referenced_size_bits = static_cast<size_t>(toBits(member_struct_info->total_size).value);
+					referenced_size_bits = static_cast<size_t>(member_struct_info->sizeInBits().value);
 					member_alignment = member_struct_info->alignment;
 				}
 			}
@@ -1876,14 +1876,14 @@ ParseResult Parser::parse_typedef_declaration() {
 		struct_type_info.setStructInfo(std::move(struct_info));
 		// Update type_size_ from the finalized struct's total size
 		if (struct_type_info.getStructInfo()) {
-			struct_type_info.type_size_ = toBits(struct_type_info.getStructInfo()->total_size).value;
+			struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
 		}
 
 		// Create type specifier for the struct
 		// Note: Use struct_type_info.getStructInfo() since struct_info was moved above
 		type_spec = TypeSpecifierNode(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(toBits(struct_type_info.getStructInfo()->total_size).value),
+			static_cast<int>(struct_type_info.getStructInfo()->sizeInBits().value),
 			Token(Token::Type::Identifier, StringTable::getStringView(struct_name_for_typedef), 0, 0, 0),
 			CVQualifier::None,
 			ReferenceQualifier::None);

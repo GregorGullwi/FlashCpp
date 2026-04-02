@@ -1233,7 +1233,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
 							if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
 								member_size = toSizeT(member_struct_info->total_size);
-								referenced_size_bits = toBits(member_struct_info->total_size).value;
+								referenced_size_bits = member_struct_info->sizeInBits().value;
 								member_alignment = member_struct_info->alignment;
 							}
 						}
@@ -2694,7 +2694,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
 			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
 				member_size = toSizeT(member_struct_info->total_size);
-				referenced_size_bits = toBits(member_struct_info->total_size).value;
+				referenced_size_bits = member_struct_info->sizeInBits().value;
 				member_alignment = member_struct_info->alignment;
 			}
 		}
@@ -3039,7 +3039,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::Const, // const qualifier
 			ReferenceQualifier::None);
@@ -3082,7 +3082,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3103,7 +3103,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::Const, // const qualifier
 			ReferenceQualifier::None);
@@ -3150,7 +3150,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3191,7 +3191,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3212,7 +3212,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			toBits(struct_info->total_size).value, // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3282,7 +3282,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
 				struct_type_index.withCategory(TypeCategory::Struct),
-				toBits(struct_info->total_size).value, // size in bits
+				struct_info->sizeInBits().value, // size in bits
 				name_token,
 				CVQualifier::Const, // const qualifier
 				ReferenceQualifier::None);
@@ -3406,7 +3406,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	struct_type_info.setStructInfo(std::move(struct_info));
 	// Update type_size_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = toBits(struct_type_info.getStructInfo()->total_size).value;
+		struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
 
 	// If this is a nested class, also register it with its qualified name

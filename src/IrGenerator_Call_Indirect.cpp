@@ -306,7 +306,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						if (type_it != getTypesByNameMap().end()) {
 							const TypeInfo* closure_type = type_it->second;
 							int closure_size = closure_type->getStructInfo()
-												   ? toBits(closure_type->getStructInfo()->total_size).value
+												   ? closure_type->getStructInfo()->sizeInBits().value
 												   : 64;
 							object_type = TypeSpecifierNode(
 								closure_type->type_index_.withCategory(TypeCategory::Struct),
@@ -1252,7 +1252,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 											if (type_it != getTypesByNameMap().end()) {
 												const TypeInfo* closure_type = type_it->second;
 												int closure_size = closure_type->getStructInfo()
-																	   ? toBits(closure_type->getStructInfo()->total_size).value
+																	   ? closure_type->getStructInfo()->sizeInBits().value
 																	   : 64;
 												type_node = TypeSpecifierNode(
 													closure_type->type_index_.withCategory(TypeCategory::Struct),

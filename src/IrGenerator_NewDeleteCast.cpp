@@ -908,7 +908,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 		const TypeInfo* target_type_info = tryGetTypeInfo(target_type_node.type_index());
 		if (target_type_info && target_type_info->struct_info_) {
 			return makeExprResult(target_type_node.type_index(),
-								  SizeInBits{static_cast<int>(toBits(target_type_info->struct_info_->total_size).value)},
+								  SizeInBits{static_cast<int>(target_type_info->struct_info_->sizeInBits().value)},
 								  expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}

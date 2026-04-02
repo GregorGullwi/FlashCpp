@@ -268,6 +268,9 @@ struct StructTypeInfo {
 	bool hasFinalizationError() const { return !finalization_error_.empty(); }
 	const std::string& getFinalizationError() const { return finalization_error_; }
 
+	SizeInBits sizeInBits() const { return toBits(total_size); }
+	SizeInBytes sizeInBytes() const { return total_size; }
+
 	bool finalize() {
 		// Build vtable first (if struct has virtual functions)
 		if (!buildVTable()) {
@@ -677,6 +680,9 @@ struct EnumTypeInfo {
 		return name;
 	}
 
+	SizeInBits sizeInBits() const { return underlying_size; }
+	SizeInBytes sizeInBytes() const { return toBytesCeil(underlying_size); }
+
 	void addEnumerator(StringHandle enumerator_name, long long value) {
 		enumerators.emplace_back(enumerator_name, value);
 	}
@@ -901,17 +907,17 @@ struct TypeInfo {
 
 	SizeInBits sizeInBits() const {
 		if (struct_info_) {
-			return toBits(struct_info_->total_size);
+			return struct_info_->sizeInBits();
 		}
 		if (enum_info_) {
-			return enum_info_->underlying_size;
+			return enum_info_->sizeInBits();
 		}
 		return SizeInBits{type_size_};
 	}
 
 	SizeInBytes sizeInBytes() const {
 		if (struct_info_) {
-			return struct_info_->total_size;
+			return struct_info_->sizeInBytes();
 		}
 		SizeInBits bits = sizeInBits();
 		return bits.is_set() ? toBytesCeil(bits) : SizeInBytes{};

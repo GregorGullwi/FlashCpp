@@ -160,8 +160,8 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
 	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-		if (type_info->type_size_ > 0) {
-			return type_info->type_size_;
+		if (type_info->hasStoredSize()) {
+			return static_cast<size_t>(type_info->sizeInBits().value);
 		}
 	}
 	return 0;  // Will be resolved during member access

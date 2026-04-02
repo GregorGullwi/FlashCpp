@@ -914,10 +914,10 @@ ASTNode Parser::substituteTemplateParameters(
 										target_type_info.getStructInfo() != nullptr;
 			int size_bits = 0;
 			if (is_struct_like) {
-				size_bits = target_type_info.type_size_;
+				size_bits = static_cast<int>(target_type_info.sizeInBits().value);
 			} else {
-				size_bits = target_type_info.type_size_ > 0
-					? target_type_info.type_size_
+				size_bits = target_type_info.hasStoredSize()
+					? static_cast<int>(target_type_info.sizeInBits().value)
 					: get_type_size_bits(target_type_info.type_index_.category());
 			}
 			Token substituted_token = type_spec.token();

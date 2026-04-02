@@ -1032,7 +1032,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 
 	struct_type_info.setStructInfo(std::move(struct_info));
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = toBits(struct_type_info.getStructInfo()->total_size).value;
+		struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
 
 	return std::nullopt;	 // Return nullopt since we don't need to add anything to AST

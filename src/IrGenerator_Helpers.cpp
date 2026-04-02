@@ -374,19 +374,19 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 	if (lowered_cat == TypeCategory::Enum) {
 		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
-				return enum_info->underlying_size.value;
+				return enum_info->sizeInBits().value;
 			}
 			// Forward-declared enums / aliases may only have type_size_.
-			if (ti->type_size_ > 0) {
-				return ti->type_size_;
+			if (ti->hasStoredSize()) {
+				return ti->sizeInBits().value;
 			}
 		}
 	}
 
 	if (semantic_cat == TypeCategory::UserDefined) {
 		if (const TypeInfo* ti = tryGetTypeInfo(type_index)) {
-			if (ti->type_size_ > 0) {
-				return ti->type_size_;
+			if (ti->hasStoredSize()) {
+				return ti->sizeInBits().value;
 			}
 		}
 	}

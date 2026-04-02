@@ -14312,7 +14312,7 @@ void IrToObjConverter<TWriterClass>::handleCatchBegin(const IrInstruction& instr
 			int catch_storage_bits = 64;
 			if (!catch_op.is_reference() && !catch_op.is_rvalue_reference()) {
 				if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-					catch_storage_bits = ti->type_size_;
+					catch_storage_bits = static_cast<int>(ti->sizeInBits().value);
 				} else {
 					int builtin_size = get_type_size_bits(catch_op.exceptionType());
 					if (builtin_size > 0) {

@@ -1351,9 +1351,9 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 		}
 
 		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-			size_bits = toBits(struct_info->total_size).value;
-		} else if (type_info->type_size_ > 0) {
-			size_bits = type_info->type_size_;
+			size_bits = struct_info->sizeInBits().value;
+		} else if (type_info->hasStoredSize()) {
+			size_bits = static_cast<int>(type_info->sizeInBits().value);
 		}
 	}
 

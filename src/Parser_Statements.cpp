@@ -1454,7 +1454,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				if (const TypeInfo* elem_info = tryGetTypeInfo(first_member.type_index)) {
 					TypeCategory elem_type = elem_info->resolvedType();
 					const TypeCategory elem_cat = elem_info->category();
-					int elem_size = elem_info->type_size_ > 0 ? elem_info->type_size_ : get_type_size_bits(elem_type);
+					int elem_size = elem_info->hasStoredSize() ? static_cast<int>(elem_info->sizeInBits().value) : get_type_size_bits(elem_type);
 
 					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
 						elem_type,
@@ -1760,7 +1760,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (is_struct_type(target_member.type_index.category())) {
 				member_type_spec = TypeSpecifierNode(
 					target_member.type_index.withCategory(member_type_info->resolvedType()),
-					member_type_info->type_size_,
+					static_cast<int>(member_type_info->sizeInBits().value),
 					Token(),
 					CVQualifier::None,
 					ReferenceQualifier::None);
@@ -1768,7 +1768,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				member_type_spec = TypeSpecifierNode(
 					target_member.memberType(),
 					TypeQualifier::None,
-					member_type_info->type_size_,
+					static_cast<int>(member_type_info->sizeInBits().value),
 					Token(),
 					CVQualifier::None);
 				member_type_spec.set_type_index(target_member.type_index);
@@ -2293,7 +2293,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	const TypeInfo* struct_type_info = type_it->second;
 	int size_bits = 0;
 	if (const StructTypeInfo* struct_info = struct_type_info->getStructInfo()) {
-		size_bits = static_cast<int>(toBits(struct_info->total_size).value);
+		size_bits = static_cast<int>(struct_info->sizeInBits().value);
 	}
 
 	TypeSpecifierNode resolved(struct_type_info->type_index_.withCategory(TypeCategory::Struct), size_bits, type_specifier.token(), type_specifier.cv_qualifier(), ReferenceQualifier::None);
