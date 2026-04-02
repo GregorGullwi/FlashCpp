@@ -2000,7 +2000,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 											}
 										}
 										MemberStoreOp elem_store;
-										elem_store.value.setType(member.type_index.category());
+										elem_store.value.setType(member.memberType());
 										assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
 										elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
 										elem_store.value.value = elem_val;

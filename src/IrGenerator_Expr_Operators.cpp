@@ -2490,13 +2490,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Need to scale the offset by sizeof(pointed-to-type)
 		FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_ARITH_DEBUG] Compound assignment: lhsSize={}, pointer_depth={}, rhsType={}", lhsSize, lhs_pointer_depth, static_cast<int>(rhsCat));
 
-		// Determine element size using existing getSizeInBytes function
+		// Determine element size using the pointee type, not the pointer object size.
 		size_t element_size;
 		if (lhs_pointer_depth > 1) {
 			element_size = 8; // Multi-level pointer
 		} else {
-			// Single-level pointer: element size is sizeof(base_type)
-			element_size = getSizeInBytes(lhs_type_node->type_index(), lhs_type_node->size_in_bits());
+			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
 		}
 
 		// Scale the offset: offset_scaled = offset * element_size

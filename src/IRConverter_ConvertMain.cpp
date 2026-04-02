@@ -8392,7 +8392,7 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 										auto index_name = std::get<StringHandle>(*lv_info.array_index);
 										auto index_offset_opt = findIdentifierStackOffset(index_name);
 										if (!index_offset_opt.has_value()) {
-											return;
+											break;
 										}
 										emitMovFromFrameSized(
 											SizedRegister{X64Register::RCX, 64, false},

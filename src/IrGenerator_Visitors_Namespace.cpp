@@ -376,12 +376,50 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					// to an array element (e.g., return values[index]).
 					// This converts the metadata-only representation into an explicit IR instruction
 					// that the code generator can handle directly.
+					auto getReferencedReturnSizeBits = [&]() {
+						if (needs_type_index(current_function_return_type_index_.category())) {
+							if (const TypeInfo* type_info = tryGetTypeInfo(current_function_return_type_index_)) {
+								if (type_info->hasStoredSize()) {
+									return type_info->sizeInBits().value;
+								}
+							}
+						}
+						int fallback_bits = get_type_size_bits(resolve_type_alias(current_function_return_type_index_));
+						return fallback_bits > 0 ? fallback_bits : current_function_return_size_;
+					};
+					auto getArrayIndexTypedValue = [&](const IrValue& index_value) {
+						TypedValue typed_index;
+						if (const auto* temp_index = std::get_if<TempVar>(&index_value)) {
+							const TempVarMetadata index_meta = getTempVarMetadata(*temp_index);
+							TypeCategory index_category = index_meta.valueType();
+							if (index_category == TypeCategory::Invalid) {
+								index_category = TypeCategory::LongLong;
+							}
+							typed_index.type_index = index_meta.value_type_index.category() != TypeCategory::Invalid
+													 ? index_meta.value_type_index
+													 : nativeTypeIndex(index_category);
+							typed_index.ir_type = index_meta.ir_type;
+							typed_index.size_in_bits = index_meta.value_size_bits.value > 0
+													 ? index_meta.value_size_bits
+													 : SizeInBits{64};
+							typed_index.is_signed = isSignedType(index_category);
+						} else if (std::holds_alternative<unsigned long long>(index_value)) {
+							typed_index.setType(TypeCategory::UnsignedLongLong);
+							typed_index.ir_type = IrType::Integer;
+							typed_index.size_in_bits = SizeInBits{64};
+						} else {
+							typed_index.setType(TypeCategory::LongLong);
+							typed_index.ir_type = IrType::Integer;
+							typed_index.size_in_bits = SizeInBits{64};
+						}
+						typed_index.value = index_value;
+						return typed_index;
+					};
 					ArrayElementAddressOp elem_addr;
 					TempVar address_temp = var_counter.next();
 					elem_addr.result = address_temp;
 					elem_addr.element_type_index = current_function_return_type_index_;
-					// Use base type size, not return size (which is 64 for reference returns)
-					elem_addr.element_size_in_bits = get_type_size_bits(current_function_return_type_index_.category());
+					elem_addr.element_size_in_bits = getReferencedReturnSizeBits();
 
 					// When the base is a StringHandle like "this.values", the code generator's
 					// handleArrayElementAddress can't handle qualified names. Emit an AddressOfMember
@@ -417,10 +455,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 					// Convert IrValue index to TypedValue
 					const IrValue& idx_val = *lv_info.array_index;
-					elem_addr.index.setType(TypeCategory::Int);
-					elem_addr.index.ir_type = IrType::Integer;
-					elem_addr.index.size_in_bits = SizeInBits{32};
-					elem_addr.index.value = idx_val;
+					elem_addr.index = getArrayIndexTypedValue(idx_val);
 					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr), node.return_token()));
 					TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
 					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
