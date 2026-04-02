@@ -1330,10 +1330,21 @@ inline bool isConcreteBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
 }
 
 inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec) {
-	if (spec.pointer_depth() > 0 || spec.is_function_pointer() || spec.is_member_function_pointer() || spec.is_member_object_pointer()) {
+	if (spec.is_function_pointer() || spec.is_member_function_pointer() || spec.is_member_object_pointer()) {
 		return false;
 	}
+	size_t total_pointer_depth = spec.pointer_depth();
 	TypeCategory type = effectiveBinaryOperatorTypeFromSpec(spec);
+	if (spec.type_index().is_valid()) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(spec.type_index());
+		total_pointer_depth += alias_info.pointer_depth;
+		if (alias_info.type_index.is_valid()) {
+			type = alias_info.typeEnum();
+		}
+	}
+	if (total_pointer_depth > 0) {
+		return false;
+	}
 	return binaryOperatorUsesTypeIndexIdentity(type) && spec.type_index().is_valid();
 }
 

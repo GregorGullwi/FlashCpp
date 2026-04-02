@@ -715,6 +715,27 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
+		auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
+			if (!type_spec.type_index().is_valid()) {
+				return;
+			}
+			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_spec.type_index());
+			if (alias_info.type_index.is_valid() && alias_info.type_index != type_spec.type_index()) {
+				type_spec.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+			}
+			type_spec.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+			if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+				alias_info.reference_qualifier != ReferenceQualifier::None) {
+				type_spec.set_reference_qualifier(alias_info.reference_qualifier);
+			}
+			if (!type_spec.has_function_signature() && alias_info.function_signature.has_value()) {
+				type_spec.set_function_signature(*alias_info.function_signature);
+			}
+			const int resolved_size_bits = getTypeSpecSizeBits(type_spec);
+			if (resolved_size_bits > 0) {
+				type_spec.set_size_in_bits(resolved_size_bits);
+			}
+		};
 
 	// Substitute template parameters in the return type
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
@@ -741,6 +762,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			substituted_return_type_index,
 			template_params,
 			template_args);
+		apply_resolved_alias_metadata_local(return_type_ref);
 
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -788,6 +810,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					substituted_type_index,
 					template_params,
 					template_args);
+				apply_resolved_alias_metadata_local(param_type_ref);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			// Preserve default argument value from the original template declaration
