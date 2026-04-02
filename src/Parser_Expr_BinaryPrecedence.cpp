@@ -35,7 +35,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		}
 
 		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
-		auto adl_candidates = gSymbolTable.lookup_adl(op_name, arg_types);
+		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
 		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
 
 		constexpr int initial_template_instantiation_depth = 1;
