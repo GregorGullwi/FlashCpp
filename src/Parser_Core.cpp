@@ -74,6 +74,44 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 				}
 			}
 		}
+		std::string_view type_name = StringTable::getStringView(type_info->name());
+		size_t sep_pos = type_name.rfind("::");
+		if (sep_pos != std::string_view::npos) {
+			std::string_view parent_name = type_name.substr(0, sep_pos);
+			std::string_view nested_name = type_name.substr(sep_pos + 2);
+			std::string_view base_template_name = extractBaseTemplateName(parent_name);
+			if (!base_template_name.empty()) {
+				const StructTypeInfo* resolved_struct_info = nullptr;
+				for (const auto& [candidate_name, candidate_type_info] : getTypesByNameMap()) {
+					if (!candidate_type_info || !candidate_type_info->getStructInfo()) {
+						continue;
+					}
+					std::string_view candidate_view = StringTable::getStringView(candidate_name);
+					size_t candidate_sep = candidate_view.rfind("::");
+					if (candidate_sep == std::string_view::npos) {
+						continue;
+					}
+					std::string_view candidate_parent = candidate_view.substr(0, candidate_sep);
+					std::string_view candidate_nested = candidate_view.substr(candidate_sep + 2);
+					if (candidate_nested != nested_name) {
+						continue;
+					}
+					if (extractBaseTemplateName(candidate_parent) != base_template_name) {
+						continue;
+					}
+					if (candidate_parent.find('$') == std::string_view::npos) {
+						continue;
+					}
+					if (resolved_struct_info != nullptr) {
+						return nullptr;
+					}
+					resolved_struct_info = candidate_type_info->getStructInfo();
+				}
+				if (resolved_struct_info) {
+					return resolved_struct_info;
+				}
+			}
+		}
 	}
 	return nullptr;
 }

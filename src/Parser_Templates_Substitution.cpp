@@ -988,7 +988,10 @@ ASTNode Parser::substituteTemplateParameters(
 		// When a member function body references a nested type like Inner{}, the
 		// TypeSpecifierNode still carries the pattern's type_index (e.g., "Outer::Inner").
 		// We need to remap it to the instantiated version (e.g., "Outer$hash::Inner").
-		if (type_spec.category() == TypeCategory::Struct && type_spec.type_index().is_valid()) {
+		if ((type_spec.category() == TypeCategory::Struct ||
+			 type_spec.category() == TypeCategory::UserDefined ||
+			 type_spec.category() == TypeCategory::TypeAlias) &&
+			type_spec.type_index().is_valid()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());
 				// Use the rightmost scope separator so namespaced patterns like
@@ -997,36 +1000,37 @@ ASTNode Parser::substituteTemplateParameters(
 				if (sep_pos != std::string_view::npos) {
 					std::string_view parent_name = type_name.substr(0, sep_pos);
 					std::string_view nested_name = type_name.substr(sep_pos + 2);
-					// Only remap if parent is a template pattern (not already instantiated)
-					if (parent_name.find('$') == std::string_view::npos) {
-						// Try both the fully-qualified template name ("ns::Outer") and
-						// the short name ("Outer"), because instantiated nested types
-						// are currently registered under the short instantiated parent.
-						std::vector<std::string_view> template_owner_candidates{parent_name};
-						size_t parent_sep_pos = parent_name.rfind("::");
-						if (parent_sep_pos != std::string_view::npos) {
-							template_owner_candidates.push_back(parent_name.substr(parent_sep_pos + 2));
+					// Try both the fully-qualified template name ("ns::Outer"), its short
+					// name ("Outer"), and the base template name extracted from hashed
+					// placeholders ("Outer" from "Outer$hash").
+					std::vector<std::string_view> template_owner_candidates;
+					template_owner_candidates.push_back(parent_name);
+					if (std::string_view base_parent = extractBaseTemplateName(parent_name); !base_parent.empty()) {
+						template_owner_candidates.push_back(base_parent);
+					}
+					size_t parent_sep_pos = parent_name.rfind("::");
+					if (parent_sep_pos != std::string_view::npos) {
+						template_owner_candidates.push_back(parent_name.substr(parent_sep_pos + 2));
+					}
+					std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
+					for (const std::string_view& parent_candidate : template_owner_candidates) {
+						auto template_opt = gTemplateRegistry.lookupTemplate(parent_candidate);
+						if (!template_opt.has_value()) {
+							continue;
 						}
-						std::vector<TemplateTypeArg> args_vec(template_args.begin(), template_args.end());
-						for (const std::string_view& parent_candidate : template_owner_candidates) {
-							auto template_opt = gTemplateRegistry.lookupTemplate(parent_candidate);
-							if (!template_opt.has_value()) {
-								continue;
-							}
-							std::string_view inst_parent = FlashCpp::generateInstantiatedNameFromArgs(parent_candidate, args_vec);
-							StringBuilder sb;
-							StringHandle inst_nested_handle = StringTable::getOrInternStringHandle(
-								sb.append(inst_parent).append("::"sv).append(nested_name).commit());
-							auto it = getTypesByNameMap().find(inst_nested_handle);
-							if (it == getTypesByNameMap().end()) {
-								continue;
-							}
-							const TypeInfo* inst_type_info = it->second;
-							FLASH_LOG(Templates, Debug,
-								"Remapped nested struct type '", type_name,
-								"' -> '", StringTable::getStringView(inst_type_info->name()), "'");
-							return makeTypeSpecifier(*inst_type_info);
+						std::string_view inst_parent = FlashCpp::generateInstantiatedNameFromArgs(parent_candidate, args_vec);
+						StringBuilder sb;
+						StringHandle inst_nested_handle = StringTable::getOrInternStringHandle(
+							sb.append(inst_parent).append("::"sv).append(nested_name).commit());
+						auto it = getTypesByNameMap().find(inst_nested_handle);
+						if (it == getTypesByNameMap().end()) {
+							continue;
 						}
+						const TypeInfo* inst_type_info = it->second;
+						FLASH_LOG(Templates, Debug,
+							"Remapped nested struct type '", type_name,
+							"' -> '", StringTable::getStringView(inst_type_info->name()), "'");
+						return makeTypeSpecifier(*inst_type_info);
 					}
 				}
 			}

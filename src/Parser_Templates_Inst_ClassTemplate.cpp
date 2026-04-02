@@ -5507,6 +5507,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				ASTNode substituted_return_type_node = substituteTemplateParameters(
+					decl.type_node(), template_params, template_args_to_use);
 				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
 
@@ -5551,23 +5553,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				// Create substituted return type node
-				TypeSpecifierNode substituted_return_type(
-					return_type,
-					return_type_spec.qualifier(),
-					get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
-					decl.identifier_token(),
-					CVQualifier::None);
-				substituted_return_type.set_type_index(return_type_index);
+				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
+					? substituted_return_type_node.as<TypeSpecifierNode>()
+					: TypeSpecifierNode(
+						  return_type,
+						  return_type_spec.qualifier(),
+						  get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
+						  decl.identifier_token(),
+						  CVQualifier::None);
+				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
+					substituted_return_type.set_type_index(return_type_index);
 
-				// Copy pointer levels and reference qualifiers from original
-				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+					// Copy pointer levels and reference qualifiers from original
+					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+					}
+					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				}
-				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				if (return_type_spec.has_function_signature()) {
 					substituted_return_type.set_function_signature(return_type_spec.function_signature());
-				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
-						   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
+						   substituted_return_type.type_index().category() == TypeCategory::MemberFunctionPointer) {
 					if (const auto* arg = findTemplateArgByName(
 							return_type_spec.token().value(),
 							template_params,
@@ -5723,27 +5729,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (func_decl.get_definition().has_value() || func_decl.has_template_body_position()) {
 				// Substitute return type
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+				ASTNode substituted_return_type_node = substituteTemplateParameters(
+					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex return_type_index = substitute_template_parameter(
 					return_type_spec, template_params, template_args_to_use);
 
 				// Create substituted return type node
-				TypeSpecifierNode substituted_return_type(
-					return_type_index.category(),
-					return_type_spec.qualifier(),
-					get_substituted_type_size_bits(return_type_index),
-					decl.identifier_token(),
-					CVQualifier::None);
-				substituted_return_type.set_type_index(return_type_index);
+				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
+					? substituted_return_type_node.as<TypeSpecifierNode>()
+					: TypeSpecifierNode(
+						  return_type_index.category(),
+						  return_type_spec.qualifier(),
+						  get_substituted_type_size_bits(return_type_index),
+						  decl.identifier_token(),
+						  CVQualifier::None);
+				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
+					substituted_return_type.set_type_index(return_type_index);
 
-				// Copy pointer levels and reference qualifiers from original
-				for (const auto& ptr_level : return_type_spec.pointer_levels()) {
-					substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+					// Copy pointer levels and reference qualifiers from original
+					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
+						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
+					}
+					substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				}
-				substituted_return_type.set_reference_qualifier(return_type_spec.reference_qualifier());
 				if (return_type_spec.has_function_signature()) {
 					substituted_return_type.set_function_signature(return_type_spec.function_signature());
-				} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
-						   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+				} else if (substituted_return_type.type_index().category() == TypeCategory::FunctionPointer ||
+						   substituted_return_type.type_index().category() == TypeCategory::MemberFunctionPointer) {
 					if (const auto* arg = findTemplateArgByName(
 							return_type_spec.token().value(),
 							template_params,
@@ -6321,21 +6333,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (needs_substitution) {
 				// Create a new inner function with substituted non-auto parameter types
 				const TypeSpecifierNode& return_type_spec = decl_node.type_node().as<TypeSpecifierNode>();
+				ASTNode substituted_return_type_node = substituteTemplateParameters(
+					decl_node.type_node(), template_params, template_args_to_use);
 				TypeIndex ret_type_index = substitute_template_parameter(
 					return_type_spec, template_params, template_args_to_use);
 
-				ASTNode new_return_type = emplace_node<TypeSpecifierNode>(
-					ret_type_index.category(), return_type_spec.qualifier(),
-					get_type_size_bits(ret_type_index.category()), return_type_spec.token(), return_type_spec.cv_qualifier());
+				ASTNode new_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
+					? substituted_return_type_node
+					: emplace_node<TypeSpecifierNode>(
+						  ret_type_index.category(), return_type_spec.qualifier(),
+						  get_type_size_bits(ret_type_index.category()), return_type_spec.token(), return_type_spec.cv_qualifier());
 				auto& new_return_spec = new_return_type.as<TypeSpecifierNode>();
-				new_return_spec.set_type_index(ret_type_index);
-				for (const auto& pl : return_type_spec.pointer_levels())
-					new_return_spec.add_pointer_level(pl.cv_qualifier);
-				new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
+				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
+					new_return_spec.set_type_index(ret_type_index);
+					for (const auto& pl : return_type_spec.pointer_levels())
+						new_return_spec.add_pointer_level(pl.cv_qualifier);
+					new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
+				}
 				if (return_type_spec.has_function_signature()) {
 					new_return_spec.set_function_signature(return_type_spec.function_signature());
-				} else if (ret_type_index.category() == TypeCategory::FunctionPointer ||
-						   ret_type_index.category() == TypeCategory::MemberFunctionPointer) {
+				} else if (new_return_spec.type_index().category() == TypeCategory::FunctionPointer ||
+						   new_return_spec.type_index().category() == TypeCategory::MemberFunctionPointer) {
 					if (const auto* arg = findTemplateArgByName(
 							return_type_spec.token().value(),
 							template_params,
