@@ -3,6 +3,21 @@
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
+namespace {
+void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& source) {
+	target.set_indirect_call(source.is_indirect_call());
+	if (source.has_mangled_name()) {
+		target.set_mangled_name(source.mangled_name());
+	}
+	if (source.has_qualified_name()) {
+		target.set_qualified_name(source.qualified_name());
+	}
+	if (source.has_template_arguments()) {
+		target.set_template_arguments(std::vector<ASTNode>(source.template_arguments().begin(), source.template_arguments().end()));
+	}
+}
+}
+
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -295,6 +310,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from());
+					copyFunctionCallMetadata(new_call, call);
 					std::vector<ASTNode> substituted_template_arg_nodes;
 					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
 					for (const auto& arg_node : explicit_template_arg_nodes) {
@@ -389,6 +405,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from());
+					copyFunctionCallMetadata(new_call, call);
 					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 					return ASTNode(&new_expr);
 				}
@@ -472,6 +489,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					instantiated_func.decl_node(),
 					std::move(substituted_args),
 					call.called_from());
+				copyFunctionCallMetadata(new_call, call);
 
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 				return ASTNode(&new_expr);
@@ -552,6 +570,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 
 			FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
 				new_decl, std::move(substituted_args), new_func_token);
+			copyFunctionCallMetadata(new_call, call);
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 			return ASTNode(&new_expr);
 		}

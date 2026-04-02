@@ -228,9 +228,11 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
 
-			// Check if this is a function pointer or auto type (which could be a callable)
+			// Check if this is a function pointer or a substituted function type carrying
+			// a function signature. Free-function template parameters can instantiate into
+			// the latter form before full canonicalization.
 			// auto&& parameters in recursive lambdas need to be treated as callables
-		if (func_type.is_function_pointer()) {
+		if (func_type.is_function_pointer() || func_type.has_function_signature()) {
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 			TempVar ret_var = var_counter.next();

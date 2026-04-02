@@ -6,6 +6,44 @@
 
 #include "LambdaHelpers.h"
 
+namespace {
+TypeSpecifierNode build_function_pointer_type_from_function_declaration(const FunctionDeclarationNode& func_decl) {
+	FunctionSignature sig;
+	sig.return_type_index = func_decl.decl_node().type_node().as<TypeSpecifierNode>().type_index();
+	for (const auto& param_node : func_decl.parameter_nodes()) {
+		if (!param_node.is<DeclarationNode>()) {
+			continue;
+		}
+		const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+		sig.parameter_type_indices.push_back(param_type.type_index());
+	}
+
+	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
+	fp_type.set_function_signature(sig);
+	return fp_type;
+}
+
+const FunctionDeclarationNode* find_function_declaration_for_decl(const DeclarationNode& decl) {
+	const auto overloads = gSymbolTable.lookup_all(decl.identifier_token().value());
+	for (const auto& overload : overloads) {
+		if (!overload.is<FunctionDeclarationNode>()) {
+			continue;
+		}
+		const auto& func_decl = overload.as<FunctionDeclarationNode>();
+		const Token& decl_token = decl.identifier_token();
+		const Token& func_token = func_decl.decl_node().identifier_token();
+		if (&func_decl.decl_node() == &decl ||
+			(func_token.value() == decl_token.value() &&
+			 func_token.line() == decl_token.line() &&
+			 func_token.column() == decl_token.column() &&
+			 func_token.file_index() == decl_token.file_index())) {
+			return &func_decl;
+		}
+	}
+	return nullptr;
+}
+}
+
 // Helper: Parse template brace initialization: Template<Args>{}
 // Parses the brace initializer, looks up the instantiated type, and creates a ConstructorCallNode
 ParseResult Parser::parse_template_brace_initialization(
@@ -1225,6 +1263,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+				if (const FunctionDeclarationNode* func_decl = find_function_declaration_for_decl(*decl)) {
+					return build_function_pointer_type_from_function_declaration(*func_decl);
+				}
+
 				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
 
 				// Handle array-to-pointer decay
@@ -1242,15 +1284,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 				return type;
 			}
-			// Handle function identifiers: __typeof(func) / decltype(func) should
-			// return the function's return type. GCC's __typeof on a function name
-			// yields the function type, but for practical purposes (libstdc++ usage
-			// like 'extern "C" __typeof(uselocale) __uselocale;'), returning the
-			// return type allows parsing to continue past these declarations.
 			if (symbol->is<FunctionDeclarationNode>()) {
 				const auto& func = symbol->as<FunctionDeclarationNode>();
-				const TypeSpecifierNode& ret_type = func.decl_node().type_node().as<TypeSpecifierNode>();
-				return ret_type;
+				return build_function_pointer_type_from_function_declaration(func);
 			}
 		}
 	} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
