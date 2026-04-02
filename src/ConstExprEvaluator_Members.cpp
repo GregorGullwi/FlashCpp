@@ -4399,7 +4399,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	// First, we need to get the struct type from the object to look up the actual function
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
-	EvalResult complex_object_result = EvalResult::from_int(0LL);
+	EvalResult complex_object_result;
 	bool has_complex_object_result = false;
 
 	auto extracted = extract_identifier_from_expression(object_expr);
@@ -4469,7 +4469,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 
 	const ConstructorCallNode* ctor_call_ptr =
-		(has_complex_object_result || initializer == nullptr) ? nullptr : extract_constructor_call(*initializer);
+		has_complex_object_result ? nullptr : extract_constructor_call(*initializer);
 	if (!has_complex_object_result && !ctor_call_ptr && !(*initializer)->is<InitializerListNode>()) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
