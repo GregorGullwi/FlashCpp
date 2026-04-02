@@ -1750,19 +1750,24 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				}
 			}
 
-			StringBuilder op_name_sb;
-			op_name_sb.append("operator").append(op);
-			std::string_view operator_func_name = op_name_sb.commit();
-			auto mangled_name = NameMangling::generateMangledName(
-				operator_func_name,
-				return_type,
-				param_types,
-				false, // not variadic
-				"", // no struct (free function)
-				namespace_path,
-				Linkage::CPlusPlus,
-				false // free function, never const
-			);
+			std::string mangled_name;
+			if (func_decl.has_mangled_name()) {
+				mangled_name = std::string(func_decl.mangled_name());
+			} else {
+				StringBuilder op_name_sb;
+				op_name_sb.append("operator").append(op);
+				std::string_view operator_func_name = op_name_sb.commit();
+				mangled_name = NameMangling::generateMangledName(
+					operator_func_name,
+					return_type,
+					param_types,
+					false, // not variadic
+					"", // no struct (free function)
+					namespace_path,
+					Linkage::CPlusPlus,
+					false // free function, never const
+				);
+			}
 
 			TempVar result_var = var_counter.next();
 			CallOp call_op;

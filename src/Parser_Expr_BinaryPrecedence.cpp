@@ -15,6 +15,54 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		~RecursionGuard() { --depth; }
 	} guard(recursion_depth);
 
+	auto instantiate_binary_operator_templates = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
+		-> const FunctionDeclarationNode* {
+		if (current_linkage_ == Linkage::C) {
+			return nullptr;
+		}
+
+		StringBuilder op_name_builder;
+		op_name_builder.append("operator").append(op_symbol);
+		std::string_view op_name = op_name_builder.commit();
+
+		std::vector<TypeSpecifierNode> arg_types;
+		arg_types.reserve(2);
+		arg_types.push_back(left_type_spec);
+		arg_types.push_back(right_type_spec);
+
+		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
+			return get_function_decl_node(*instantiated);
+		}
+
+		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
+		auto adl_candidates = gSymbolTable.lookup_adl(op_name, arg_types);
+		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
+
+		int template_recursion_depth = 1;
+		for (const auto& candidate : candidates) {
+			if (!candidate.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+
+			bool previous_sfinae_context = in_sfinae_context_;
+			in_sfinae_context_ = true;
+			std::optional<ASTNode> instantiated = try_instantiate_single_template(
+				candidate,
+				op_name,
+				arg_types,
+				template_recursion_depth);
+			in_sfinae_context_ = previous_sfinae_context;
+
+			if (instantiated.has_value()) {
+				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+					return func_decl;
+				}
+			}
+		}
+
+		return nullptr;
+	};
+
 	if (recursion_depth > MAX_RECURSION_DEPTH) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
 		return ParseResult::error("Parser error: maximum recursion depth exceeded", current_token_);
@@ -407,11 +455,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						std::string_view op_symbol = operator_token.value();
 
 						if (left_type_spec.has_value() && right_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*left_type_spec) && isConcreteBinaryOperatorOperandType(*right_type_spec)) {
+							OverloadableOperator op_kind = stringToOverloadableOperator(op_symbol);
 							auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
 								*left_type_spec,
 								*right_type_spec,
-								stringToOverloadableOperator(op_symbol),
+								op_kind,
 								gSymbolTable);
+							if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind != OverloadableOperator::Assign) {
+								if (const FunctionDeclarationNode* instantiated_overload =
+										instantiate_binary_operator_templates(op_symbol, *left_type_spec, *right_type_spec)) {
+									overload_result = OperatorOverloadResult(instantiated_overload);
+								}
+							}
 							if (overload_result.is_ambiguous) {
 								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
 							}
@@ -453,6 +508,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
+							if (!overload_result.has_match && !overload_result.is_ambiguous) {
+								if (const FunctionDeclarationNode* instantiated_overload =
+										instantiate_binary_operator_templates(operator_token.value(), *left_type_spec, *right_type_spec)) {
+									overload_result = OperatorOverloadResult(instantiated_overload);
+								}
+							}
 						}
 
 						if (overload_result.is_ambiguous) {
