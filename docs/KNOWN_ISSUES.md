@@ -386,44 +386,6 @@ would be to reconstruct the `MemberFunctionCallNode` with `rebound_args` (and a
 recursed object expression) when `!is_implicit_this_call`, instead of returning the
 original node.
 
-## Double-counting of alias metadata when importing a type alias via using-declaration
-
-`add_type_alias_copy(StringHandle, const TypeInfo&, uint32_t)` at
-`src/AstNodeTypes.cpp:227-236` copies the source alias's `alias_type_spec_` onto the
-new alias entry **and** sets the new alias's `type_index_` to chain through the source
-alias (via `registeredTypeIndex()` at line 230). When `resolveAliasTypeInfo`
-(`src/AstNodeTypes_DeclNodes.h:1410-1425`) walks the chain, it accumulates
-`pointer_depth`, `reference_qualifier`, `array_dimensions`, and `function_signature`
-from `alias_type_spec_` at every alias step — so the same metadata is counted on both
-the new alias and the source alias.
-
-**Example**:
-
-```cpp
-namespace foo { using bar = int*; }
-using foo::bar;  // creates a new alias with alias_type_spec_ copied from foo::bar
-```
-
-`resolveAliasTypeInfo` sees pointer_depth=1 on the new alias, then follows the chain to
-`foo::bar` and sees pointer_depth=1 again, yielding a resolved pointer_depth of 2
-instead of the correct 1. The same double-counting applies to array dimensions,
-reference qualifiers, and function signatures.
-
-The call site that triggers this is `src/Parser_Decl_TopLevel.cpp:1279`:
-`add_type_alias_copy(target_type_name, *source_type, source_type->type_size_)`.
-
-**Impact**: Any `using ns::alias;` declaration where the source alias has pointer,
-reference, array, or function-pointer metadata will resolve with doubled attributes.
-This is not yet observed in the test suite because the existing tests don't exercise
-cross-namespace using-declarations of pointer/array aliases followed by
-`resolveAliasTypeInfo` consumption.
-
-**Suggested fix**: Do NOT copy the source's `alias_type_spec_` to the new alias in the
-`const TypeInfo&` overload. The using-declaration itself adds no new indirection, so the
-new alias's `alias_type_spec_` should remain null. `resolveAliasTypeInfo` will naturally
-find the source's `alias_type_spec_` when it traverses the chain. Remove lines 232-234
-of `src/AstNodeTypes.cpp`.
-
 ## Variadic template parameters before non-variadic ones misalign param-arg pairing
 
 In `populateTemplateParamSubstitutions` (`src/Parser_Templates_Inst_Deduction.cpp:160-162`),
