@@ -413,7 +413,7 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 						if (fallback_type.has_value()) {
 							arg_types.push_back(*fallback_type);
 						} else {
-							arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, 32, current_token_, CVQualifier::None);
+arg_types.emplace_back(TypeCategory::Int, TypeQualifier::None, get_type_size_bits(TypeCategory::Int), current_token_, CVQualifier::None);
 						}
 					}
 				}
