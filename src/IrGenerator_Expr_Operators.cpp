@@ -4395,13 +4395,11 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-						inferred_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-					} else {
-						inferred_size_bits = static_cast<int>(type_info->sizeInBits().value);
-					}
+			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+				if (type_info->hasStoredSize()) {
+					inferred_size_bits = type_info->sizeInBits().value;
 				}
+			}
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}
@@ -4629,13 +4627,11 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		// Use IrType to catch both Type::Struct and Type::UserDefined, so
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-					if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-						inferred_size_bits = static_cast<int>(struct_info->sizeInBits().value);
-					} else {
-						inferred_size_bits = static_cast<int>(type_info->sizeInBits().value);
-					}
+			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
+				if (type_info->hasStoredSize()) {
+					inferred_size_bits = type_info->sizeInBits().value;
 				}
+			}
 		} else {
 			inferred_size_bits = get_type_size_bits(lvalue_type);
 		}
