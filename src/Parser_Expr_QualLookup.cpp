@@ -814,35 +814,32 @@ TypeIndex Parser::substitute_template_parameter(
 			return materializeTemplateArgs(placeholder_info, template_params, template_args);
 		};
 		if (!type_name.empty()) {
-			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-				if (template_params[i].is<TemplateParameterNode>()) {
-					const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
-					if (tparam.name() == type_name) {
-						// Found a match! Substitute with the concrete type
-						const TemplateTypeArg& arg = template_args[i];
+			forEachNonPackTemplateParamArgBinding(
+				template_params,
+				template_args,
+				[&](const TemplateParameterNode& tparam, const TemplateTypeArg& arg, size_t) {
+					if (found_match || tparam.name() != type_name)
+						return;
 
-						// The template argument already contains the full type info including:
-						// - base_type, type_index
-						// - pointer_depth, is_reference, is_rvalue_reference
-						// - cv_qualifier (const/volatile)
+					// The template argument already contains the full type info including:
+					// - base_type, type_index
+					// - pointer_depth, is_reference, is_rvalue_reference
+					// - cv_qualifier (const/volatile)
 
-						// We need to apply the qualifiers from BOTH:
-						// 1. The original type (e.g., const T& has const and reference)
-						// 2. The template argument (e.g., T=int* has pointer_depth=1)
+					// We need to apply the qualifiers from BOTH:
+					// 1. The original type (e.g., const T& has const and reference)
+					// 2. The template argument (e.g., T=int* has pointer_depth=1)
 
-						result_type = arg.typeEnum();
-						result_type_index = arg.type_index;
+					result_type = arg.typeEnum();
+					result_type_index = arg.type_index;
 
-						// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
-						// combined here because they are already fully specified in the TypeSpecifierNode
-						// that will be created using this base type. The caller is responsible for
-						// constructing a new TypeSpecifierNode with the appropriate qualifiers.
+					// Note: The qualifiers (pointer_depth, references, const/volatile) are NOT
+					// combined here because they are already fully specified in the TypeSpecifierNode
+					// that will be created using this base type. The caller is responsible for
+					// constructing a new TypeSpecifierNode with the appropriate qualifiers.
 
-						found_match = true;
-						break;
-					}
-				}
-			}
+					found_match = true;
+				});
 
 			// Try to resolve dependent qualified member types (e.g., Helper<T>::type)
 			if (!found_match && type_name.find("::") != std::string_view::npos) {
@@ -883,39 +880,40 @@ TypeIndex Parser::substitute_template_parameter(
 			// contain template parameters in their mangled name. Extract the template base
 			// name and instantiate with the substituted arguments.
 			if (!found_match && type_name.find('_') != std::string_view::npos) {
-				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
-					if (!template_params[i].is<TemplateParameterNode>())
-						continue;
-					const auto& tparam = template_params[i].as<TemplateParameterNode>();
-					std::string_view param_name = tparam.name();
+				forEachNonPackTemplateParamArgBinding(
+					template_params,
+					template_args,
+					[&](const TemplateParameterNode& tparam, const TemplateTypeArg&, size_t) {
+						if (found_match)
+							return;
+						std::string_view param_name = tparam.name();
 
-					// Check if the type name ends with "_<param>" pattern (like "TC_T" for param "T")
-					size_t pos = type_name.rfind(param_name);
-					if (pos != std::string_view::npos && pos > 0 && type_name[pos - 1] == '_' &&
-						pos + param_name.size() == type_name.size()) {
-						// Extract the template base name by finding the template in registry
+						size_t pos = type_name.rfind(param_name);
+						if (pos == std::string_view::npos || pos == 0 || type_name[pos - 1] != '_' ||
+							pos + param_name.size() != type_name.size()) {
+							return;
+						}
+
 						std::string_view base_sv = type_name.substr(0, pos - 1);
 						auto template_opt = gTemplateRegistry.lookupTemplate(base_sv);
-						if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-							// Found the template! Instantiate it with the concrete arguments
-							FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
-									  "' is a dependent placeholder for template '", base_sv, "' - instantiating with concrete args");
+						if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>())
+							return;
 
-							try_instantiate_class_template(base_sv, template_args);
-							std::string_view instantiated_name = get_instantiated_class_name(base_sv, template_args);
+						FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
+								  "' is a dependent placeholder for template '", base_sv, "' - instantiating with concrete args");
 
-							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
-							if (type_it != getTypesByNameMap().end()) {
-								const TypeInfo* resolved_info = type_it->second;
-								result_type = resolved_info->typeEnum();
-								result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
-								found_match = true;
-								FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
-							}
-							break;
+						try_instantiate_class_template(base_sv, template_args);
+						std::string_view instantiated_name = get_instantiated_class_name(base_sv, template_args);
+
+						auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+						if (type_it != getTypesByNameMap().end()) {
+							const TypeInfo* resolved_info = type_it->second;
+							result_type = resolved_info->typeEnum();
+							result_type_index = resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
+							found_match = true;
+							FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
 						}
-					}
-				}
+					});
 			}
 
 			// If not found as a direct template parameter, check if this is a type alias

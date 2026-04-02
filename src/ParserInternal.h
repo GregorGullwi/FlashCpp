@@ -56,6 +56,12 @@ void registerTypeParamsInScope(
 	const std::vector<ASTNode>& template_param_nodes,
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
+	bool preserve_ref_qualifier);
+
+void registerTypeParamsInScope(
+	const std::vector<ASTNode>& template_param_nodes,
+	const std::vector<TemplateTypeArg>& template_args,
+	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map = nullptr);
 
 void registerOuterBindingInScope(
