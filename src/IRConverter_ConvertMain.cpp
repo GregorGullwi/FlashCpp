@@ -8278,10 +8278,6 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 					FLASH_LOG(Codegen, Debug, "handleReturn: lvalue metadata present=", lv_info_opt.has_value(), ", returns_reference=", current_function_returns_reference_, ", is_address=", return_meta.is_address);
 					if (lv_info_opt.has_value() && (current_function_returns_reference_ || return_meta.is_address)) {
 						const LValueInfo& lv_info = lv_info_opt.value();
-						FLASH_LOG_FORMAT(Codegen, Debug, "handleReturn: lv_info.kind={}, offset={}, has_index={}, base_is_string={}",
-							static_cast<int>(lv_info.kind), lv_info.offset,
-							lv_info.array_index.has_value(),
-							std::holds_alternative<StringHandle>(lv_info.base));
 						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
 							int base_offset = 0;
 							if (std::holds_alternative<StringHandle>(base)) {
@@ -8331,16 +8327,6 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 						case LValueInfo::Kind::ArrayElement: {
 							const int element_size_bits = std::max(8, get_type_size_bits(ret_op.return_type_index.category()));
 							const int element_size_bytes = element_size_bits / 8;
-							FLASH_LOG_FORMAT(Codegen, Debug,
-								"handleReturn ArrayElement: element_size_bits={}, element_size_bytes={}, offset={}, has_index={}, is_pointer_to_array={}, this_offset={}",
-								element_size_bits, element_size_bytes, lv_info.offset,
-								lv_info.array_index.has_value(), lv_info.is_pointer_to_array,
-								current_function_this_offset_);
-							if (lv_info.array_index.has_value()) {
-								FLASH_LOG_FORMAT(Codegen, Debug,
-									"handleReturn ArrayElement: index type={}",
-									lv_info.array_index->index());
-							}
 							auto loadArrayBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool is_pointer_to_array) -> bool {
 								if (const auto* base_name = std::get_if<StringHandle>(&base)) {
 									std::string_view base_view = StringTable::getStringView(*base_name);

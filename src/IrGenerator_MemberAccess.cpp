@@ -775,15 +775,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	payload.result = result_var;
 	payload.element_type_index = element_type_index;
 	payload.element_size_in_bits = element_size_bits;
-	payload.member_offset = 0; // Not a member array
-	payload.is_pointer_to_array = is_pointer_to_array;
+	payload.member_offset = base_member_offset;
+	payload.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
 
-	// Set array (either variable name or temp)
-	if (const auto* string = std::get_if<StringHandle>(&array_result.value)) {
-		payload.array = *string;
-	} else if (const auto* temp_var = std::get_if<TempVar>(&array_result.value)) {
-		payload.array = *temp_var;
-	}
+	payload.array = base_variant;
 
 	// Set index as TypedValue
 	TypeCategory index_type = index_result.typeEnum();
