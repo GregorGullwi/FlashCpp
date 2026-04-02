@@ -2,58 +2,10 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 namespace {
-const FunctionDeclarationNode* findFunctionDeclarationForIdentifier(std::string_view identifier, const Token& token) {
-	const auto overloads = gSymbolTable.lookup_all(identifier);
-	for (const auto& overload : overloads) {
-		if (!overload.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		const auto& func_decl = overload.as<FunctionDeclarationNode>();
-		const Token& func_token = func_decl.decl_node().identifier_token();
-		if (func_token.value() == token.value() &&
-			func_token.line() == token.line() &&
-			func_token.column() == token.column() &&
-			func_token.file_index() == token.file_index()) {
-			return &func_decl;
-		}
-	}
-	return nullptr;
-}
-
-const FunctionDeclarationNode* findFunctionDeclarationForSymbol(const ASTNode& symbol) {
-	if (symbol.is<FunctionDeclarationNode>()) {
-		return &symbol.as<FunctionDeclarationNode>();
-	}
-	if (symbol.is<DeclarationNode>()) {
-		const auto& decl = symbol.as<DeclarationNode>();
-		return findFunctionDeclarationForIdentifier(decl.identifier_token().value(), decl.identifier_token());
-	}
-	if (symbol.is<VariableDeclarationNode>()) {
-		const auto& decl = symbol.as<VariableDeclarationNode>().declaration();
-		return findFunctionDeclarationForIdentifier(decl.identifier_token().value(), decl.identifier_token());
-	}
-	return nullptr;
-}
-
-TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclaration(const FunctionDeclarationNode& func_decl) {
-	FunctionSignature sig;
-	sig.return_type_index = func_decl.decl_node().type_node().as<TypeSpecifierNode>().type_index();
-	for (const auto& param_node : func_decl.parameter_nodes()) {
-		if (!param_node.is<DeclarationNode>()) {
-			continue;
-		}
-		const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-		sig.parameter_type_indices.push_back(param_type.type_index());
-	}
-
-	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
-	fp_type.set_function_signature(sig);
-	return fp_type;
-}
-
 bool isBareFunctionIdentifierExpr(const ASTNode& arg_node) {
 	if (!arg_node.is<ExpressionNode>()) {
 		return false;
@@ -64,26 +16,7 @@ bool isBareFunctionIdentifierExpr(const ASTNode& arg_node) {
 	}
 	const auto& ident = std::get<IdentifierNode>(expr);
 	auto symbol = gSymbolTable.lookup(ident.nameHandle());
-	return symbol.has_value() && findFunctionDeclarationForSymbol(*symbol) != nullptr;
-}
-
-std::optional<TypeSpecifierNode> tryGetBareFunctionIdentifierType(const ASTNode& arg_node) {
-	if (!arg_node.is<ExpressionNode>()) {
-		return std::nullopt;
-	}
-	const ExpressionNode& expr = arg_node.as<ExpressionNode>();
-	if (!std::holds_alternative<IdentifierNode>(expr)) {
-		return std::nullopt;
-	}
-	const auto& ident = std::get<IdentifierNode>(expr);
-	auto symbol = gSymbolTable.lookup(ident.nameHandle());
-	if (!symbol.has_value()) {
-		return std::nullopt;
-	}
-	if (const FunctionDeclarationNode* func_decl = findFunctionDeclarationForSymbol(*symbol)) {
-		return buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
-	}
-	return std::nullopt;
+	return symbol.has_value() && FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol) != nullptr;
 }
 }
 
@@ -469,8 +402,8 @@ FlashCpp::ParsedFunctionArguments Parser::parse_function_arguments(const FlashCp
 								const auto& ident = std::get<IdentifierNode>(expr);
 								auto symbol = lookup_symbol(StringTable::getOrInternStringHandle(ident.name()));
 								if (symbol.has_value()) {
-									if (const FunctionDeclarationNode* func_decl = findFunctionDeclarationForSymbol(*symbol)) {
-										fallback_type = buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol)) {
+										fallback_type = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
 									} else if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 										fallback_type = decl->type_node().as<TypeSpecifierNode>();
 									}
@@ -518,7 +451,7 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 	for (size_t i = 0; i < arg_types.size(); ++i) {
 		TypeSpecifierNode arg_type_node = arg_types[i];
 		if (i < args.size()) {
-			if (auto function_type = tryGetBareFunctionIdentifierType(args[i]); function_type.has_value()) {
+			if (auto function_type = FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionIdentifierType(args[i]); function_type.has_value()) {
 				arg_type_node = *function_type;
 			}
 		}

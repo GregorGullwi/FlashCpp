@@ -2,60 +2,10 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
-
-namespace {
-const FunctionDeclarationNode* findFunctionDeclarationForIdentifierPrimaryExpr(std::string_view identifier, const Token& token) {
-	const auto overloads = gSymbolTable.lookup_all(identifier);
-	for (const auto& overload : overloads) {
-		if (!overload.is<FunctionDeclarationNode>()) {
-			continue;
-		}
-		const auto& func_decl = overload.as<FunctionDeclarationNode>();
-		const Token& func_token = func_decl.decl_node().identifier_token();
-		if (func_token.value() == token.value() &&
-			func_token.line() == token.line() &&
-			func_token.column() == token.column() &&
-			func_token.file_index() == token.file_index()) {
-			return &func_decl;
-		}
-	}
-	return nullptr;
-}
-
-const FunctionDeclarationNode* findFunctionDeclarationForSymbolPrimaryExpr(const ASTNode& symbol) {
-	if (symbol.is<FunctionDeclarationNode>()) {
-		return &symbol.as<FunctionDeclarationNode>();
-	}
-	if (symbol.is<DeclarationNode>()) {
-		const auto& decl = symbol.as<DeclarationNode>();
-		return findFunctionDeclarationForIdentifierPrimaryExpr(decl.identifier_token().value(), decl.identifier_token());
-	}
-	if (symbol.is<VariableDeclarationNode>()) {
-		const auto& decl = symbol.as<VariableDeclarationNode>().declaration();
-		return findFunctionDeclarationForIdentifierPrimaryExpr(decl.identifier_token().value(), decl.identifier_token());
-	}
-	return nullptr;
-}
-
-TypeSpecifierNode buildFunctionPointerTypeFromFunctionDeclarationPrimaryExpr(const FunctionDeclarationNode& func_decl) {
-	FunctionSignature sig;
-	sig.return_type_index = func_decl.decl_node().type_node().as<TypeSpecifierNode>().type_index();
-	for (const auto& param_node : func_decl.parameter_nodes()) {
-		if (!param_node.is<DeclarationNode>()) {
-			continue;
-		}
-		const auto& param_type = param_node.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
-		sig.parameter_type_indices.push_back(param_type.type_index());
-	}
-
-	TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, func_decl.decl_node().identifier_token(), CVQualifier::None);
-	fp_type.set_function_signature(sig);
-	return fp_type;
-}
-}
 
 // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
 // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined
@@ -2781,8 +2731,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// Look up the identifier's type
 								auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 								if (id_type.has_value()) {
-									if (const FunctionDeclarationNode* func_decl = findFunctionDeclarationForSymbolPrimaryExpr(*id_type)) {
-										arg_type_node_opt = buildFunctionPointerTypeFromFunctionDeclarationPrimaryExpr(*func_decl);
+									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*id_type)) {
+										arg_type_node_opt = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
 									} else if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 										if (decl->type_node().template is<TypeSpecifierNode>()) {
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
