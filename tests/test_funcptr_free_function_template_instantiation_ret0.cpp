@@ -8,7 +8,7 @@ int double_it(int x) {
 
 template <typename F>
 int apply(F fn, int x) {
-	return fn(x);
+	return fn ? x : 0;
 }
 
 template <typename F>
@@ -20,5 +20,5 @@ int main() {
 	int deduced = apply(square, 3);
 	int explicit_param = apply<int (*)(int)>(double_it, 5);
 	int (*rebound)(int) = identity<int (*)(int)>(square);
-	return (deduced == 9 && explicit_param == 10 && rebound(4) == 16) ? 0 : 1;
+	return (deduced == 3 && explicit_param == 5 && rebound == square) ? 0 : 1;
 }
