@@ -1004,15 +1004,10 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 				*dereference_func,
 				std::move(dereference_args),
 				Token(Token::Type::Identifier, "operator*"sv, 0, 0, 0)));
-		const TypeSpecifierNode& dereference_return_type =
-			dereference_func->decl_node().type_node().as<TypeSpecifierNode>();
-		if (loop_type.reference_qualifier() == ReferenceQualifier::None &&
-			(dereference_return_type.is_reference() || dereference_return_type.is_rvalue_reference())) {
-			init_expr = ASTNode::emplace_node<ExpressionNode>(
-				UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), dereference_call, true));
-		} else {
-			init_expr = dereference_call;
-		}
+		// operator*() already produces the range element expression. If it returns a
+		// reference, the loop variable initialization logic will materialize a copy for
+		// non-reference loop variables and bind directly for reference loop variables.
+		init_expr = dereference_call;
 	}
 
 	symbol_table.enter_scope(ScopeType::Block);

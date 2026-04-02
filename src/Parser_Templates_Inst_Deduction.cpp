@@ -24,12 +24,29 @@ static void propagateFunctionSignatureFromTemplateArg(
 	}
 }
 
+static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
+	ReferenceQualifier original_ref_qualifier,
+	ReferenceQualifier template_arg_ref_qualifier) {
+	if (template_arg_ref_qualifier == ReferenceQualifier::None) {
+		return original_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::None) {
+		return template_arg_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::LValueReference ||
+		template_arg_ref_qualifier == ReferenceQualifier::LValueReference) {
+		return ReferenceQualifier::LValueReference;
+	}
+	return ReferenceQualifier::RValueReference;
+}
+
 template <typename ParamContainer, typename ArgContainer>
 static void applyTemplateArgIndirection(
 	TypeSpecifierNode& substituted_type,
 	const TypeSpecifierNode& orig_type,
 	const ParamContainer& template_params,
-	const ArgContainer& template_args) {
+	const ArgContainer& template_args,
+	bool propagate_reference_qualifier) {
 	std::string_view type_name = orig_type.token().value();
 	if (type_name.empty()) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(orig_type.type_index())) {
@@ -41,8 +58,11 @@ static void applyTemplateArgIndirection(
 			CVQualifier cv = pd < arg->pointer_cv_qualifiers.size() ? arg->pointer_cv_qualifiers[pd] : CVQualifier::None;
 			substituted_type.add_pointer_level(cv);
 		}
-		if (substituted_type.reference_qualifier() == ReferenceQualifier::None && arg->ref_qualifier != ReferenceQualifier::None) {
-			substituted_type.set_reference_qualifier(arg->ref_qualifier);
+		if (propagate_reference_qualifier && arg->ref_qualifier != ReferenceQualifier::None) {
+			substituted_type.set_reference_qualifier(
+				collapseTemplateArgumentReferenceQualifier(
+					substituted_type.reference_qualifier(),
+					arg->ref_qualifier));
 		}
 		if (!substituted_type.is_array() && arg->is_array) {
 			substituted_type.set_array(true, arg->array_size);
@@ -778,11 +798,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Apply pointer levels and references from original type
 		TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
-		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, explicit_types);
+		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
+		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, explicit_types,
+									/*propagate_reference_qualifier=*/true);
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 		}
-		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
 		propagateFunctionSignatureFromTemplateArg(
 			return_type_ref,
 			orig_return_type,
@@ -827,11 +848,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						param_type_ref.cv_qualifier(),
 						param_type_ref.reference_qualifier());
 				}
-				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types);
+				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
+				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types,
+											/*propagate_reference_qualifier=*/true);
 				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
 					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 				propagateFunctionSignatureFromTemplateArg(
 					param_type_ref,
 					orig_param_type,
@@ -1728,7 +1750,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			template_args);
 
 		// Preserve pointer levels
-		applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args);
+		applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args,
+									/*propagate_reference_qualifier=*/false);
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
 		}
@@ -2092,7 +2115,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						Token(),
 						orig_param_type.cv_qualifier());
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
-					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args);
+					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
+												/*propagate_reference_qualifier=*/false);
 					propagateFunctionSignatureFromTemplateArg(
 						param_type.as<TypeSpecifierNode>(),
 						orig_param_type,
