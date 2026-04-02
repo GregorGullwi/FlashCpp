@@ -2160,7 +2160,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 								} else {
 									int catch_size_bits = 0;
 									if (const TypeInfo* ti = tryGetTypeInfo(catch_op->type_index)) {
-										catch_size_bits = ti->type_size_;
+										catch_size_bits = ti->sizeInBits().value;
 									} else {
 										catch_size_bits = get_type_size_bits(catch_op->exceptionType());
 									}
@@ -4767,16 +4767,12 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		int struct_size_bits = 64;  // Default to 8 bytes
 		auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 		if (struct_type_it != getTypesByNameMap().end()) {
-			const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-			if (struct_info) {
-				struct_size_bits = static_cast<int>(toBits(struct_info->total_size).value);  // Convert bytes to bits
+			const TypeInfo* type_info = struct_type_it->second;
+			if (type_info) {
+				struct_size_bits = type_info->sizeInBits().value;
 				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "Constructor for {} found struct_info with size {} bits",
+								 "Constructor for {} found type_info with size {} bits",
 								 struct_name, struct_size_bits);
-			} else {
-				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "Constructor for {} found in getTypesByNameMap() but no struct_info",
-								 struct_name);
 			}
 		} else {
 			FLASH_LOG_FORMAT(Codegen, Debug,
@@ -4804,9 +4800,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 				// Look up struct size to calculate element offset
 			auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 			if (struct_type_it != getTypesByNameMap().end()) {
-				const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-				if (struct_info) {
-					size_t element_size = toSizeT(struct_info->total_size);
+				const TypeInfo* type_info = struct_type_it->second;
+				if (type_info) {
+					size_t element_size = toSizeT(type_info->sizeInBytes());
 					size_t index = ctor_op.array_index.value();
 						// Adjust offset: base_offset + (index * element_size)
 					object_offset += static_cast<int>(index * element_size);
@@ -14165,7 +14161,7 @@ void IrToObjConverter<TWriterClass>::materializeCatchObjectFromRax(const CatchBe
 	if (is_builtin) {
 		type_size_bits = get_type_size_bits(catch_op.exceptionType());
 	} else if (const TypeInfo* ti = tryGetTypeInfo(catch_op.type_index)) {
-		type_size_bits = ti->type_size_;
+		type_size_bits = ti->sizeInBits().value;
 	}
 	size_t type_size = type_size_bits / 8;
 

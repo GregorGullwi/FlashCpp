@@ -1521,14 +1521,8 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 	if (needs_type_index(t)) {
 		TypeIndex idx = type_spec.type_index();
 		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
-			if (const StructTypeInfo* si = ti->getStructInfo()) {
-				return toBits(si->total_size).value;
-			}
-			if (const EnumTypeInfo* ei = ti->getEnumInfo()) {
-				return ei->underlying_size.value;
-			}
-			if (ti->type_size_ > 0) {
-				return ti->type_size_;
+			if (ti->hasStoredSize()) {
+				return ti->sizeInBits().value;
 			}
 		}
 	} else {

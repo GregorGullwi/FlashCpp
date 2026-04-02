@@ -18,7 +18,7 @@ std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult&
 	}
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(value.object_type_index)) {
-		return TypeSpecifierNode(value.object_type_index.withCategory(type_info->typeEnum()), type_info->type_size_, Token{}, CVQualifier::None, ReferenceQualifier::None);
+		return TypeSpecifierNode(value.object_type_index.withCategory(type_info->typeEnum()), type_info->sizeInBits().value, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (std::holds_alternative<bool>(value.value)) {
