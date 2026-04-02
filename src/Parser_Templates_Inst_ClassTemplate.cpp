@@ -949,10 +949,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return std::nullopt;
 		}
 
+		ResolvedAliasTypeInfo resolved_alias_target = resolveAliasTypeInfo(substituted_type_index);
+		if (resolved_alias_target.type_index.is_valid()) {
+			substituted_type_index = resolved_alias_target.type_index;
+			substituted_type = resolved_alias_target.typeEnum();
+		}
+
 		TypeSpecifierNode substituted_type_spec = type_alias.type_node.as<TypeSpecifierNode>();
 		substituted_type_spec.set_type_index(substituted_type_index.withCategory(substituted_type));
 		substituted_type_spec.set_category(substituted_type);
-		if (type_alias.array_dimensions.empty()) {
+		if (type_alias.array_dimensions.empty() && !resolved_alias_target.isArray()) {
 			return substituted_type_spec;
 		}
 
@@ -965,6 +971,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				return std::nullopt;
 			}
 			resolved_dims.push_back(static_cast<size_t>(eval_result.as_int()));
+		}
+		if (resolved_alias_target.isArray()) {
+			resolved_dims.insert(
+				resolved_dims.end(),
+				resolved_alias_target.array_dimensions.begin(),
+				resolved_alias_target.array_dimensions.end());
 		}
 		substituted_type_spec.set_array_dimensions(resolved_dims);
 		return substituted_type_spec;

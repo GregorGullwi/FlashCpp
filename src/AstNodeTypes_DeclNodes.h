@@ -1396,19 +1396,11 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		return resolved;
 	}
 
-	auto prependArrayDimensions = [](std::vector<size_t>& dims, const std::vector<size_t>& prefix) {
-		if (prefix.empty()) {
+	auto appendArrayDimensions = [](std::vector<size_t>& dims, const std::vector<size_t>& suffix) {
+		if (suffix.empty()) {
 			return;
 		}
-		if (dims.empty()) {
-			dims = prefix;
-			return;
-		}
-		std::vector<size_t> combined;
-		combined.reserve(prefix.size() + dims.size());
-		combined.insert(combined.end(), prefix.begin(), prefix.end());
-		combined.insert(combined.end(), dims.begin(), dims.end());
-		dims = std::move(combined);
+		dims.insert(dims.end(), suffix.begin(), suffix.end());
 	};
 
 	TypeIndex current_type_index = type_index;
@@ -1423,21 +1415,25 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		if (type_info->isTypeAlias()) {
 			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
 				resolved.pointer_depth += alias_type_spec->pointer_depth();
-				if (resolved.reference_qualifier == ReferenceQualifier::None &&
-					alias_type_spec->reference_qualifier() != ReferenceQualifier::None) {
-					resolved.reference_qualifier = alias_type_spec->reference_qualifier();
+				if (alias_type_spec->reference_qualifier() == ReferenceQualifier::LValueReference) {
+					resolved.reference_qualifier = ReferenceQualifier::LValueReference;
+				} else if (resolved.reference_qualifier == ReferenceQualifier::None &&
+						   alias_type_spec->reference_qualifier() == ReferenceQualifier::RValueReference) {
+					resolved.reference_qualifier = ReferenceQualifier::RValueReference;
 				}
 				if (!resolved.function_signature.has_value() && alias_type_spec->has_function_signature()) {
 					resolved.function_signature = alias_type_spec->function_signature();
 				}
 				if (alias_type_spec->is_array()) {
-					prependArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
+					appendArrayDimensions(resolved.array_dimensions, alias_type_spec->array_dimensions());
 				}
 			} else {
 				resolved.pointer_depth += type_info->pointer_depth_;
-				if (resolved.reference_qualifier == ReferenceQualifier::None &&
-					type_info->reference_qualifier_ != ReferenceQualifier::None) {
-					resolved.reference_qualifier = type_info->reference_qualifier_;
+				if (type_info->reference_qualifier_ == ReferenceQualifier::LValueReference) {
+					resolved.reference_qualifier = ReferenceQualifier::LValueReference;
+				} else if (resolved.reference_qualifier == ReferenceQualifier::None &&
+						   type_info->reference_qualifier_ == ReferenceQualifier::RValueReference) {
+					resolved.reference_qualifier = ReferenceQualifier::RValueReference;
 				}
 				if (!resolved.function_signature.has_value() && type_info->function_signature_.has_value()) {
 					resolved.function_signature = type_info->function_signature_;
