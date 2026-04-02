@@ -96,6 +96,21 @@ private:
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
 	void populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
+
+	// Shared helper: build the ExprResult for a function call given its return type
+	// and the TempVar holding the raw call result.  Handles:
+	//   1. Reference-returning functions: sets lvalue/xvalue metadata on ret_var,
+	//      auto-dereferences when context != LValueAddress, and returns the
+	//      appropriate ContainsAddress / ContainsData result.
+	//   2. Non-reference returns: computes result_size, type_index, ValueStorage
+	//      and returns a ContainsData / ContainsAddress result.
+	// Used by both generateFunctionCallIr and generateMemberFunctionCallIr to
+	// avoid duplicating the ~40-line return-result epilogue.
+	ExprResult buildCallReturnResult(
+		const TypeSpecifierNode& return_type,
+		TempVar ret_var,
+		ExpressionContext context,
+		const Token& source_token);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
@@ -259,8 +274,8 @@ private:
 	ExprResult generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode);
-	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
+	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
@@ -513,7 +528,7 @@ private:
 
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
-	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode);
+	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
 
 	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
 	// Returns nullptr if the type is not a struct.

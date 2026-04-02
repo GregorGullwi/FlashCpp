@@ -22,9 +22,9 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 			return generateTernaryOperatorIr(expr);
 		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-			return generateFunctionCallIr(expr);
+			return generateFunctionCallIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-			return generateMemberFunctionCallIr(expr);
+			return generateMemberFunctionCallIr(expr, context);
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
@@ -305,6 +305,27 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 	StringHandle var_name_str = StringTable::getOrInternStringHandle(identifierNode.name());
 	auto preserveSemanticTypeIndex = [](TypeCategory type, TypeIndex type_index) {
 		return carriesSemanticTypeIndex(type) ? type_index : TypeIndex{};
+	};
+	auto emitArrayMemberDecay = [&](const StructMember* member,
+								 StringHandle base_object,
+								 int member_offset) -> ExprResult {
+		TempVar addr_temp = var_counter.next();
+		AddressOfMemberOp addr_member_op;
+		addr_member_op.result = addr_temp;
+		addr_member_op.base_object = base_object;
+		addr_member_op.member_offset = member_offset;
+		addr_member_op.member_type_index = member->type_index.withCategory(member->memberType());
+		addr_member_op.member_size_in_bits = static_cast<int>(member->size * 8);
+		ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), Token()));
+
+		PointerDepth pointer_depth{member->pointer_depth + 1};
+		TypeIndex type_index = preserveSemanticTypeIndex(member->memberType(), member->type_index);
+		return makeExprResult(
+			type_index.withCategory(member->memberType()),
+			SizeInBits{POINTER_SIZE_BITS},
+			IrOperand{addr_temp},
+			pointer_depth,
+			ValueStorage::ContainsData);
 	};
 	bool is_explicit_capture = (identifierNode.binding() == IdentifierBinding::CapturedByValue ||
 								identifierNode.binding() == IdentifierBinding::CapturedByRef);
@@ -587,6 +608,12 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				TypeIndex struct_type_index = type_it->second->type_index_;
 				if (auto result = FlashCpp::gLazyMemberResolver.resolve(struct_type_index, var_name_str)) {
 					const StructMember* member = result.member;
+					if (member->is_array) {
+						return emitArrayMemberDecay(
+							member,
+							StringTable::getOrInternStringHandle("this"),
+							static_cast<int>(result.adjusted_offset));
+					}
 					TempVar result_temp = var_counter.next();
 					MemberLoadOp member_load;
 					member_load.result.value = result_temp;

@@ -344,6 +344,40 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			target.set_function_signature(*resolved_arg->function_signature);
 		}
 	};
+	auto apply_resolved_type_metadata = [](TypeSpecifierNode& target, const TemplateTypeArg* resolved_arg, TypeIndex source_type_index) {
+		if (resolved_arg) {
+			for (size_t i = 0; i < resolved_arg->pointer_depth; ++i) {
+				CVQualifier cv = i < resolved_arg->pointer_cv_qualifiers.size()
+									 ? resolved_arg->pointer_cv_qualifiers[i]
+									 : CVQualifier::None;
+				target.add_pointer_level(cv);
+			}
+			if (target.reference_qualifier() == ReferenceQualifier::None &&
+				resolved_arg->ref_qualifier != ReferenceQualifier::None) {
+				target.set_reference_qualifier(resolved_arg->ref_qualifier);
+			}
+		}
+
+		if (source_type_index.is_valid()) {
+			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(source_type_index);
+			if (alias_info.type_index.is_valid() && alias_info.type_index != source_type_index) {
+				target.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+			}
+			target.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+			if (target.reference_qualifier() == ReferenceQualifier::None &&
+				alias_info.reference_qualifier != ReferenceQualifier::None) {
+				target.set_reference_qualifier(alias_info.reference_qualifier);
+			}
+			if (!target.has_function_signature() && alias_info.function_signature.has_value()) {
+				target.set_function_signature(*alias_info.function_signature);
+			}
+		}
+
+		const int resolved_size_bits = getTypeSpecSizeBits(target);
+		if (resolved_size_bits > 0) {
+			target.set_size_in_bits(resolved_size_bits);
+		}
+	};
 
 	// Substitute the return type if it's a template parameter
 	const TypeSpecifierNode& return_type_spec = orig_decl.type_node().as<TypeSpecifierNode>();
@@ -368,7 +402,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 		substituted_return_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 	}
+	substituted_return_type_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
 	propagate_function_signature(substituted_return_type_spec, return_type_spec, return_resolved_arg);
+	apply_resolved_type_metadata(substituted_return_type_spec, return_resolved_arg, return_type_index);
 
 	// Create the new function declaration
 	auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(substituted_return_type, mangled_token);
@@ -427,7 +463,9 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 			for (const auto& ptr_level : param_type_spec.pointer_levels()) {
 				substituted_param_type_spec.add_pointer_level(ptr_level.cv_qualifier);
 			}
+			substituted_param_type_spec.set_reference_qualifier(param_type_spec.reference_qualifier());
 			propagate_function_signature(substituted_param_type_spec, param_type_spec, resolved_arg);
+			apply_resolved_type_metadata(substituted_param_type_spec, resolved_arg, param_type_index);
 
 			// Create the new parameter declaration
 			auto new_param_decl = emplace_node<DeclarationNode>(substituted_param_type, param_decl.identifier_token());

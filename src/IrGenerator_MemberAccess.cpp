@@ -505,6 +505,76 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 
 	// Fall back to default handling for regular arrays
 	// Get the array expression (should be an identifier for now)
+	if (std::holds_alternative<IdentifierNode>(array_expr)) {
+		const IdentifierNode& arr_ident = std::get<IdentifierNode>(array_expr);
+		if (current_struct_name_.isValid() && !lookupDeclaration(arr_ident.name())) {
+			auto type_it = getTypesByNameMap().find(current_struct_name_);
+			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(
+						type_it->second->type_index_,
+						StringTable::getOrInternStringHandle(arr_ident.name()))) {
+					const StructMember* member = member_result.member;
+					if (member->is_array) {
+						ExprResult index_result = visitExpressionNode(arraySubscriptNode.index_expr().as<ExpressionNode>());
+						TypeCategory element_type = member->memberType();
+						int element_size_bits = static_cast<int>(member->size * 8);
+						if (!member->array_dimensions.empty()) {
+							size_t total_elements = 1;
+							for (size_t dim : member->array_dimensions) {
+								total_elements *= dim;
+							}
+							if (total_elements > 0) {
+								element_size_bits /= static_cast<int>(total_elements);
+							}
+						}
+
+						TempVar result_var = var_counter.next();
+						StringHandle qualified_name = StringTable::getOrInternStringHandle(
+							StringBuilder().append("this").append(".").append(arr_ident.name()).commit());
+						LValueInfo lvalue_info(
+							LValueInfo::Kind::ArrayElement,
+							qualified_name,
+							static_cast<int64_t>(member_result.adjusted_offset));
+						lvalue_info.array_index = toIrValue(index_result.value);
+						lvalue_info.is_pointer_to_array = false;
+						setTempVarMetadata(result_var, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+						ArrayAccessOp payload;
+						payload.result = result_var;
+						payload.element_type_index = member->type_index.withCategory(element_type);
+						payload.element_size_in_bits = element_size_bits;
+						payload.array = qualified_name;
+						payload.member_offset = static_cast<int64_t>(member_result.adjusted_offset);
+						payload.is_pointer_to_array = false;
+						payload.index.setType(index_result.category());
+						payload.index.ir_type = index_result.effectiveIrType();
+						payload.index.size_in_bits = index_result.size_in_bits;
+						payload.index.value = toIrValue(index_result.value);
+
+						if (context == ExpressionContext::LValueAddress) {
+							return makeArrayResult(
+								element_type,
+								element_size_bits,
+								IrOperand{result_var},
+								member->type_index,
+								PointerDepth{},
+								ValueStorage::ContainsAddress);
+						}
+
+						ir_.addInstruction(IrInstruction(IrOpcode::ArrayAccess, std::move(payload), arraySubscriptNode.bracket_token()));
+						return makeArrayResult(
+							element_type,
+							element_size_bits,
+							IrOperand{result_var},
+							member->type_index,
+							PointerDepth{},
+							ValueStorage::ContainsData);
+					}
+				}
+			}
+		}
+	}
+
 	ExprResult array_result = visitExpressionNode(arraySubscriptNode.array_expr().as<ExpressionNode>());
 
 	// Get the index expression
@@ -705,15 +775,10 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 	payload.result = result_var;
 	payload.element_type_index = element_type_index;
 	payload.element_size_in_bits = element_size_bits;
-	payload.member_offset = 0; // Not a member array
-	payload.is_pointer_to_array = is_pointer_to_array;
+	payload.member_offset = base_member_offset;
+	payload.is_pointer_to_array = is_pointer_to_array || base_is_pointer_to_member;
 
-	// Set array (either variable name or temp)
-	if (const auto* string = std::get_if<StringHandle>(&array_result.value)) {
-		payload.array = *string;
-	} else if (const auto* temp_var = std::get_if<TempVar>(&array_result.value)) {
-		payload.array = *temp_var;
-	}
+	payload.array = base_variant;
 
 	// Set index as TypedValue
 	TypeCategory index_type = index_result.typeEnum();
@@ -1035,7 +1100,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				is_pointer_dereference = true;
 			}
 		} else if (const MemberFunctionCallNode* call = get_member_func_call()) {
-			auto call_result = generateMemberFunctionCallIr(*call);
+			auto call_result = generateMemberFunctionCallIr(*call, ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
@@ -1158,7 +1223,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
 		} else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
-			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr));
+			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr), ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
 				throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}

@@ -370,6 +370,97 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 					setTempVarMetadata(address_temp, std::move(address_meta));
 					operands.value = address_temp;
+				} else if (lv_info.kind == LValueInfo::Kind::ArrayElement &&
+						   lv_info.array_index.has_value()) {
+					// Materialize an ArrayElementAddress instruction for returning a reference
+					// to an array element (e.g., return values[index]).
+					// This converts the metadata-only representation into an explicit IR instruction
+					// that the code generator can handle directly.
+					auto getReferencedReturnSizeBits = [&]() {
+						if (needs_type_index(current_function_return_type_index_.category())) {
+							if (const TypeInfo* type_info = tryGetTypeInfo(current_function_return_type_index_)) {
+								if (type_info->hasStoredSize()) {
+									return type_info->sizeInBits().value;
+								}
+							}
+						}
+						int fallback_bits = get_type_size_bits(resolve_type_alias(current_function_return_type_index_));
+						return fallback_bits > 0 ? fallback_bits : current_function_return_size_;
+					};
+					auto getArrayIndexTypedValue = [&](const IrValue& index_value) {
+						TypedValue typed_index;
+						if (const auto* temp_index = std::get_if<TempVar>(&index_value)) {
+							const TempVarMetadata index_meta = getTempVarMetadata(*temp_index);
+							TypeCategory index_category = index_meta.valueType();
+							if (index_category == TypeCategory::Invalid) {
+								index_category = TypeCategory::LongLong;
+							}
+							typed_index.type_index = index_meta.value_type_index.category() != TypeCategory::Invalid
+													 ? index_meta.value_type_index
+													 : nativeTypeIndex(index_category);
+							typed_index.ir_type = index_meta.ir_type;
+							typed_index.size_in_bits = index_meta.value_size_bits.value > 0
+													 ? index_meta.value_size_bits
+													 : SizeInBits{64};
+							typed_index.is_signed = isSignedType(index_category);
+						} else if (std::holds_alternative<unsigned long long>(index_value)) {
+							typed_index.setType(TypeCategory::UnsignedLongLong);
+							typed_index.ir_type = IrType::Integer;
+							typed_index.size_in_bits = SizeInBits{64};
+						} else {
+							typed_index.setType(TypeCategory::LongLong);
+							typed_index.ir_type = IrType::Integer;
+							typed_index.size_in_bits = SizeInBits{64};
+						}
+						typed_index.value = index_value;
+						return typed_index;
+					};
+					ArrayElementAddressOp elem_addr;
+					TempVar address_temp = var_counter.next();
+					elem_addr.result = address_temp;
+					elem_addr.element_type_index = current_function_return_type_index_;
+					elem_addr.element_size_in_bits = getReferencedReturnSizeBits();
+
+					// When the base is a StringHandle like "this.values", the code generator's
+					// handleArrayElementAddress can't handle qualified names. Emit an AddressOfMember
+					// first to compute the base pointer, then use the TempVar result.
+					bool base_is_pointer = lv_info.is_pointer_to_array;
+					if (std::holds_alternative<StringHandle>(lv_info.base)) {
+						StringHandle base_sh = std::get<StringHandle>(lv_info.base);
+						std::string_view base_sv = StringTable::getStringView(base_sh);
+						size_t dot_pos = base_sv.find('.');
+						if (dot_pos != std::string_view::npos) {
+							// Qualified name like "this.values" - emit AddressOfMember to resolve
+							StringHandle obj_name = StringTable::getOrInternStringHandle(base_sv.substr(0, dot_pos));
+							TempVar base_addr_temp = var_counter.next();
+							AddressOfMemberOp addr_op;
+							addr_op.result = base_addr_temp;
+							addr_op.base_object = obj_name;
+							addr_op.member_offset = lv_info.offset;
+							addr_op.member_type_index = current_function_return_type_index_;
+							addr_op.member_size_in_bits = elem_addr.element_size_in_bits;
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), node.return_token()));
+							elem_addr.array = base_addr_temp;
+							base_is_pointer = true;
+						} else {
+							elem_addr.array = base_sh;
+						}
+					} else {
+						// TempVar base (e.g., from AddressOfMember/emitArrayMemberDecay)
+						// holds a computed pointer, so the code generator must load it first.
+						elem_addr.array = std::get<TempVar>(lv_info.base);
+						base_is_pointer = true;
+					}
+					elem_addr.is_pointer_to_array = base_is_pointer;
+
+					// Convert IrValue index to TypedValue
+					const IrValue& idx_val = *lv_info.array_index;
+					elem_addr.index = getArrayIndexTypedValue(idx_val);
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr), node.return_token()));
+					TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
+					setTempVarMetadata(address_temp, std::move(address_meta));
+					operands.value = address_temp;
 				} else if (lv_info.kind == LValueInfo::Kind::Global &&
 						   std::holds_alternative<StringHandle>(lv_info.base)) {
 					TempVar address_temp = emitAddressOf(

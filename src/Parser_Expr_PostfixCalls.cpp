@@ -390,8 +390,24 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			advance(); // consume ']'
 
 			if (auto index_node = index_result.node()) {
-				result = emplace_node<ExpressionNode>(
-					ArraySubscriptNode(*result, *index_node, bracket_token));
+				auto object_type = get_expression_type(*result);
+				if (object_type.has_value() &&
+					is_struct_type(object_type->category()) &&
+					!object_type->is_array() &&
+					object_type->pointer_depth() == 0) {
+					Token operator_token(Token::Type::Identifier, "operator[]"sv,
+										 bracket_token.line(), bracket_token.column(), bracket_token.file_index());
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_token, CVQualifier::None, ReferenceQualifier::None);
+					auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
+					ChunkedVector<ASTNode> args;
+					args.push_back(*index_node);
+					result = emplace_node<ExpressionNode>(
+						MemberFunctionCallNode(*result, func_decl_node, std::move(args), operator_token));
+				} else {
+					result = emplace_node<ExpressionNode>(
+						ArraySubscriptNode(*result, *index_node, bracket_token));
+				}
 				continue;
 			} else {
 				return ParseResult::error("Invalid array index expression", bracket_token);
@@ -552,10 +568,25 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			}
 			advance(); // consume ']'
 
-			// Create array subscript node
 			if (auto index_node = index_result.node()) {
-				result = emplace_node<ExpressionNode>(
-					ArraySubscriptNode(*result, *index_node, bracket_token));
+				auto object_type = get_expression_type(*result);
+				if (object_type.has_value() &&
+					is_struct_type(object_type->category()) &&
+					!object_type->is_array() &&
+					object_type->pointer_depth() == 0) {
+					Token operator_token(Token::Type::Identifier, "operator[]"sv,
+										 bracket_token.line(), bracket_token.column(), bracket_token.file_index());
+					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_token, CVQualifier::None, ReferenceQualifier::None);
+					auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_token).as<DeclarationNode>();
+					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
+					ChunkedVector<ASTNode> args;
+					args.push_back(*index_node);
+					result = emplace_node<ExpressionNode>(
+						MemberFunctionCallNode(*result, func_decl_node, std::move(args), operator_token));
+				} else {
+					result = emplace_node<ExpressionNode>(
+						ArraySubscriptNode(*result, *index_node, bracket_token));
+				}
 				continue;  // Check for more postfix operators (e.g., arr[i][j])
 			} else {
 				return ParseResult::error("Invalid array index expression", bracket_token);

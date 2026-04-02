@@ -2748,6 +2748,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						},
 								   expr);
 
+						if (!arg_type_node_opt.has_value()) {
+							if (auto expr_type = get_expression_type(*node)) {
+								arg_type_node_opt = *expr_type;
+								arg_type = expr_type->type();
+							}
+						}
+
 						TypeSpecifierNode arg_type_node = arg_type_node_opt.value_or(
 							TypeSpecifierNode(arg_type, TypeQualifier::None, get_type_size_bits(arg_type), Token(), CVQualifier::None));
 						if (is_lvalue) {

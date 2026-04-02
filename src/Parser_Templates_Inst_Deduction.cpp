@@ -24,6 +24,52 @@ static void propagateFunctionSignatureFromTemplateArg(
 	}
 }
 
+static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
+	ReferenceQualifier original_ref_qualifier,
+	ReferenceQualifier template_arg_ref_qualifier) {
+	if (template_arg_ref_qualifier == ReferenceQualifier::None) {
+		return original_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::None) {
+		return template_arg_ref_qualifier;
+	}
+	if (original_ref_qualifier == ReferenceQualifier::LValueReference ||
+		template_arg_ref_qualifier == ReferenceQualifier::LValueReference) {
+		return ReferenceQualifier::LValueReference;
+	}
+	return ReferenceQualifier::RValueReference;
+}
+
+template <typename ParamContainer, typename ArgContainer>
+static void applyTemplateArgIndirection(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& orig_type,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args,
+	bool propagate_reference_qualifier) {
+	std::string_view type_name = orig_type.token().value();
+	if (type_name.empty()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(orig_type.type_index())) {
+			type_name = StringTable::getStringView(type_info->name());
+		}
+	}
+	if (const auto* arg = findTemplateArgByName(type_name, template_params, template_args)) {
+		for (size_t pd = 0; pd < arg->pointer_depth; ++pd) {
+			CVQualifier cv = pd < arg->pointer_cv_qualifiers.size() ? arg->pointer_cv_qualifiers[pd] : CVQualifier::None;
+			substituted_type.add_pointer_level(cv);
+		}
+		if (propagate_reference_qualifier && arg->ref_qualifier != ReferenceQualifier::None) {
+			substituted_type.set_reference_qualifier(
+				collapseTemplateArgumentReferenceQualifier(
+					substituted_type.reference_qualifier(),
+					arg->ref_qualifier));
+		}
+		if (!substituted_type.is_array() && arg->is_array) {
+			substituted_type.set_array(true, arg->array_size);
+		}
+	}
+}
+
 // Helper: register type-kind template parameters as TypeInfo / getTypesByNameMap() entries so
 // that body re-parsing can resolve their names.  Non-type (value) parameters are
 // intentionally skipped: makeValue() leaves base_type as the value-type (e.g. Type::Int
@@ -715,6 +761,27 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
+		auto apply_resolved_alias_metadata_local = [&](TypeSpecifierNode& type_spec) {
+			if (!type_spec.type_index().is_valid()) {
+				return;
+			}
+			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type_spec.type_index());
+			if (alias_info.type_index.is_valid() && alias_info.type_index != type_spec.type_index()) {
+				type_spec.set_type_index(alias_info.type_index.withCategory(alias_info.typeEnum()));
+			}
+			type_spec.add_pointer_levels(static_cast<int>(alias_info.pointer_depth));
+			if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+				alias_info.reference_qualifier != ReferenceQualifier::None) {
+				type_spec.set_reference_qualifier(alias_info.reference_qualifier);
+			}
+			if (!type_spec.has_function_signature() && alias_info.function_signature.has_value()) {
+				type_spec.set_function_signature(*alias_info.function_signature);
+			}
+			const int resolved_size_bits = getTypeSpecSizeBits(type_spec);
+			if (resolved_size_bits > 0) {
+				type_spec.set_size_in_bits(resolved_size_bits);
+			}
+		};
 
 	// Substitute template parameters in the return type
 		const TypeSpecifierNode& orig_return_type = orig_decl.type_node().as<TypeSpecifierNode>();
@@ -731,16 +798,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 	// Apply pointer levels and references from original type
 		TypeSpecifierNode& return_type_ref = return_type.as<TypeSpecifierNode>();
+		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
+		applyTemplateArgIndirection(return_type_ref, orig_return_type, template_params, explicit_types,
+									/*propagate_reference_qualifier=*/true);
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 		}
-		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
 		propagateFunctionSignatureFromTemplateArg(
 			return_type_ref,
 			orig_return_type,
 			substituted_return_type_index,
 			template_params,
 			template_args);
+		apply_resolved_alias_metadata_local(return_type_ref);
 
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -778,16 +848,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						param_type_ref.cv_qualifier(),
 						param_type_ref.reference_qualifier());
 				}
+				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
+				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types,
+											/*propagate_reference_qualifier=*/true);
 				for (const auto& ptr_level : orig_param_type.pointer_levels()) {
 					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 				}
-				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 				propagateFunctionSignatureFromTemplateArg(
 					param_type_ref,
 					orig_param_type,
 					substituted_type_index,
 					template_params,
 					template_args);
+				apply_resolved_alias_metadata_local(param_type_ref);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			// Preserve default argument value from the original template declaration
@@ -1677,8 +1750,25 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			template_args);
 
 		// Preserve pointer levels
+		applyTemplateArgIndirection(new_return_type, orig_return_type, template_params, template_args,
+									/*propagate_reference_qualifier=*/false);
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
+		}
+		const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(new_return_type.type_index());
+		if (return_alias_info.type_index.is_valid() && return_alias_info.type_index != new_return_type.type_index()) {
+			new_return_type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
+		}
+		new_return_type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
+		if (new_return_type.reference_qualifier() == ReferenceQualifier::None &&
+			return_alias_info.reference_qualifier != ReferenceQualifier::None) {
+			new_return_type.set_reference_qualifier(return_alias_info.reference_qualifier);
+		}
+		if (!new_return_type.has_function_signature() && return_alias_info.function_signature.has_value()) {
+			new_return_type.set_function_signature(*return_alias_info.function_signature);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(new_return_type); resolved_size_bits > 0) {
+			new_return_type.set_size_in_bits(resolved_size_bits);
 		}
 
 		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
@@ -2025,6 +2115,8 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						Token(),
 						orig_param_type.cv_qualifier());
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
+					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
+												/*propagate_reference_qualifier=*/false);
 					propagateFunctionSignatureFromTemplateArg(
 						param_type.as<TypeSpecifierNode>(),
 						orig_param_type,
@@ -2054,6 +2146,23 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 				} else if (orig_param_type.is_rvalue_reference()) {
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+				}
+
+				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
+				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
+				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {
+					resolved_param_type.set_type_index(param_alias_info.type_index.withCategory(param_alias_info.typeEnum()));
+				}
+				resolved_param_type.add_pointer_levels(static_cast<int>(param_alias_info.pointer_depth));
+				if (resolved_param_type.reference_qualifier() == ReferenceQualifier::None &&
+					param_alias_info.reference_qualifier != ReferenceQualifier::None) {
+					resolved_param_type.set_reference_qualifier(param_alias_info.reference_qualifier);
+				}
+				if (!resolved_param_type.has_function_signature() && param_alias_info.function_signature.has_value()) {
+					resolved_param_type.set_function_signature(*param_alias_info.function_signature);
+				}
+				if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_param_type); resolved_size_bits > 0) {
+					resolved_param_type.set_size_in_bits(resolved_size_bits);
 				}
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
