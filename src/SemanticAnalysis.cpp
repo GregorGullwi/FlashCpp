@@ -3636,8 +3636,12 @@ void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& sub
 		return;
 
 	// Collect all operator[] candidates from this struct and its base classes.
+	// Use a visited set to avoid collecting duplicate candidates in diamond inheritance.
 	std::vector<ASTNode> candidates;
+	std::unordered_set<const StructTypeInfo*> visited;
 	auto collectCandidates = [&](auto&& self, const StructTypeInfo* current_struct) -> void {
+		if (!visited.insert(current_struct).second)
+			return;
 		for (const auto& member_func : current_struct->member_functions) {
 			if (member_func.operator_kind != OverloadableOperator::Subscript)
 				continue;
