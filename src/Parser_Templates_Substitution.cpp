@@ -1536,6 +1536,7 @@ void Parser::substituteFunctionCallExtras(
 	const FunctionCallNode& old_call,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
+	new_call.set_indirect_call(old_call.is_indirect_call());
 	if (old_call.has_mangled_name()) {
 		new_call.set_mangled_name(old_call.mangled_name());
 	}

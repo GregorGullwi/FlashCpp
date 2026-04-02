@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
@@ -2730,7 +2731,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								// Look up the identifier's type
 								auto id_type = lookup_symbol(StringTable::getOrInternStringHandle(inner.name()));
 								if (id_type.has_value()) {
-									if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
+									if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*id_type)) {
+										arg_type_node_opt = FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+									} else if (const DeclarationNode* decl = get_decl_from_symbol(*id_type)) {
 										if (decl->type_node().template is<TypeSpecifierNode>()) {
 											// Preserve the full TypeSpecifierNode to retain type_index for structs
 											const auto& type_spec = decl->type_node().template as<TypeSpecifierNode>();

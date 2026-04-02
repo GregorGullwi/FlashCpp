@@ -343,38 +343,3 @@ packs work correctly.
 **Suggested fix**: Instead of a parallel-index loop, consume variadic packs separately and
 maintain an independent arg cursor, similar to how `try_instantiate_template_explicit`
 (same file, line ~390) handles variadic packs with a dedicated `explicit_idx` counter.
-
-## Calling a function-pointer template parameter in a free function template can lower as `operator()`
-
-While validating the free-function `function_signature` propagation fix, the more direct
-runtime shape
-
-```cpp
-template <typename F>
-int apply(F fn, int x) {
-	return fn(x);
-}
-```
-
-still compiled but linked with `undefined reference to 'operator()'` when instantiated as
-`F = int (*)(int)`. The same test passed once it stopped *calling* the function pointer and
-only used the parameter for instantiation / comparison, which suggests a separate lowering
-gap in the call-expression path after template substitution rather than in template argument
-binding or mangling.
-
-This was reproduced with both deduced and explicit free-function template instantiations
-while adding `tests/test_funcptr_free_function_template_signature_ret0.cpp`.
-
-## Implicit function-name → function-pointer conversion for overload resolution
-
-Passing a bare function name to a parameter whose declared type is a typedef'd or
-`using`-alias function pointer fails overload resolution:
-
-```cpp
-typedef int (*IntFn)(int);
-void call(IntFn f);
-int foo(int x) { return x; }
-call(foo);  // ERROR: No matching function for call to 'call'
-```
-
-**Workaround:** Assign the function to a typed local variable first and pass the variable.

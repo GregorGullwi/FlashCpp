@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
+#include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
 #include "LambdaHelpers.h"
@@ -1225,6 +1226,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		auto symbol = this->lookup_symbol(ident.nameHandle());
 		if (symbol.has_value()) {
 			if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+				if (const FunctionDeclarationNode* func_decl = FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol)) {
+					return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(*func_decl);
+				}
+
 				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
 
 				// Handle array-to-pointer decay
@@ -1242,15 +1247,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 				return type;
 			}
-			// Handle function identifiers: __typeof(func) / decltype(func) should
-			// return the function's return type. GCC's __typeof on a function name
-			// yields the function type, but for practical purposes (libstdc++ usage
-			// like 'extern "C" __typeof(uselocale) __uselocale;'), returning the
-			// return type allows parsing to continue past these declarations.
 			if (symbol->is<FunctionDeclarationNode>()) {
 				const auto& func = symbol->as<FunctionDeclarationNode>();
-				const TypeSpecifierNode& ret_type = func.decl_node().type_node().as<TypeSpecifierNode>();
-				return ret_type;
+				return FlashCpp::ParserFunctionTypeHelpers::buildFunctionPointerTypeFromFunctionDeclaration(func);
 			}
 		}
 	} else if (std::holds_alternative<BinaryOperatorNode>(expr)) {
