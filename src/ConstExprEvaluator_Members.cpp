@@ -93,7 +93,7 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 }
 } // namespace
 
-bool Evaluator::is_constexpr_member_lookup_candidate(
+bool Evaluator::isConstexprMemberLookupCandidate(
 	const FunctionDeclarationNode& func_decl,
 	size_t argument_count,
 	EvaluationContext& context,
@@ -136,7 +136,7 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 				continue;
 			}
 			const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (!is_constexpr_member_lookup_candidate(
+			if (!isConstexprMemberLookupCandidate(
 					candidate,
 					argument_count,
 					context,
@@ -153,7 +153,7 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 			}
 		}
 	}
-	if (!is_constexpr_member_lookup_candidate(
+	if (!isConstexprMemberLookupCandidate(
 			lowered_func,
 			argument_count,
 			context,
@@ -1155,7 +1155,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		if (require_static && !func_decl.is_static()) {
 			continue;
 		}
-		if (!is_constexpr_member_lookup_candidate(
+		if (!isConstexprMemberLookupCandidate(
 				func_decl,
 				argument_count,
 				context,

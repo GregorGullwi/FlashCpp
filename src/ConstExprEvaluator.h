@@ -787,7 +787,7 @@ private:
 		const EvalResult& object,
 		std::string_view func_name,
 		EvaluationContext& context);
-	static bool is_constexpr_member_lookup_candidate(
+	static bool isConstexprMemberLookupCandidate(
 		const FunctionDeclarationNode& func_decl,
 		size_t argument_count,
 		EvaluationContext& context,
