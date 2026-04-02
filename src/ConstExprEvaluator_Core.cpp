@@ -4496,39 +4496,7 @@ EvalResult Evaluator::materializeFromConstantBytes(
 	const std::vector<char>& bytes,
 	TypeIndex type_index,
 	const std::vector<size_t>& array_dimensions) {
- // Scalar extraction helper
-	auto extractScalar = [&bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
-		if (offset + size > bytes.size()) {
-			return EvalResult::error("NormalizedInitializer: offset out of range");
-		}
-		unsigned long long raw = 0;
-		for (size_t i = 0; i < size && i < 8; ++i) {
-			raw |= static_cast<unsigned long long>(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
-		}
-		if (cat == TypeCategory::Float) {
-			float f;
-			uint32_t bits = static_cast<uint32_t>(raw);
-			std::memcpy(&f, &bits, sizeof(float));
-			return EvalResult::from_double(static_cast<double>(f));
-		}
-		if (cat == TypeCategory::Double || cat == TypeCategory::LongDouble) {
-			double d;
-			std::memcpy(&d, &raw, sizeof(double));
-			return EvalResult::from_double(d);
-		}
-		if (cat == TypeCategory::Bool) {
-			return EvalResult::from_bool(raw != 0);
-		}
-		if (is_signed_integer_type(cat)) {
-			int bit_count = static_cast<int>(size * 8);
-			long long signed_val = static_cast<long long>(raw);
-			if (bit_count < 64 && (raw & (1ULL << (bit_count - 1)))) {
-				signed_val |= ~((1LL << bit_count) - 1);
-			}
-			return EvalResult::from_int(signed_val);
-		}
-		return EvalResult::from_uint(raw);
-	};
+/* extractScalar removed: use local extractLeafScalar inside materializeLeaf for leaf byte extraction. */
 
 	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
 		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(current_type_index)) {
