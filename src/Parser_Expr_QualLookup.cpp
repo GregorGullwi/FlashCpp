@@ -1452,32 +1452,55 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
 		const auto& decl = member_call.function_declaration();
 		TypeSpecifierNode return_type = decl.decl_node().type_node().as<TypeSpecifierNode>();
+		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {
+			if (!struct_info) {
+				return;
+			}
+			std::string_view func_name = decl.decl_node().identifier_token().value();
+			for (const auto& member_func : struct_info->member_functions) {
+				if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) &&
+					member_func.function_decl.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& real_func =
+						member_func.function_decl.as<FunctionDeclarationNode>();
+					return_type = real_func.decl_node().type_node().as<TypeSpecifierNode>();
+					return;
+				}
+			}
+		};
 
 		// Try to get the actual function declaration from the struct info
 		// The placeholder function declaration may have wrong return type
 		const ASTNode& object_node = member_call.object();
 		if (object_node.is<ExpressionNode>()) {
 			auto object_type_opt = get_expression_type(object_node);
-			if (object_type_opt.has_value() && object_type_opt->category() == TypeCategory::Struct) {
-				size_t struct_type_index = object_type_opt->type_index().index();
-				if (const TypeInfo* type_info = tryGetTypeInfo(TypeIndex{struct_type_index})) {
-					const StructTypeInfo* struct_info = type_info->getStructInfo();
-					if (struct_info) {
-						// Look up the member function
-						std::string_view func_name = decl.decl_node().identifier_token().value();
-						for (const auto& member_func : struct_info->member_functions) {
-							if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) &&
-								member_func.function_decl.is<FunctionDeclarationNode>()) {
-								// Found the real function - use its return type
-								const FunctionDeclarationNode& real_func =
-									member_func.function_decl.as<FunctionDeclarationNode>();
-								return_type = real_func.decl_node().type_node().as<TypeSpecifierNode>();
-								break;
-							}
-						}
-					}
-				}
+			if (object_type_opt.has_value()) {
+				update_return_type_from_struct(tryGetStructTypeInfo(object_type_opt->type_index()));
 			}
+		}
+		if (const std::string_view parent_struct_name = decl.parent_struct_name(); !parent_struct_name.empty()) {
+			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(parent_struct_name));
+			if (type_it != getTypesByNameMap().end()) {
+				update_return_type_from_struct(type_it->second->getStructInfo());
+			}
+		}
+
+		const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(return_type.type_index());
+		if (return_alias_info.type_index.is_valid()) {
+			return_type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
+		}
+		return_type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
+		if (return_type.reference_qualifier() == ReferenceQualifier::None &&
+			return_alias_info.reference_qualifier != ReferenceQualifier::None) {
+			return_type.set_reference_qualifier(return_alias_info.reference_qualifier);
+		}
+		if (!return_type.has_function_signature() && return_alias_info.function_signature.has_value()) {
+			return_type.set_function_signature(*return_alias_info.function_signature);
+		}
+		if (!return_alias_info.array_dimensions.empty()) {
+			return_type.set_array_dimensions(return_alias_info.array_dimensions);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(return_type); resolved_size_bits > 0) {
+			return_type.set_size_in_bits(resolved_size_bits);
 		}
 
 		FLASH_LOG(Parser, Debug, "get_expression_type for member function call: ",

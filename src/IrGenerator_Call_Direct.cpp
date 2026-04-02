@@ -1685,6 +1685,11 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
 							  ? ValueStorage::ContainsAddress
 							  : ValueStorage::ContainsData;
-		return makeExprResult(type_index_result.withCategory(return_type.type()), SizeInBits{result_size}, IrOperand{ret_var}, PointerDepth{}, st);
+		return makeExprResult(
+			type_index_result.withCategory(return_type.type()),
+			SizeInBits{result_size},
+			IrOperand{ret_var},
+			PointerDepth{static_cast<int>(return_type.pointer_depth())},
+			st);
 	}
 }

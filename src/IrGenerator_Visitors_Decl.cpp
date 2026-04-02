@@ -1977,6 +1977,41 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								const InitializerListNode& init_list = init_node.as<InitializerListNode>();
 								const auto& initializers = init_list.initializers();
 
+								if (member.is_array && !member.array_dimensions.empty()) {
+									const size_t declared_count = member.array_dimensions[0];
+									const size_t element_size = declared_count > 0 ? member.size / declared_count : member.size;
+									const bool elem_is_fp = isFloatingPointType(member.memberType());
+
+									for (size_t i = 0; i < declared_count; ++i) {
+										IrValue elem_val = elem_is_fp ? IrValue{0.0} : IrValue{0ULL};
+										if (i < initializers.size() && initializers[i].is<ExpressionNode>()) {
+											ExprResult elem_op = visitExpressionNode(initializers[i].as<ExpressionNode>());
+											if (const auto* tmp = std::get_if<TempVar>(&elem_op.value)) {
+												elem_val = *tmp;
+											} else if (const auto* ull = std::get_if<unsigned long long>(&elem_op.value)) {
+												elem_val = *ull;
+											} else if (const auto* dbl = std::get_if<double>(&elem_op.value)) {
+												elem_val = *dbl;
+											} else if (const auto* sh = std::get_if<StringHandle>(&elem_op.value)) {
+												elem_val = *sh;
+											}
+										}
+										MemberStoreOp elem_store;
+										elem_store.value.setType(member.type_index.category());
+										assert(element_size * 8 <= static_cast<size_t>(std::numeric_limits<int>::max()));
+										elem_store.value.size_in_bits = SizeInBits{static_cast<int>(element_size * 8)};
+										elem_store.value.value = elem_val;
+										elem_store.object = StringTable::getOrInternStringHandle("this");
+										elem_store.member_name = member.getName();
+										assert(member.offset + i * element_size <= static_cast<size_t>(std::numeric_limits<int>::max()));
+										elem_store.offset = static_cast<int>(member.offset + i * element_size);
+										elem_store.ref_qualifier = CVReferenceQualifier::None;
+										elem_store.struct_type_info = nullptr;
+										ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(elem_store), node.name_token()));
+									}
+									continue;
+								}
+
 									// For struct members with brace initializers, we need to handle them specially
 									// Get the type info for this member
 								TypeIndex member_type_index = member.type_index;
