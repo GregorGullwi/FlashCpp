@@ -5,21 +5,6 @@
 #include "Parser_FunctionTypeHelpers.h"
 #include "TypeTraitEvaluator.h"
 
-namespace {
-bool isBareFunctionIdentifierExpr(const ASTNode& arg_node) {
-	if (!arg_node.is<ExpressionNode>()) {
-		return false;
-	}
-	const ExpressionNode& expr = arg_node.as<ExpressionNode>();
-	if (!std::holds_alternative<IdentifierNode>(expr)) {
-		return false;
-	}
-	const auto& ident = std::get<IdentifierNode>(expr);
-	auto symbol = gSymbolTable.lookup(ident.nameHandle());
-	return symbol.has_value() && FlashCpp::ParserFunctionTypeHelpers::findFunctionDeclarationForSymbol(*symbol) != nullptr;
-}
-}
-
 // Phase 1: Unified parameter list parsing
 // This method handles all the common parameter parsing logic:
 // - Basic parameters: (int x, float y)
@@ -450,16 +435,19 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 
 	for (size_t i = 0; i < arg_types.size(); ++i) {
 		TypeSpecifierNode arg_type_node = arg_types[i];
+		bool is_bare_function = false;
 		if (i < args.size()) {
 			if (auto function_type = FlashCpp::ParserFunctionTypeHelpers::tryGetBareFunctionIdentifierType(args[i]); function_type.has_value()) {
 				arg_type_node = *function_type;
+				is_bare_function = true;
 			}
 		}
 
 		// Check if this is an lvalue (for perfect forwarding deduction)
 		// Lvalues: named variables, array subscripts, member access, dereferences, string literals
 		// Rvalues: numeric/bool literals, temporaries, function calls returning non-reference
-		if (i < args.size() && args[i].is<ExpressionNode>()) {
+		// Bare function identifiers are excluded — they decay to function pointers (rvalues).
+		if (i < args.size() && !is_bare_function && args[i].is<ExpressionNode>()) {
 			const ExpressionNode& expr = args[i].as<ExpressionNode>();
 			bool is_lvalue = std::visit([](const auto& inner) -> bool {
 				using T = std::decay_t<decltype(inner)>;
@@ -479,7 +467,7 @@ std::vector<TypeSpecifierNode> Parser::apply_lvalue_reference_deduction(
 			},
 										expr);
 
-			if (is_lvalue && !isBareFunctionIdentifierExpr(args[i])) {
+			if (is_lvalue) {
 				arg_type_node.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			}
 		}
