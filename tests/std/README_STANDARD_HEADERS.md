@@ -19,13 +19,13 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | Operator== not defined for operand types |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~1960ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed; it now gets through `char_traits<wchar_t>` and fails later on ranges/view constraints plus iterator arithmetic (`Operator-`, `make_move_iterator`) |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~4150ms (targeted retest 2026-03-31). Previous function-pointer mangling blocker fixed; now fails later on `Missing identifier: string`, missing `std::basic_string` primary template lookups, and explicit-constructor copy-init errors |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~750ms (targeted retest 2026-04-01). The aggregate brace-init blocker for `std::array<int, N>` is fixed; the header now parses and reaches later iterator/string-view codegen failures (`Operator!=`, `Operator==`, then fatal `Operator+`) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2100ms (targeted retest 2026-03-31). No longer reproduces unresolved-`auto` mangling here; now fails later on explicit-constructor copy-init after concepts/ranges diagnostics |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1140ms (targeted retest 2026-04-02). The aggregate brace-init blocker stays fixed; current failures are later iterator/ranges follow-ons (`Operator-` via `operator+`, `make_move_iterator`, and `operator==` hitting missing struct type info) |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2210ms (targeted retest 2026-04-02). Now gets past the earlier free-operator-template blocker but still fails later on ranges/view helpers (`__is_derived_from_view_interface_fn`), `first` member lookup, `_S_empty` / `_S_size`, and fatal `Operator-` follow-ons |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | member '_M_start' not found in struct '_Vector_impl' (base class member access) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | ~3050ms (targeted retest 2026-04-02). Base-member lookup is no longer the first stop; current failures are later iterator/ranges/codegen issues (`Operator-` / `Operator!=`, `make_move_iterator`, unresolved `auto` in `__addressof`, `first` lookup, and struct type info gaps) |
 | `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
 | `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
@@ -35,7 +35,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
 | `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
-| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~2967ms (targeted retest 2026-04-01). The earlier missing-InstantiationContext assertion is fixed; codegen now gets further, reports `_S_empty`/`_S_size`/`move` failures, and then crashes in `IROperandHelpers::toIrValue` |
+| `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-04-01):** The table entries for `<array>` and `<iostream>` were re-verified individually after the fixes below. `<array>` now gets past the documented aggregate brace-init blocker and reaches later codegen errors; `<iostream>` no longer aborts on the missing-InstantiationContext assertion and now crashes later in IR lowering. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-02):** `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, and `<iostream>` were re-checked individually after the fixes below. The wide-`wmemchr` ambiguity is gone and infix free operator templates now instantiate in simple cases, but the libstdc++ headers still run into later ranges/view, iterator arithmetic, and struct-type-info follow-on failures. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -122,7 +122,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 3. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-4. **Iterator / string-view downstream codegen after the `std::array` parse fix**: `std::array<int, 5> arr = {1, 2, 3, 4, 5}` now parses, but `<array>` still dies later in codegen on unresolved iterator/string-view operators (`Operator!=`, `Operator==`, then fatal `Operator+`). Affects: `<array>`.
+4. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
 5. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
 
@@ -133,6 +133,12 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 8. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
 
 9. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-04-02)
+
+1. **Builtin wide `wmemchr` declarations now match the standard const/non-const overload set**: the compiler-used builtin declarations now register both `wchar_t* wmemchr(wchar_t*, ...)` and `const wchar_t* wmemchr(const wchar_t*, ...)`, instead of a non-standard mixed signature. This removes the early `bits/char_traits.h` ambiguity that previously stopped `<string_view>` / `<iostream>` before later semantic/codegen phases. Regression coverage: existing `tests/std/test_wmemchr.cpp` plus targeted std-header repro `tests/std/test_std_wstring_view_find_ret0.cpp`.
+
+2. **Binary operator parsing now instantiates matching free operator templates, and free-operator codegen reuses the instantiated mangled name**: infix expressions like `a == b` / `a - b` now trigger the same template-instantiation machinery that direct `operator==(a, b)` calls already used, and the later call emission now honors the instantiated function's stored mangled name. This fixes plain templated free operator overloads and removes one blocker from the standard-library iterator/string-view path. Regression tests: `tests/test_operator_template_eq_ret0.cpp`, `tests/test_operator_template_minus_ret0.cpp`.
 
 ### Recent Fixes (2026-04-01)
 

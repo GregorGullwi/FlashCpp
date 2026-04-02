@@ -15,7 +15,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		~RecursionGuard() { --depth; }
 	} guard(recursion_depth);
 
-	auto instantiate_binary_operator_templates = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
+	auto tryInstantiateOperatorTemplate = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
 		-> const FunctionDeclarationNode* {
 		if (current_linkage_ == Linkage::C) {
 			return nullptr;
@@ -38,7 +38,8 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		auto adl_candidates = gSymbolTable.lookup_adl(op_name, arg_types);
 		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
 
-		int template_recursion_depth = 1;
+		constexpr int initial_template_instantiation_depth = 1;
+		int template_recursion_depth = initial_template_instantiation_depth;
 		for (const auto& candidate : candidates) {
 			if (!candidate.is<TemplateFunctionDeclarationNode>()) {
 				continue;
@@ -463,7 +464,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								gSymbolTable);
 							if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind != OverloadableOperator::Assign) {
 								if (const FunctionDeclarationNode* instantiated_overload =
-										instantiate_binary_operator_templates(op_symbol, *left_type_spec, *right_type_spec)) {
+										tryInstantiateOperatorTemplate(op_symbol, *left_type_spec, *right_type_spec)) {
 									overload_result = OperatorOverloadResult(instantiated_overload);
 								}
 							}
@@ -510,7 +511,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								gSymbolTable);
 							if (!overload_result.has_match && !overload_result.is_ambiguous) {
 								if (const FunctionDeclarationNode* instantiated_overload =
-										instantiate_binary_operator_templates(operator_token.value(), *left_type_spec, *right_type_spec)) {
+										tryInstantiateOperatorTemplate(operator_token.value(), *left_type_spec, *right_type_spec)) {
 									overload_result = OperatorOverloadResult(instantiated_overload);
 								}
 							}
