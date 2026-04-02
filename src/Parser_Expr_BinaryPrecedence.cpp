@@ -38,9 +38,14 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		const FunctionDeclarationNode* best_match = nullptr;
 
 		// Phase 1: try the template registry (covers most non-ADL templates)
+		// Must set SFINAE context so substitution failures return nullopt
+		// instead of throwing a hard CompileError (same as Phase 2 below).
+		bool previous_sfinae_phase1 = in_sfinae_context_;
+		in_sfinae_context_ = true;
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
 			best_match = get_function_decl_node(*instantiated);
 		}
+		in_sfinae_context_ = previous_sfinae_phase1;
 
 		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
 		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
