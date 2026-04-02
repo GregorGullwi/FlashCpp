@@ -341,17 +341,22 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		const TemplateFunctionDeclarationNode& template_func = template_node.as<TemplateFunctionDeclarationNode>();
 		const std::vector<ASTNode>& template_params = template_func.template_parameters();
 		const FunctionDeclarationNode& func_decl = template_func.function_decl_node();
+		bool has_variadic_func_pack = false;
+		size_t required_function_args_after_pack = 0;
 
 	// Filter by call argument count if known (SIZE_MAX means unknown)
 	// Only reject if caller provides MORE args than the function has params
 	// (fewer args might use defaults, so we allow call_arg_count <= func_param_count)
 		if (call_arg_count != SIZE_MAX && !func_decl.is_variadic()) {
 			size_t func_param_count = func_decl.parameter_nodes().size();
-			bool has_variadic_func_pack = false;
 			for (const auto& p : func_decl.parameter_nodes()) {
 				if (p.is<DeclarationNode>() && p.as<DeclarationNode>().is_parameter_pack()) {
 					has_variadic_func_pack = true;
-					break;
+					continue;
+				}
+				if (has_variadic_func_pack &&
+					(!p.is<DeclarationNode>() || !p.as<DeclarationNode>().has_default_value())) {
+					++required_function_args_after_pack;
 				}
 			}
 			if (!has_variadic_func_pack && call_arg_count > func_param_count) {
@@ -393,13 +398,26 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// Build template argument list
 		InlineVector<TemplateTypeArg, 4> template_args;
 		size_t explicit_idx = 0;	 // Track position in explicit_types
+		size_t deduced_call_arg_index = SIZE_MAX;
+		if (current_explicit_call_arg_types_ != nullptr) {
+			deduced_call_arg_index = 0;
+			if (has_variadic_func_pack &&
+				current_explicit_call_arg_types_->size() >= required_function_args_after_pack) {
+				deduced_call_arg_index =
+					current_explicit_call_arg_types_->size() - required_function_args_after_pack;
+			}
+		}
 		bool overload_mismatch = false;
 		auto appendDefaultTemplateArg = [&](const TemplateParameterNode& param) -> bool {
 			if (!param.has_default())
 				return false;
 			const ASTNode& default_node = param.default_value();
 			if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-				template_args.push_back(TemplateTypeArg(default_node.as<TypeSpecifierNode>()));
+				TemplateTypeArg default_arg(default_node.as<TypeSpecifierNode>());
+				if (is_builtin_type(default_arg.typeEnum())) {
+					default_arg.type_index = nativeTypeIndex(default_arg.typeEnum());
+				}
+				template_args.push_back(default_arg);
 				return true;
 			}
 			if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
@@ -407,8 +425,8 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (!default_value.has_value())
 					return false;
 				template_args.push_back(TemplateTypeArg::makeValue(
-					default_value->intValue(),
-					default_value->typeEnum()));
+					default_value->value,
+					default_value->type));
 				return true;
 			}
 			if (param.kind() == TemplateParameterKind::Template && default_node.is<TypeSpecifierNode>()) {
@@ -448,12 +466,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				size_t remaining_args = explicit_idx < explicit_types.size()
 										   ? explicit_types.size() - explicit_idx
 										   : 0;
-				size_t required_after = countRequiredTemplateArgsAfter<
-					decltype(template_params),
-					decltype(explicit_types)>(template_params, i + 1);
-				size_t pack_size = remaining_args > required_after
+				size_t pack_size = remaining_args;
+				if (current_explicit_call_arg_types_ == nullptr) {
+					size_t required_after = countRequiredTemplateArgsAfter<
+						decltype(template_params),
+						decltype(explicit_types)>(template_params, i + 1);
+					pack_size = remaining_args > required_after
 									 ? remaining_args - required_after
 									 : 0;
+				}
 				for (size_t j = 0; j < pack_size; ++j) {
 					template_args.push_back(explicit_types[explicit_idx + j]);
 				}
@@ -462,6 +483,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				if (explicit_idx < explicit_types.size()) {
 					template_args.push_back(explicit_types[explicit_idx]);
 					++explicit_idx;
+				} else if (current_explicit_call_arg_types_ != nullptr &&
+						   deduced_call_arg_index != SIZE_MAX &&
+						   deduced_call_arg_index < current_explicit_call_arg_types_->size()) {
+					template_args.push_back(TemplateTypeArg::makeTypeSpecifier(
+						(*current_explicit_call_arg_types_)[deduced_call_arg_index]));
+					++deduced_call_arg_index;
 				} else if (!appendDefaultTemplateArg(param)) {
 					FLASH_LOG_FORMAT(Templates, Debug, "Template overload mismatch: need argument at position {} but only {} types provided",
 									 explicit_idx, explicit_types.size());
@@ -525,11 +552,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	// CHECK CONCEPT CONSTRAINTS ON TEMPLATE PARAMETERS (C++20 abbreviated templates)
 	// For parameters like `template<IsInt _T0>` (from `IsInt auto x`), evaluate the concept
 		{
+			bool concept_failed = false;
 			forEachNonPackTemplateParamArgBinding(
 				template_params,
-				constraint_eval_args,
+				template_args,
 				[&](const TemplateParameterNode& param, const TemplateTypeArg& bound_arg, size_t) {
-					if (!param.has_concept_constraint() || overload_mismatch)
+					if (!param.has_concept_constraint() || overload_mismatch || concept_failed)
 						return;
 					std::string_view concept_name = param.concept_constraint();
 					auto concept_opt = gConceptRegistry.lookupConcept(concept_name);
@@ -551,9 +579,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						FLASH_LOG(Parser, Error, "concept constraint '", concept_name, "' not satisfied for parameter '", param.name(), "' of '", template_name, "'");
 						FLASH_LOG(Parser, Error, "  ", constraint_result.error_message);
 						overload_mismatch = true;
+						concept_failed = true;
 					}
 				});
-			if (overload_mismatch)
+			if (overload_mismatch || concept_failed)
 				continue;
 		}
 		if (overload_mismatch)
@@ -870,6 +899,15 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 	} // end of overload loop
 
 	return std::nullopt;	 // No overload matched
+}
+
+std::optional<ASTNode> Parser::try_instantiate_template_explicit(
+	std::string_view template_name,
+	const std::vector<TemplateTypeArg>& explicit_types,
+	const std::vector<TypeSpecifierNode>& arg_types) {
+	FlashCpp::ScopedState guard_explicit_call_arg_types(current_explicit_call_arg_types_);
+	current_explicit_call_arg_types_ = &arg_types;
+	return try_instantiate_template_explicit(template_name, explicit_types, arg_types.size());
 }
 
 // Try to instantiate a function template with the given argument types

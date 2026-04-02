@@ -5274,7 +5274,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, args.size());
+										instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 									}
 									if (instantiated_func.has_value()) {
 										// Check if the function is deleted

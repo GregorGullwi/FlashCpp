@@ -324,22 +324,3 @@ and `rebindStaticMemberInitializerFunctionCalls` had the same fall-through. The 
 would be to reconstruct the `MemberFunctionCallNode` with `rebound_args` (and a
 recursed object expression) when `!is_implicit_this_call`, instead of returning the
 original node.
-
-## Variadic template parameters before non-variadic ones misalign param-arg pairing
-
-In `populateTemplateParamSubstitutions` (`src/Parser_Templates_Inst_Deduction.cpp:160-162`),
-variadic template parameters are skipped with `continue`. Because the loop iterates params
-and args in parallel by index `i`, skipping a variadic param also skips `template_args[i]`.
-This is correct when variadic params appear at the end of the parameter list (the common
-case) and pack expansion is handled separately via `pack_param_info_`. However, if a
-variadic parameter appears before non-variadic ones (unusual but valid in C++20 with
-constrained params or partial deduction guides), the remaining params would be paired with
-the wrong args since the `continue` does not adjust the arg-side index.
-
-**Impact**: Only affects templates where a variadic parameter pack precedes a non-variadic
-parameter in the template parameter list, which is uncommon in practice. Standard trailing
-packs work correctly.
-
-**Suggested fix**: Instead of a parallel-index loop, consume variadic packs separately and
-maintain an independent arg cursor, similar to how `try_instantiate_template_explicit`
-(same file, line ~390) handles variadic packs with a dedicated `explicit_idx` counter.
