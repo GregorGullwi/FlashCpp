@@ -1133,6 +1133,10 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin(
 		"wmemchr",
 		wchar_t_ptr,
+		{wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
+	register_extern_c_builtin(
+		"wmemchr",
+		const_wchar_t_ptr,
 		{const_wchar_t_ptr, make_builtin_type(TypeCategory::WChar, CVQualifier::None, 0), size_t_type});
 	register_extern_c_builtin(
 		"wmemcpy",

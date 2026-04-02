@@ -15,6 +15,81 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		~RecursionGuard() { --depth; }
 	} guard(recursion_depth);
 
+	auto tryInstantiateOperatorTemplate = [&](std::string_view op_symbol, const TypeSpecifierNode& left_type_spec, const TypeSpecifierNode& right_type_spec)
+		-> const FunctionDeclarationNode* {
+		if (current_linkage_ == Linkage::C) {
+			return nullptr;
+		}
+
+		StringBuilder op_name_builder;
+		op_name_builder.append("operator").append(op_symbol);
+		std::string_view op_name = op_name_builder.commit();
+
+		std::vector<TypeSpecifierNode> arg_types;
+		arg_types.reserve(2);
+		arg_types.push_back(left_type_spec);
+		arg_types.push_back(right_type_spec);
+
+		// C++20 [basic.lookup.argdep]/1, [over.match.oper]/2: form a single
+		// candidate set from the template registry, ordinary unqualified lookup,
+		// and ADL, then try each template candidate under SFINAE.  We must NOT
+		// short-circuit after the registry hit because an ADL-only hidden friend
+		// template could be a better (more-specialized) match.
+		const FunctionDeclarationNode* best_match = nullptr;
+
+		// Phase 1: try the template registry (covers most non-ADL templates)
+		// Must set SFINAE context so substitution failures return nullopt
+		// instead of throwing a hard CompileError (same as Phase 2 below).
+		bool previous_sfinae_phase1 = in_sfinae_context_;
+		in_sfinae_context_ = true;
+		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
+			best_match = get_function_decl_node(*instantiated);
+		}
+		in_sfinae_context_ = previous_sfinae_phase1;
+
+		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
+		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
+		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
+		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
+
+		constexpr int initial_template_instantiation_depth = 1;
+		int template_recursion_depth = initial_template_instantiation_depth;
+		for (const auto& candidate : candidates) {
+			if (!candidate.is<TemplateFunctionDeclarationNode>()) {
+				continue;
+			}
+
+			bool previous_sfinae_context = in_sfinae_context_;
+			in_sfinae_context_ = true;
+			std::optional<ASTNode> instantiated = try_instantiate_single_template(
+				candidate,
+				op_name,
+				arg_types,
+				template_recursion_depth);
+			in_sfinae_context_ = previous_sfinae_context;
+
+			if (instantiated.has_value()) {
+				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
+					// C++20 [over.match.best]/1, [temp.func.order]: all candidates
+					// (registry, ordinary lookup, ADL) form a single overload set
+					// and the most specialized viable function wins.  Full partial
+					// ordering is not yet implemented; as an approximation, prefer
+					// ADL/lookup_all hits over the Phase 1 registry hit because
+					// hidden-friend templates (ADL-only) are defined inside the
+					// class body and are almost always more specialized than
+					// catch-all namespace-scope templates from the registry.
+					best_match = func_decl;
+				}
+			}
+		}
+
+		if (best_match) {
+			return best_match;
+		}
+
+		return nullptr;
+	};
+
 	if (recursion_depth > MAX_RECURSION_DEPTH) {
 		FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_RECURSION_DEPTH limit ({}) in parse_expression", MAX_RECURSION_DEPTH);
 		return ParseResult::error("Parser error: maximum recursion depth exceeded", current_token_);
@@ -407,11 +482,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						std::string_view op_symbol = operator_token.value();
 
 						if (left_type_spec.has_value() && right_type_spec.has_value() && isConcreteBinaryOperatorOperandType(*left_type_spec) && isConcreteBinaryOperatorOperandType(*right_type_spec)) {
+							OverloadableOperator op_kind = stringToOverloadableOperator(op_symbol);
 							auto overload_result = findBinaryOperatorOverloadWithFreeFunction(
 								*left_type_spec,
 								*right_type_spec,
-								stringToOverloadableOperator(op_symbol),
+								op_kind,
 								gSymbolTable);
+							if (!overload_result.has_match && !overload_result.is_ambiguous && op_kind != OverloadableOperator::Assign) {
+								if (const FunctionDeclarationNode* instantiated_overload =
+										tryInstantiateOperatorTemplate(op_symbol, *left_type_spec, *right_type_spec)) {
+									overload_result = OperatorOverloadResult(instantiated_overload);
+								}
+							}
 							if (overload_result.is_ambiguous) {
 								return ParseResult::error("SFINAE: ambiguous operator overload for '" + std::string(op_symbol) + "'", operator_token);
 							}
@@ -453,6 +535,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 								*right_type_spec,
 								op_kind,
 								gSymbolTable);
+							if (!overload_result.has_match && !overload_result.is_ambiguous) {
+								if (const FunctionDeclarationNode* instantiated_overload =
+										tryInstantiateOperatorTemplate(operator_token.value(), *left_type_spec, *right_type_spec)) {
+									overload_result = OperatorOverloadResult(instantiated_overload);
+								}
+							}
 						}
 
 						if (overload_result.is_ambiguous) {

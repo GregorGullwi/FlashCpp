@@ -1736,33 +1736,38 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				}
 			}
 
-			// Get namespace path for mangling
-			std::vector<std::string_view> namespace_path;
-			if (global_symbol_table_) {
-				auto ns_handle_opt = global_symbol_table_->find_namespace_of_function(func_decl);
-				if (ns_handle_opt.has_value()) {
-					NamespaceHandle nh = *ns_handle_opt;
-					while (nh.isValid() && !nh.isGlobal()) {
-						const NamespaceEntry& entry = gNamespaceRegistry.getEntry(nh);
-						namespace_path.insert(namespace_path.begin(), StringTable::getStringView(entry.name));
-						nh = gNamespaceRegistry.getParent(nh);
+			std::string mangled_name;
+			if (func_decl.has_mangled_name()) {
+				mangled_name = std::string(func_decl.mangled_name());
+			} else {
+				// Get namespace path for mangling (only needed when no pre-computed name)
+				std::vector<std::string_view> namespace_path;
+				if (global_symbol_table_) {
+					auto ns_handle_opt = global_symbol_table_->find_namespace_of_function(func_decl);
+					if (ns_handle_opt.has_value()) {
+						NamespaceHandle nh = *ns_handle_opt;
+						while (nh.isValid() && !nh.isGlobal()) {
+							const NamespaceEntry& entry = gNamespaceRegistry.getEntry(nh);
+							namespace_path.insert(namespace_path.begin(), StringTable::getStringView(entry.name));
+							nh = gNamespaceRegistry.getParent(nh);
+						}
 					}
 				}
-			}
 
-			StringBuilder op_name_sb;
-			op_name_sb.append("operator").append(op);
-			std::string_view operator_func_name = op_name_sb.commit();
-			auto mangled_name = NameMangling::generateMangledName(
-				operator_func_name,
-				return_type,
-				param_types,
-				false, // not variadic
-				"", // no struct (free function)
-				namespace_path,
-				Linkage::CPlusPlus,
-				false // free function, never const
-			);
+				StringBuilder op_name_sb;
+				op_name_sb.append("operator").append(op);
+				std::string_view operator_func_name = op_name_sb.commit();
+				mangled_name = NameMangling::generateMangledName(
+					operator_func_name,
+					return_type,
+					param_types,
+					false, // not variadic
+					"", // no struct (free function)
+					namespace_path,
+					Linkage::CPlusPlus,
+					false // free function, never const
+				);
+			}
 
 			TempVar result_var = var_counter.next();
 			CallOp call_op;
