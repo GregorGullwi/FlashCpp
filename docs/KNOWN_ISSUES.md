@@ -261,39 +261,3 @@ evaluator features.
 they represent true C++ violations (not evaluator gaps), then the existing enforcement
 path in `evalToValue` in `IrGenerator_Stmt_Decl.cpp` will automatically upgrade them
 to compile errors.
-
-## Static-member rebinding drops rebound arguments for non-implicit-this member calls
-
-In `rebindStaticMemberInitializerFunctionCalls`, when a `MemberFunctionCallNode` is
-encountered whose object is **not** implicit `this`, the function recursively rebinds
-the call's arguments but then discards them — the original unmodified `node` is
-returned instead of a reconstructed node carrying the rebound arguments. This means
-that static-member function calls nested inside the arguments of such a call are
-never redirected to the instantiated class's declarations.
-
-```cpp
-template <typename T>
-struct Box {
-    static T helper() { return T{}; }
-
-    static int compute() {
-        Box other;
-        // `other.method(helper())` — helper() in the arguments is a
-        // FunctionCallNode that should be rebound to Box<int>::helper(),
-        // but the MemberFunctionCallNode falls through and returns the
-        // original node with un-rebound arguments.
-        return other.method(helper());
-    }
-};
-```
-
-For the bug to manifest all three conditions must hold:
-1. A `MemberFunctionCallNode` where the object is not `this`
-2. The arguments contain calls to static member functions of the same template class
-3. Those inner static calls need rebinding (reference uninstantiated declarations)
-
-This is a pre-existing issue — both the old `rebindDelayedStaticMemberFunctionCalls`
-and `rebindStaticMemberInitializerFunctionCalls` had the same fall-through. The fix
-would be to reconstruct the `MemberFunctionCallNode` with `rebound_args` (and a
-recursed object expression) when `!is_implicit_this_call`, instead of returning the
-original node.
