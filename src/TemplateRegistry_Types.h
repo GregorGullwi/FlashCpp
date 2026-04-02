@@ -688,7 +688,7 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.setCategory(arg_info.category());
 	concrete_arg.type_index = arg_info.type_index;
 	concrete_arg.is_value = arg_info.is_value;
-	concrete_arg.value = arg_info.intValue();
+	concrete_arg.value = arg_info.value;
 	concrete_arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
 	concrete_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
 	concrete_arg.ref_qualifier = arg_info.ref_qualifier;
