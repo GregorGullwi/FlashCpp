@@ -1,17 +1,15 @@
-struct Receiver {
-	int method(int value) {
-		return value;
-	}
-};
-
 template <typename T>
 struct Box {
 	static int helper() {
 		return static_cast<int>(sizeof(T)) + 38;
 	}
 
+	int method(int value) {
+		return value;
+	}
+
 	static int compute() {
-		Receiver other;
+		Box other;
 		return other.method(helper());
 	}
 };
