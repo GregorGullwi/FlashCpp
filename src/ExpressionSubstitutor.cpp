@@ -4,7 +4,11 @@
 #include "Log.h"
 
 namespace {
-void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& source) {
+// Copy call metadata from source to target. By default all metadata is copied
+// including template_arguments. Pass copy_template_args=false when the caller
+// will substitute and set template arguments explicitly (avoids a redundant
+// shallow copy of potentially-unsubstituted dependent template parameters).
+void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& source, bool copy_template_args = true) {
 	target.set_indirect_call(source.is_indirect_call());
 	if (source.has_mangled_name()) {
 		target.set_mangled_name(source.mangled_name());
@@ -12,7 +16,7 @@ void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& 
 	if (source.has_qualified_name()) {
 		target.set_qualified_name(source.qualified_name());
 	}
-	if (source.has_template_arguments()) {
+	if (copy_template_args && source.has_template_arguments()) {
 		target.set_template_arguments(std::vector<ASTNode>(source.template_arguments().begin(), source.template_arguments().end()));
 	}
 }
@@ -310,7 +314,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from());
-					copyFunctionCallMetadata(new_call, call);
+					copyFunctionCallMetadata(new_call, call, /*copy_template_args=*/false);
 					std::vector<ASTNode> substituted_template_arg_nodes;
 					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
 					for (const auto& arg_node : explicit_template_arg_nodes) {
