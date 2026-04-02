@@ -509,20 +509,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// For immediate lambda invocation, object_decl can be nullptr
 	// In that case, we still need object_type to be set correctly
 
+	std::string_view current_struct_name_sv;
+	std::string_view base_template_name;
+	if (current_struct_name_.isValid()) {
+		current_struct_name_sv = StringTable::getStringView(current_struct_name_);
+		base_template_name = extractBaseTemplateName(current_struct_name_sv);
+	}
+
 	auto isSameClassAsCurrentInstantiation = [&](std::string_view candidate_name) {
-		if (!current_struct_name_.isValid() || candidate_name.empty()) {
+		if (candidate_name.empty() || current_struct_name_sv.empty()) {
 			return false;
 		}
 
-		std::string_view current_struct_name = StringTable::getStringView(current_struct_name_);
-		if (candidate_name == current_struct_name) {
+		if (candidate_name == current_struct_name_sv) {
 			return true;
 		}
 
-		std::string_view base_template_name = extractBaseTemplateName(current_struct_name);
 		if (base_template_name.empty()) {
 			return false;
 		}
+
 		if (candidate_name == base_template_name) {
 			return true;
 		}
