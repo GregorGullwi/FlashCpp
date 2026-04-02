@@ -325,6 +325,111 @@ void AstToIr::generateStaticMemberDeclarations() {
 			target.push_back(static_cast<char>((value >> (i * 8)) & 0xFF));
 		}
 	};
+	auto evalResultMemberToRaw = [](const ConstExpr::EvalResult& r, TypeCategory member_type) -> unsigned long long {
+		if (member_type == TypeCategory::Float) {
+			float fval = static_cast<float>(r.as_double());
+			uint32_t fbits = 0;
+			std::memcpy(&fbits, &fval, sizeof(float));
+			return static_cast<unsigned long long>(fbits);
+		}
+		if (member_type == TypeCategory::Double || member_type == TypeCategory::LongDouble) {
+			double dval = r.as_double();
+			unsigned long long dbits = 0;
+			std::memcpy(&dbits, &dval, sizeof(double));
+			return dbits;
+		}
+		return evalResultScalarToRaw(r);
+	};
+	auto writeRawValueAtOffset = [](std::vector<char>& data, size_t offset, size_t byte_count, unsigned long long value) {
+		for (size_t i = 0; i < byte_count && (offset + i) < data.size(); ++i) {
+			data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
+		}
+	};
+	static constexpr size_t kPackStructMaxDepth = 64;
+	auto packStructEvalResultIntoInitData = [&](auto& self, std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset, size_t depth) -> void {
+		if (depth >= kPackStructMaxDepth) {
+			FLASH_LOG(Codegen, Warning, "packStructEvalResultIntoInitData: recursion depth limit (",
+					  kPackStructMaxDepth, ") exceeded, skipping deeper nesting");
+			return;
+		}
+		for (const auto& member : struct_info.members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			auto it = eval_result.object_member_bindings.find(member_name);
+			if (it == eval_result.object_member_bindings.end()) {
+				continue;
+			}
+
+			const ConstExpr::EvalResult& member_result = it->second;
+			const size_t abs_offset = base_offset + member.offset;
+			if (member.is_array && member_result.is_array) {
+				size_t total_elements = 1;
+				for (size_t dim : member.array_dimensions) {
+					total_elements *= dim;
+				}
+				if (total_elements == 0) {
+					continue;
+				}
+
+				if (const TypeInfo* elem_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
+					if (const StructTypeInfo* elem_struct = elem_type_info->getStructInfo()) {
+						for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
+							self(self,
+								 init_data,
+								 *elem_struct,
+								 member_result.array_elements[elem_i],
+								 abs_offset + elem_i * elem_struct->total_size,
+								 depth + 1);
+						}
+						continue;
+					}
+				}
+
+				const size_t element_size = member.size / total_elements;
+				if (!member_result.array_elements.empty()) {
+					for (size_t elem_i = 0; elem_i < member_result.array_elements.size() && elem_i < total_elements; ++elem_i) {
+						writeRawValueAtOffset(
+							init_data,
+							abs_offset + elem_i * element_size,
+							element_size,
+							evalResultMemberToRaw(member_result.array_elements[elem_i], member.memberType()));
+					}
+				} else {
+					for (size_t elem_i = 0; elem_i < member_result.array_values.size() && elem_i < total_elements; ++elem_i) {
+						writeRawValueAtOffset(
+							init_data,
+							abs_offset + elem_i * element_size,
+							element_size,
+							static_cast<unsigned long long>(member_result.array_values[elem_i]));
+					}
+				}
+				continue;
+			}
+
+			if (const TypeInfo* member_type_info = resolveToConcreteStructTypeInfo(member.type_index)) {
+				if (const StructTypeInfo* nested_struct = member_type_info->getStructInfo();
+					nested_struct && !member_result.object_member_bindings.empty()) {
+					self(self, init_data, *nested_struct, member_result, abs_offset, depth + 1);
+					continue;
+				}
+			}
+
+			unsigned long long value = evalResultMemberToRaw(member_result, member.memberType());
+			if (member.bitfield_width.has_value()) {
+				size_t width = *member.bitfield_width;
+				size_t bit_offset = member.bitfield_bit_offset;
+				unsigned long long mask = (width < 64) ? ((1ULL << width) - 1) : ~0ULL;
+				value &= mask;
+				unsigned long long existing = 0;
+				for (size_t byte_index = 0; byte_index < member.size && (abs_offset + byte_index) < init_data.size(); ++byte_index) {
+					existing |= (static_cast<unsigned long long>(static_cast<unsigned char>(init_data[abs_offset + byte_index])) << (byte_index * 8));
+				}
+				existing |= (value << bit_offset);
+				writeRawValueAtOffset(init_data, abs_offset, member.size, existing);
+			} else {
+				writeRawValueAtOffset(init_data, abs_offset, member.size, value);
+			}
+		}
+	};
 	auto evaluate_static_initializer = [&](const ASTNode& expr_node, unsigned long long& out_value, const StructTypeInfo* struct_info) -> bool {
 		ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 		ctx.storage_duration = ConstExpr::StorageDuration::Static;
@@ -548,12 +653,16 @@ void AstToIr::generateStaticMemberDeclarations() {
 				bool allowNormalizedWriteBack = true;
 				op.type_index = static_member.type_index;
 				op.size_in_bits = SizeInBits{static_cast<int>(static_member.size * 8)};
-				// If size is 0 for struct types, look up from type info
+				// If size is 0 for struct-like types, look up from resolved struct info.
 				if (!op.size_in_bits.is_set()) {
-					if (const TypeInfo* static_type_info = tryGetTypeInfo(static_member.type_index)) {
-						if (const StructTypeInfo* member_si = static_type_info->getStructInfo()) {
-							op.size_in_bits = SizeInBits{static_cast<int>(member_si->total_size * 8)};
+					if (const StructTypeInfo* member_si = tryGetStructTypeInfo(static_member.type_index)) {
+						size_t total_size = member_si->total_size;
+						if (static_member.is_array) {
+							for (size_t dim_size : static_member.array_dimensions) {
+								total_size *= dim_size;
+							}
 						}
+						op.size_in_bits = SizeInBits{static_cast<int>(total_size * 8)};
 					}
 				}
 				op.var_name = name_handle; // Phase 3: Now using StringHandle instead of string_view
@@ -583,69 +692,142 @@ void AstToIr::generateStaticMemberDeclarations() {
 						op.init_data.push_back(0);
 					}
 				};
+				auto write_back_constant_bytes = [&]() {
+					if (!op.init_data.empty()) {
+						if (StructStaticMember* mutable_member =
+								const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
+							NormalizedInitializer ni;
+							ni.kind = NormalizedInitializer::Kind::ConstantBytes;
+							ni.constant_bytes = op.init_data;
+							mutable_member->normalized_init = std::move(ni);
+							FLASH_LOG(Codegen, Debug, "Wrote back aggregate NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
+						}
+					}
+				};
 				if (unresolved_identifier_initializer) {
 					FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
 					allowNormalizedWriteBack = false;
 					zero_initialize();
 				} else if (op.is_initialized) {
 					if (static_member.initializer->is<InitializerListNode>()) {
-						if (static_member.type_index.category() == TypeCategory::Struct) {
-							if (const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index)) {
-									FLASH_LOG(Codegen, Debug, "Aggregate static member '", qualified_name,
-											  "': struct total_size=", static_struct_info->total_size,
-											  ", members=", static_struct_info->members.size(),
-											  ", type_index=", static_member.type_index.index());
-								op.init_data.resize(static_struct_info->total_size, 0);
-								auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
-									unsigned long long leaf_value = 0;
-									if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
-										if (target_type == TypeCategory::Float) {
-											ConstExpr::EvaluationContext ctx(*global_symbol_table_);
-											ctx.storage_duration = ConstExpr::StorageDuration::Static;
-											ctx.parser = parser_;
-											auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
-											if (eval_result.success()) {
-												float f = static_cast<float>(eval_result.as_double());
-												uint32_t f_bits;
-												std::memcpy(&f_bits, &f, sizeof(float));
-												return f_bits;
-											}
-										} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
-											ConstExpr::EvaluationContext ctx(*global_symbol_table_);
-											ctx.storage_duration = ConstExpr::StorageDuration::Static;
-											ctx.parser = parser_;
-											auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
-											if (eval_result.success()) {
-												double d = eval_result.as_double();
-												unsigned long long bits;
-												std::memcpy(&bits, &d, sizeof(double));
-												return bits;
-											}
-										}
-										return leaf_value;
+						const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index);
+						auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
+							unsigned long long leaf_value = 0;
+							if (evaluate_static_initializer(leaf_expr, leaf_value, struct_info)) {
+								if (target_type == TypeCategory::Float) {
+									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+									ctx.storage_duration = ConstExpr::StorageDuration::Static;
+									ctx.parser = parser_;
+									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+									if (eval_result.success()) {
+										float f = static_cast<float>(eval_result.as_double());
+										uint32_t f_bits;
+										std::memcpy(&f_bits, &f, sizeof(float));
+										return f_bits;
 									}
-									return 0;
-								};
-								fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
-									FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
-
- // Phase C: immediately write-back aggregate bytes so subsequent
- // static members can reference them via constexpr evaluation.
-									if (!op.init_data.empty()) {
-										if (StructStaticMember* mutable_member =
-												const_cast<StructTypeInfo*>(struct_info)->findStaticMember(static_member.getName())) {
-											NormalizedInitializer ni;
-											ni.kind = NormalizedInitializer::Kind::ConstantBytes;
-											ni.constant_bytes = op.init_data;
-											mutable_member->normalized_init = std::move(ni);
-											FLASH_LOG(Codegen, Debug, "Wrote back aggregate NormalizedInitializer for '", qualified_name, "' (", op.init_data.size(), " bytes)");
-										}
+								} else if (target_type == TypeCategory::Double || target_type == TypeCategory::LongDouble) {
+									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
+									ctx.storage_duration = ConstExpr::StorageDuration::Static;
+									ctx.parser = parser_;
+									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
+									if (eval_result.success()) {
+										double d = eval_result.as_double();
+										unsigned long long bits;
+										std::memcpy(&bits, &d, sizeof(double));
+										return bits;
 									}
-							} else {
-								FLASH_LOG(Codegen, Debug, "Static member initializer references missing struct info for '", qualified_name, "', zero-initializing");
-								allowNormalizedWriteBack = false;
-								zero_initialize();
+								}
+								return leaf_value;
 							}
+							return 0;
+						};
+						if (static_member.is_array && !static_member.array_dimensions.empty() && static_struct_info) {
+							const auto& init_list = static_member.initializer->as<InitializerListNode>();
+							size_t total_elements = 1;
+							for (size_t dim_size : static_member.array_dimensions) {
+								total_elements *= dim_size;
+							}
+							size_t element_size = static_struct_info->total_size;
+							op.init_data.resize(element_size * total_elements, 0);
+
+							auto pack_struct_array_level =
+								[&](const auto& self, const InitializerListNode& current_list, size_t dim_index, size_t base_offset) -> void {
+								const size_t current_dim = static_member.array_dimensions[dim_index];
+								if (dim_index + 1 == static_member.array_dimensions.size()) {
+									size_t element_index = 0;
+									for (const ASTNode& node : current_list.initializers()) {
+										if (element_index >= current_dim) {
+											throw CompileError("Too many initializers for array");
+										}
+										std::vector<char> element_bytes(element_size, 0);
+										if (node.is<InitializerListNode>()) {
+											fillAggregateInitData(
+												element_bytes,
+												*static_struct_info,
+												node.as<InitializerListNode>(),
+												eval_aggregate_leaf);
+										} else {
+											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
+											eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+											eval_ctx.parser = parser_;
+											eval_ctx.struct_info = struct_info;
+											if (struct_info && struct_info->own_type_index_.has_value()) {
+												if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
+													ConstExpr::Evaluator::load_template_bindings_from_type(ti, eval_ctx);
+												}
+											}
+
+											ConstExpr::EvalResult object_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
+											if (!object_result.success() || object_result.object_member_bindings.empty()) {
+												throw CompileError("Expected constexpr struct initializer for array element");
+											}
+											packStructEvalResultIntoInitData(
+												packStructEvalResultIntoInitData,
+												element_bytes,
+												*static_struct_info,
+												object_result,
+												0,
+												0);
+										}
+										std::copy(
+											element_bytes.begin(),
+											element_bytes.end(),
+											op.init_data.begin() + static_cast<std::ptrdiff_t>(base_offset + element_index * element_size));
+										element_index++;
+									}
+									return;
+								}
+
+								size_t subarray_elements = 1;
+								for (size_t next_dim = dim_index + 1; next_dim < static_member.array_dimensions.size(); ++next_dim) {
+									subarray_elements *= static_member.array_dimensions[next_dim];
+								}
+								size_t subarray_size = subarray_elements * element_size;
+								size_t subarray_index = 0;
+								for (const ASTNode& node : current_list.initializers()) {
+									if (subarray_index >= current_dim) {
+										throw CompileError("Too many initializers for array");
+									}
+									if (!node.is<InitializerListNode>()) {
+										throw CompileError("Expected braced initializer for array subobject");
+									}
+									self(self, node.as<InitializerListNode>(), dim_index + 1, base_offset + subarray_index * subarray_size);
+									subarray_index++;
+								}
+							};
+
+							pack_struct_array_level(pack_struct_array_level, init_list, 0, 0);
+							FLASH_LOG(Codegen, Debug, "Packed struct-array initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
+							write_back_constant_bytes();
+						} else if (static_struct_info) {
+							FLASH_LOG(Codegen, Debug, "Aggregate static member '", qualified_name,
+									  "': struct total_size=", static_struct_info->total_size,
+									  ", members=", static_struct_info->members.size(),
+									  ", type_index=", static_member.type_index.index());
+							op.init_data.resize(static_struct_info->total_size, 0);
+							fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
+							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
+							write_back_constant_bytes();
 						} else {
 							// Non-struct InitializerListNode (e.g., static constexpr int x{42}).
 							// Extract the single element and evaluate as a scalar.

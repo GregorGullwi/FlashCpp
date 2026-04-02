@@ -491,9 +491,72 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 	if (!context.symbols) {
 		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
 	}
+
+	auto evaluate_array_element = [&](const ASTNode& element, TypeIndex element_type_index) -> EvalResult {
+		if (element.is<InitializerListNode>()) {
+			const auto& element_init_list = element.as<InitializerListNode>();
+			if (is_struct_type(element_type_index.category())) {
+				if (const TypeInfo* element_type_info = tryGetTypeInfo(element_type_index);
+					const StructTypeInfo* element_struct_info = element_type_info ? element_type_info->getStructInfo() : nullptr) {
+					return materialize_aggregate_object_value(
+						element_struct_info,
+						element_type_index,
+						element_init_list,
+						context);
+				}
+				return EvalResult::error("Array element struct type info not found in constant expression");
+			}
+			return materialize_array_value(element_type_index, element_init_list, context, nullptr);
+		}
+
+		return evaluate(element, context);
+	};
+
+	auto dereference_array_initializer =
+		[&](const InitializerListNode& init_list, TypeIndex element_type_index) -> EvalResult {
+		const auto& elements = init_list.initializers();
+		if (static_cast<size_t>(offset) >= elements.size()) {
+			return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
+										 " out of bounds (size " + std::to_string(elements.size()) + ")",
+									 EvalErrorType::NotConstantExpression);
+		}
+
+		return evaluate_array_element(elements[static_cast<size_t>(offset)], element_type_index);
+	};
+
 	auto symbol = context.symbols->lookup(var_name);
 	if (!symbol.has_value() && context.global_symbols) {
 		symbol = context.global_symbols->lookup(var_name);
+	}
+	if (!symbol.has_value() && context.struct_info) {
+		StringHandle member_name_handle = StringTable::getOrInternStringHandle(var_name);
+		auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(member_name_handle);
+		if (static_member != nullptr && owner_struct != nullptr) {
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(owner_struct->getName()).append("::"sv).append(member_name_handle).commit());
+			symbol = context.symbols->lookup(qualified_handle);
+			if (!symbol.has_value() && context.global_symbols) {
+				symbol = context.global_symbols->lookup(qualified_handle);
+			}
+			if (!symbol.has_value() &&
+				static_member->initializer.has_value() &&
+				static_member->initializer->is<InitializerListNode>()) {
+				const auto& init_list = static_member->initializer->as<InitializerListNode>();
+				if (static_member->is_array) {
+					return dereference_array_initializer(init_list, static_member->type_index);
+				}
+				if (offset == 0 && is_struct_type(static_member->type_index.category())) {
+					if (const TypeInfo* type_info = tryGetTypeInfo(static_member->type_index);
+						const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+						return materialize_aggregate_object_value(
+							struct_info,
+							static_member->type_index,
+							init_list,
+							context);
+					}
+				}
+			}
+		}
 	}
 	if (!symbol.has_value()) {
 		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
@@ -524,13 +587,12 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		// InitializerListNode, not ExpressionNode, so evaluate() would reject it).
 		if (initializer->is<InitializerListNode>()) {
 			const auto& init_list = initializer->as<InitializerListNode>();
-			const auto& elements = init_list.initializers();
-			if (static_cast<size_t>(offset) >= elements.size()) {
-				return EvalResult::error("Pointer dereference at offset " + std::to_string(offset) +
-											 " out of bounds (size " + std::to_string(elements.size()) + ")",
-										 EvalErrorType::NotConstantExpression);
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+				const auto& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+				return dereference_array_initializer(init_list, type_spec.type_index());
 			}
-			return evaluate(elements[static_cast<size_t>(offset)], context);
+
+			return dereference_array_initializer(init_list, TypeIndex{});
 		}
 
 		// For other array forms, materialize then index.
@@ -1872,7 +1934,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			resolved_static_initializer.static_member->normalized_init->isConstant()) {
 			return materializeFromConstantBytes(
 				resolved_static_initializer.static_member->normalized_init->constant_bytes,
-				resolved_static_initializer.static_member->type_index);
+				resolved_static_initializer.static_member->type_index,
+				resolved_static_initializer.static_member->array_dimensions);
 		}
 
 		if ((!resolved_static_initializer.initializer || !resolved_static_initializer.initializer->has_value()) &&
@@ -1887,11 +1950,117 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				resolved_static_initializer.static_member->normalized_init->isConstant()) {
 				return materializeFromConstantBytes(
 					resolved_static_initializer.static_member->normalized_init->constant_bytes,
-					resolved_static_initializer.static_member->type_index);
+					resolved_static_initializer.static_member->type_index,
+					resolved_static_initializer.static_member->array_dimensions);
 			}
 		}
 
 		return std::nullopt;
+	};
+	auto evaluate_current_struct_static_initializer = [&](
+		const ResolvedCurrentStructStaticInitializer& resolved_static_initializer) -> std::optional<EvalResult> {
+		if (!resolved_static_initializer.found ||
+			!resolved_static_initializer.initializer ||
+			!resolved_static_initializer.initializer->has_value()) {
+			return std::nullopt;
+		}
+
+		const ASTNode& initializer = resolved_static_initializer.initializer->value();
+		if (initializer.is<ConstructorCallNode>()) {
+			return evaluate_constructor_call(initializer.as<ConstructorCallNode>(), context);
+		}
+
+		if (initializer.is<InitializerListNode>() && resolved_static_initializer.static_member) {
+			auto try_evaluate_qualified_static_member = [&]() -> std::optional<EvalResult> {
+				if (!context.struct_info || !context.symbols) {
+					return std::nullopt;
+				}
+
+				auto try_lookup_qualified_variable = [&](StringHandle qualified_handle) -> std::optional<EvalResult> {
+					auto qualified_symbol = context.symbols->lookup(qualified_handle);
+					if (!qualified_symbol.has_value() && context.global_symbols) {
+						qualified_symbol = context.global_symbols->lookup(qualified_handle);
+					}
+					if (!qualified_symbol.has_value() || !qualified_symbol->is<VariableDeclarationNode>()) {
+						return std::nullopt;
+					}
+
+					const VariableDeclarationNode& qualified_var = qualified_symbol->as<VariableDeclarationNode>();
+					if (!qualified_var.is_constexpr() || !qualified_var.initializer().has_value()) {
+						return std::nullopt;
+					}
+
+					const ASTNode& qualified_initializer = qualified_var.initializer().value();
+					if (qualified_initializer.is<InitializerListNode>()) {
+						const auto& qualified_init_list = qualified_initializer.as<InitializerListNode>();
+						if (qualified_var.declaration().is_array()) {
+							if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
+								return materialize_array_value_with_spec(
+									qualified_var.declaration().type_node().as<TypeSpecifierNode>(),
+									qualified_init_list,
+									context);
+							}
+							return materialize_array_value(TypeIndex{}, qualified_init_list, context, nullptr);
+						}
+
+						if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
+							const auto& type_spec = qualified_var.declaration().type_node().as<TypeSpecifierNode>();
+							if (is_struct_type(type_spec.category())) {
+								if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
+									const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+									return materialize_aggregate_object_value(
+										struct_info,
+										type_spec.type_index(),
+										qualified_init_list,
+										context);
+								}
+								return std::nullopt;
+							}
+						}
+					}
+
+					return evaluate(qualified_initializer, context);
+				};
+
+				if (identifier.resolved_name().isValid()) {
+					if (auto resolved_eval = try_lookup_qualified_variable(identifier.resolved_name())) {
+						return resolved_eval;
+					}
+				}
+
+				auto [static_member, owner_struct] = context.struct_info->findStaticMemberRecursive(name_handle);
+				if (static_member == nullptr || owner_struct == nullptr) {
+					return std::nullopt;
+				}
+
+				StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+					StringBuilder().append(owner_struct->getName()).append("::"sv).append(name_handle).commit());
+				return try_lookup_qualified_variable(qualified_handle);
+			};
+
+			if (auto qualified_eval = try_evaluate_qualified_static_member()) {
+				return qualified_eval;
+			}
+
+			const auto& init_list = initializer.as<InitializerListNode>();
+			const StructStaticMember& static_member = *resolved_static_initializer.static_member;
+			if (static_member.is_array) {
+				return materialize_array_value(static_member.type_index, init_list, context, nullptr);
+			}
+			if (is_struct_type(static_member.type_index.category())) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(static_member.type_index);
+					const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
+					return materialize_aggregate_object_value(
+						struct_info,
+						static_member.type_index,
+						init_list,
+						context);
+				}
+				return std::nullopt;
+			}
+		}
+
+		return evaluate(initializer, context);
 	};
 
 	std::optional<ASTNode> symbol_opt;
@@ -1908,8 +2077,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return *materialized;
 		}
 
-		if (found_bound_static_member && bound_static_initializer.initializer && bound_static_initializer.initializer->has_value()) {
-			return evaluate(bound_static_initializer.initializer->value(), context);
+		if (auto evaluated_static_initializer = evaluate_current_struct_static_initializer(bound_static_initializer)) {
+			return *evaluated_static_initializer;
 		}
 
 		if (identifier.resolved_name().isValid()) {
@@ -1939,8 +2108,8 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 				return *materialized;
 			}
 
-			if (preferred_static_initializer.initializer && preferred_static_initializer.initializer->has_value()) {
-				return evaluate(preferred_static_initializer.initializer->value(), context);
+			if (auto evaluated_static_initializer = evaluate_current_struct_static_initializer(preferred_static_initializer)) {
+				return *evaluated_static_initializer;
 			}
 			return EvalResult::error("Static member has no initializer: " + std::string(var_name));
 		}
@@ -4318,64 +4487,146 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 EvalResult Evaluator::materializeFromConstantBytes(
 	const std::vector<char>& bytes,
 	TypeIndex type_index) {
- // Scalar extraction helper
-	auto extractScalar = [&bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
-		if (offset + size > bytes.size()) {
-			return EvalResult::error("NormalizedInitializer: offset out of range");
+	return materializeFromConstantBytes(bytes, type_index, {});
+}
+
+EvalResult Evaluator::materializeFromConstantBytes(
+	const std::vector<char>& bytes,
+	TypeIndex type_index,
+	const std::vector<size_t>& array_dimensions) {
+/* extractScalar removed: use local extractLeafScalar inside materializeLeaf for leaf byte extraction. */
+
+	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(current_type_index)) {
+			return struct_info->total_size;
 		}
-		unsigned long long raw = 0;
-		for (size_t i = 0; i < size && i < 8; ++i) {
-			raw |= static_cast<unsigned long long>(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
-		}
-		if (cat == TypeCategory::Float) {
-			float f;
-			uint32_t bits = static_cast<uint32_t>(raw);
-			std::memcpy(&f, &bits, sizeof(float));
-			return EvalResult::from_double(static_cast<double>(f));
-		}
-		if (cat == TypeCategory::Double || cat == TypeCategory::LongDouble) {
-			double d;
-			std::memcpy(&d, &raw, sizeof(double));
-			return EvalResult::from_double(d);
-		}
-		if (cat == TypeCategory::Bool) {
-			return EvalResult::from_bool(raw != 0);
-		}
-		if (is_signed_integer_type(cat)) {
-			int bit_count = static_cast<int>(size * 8);
-			long long signed_val = static_cast<long long>(raw);
-			if (bit_count < 64 && (raw & (1ULL << (bit_count - 1)))) {
-				signed_val |= ~((1LL << bit_count) - 1);
+
+		if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {
+			if (type_info->type_size_ > 0) {
+				return static_cast<size_t>(type_info->type_size_) / 8;
 			}
-			return EvalResult::from_int(signed_val);
 		}
-		return EvalResult::from_uint(raw);
+
+		return static_cast<size_t>(get_type_size_bits(current_type_index.category()) / 8);
 	};
 
- // Struct: populate object_member_bindings from the byte buffer
-	if (is_struct_type(type_index.category())) {
-		const StructTypeInfo* si = tryGetStructTypeInfo(type_index);
-		if (!si) {
-			return EvalResult::error("NormalizedInitializer: struct info not found");
-		}
-		EvalResult result = EvalResult::from_int(0);
-		result.object_type_index = type_index;
-		for (const auto& member : si->members) {
- // Skip array and nested struct members — they can't be represented as
- // simple scalars.  Callers should fall through to normal AST evaluation
- // when looking up these members.
-			if (member.is_array || is_struct_type(member.memberType())) {
-				continue;
+	auto materializeLeaf = [&](const std::vector<char>& leaf_bytes) -> EvalResult {
+		auto extractLeafScalar = [&leaf_bytes](size_t offset, size_t size, TypeCategory cat) -> EvalResult {
+			if (offset + size > leaf_bytes.size()) {
+				return EvalResult::error("NormalizedInitializer: offset out of range");
 			}
-			std::string_view member_name = StringTable::getStringView(member.getName());
-			result.object_member_bindings[member_name] =
-				extractScalar(member.offset, member.size, member.memberType());
+			unsigned long long raw = 0;
+			for (size_t i = 0; i < size && i < 8; ++i) {
+				raw |= static_cast<unsigned long long>(static_cast<unsigned char>(leaf_bytes[offset + i])) << (i * 8);
+			}
+			if (cat == TypeCategory::Float) {
+				float f;
+				uint32_t bits = static_cast<uint32_t>(raw);
+				std::memcpy(&f, &bits, sizeof(float));
+				return EvalResult::from_double(static_cast<double>(f));
+			}
+			if (cat == TypeCategory::Double || cat == TypeCategory::LongDouble) {
+				double d;
+				std::memcpy(&d, &raw, sizeof(double));
+				return EvalResult::from_double(d);
+			}
+			if (cat == TypeCategory::Bool) {
+				return EvalResult::from_bool(raw != 0);
+			}
+			if (is_signed_integer_type(cat)) {
+				int bit_count = static_cast<int>(size * 8);
+				long long signed_val = static_cast<long long>(raw);
+				if (bit_count < 64 && (raw & (1ULL << (bit_count - 1)))) {
+					signed_val |= ~((1LL << bit_count) - 1);
+				}
+				return EvalResult::from_int(signed_val);
+			}
+			return EvalResult::from_uint(raw);
+		};
+
+		if (is_struct_type(type_index.category())) {
+			const StructTypeInfo* si = tryGetStructTypeInfo(type_index);
+			if (!si) {
+				return EvalResult::error("NormalizedInitializer: struct info not found");
+			}
+			EvalResult result = EvalResult::from_int(0);
+			result.object_type_index = type_index;
+			for (const auto& member : si->members) {
+				if (member.is_array || is_struct_type(member.memberType())) {
+					continue;
+				}
+				std::string_view member_name = StringTable::getStringView(member.getName());
+				result.object_member_bindings[member_name] =
+					extractLeafScalar(member.offset, member.size, member.memberType());
+			}
+			return result;
 		}
-		return result;
+
+		return extractLeafScalar(0, leaf_bytes.size(), type_index.category());
+	};
+
+	if (!array_dimensions.empty()) {
+		const size_t element_size = getElementByteSize(type_index);
+		if (element_size == 0) {
+			return EvalResult::error("NormalizedInitializer: array element size is zero");
+		}
+
+		auto materializeArray =
+			[&](const auto& self, size_t dim_index, size_t offset) -> EvalResult {
+			EvalResult result = EvalResult::from_int(0);
+			result.is_array = true;
+
+			const size_t current_dim = array_dimensions[dim_index];
+			result.array_elements.reserve(current_dim);
+
+			size_t subobject_size = element_size;
+			for (size_t next_dim = dim_index + 1; next_dim < array_dimensions.size(); ++next_dim) {
+				subobject_size *= array_dimensions[next_dim];
+			}
+
+			std::vector<int64_t> array_values;
+			bool all_scalar_elements = true;
+			for (size_t i = 0; i < current_dim; ++i) {
+				EvalResult element_result;
+				size_t element_offset = offset + i * subobject_size;
+				if (dim_index + 1 == array_dimensions.size()) {
+					if (element_offset + element_size > bytes.size()) {
+						return EvalResult::error("NormalizedInitializer: array element offset out of range");
+					}
+
+					std::vector<char> element_bytes(
+						bytes.begin() + static_cast<std::ptrdiff_t>(element_offset),
+						bytes.begin() + static_cast<std::ptrdiff_t>(element_offset + element_size));
+					element_result = materializeLeaf(element_bytes);
+				} else {
+					element_result = self(self, dim_index + 1, element_offset);
+				}
+
+				if (!element_result.success()) {
+					return element_result;
+				}
+
+				if (element_result.object_type_index.is_valid() || element_result.is_array ||
+					element_result.callable_var_decl != nullptr || element_result.callable_lambda != nullptr) {
+					all_scalar_elements = false;
+				} else {
+					array_values.push_back(element_result.as_int());
+				}
+
+				result.array_elements.push_back(std::move(element_result));
+			}
+
+			if (all_scalar_elements) {
+				result.array_values = std::move(array_values);
+			}
+
+			return result;
+		};
+
+		return materializeArray(materializeArray, 0, 0);
 	}
 
- // Scalar type
-	return extractScalar(0, bytes.size(), type_index.category());
+	return materializeLeaf(bytes);
 }
 
 } // namespace ConstExpr

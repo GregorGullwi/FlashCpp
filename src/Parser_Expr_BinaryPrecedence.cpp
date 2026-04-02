@@ -1469,6 +1469,35 @@ ParseResult Parser::parse_static_member_block(
 	auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
 	ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 	int ptr_depth = static_cast<int>(type_spec.pointer_depth());
+	bool is_array = decl.is_array() || type_spec.is_array();
+	std::vector<size_t> array_dimensions;
+	if (decl.is_array()) {
+		auto [resolved_member_size, resolved_member_alignment] =
+			calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
+		member_size = resolved_member_size;
+		member_alignment = resolved_member_alignment;
+		for (const auto& dim_expr : decl.array_dimensions()) {
+			ConstExpr::EvaluationContext ctx(gSymbolTable);
+			auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+			if (eval_result.success() && eval_result.as_int() > 0) {
+				size_t dim_size = static_cast<size_t>(eval_result.as_int());
+				array_dimensions.push_back(dim_size);
+				member_size *= dim_size;
+			}
+		}
+	} else if (type_spec.is_array()) {
+		auto [resolved_member_size, resolved_member_alignment] =
+			calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
+		member_size = resolved_member_size;
+		member_alignment = resolved_member_alignment;
+		for (size_t dim_size : type_spec.array_dimensions()) {
+			if (dim_size == 0) {
+				continue;
+			}
+			array_dimensions.push_back(dim_size);
+			member_size *= dim_size;
+		}
+	}
 
 	// Register the static member
 	StringHandle static_member_name_handle = decl.identifier_token().handle();
@@ -1489,7 +1518,9 @@ ParseResult Parser::parse_static_member_block(
 				init_expr_opt,
 				cv_qual,
 				ref_qual,
-				ptr_depth);
+				ptr_depth,
+				is_array,
+				array_dimensions);
 		}
 	} else {
 		// Normal case - use provided struct_info directly
@@ -1502,7 +1533,9 @@ ParseResult Parser::parse_static_member_block(
 			init_expr_opt,
 			cv_qual,
 			ref_qual,
-			ptr_depth);
+			ptr_depth,
+			is_array,
+			std::move(array_dimensions));
 	}
 
 	return ParseResult::success();  // Signal caller to continue

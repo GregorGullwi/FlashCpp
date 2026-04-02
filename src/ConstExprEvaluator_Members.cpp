@@ -3268,14 +3268,49 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 	if (var_name.empty()) {
 		if (object_expr.is<ExpressionNode>()) {
 			const ExpressionNode& expr_node = object_expr.as<ExpressionNode>();
+			auto try_resolve_evaluated_object_member =
+				[&](const ASTNode& evaluated_object_expr) -> std::optional<EvalResult> {
+				EvalResult object_result = evaluate(evaluated_object_expr, context);
+				if (!object_result.success()) {
+					return object_result;
+				}
+
+				auto member_it = object_result.object_member_bindings.find(member_name);
+				if (member_it != object_result.object_member_bindings.end()) {
+					return member_it->second;
+				}
+
+				if (object_result.pointer_to_var.isValid()) {
+					EvalResult deref_result = dereference_constexpr_pointer(
+						StringTable::getStringView(object_result.pointer_to_var),
+						context,
+						object_result.pointer_offset);
+					if (!deref_result.success()) {
+						return deref_result;
+					}
+
+					auto deref_member_it = deref_result.object_member_bindings.find(member_name);
+					if (deref_member_it != deref_result.object_member_bindings.end()) {
+						return deref_member_it->second;
+					}
+				}
+
+				return std::nullopt;
+			};
 			// Check for ArraySubscriptNode
 			if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_node)) {
+				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
+					return *evaluated_member;
+				}
 				// Array subscript on struct - evaluate array element then access member
 				return evaluate_array_subscript_member_access(*array_subscript, member_name, context);
 			}
 			// Check for FunctionCallNode - evaluate the return type and access static member
 			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
 				const FunctionCallNode& func_call = *function_call;
+				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
+					return *evaluated_member;
+				}
 				return evaluate_function_call_member_access(func_call, member_name, context);
 			}
 		}
@@ -3628,7 +3663,8 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 			static_member_result.static_member->normalized_init->isConstant()) {
 			EvalResult materialized = materializeFromConstantBytes(
 				static_member_result.static_member->normalized_init->constant_bytes,
-				static_member_result.static_member->type_index);
+				static_member_result.static_member->type_index,
+				static_member_result.static_member->array_dimensions);
 			if (materialized.success()) {
 				resolved_object.declared_type_index = static_member_result.static_member->type_index;
 				resolved_object.materialized_value = materialized;
@@ -3654,7 +3690,8 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 			static_member_result.static_member->normalized_init->isConstant()) {
 			EvalResult materialized = materializeFromConstantBytes(
 				static_member_result.static_member->normalized_init->constant_bytes,
-				static_member_result.static_member->type_index);
+				static_member_result.static_member->type_index,
+				static_member_result.static_member->array_dimensions);
 			if (materialized.success()) {
 				resolved_object.declared_type_index = static_member_result.static_member->type_index;
 				resolved_object.materialized_value = materialized;
@@ -5511,7 +5548,9 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 	size_t index,
 	EvaluationContext& context) {
 	std::string_view var_name = identifier.name();
-	auto evaluate_array_initializer = [&](const std::optional<ASTNode>& initializer_opt) -> std::optional<EvalResult> {
+	auto evaluate_array_initializer = [&](const std::optional<ASTNode>& initializer_opt,
+										 TypeIndex element_type_index,
+										 bool element_is_struct_object) -> std::optional<EvalResult> {
 		if (!initializer_opt.has_value() || !initializer_opt->is<InitializerListNode>()) {
 			return std::nullopt;
 		}
@@ -5524,7 +5563,16 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		// Handle nested array row (multi-dimensional array element is an InitializerListNode).
 		const ASTNode& elem = elements[index];
 		if (elem.is<InitializerListNode>()) {
-			return materialize_array_value(TypeIndex{}, elem.as<InitializerListNode>(), context, nullptr);
+			if (element_is_struct_object) {
+				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(element_type_index)) {
+					return materialize_aggregate_object_value(
+						struct_info,
+						element_type_index,
+						elem.as<InitializerListNode>(),
+						context);
+				}
+			}
+			return materialize_array_value(element_type_index, elem.as<InitializerListNode>(), context, nullptr);
 		}
 		return evaluate(elem, context);
 	};
@@ -5538,7 +5586,13 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			context,
 			CurrentStructStaticLookupMode::PreferCurrentStruct);
 		static_member_result.static_member) {
-		if (auto static_result = evaluate_array_initializer(static_member_result.static_member->initializer)) {
+		bool element_is_struct_object =
+			static_member_result.static_member->array_dimensions.size() == 1 &&
+			tryGetStructTypeInfo(static_member_result.static_member->type_index) != nullptr;
+		if (auto static_result = evaluate_array_initializer(
+				static_member_result.static_member->initializer,
+				static_member_result.static_member->type_index,
+				element_is_struct_object)) {
 			return *static_result;
 		}
 
@@ -5550,7 +5604,18 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 			if (!qualified_var.is_constexpr()) {
 				return EvalResult::error("Static member array in array subscript must be constexpr");
 			}
-			if (auto qualified_result = evaluate_array_initializer(qualified_var.initializer())) {
+			TypeIndex qualified_element_type{};
+			bool qualified_element_is_struct_object = false;
+			if (qualified_var.declaration().type_node().is<TypeSpecifierNode>()) {
+				qualified_element_type = qualified_var.declaration().type_node().as<TypeSpecifierNode>().type_index();
+				qualified_element_is_struct_object =
+					qualified_var.declaration().array_dimensions().size() == 1 &&
+					tryGetStructTypeInfo(qualified_element_type) != nullptr;
+			}
+			if (auto qualified_result = evaluate_array_initializer(
+					qualified_var.initializer(),
+					qualified_element_type,
+					qualified_element_is_struct_object)) {
 				return *qualified_result;
 			}
 		}
@@ -5592,6 +5657,18 @@ EvalResult Evaluator::evaluate_variable_array_subscript(
 		if (elem.is<InitializerListNode>()) {
 			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
 				const TypeSpecifierNode& type_spec = var_decl.declaration().type_node().as<TypeSpecifierNode>();
+				bool element_is_struct_object =
+					var_decl.declaration().array_dimensions().size() == 1 &&
+					tryGetStructTypeInfo(type_spec.type_index()) != nullptr;
+				if (element_is_struct_object) {
+					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
+						return materialize_aggregate_object_value(
+							struct_info,
+							type_spec.type_index(),
+							elem.as<InitializerListNode>(),
+							context);
+					}
+				}
 				return materialize_array_value(type_spec.type_index(),
 											   elem.as<InitializerListNode>(), context, nullptr);
 			}

@@ -4941,8 +4941,30 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						const DeclarationNode& decl = type_and_name_result.node()->as<DeclarationNode>();
 						const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 
-						// Calculate size and alignment for the static member (handles pointers/references correctly)
-						auto [static_member_size, static_member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+						// Calculate size and alignment for the static member, preserving array shape.
+						auto [static_member_size, static_member_alignment] =
+							calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
+						bool is_array = decl.is_array() || type_spec.is_array();
+						std::vector<size_t> array_dimensions;
+						if (decl.is_array()) {
+							for (const auto& dim_expr : decl.array_dimensions()) {
+								ConstExpr::EvaluationContext ctx(gSymbolTable);
+								auto eval_result = ConstExpr::Evaluator::evaluate(dim_expr, ctx);
+								if (eval_result.success() && eval_result.as_int() > 0) {
+									size_t dim_size = static_cast<size_t>(eval_result.as_int());
+									array_dimensions.push_back(dim_size);
+									static_member_size *= dim_size;
+								}
+							}
+						} else if (type_spec.is_array()) {
+							for (size_t dim_size : type_spec.array_dimensions()) {
+								if (dim_size == 0) {
+									continue;
+								}
+								array_dimensions.push_back(dim_size);
+								static_member_size *= dim_size;
+							}
+						}
 						ReferenceQualifier ref_qual = type_spec.reference_qualifier();
 						int ptr_depth = static_cast<int>(type_spec.pointer_depth());
 
@@ -4950,6 +4972,7 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 						StringHandle static_member_name_handle = decl.identifier_token().handle();
 						member_struct_ref.add_static_member(
 							static_member_name_handle,
+							*type_and_name_result.node(),
 							type_spec.type_index(),
 							static_member_size,
 							static_member_alignment,
@@ -4957,7 +4980,9 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 							init_expr_opt,
 							cv_qual,
 							ref_qual,
-							ptr_depth);
+							ptr_depth,
+							is_array,
+							std::move(array_dimensions));
 					}
 					continue;
 				}
