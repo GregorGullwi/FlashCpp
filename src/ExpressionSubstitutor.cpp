@@ -134,6 +134,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	if (func_name.empty()) {
 		func_name = decl_node.identifier_token().value();
 	}
+	const std::string_view qualified_name = call.has_qualified_name()
+		? call.qualified_name()
+		: std::string_view{};
 	std::vector<ASTNode> explicit_template_arg_nodes;
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
@@ -177,6 +180,22 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 						type_name = StringTable::getStringView(type_info->name());
 						FLASH_LOG(Templates, Debug, "    Type name from gTypeInfo: ", type_name);
+					}
+					if (type_name.empty()) {
+						type_name = type_spec.token().value();
+						if (!type_name.empty()) {
+							FLASH_LOG(Templates, Debug, "    Type name from token: ", type_name);
+						}
+					}
+
+					auto pack_it = pack_map_.find(type_name);
+					if (type_spec.is_pack_expansion() && pack_it != pack_map_.end()) {
+						FLASH_LOG(Templates, Debug, "    Expanding template parameter pack: ", type_name, " with ", pack_it->second.size(), " arguments");
+						substituted_template_args.insert(
+							substituted_template_args.end(),
+							pack_it->second.begin(),
+							pack_it->second.end());
+						continue;
 					}
 
 				// Check if this type_name is in our substitution map (indicating it's a template parameter)
@@ -301,7 +320,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template: ", func_name, " with ", substituted_template_args.size(), " arguments");
 
 			// First try function template instantiation to obtain accurate return type
-			if (auto instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args)) {
+			std::optional<ASTNode> instantiated_template = std::nullopt;
+			if (!qualified_name.empty()) {
+				instantiated_template = parser_.try_instantiate_template_explicit(qualified_name, substituted_template_args);
+			}
+			if (!instantiated_template.has_value()) {
+				instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args);
+			}
+			if (instantiated_template.has_value()) {
 				if (instantiated_template->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
 
@@ -315,6 +341,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						std::move(substituted_args_nodes),
 						call.called_from());
 					copyFunctionCallMetadata(new_call, call, /*copy_template_args=*/false);
+					if (func_decl.has_mangled_name()) {
+						new_call.set_mangled_name(func_decl.mangled_name());
+					}
 					std::vector<ASTNode> substituted_template_arg_nodes;
 					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
 					for (const auto& arg_node : explicit_template_arg_nodes) {
@@ -347,7 +376,12 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				return *var_template_node;
 			}
 
-			auto instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+			auto instantiated_node = !qualified_name.empty()
+				? parser_.try_instantiate_class_template(qualified_name, substituted_template_args, true)
+				: parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+			if (!instantiated_node.has_value() && !qualified_name.empty()) {
+				instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+			}
 			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 				const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
 				StringHandle instantiated_name = class_decl.name();
@@ -382,37 +416,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				}
 			} else {
 				FLASH_LOG(Templates, Warning, "  Failed to instantiate template: ", func_name);
-			}
-		}
-	}
-
-	// Handle calls without stored template arguments by using pack substitutions when available
-	if (!call.has_template_arguments() && !pack_map_.empty()) {
-		std::vector<TemplateTypeArg> substituted_template_args;
-		for (const auto& pack_entry : pack_map_) {
-			substituted_template_args.insert(substituted_template_args.end(), pack_entry.second.begin(), pack_entry.second.end());
-			break; // Use the first available pack substitution
-		}
-
-		if (!substituted_template_args.empty()) {
-			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template (pack-only): ", func_name, " with ", substituted_template_args.size(), " arguments");
-			if (auto instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args)) {
-				if (instantiated_template->is<FunctionDeclarationNode>()) {
-					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
-
-					ChunkedVector<ASTNode> substituted_args_nodes;
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
-
-					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-						func_decl.decl_node(),
-						std::move(substituted_args_nodes),
-						call.called_from());
-					copyFunctionCallMetadata(new_call, call);
-					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
-					return ASTNode(&new_expr);
-				}
 			}
 		}
 	}
@@ -572,9 +575,29 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				}
 			}
 
+			const DeclarationNode* target_decl = &new_decl;
+			const FunctionDeclarationNode* target_func = nullptr;
+			auto type_it = getTypesByNameMap().find(inst_name_handle);
+			if (type_it != getTypesByNameMap().end()) {
+				if (const StructTypeInfo* struct_info = type_it->second->getStructInfo()) {
+					for (const auto& member_func : struct_info->member_functions) {
+						if (member_func.getName() == member_handle &&
+							member_func.function_decl.is<FunctionDeclarationNode>()) {
+							target_func = &member_func.function_decl.as<FunctionDeclarationNode>();
+							target_decl = &target_func->decl_node();
+							break;
+						}
+					}
+				}
+			}
+
 			FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-				new_decl, std::move(substituted_args), new_func_token);
+				*target_decl, std::move(substituted_args), new_func_token);
 			copyFunctionCallMetadata(new_call, call);
+			new_call.set_qualified_name(new_func_name);
+			if (target_func && target_func->has_mangled_name()) {
+				new_call.set_mangled_name(target_func->mangled_name());
+			}
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 			return ASTNode(&new_expr);
 		}
@@ -1139,14 +1162,20 @@ bool ExpressionSubstitutor::isPackExpansion(const ASTNode& arg_node, std::string
 	// Also check TypeSpecifierNode for pack types
 	if (arg_node.is<TypeSpecifierNode>()) {
 		const TypeSpecifierNode& type_spec = arg_node.as<TypeSpecifierNode>();
+		if (!type_spec.is_pack_expansion()) {
+			return false;
+		}
+
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
 			pack_name = StringTable::getStringView(type_info->name());
+		}
+		if (pack_name.empty()) {
+			pack_name = type_spec.token().value();
+		}
 
-			// Check if this type is in our pack map
-			if (pack_map_.find(pack_name) != pack_map_.end()) {
-				FLASH_LOG(Templates, Debug, "Detected pack expansion (TypeSpecifier): ", pack_name);
-				return true;
-			}
+		if (pack_map_.find(pack_name) != pack_map_.end()) {
+			FLASH_LOG(Templates, Debug, "Detected pack expansion (TypeSpecifier): ", pack_name);
+			return true;
 		}
 	}
 

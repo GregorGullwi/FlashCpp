@@ -318,6 +318,11 @@ void Parser::reparse_template_function_body(
 }
 
 std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_view template_name, const std::vector<TemplateTypeArg>& explicit_types, size_t call_arg_count) {
+	for (const TemplateTypeArg& arg : explicit_types) {
+		if (arg.is_dependent || arg.dependent_name.isValid()) {
+			return std::nullopt;
+		}
+	}
 	// FIRST: Check if we have an explicit specialization for these template arguments
 	// This handles cases like: template<> int sum<int, int>(int, int) being called as sum<int, int>(3, 7)
 	auto specialization_opt = gTemplateRegistry.lookupSpecialization(template_name, explicit_types);
@@ -501,7 +506,6 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			continue;  // SFINAE: try next overload
 
 	// CHECK REQUIRES CLAUSE CONSTRAINT BEFORE INSTANTIATION
-		FLASH_LOG(Templates, Debug, "try_instantiate_template_explicit: Checking requires clause for '", template_name, "', has_requires_clause=", template_func.has_requires_clause());
 		if (template_func.has_requires_clause()) {
 			const RequiresClauseNode& requires_clause =
 				template_func.requires_clause()->as<RequiresClauseNode>();

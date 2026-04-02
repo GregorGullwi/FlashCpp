@@ -7,6 +7,136 @@
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text);
 
+namespace {
+std::string_view getTemplateArgTokenText(const TemplateTypeArg& arg) {
+	switch (arg.typeEnum()) {
+	case TypeCategory::Void: return "void";
+	case TypeCategory::Bool: return "bool";
+	case TypeCategory::Char: return "char";
+	case TypeCategory::UnsignedChar: return "unsigned char";
+	case TypeCategory::Short: return "short";
+	case TypeCategory::UnsignedShort: return "unsigned short";
+	case TypeCategory::Int: return "int";
+	case TypeCategory::UnsignedInt: return "unsigned int";
+	case TypeCategory::Long: return "long";
+	case TypeCategory::UnsignedLong: return "unsigned long";
+	case TypeCategory::LongLong: return "long long";
+	case TypeCategory::UnsignedLongLong: return "unsigned long long";
+	case TypeCategory::Float: return "float";
+	case TypeCategory::Double: return "double";
+	case TypeCategory::LongDouble: return "long double";
+	default: return {};
+	}
+}
+
+std::vector<ASTNode> materializeTemplateArgumentNodes(
+	const std::vector<TemplateTypeArg>& template_args,
+	const Token& source_token) {
+	std::vector<ASTNode> result;
+	result.reserve(template_args.size());
+
+	for (const auto& arg : template_args) {
+		if (arg.is_dependent && arg.dependent_name.isValid()) {
+			Token dep_token(
+				Token::Type::Identifier,
+				arg.dependent_name.view(),
+				source_token.line(),
+				source_token.column(),
+				source_token.file_index());
+			ExpressionNode& dep_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+				TemplateParameterReferenceNode(arg.dependent_name, dep_token));
+			result.push_back(ASTNode(&dep_expr));
+			continue;
+		}
+
+		if (arg.is_value) {
+			if (arg.typeEnum() == TypeCategory::Bool) {
+				Token bool_token(
+					Token::Type::Keyword,
+					arg.value != 0 ? "true"sv : "false"sv,
+					source_token.line(),
+					source_token.column(),
+					source_token.file_index());
+				ExpressionNode& bool_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					BoolLiteralNode(bool_token, arg.value != 0));
+				result.push_back(ASTNode(&bool_expr));
+			} else {
+				StringBuilder text_builder;
+				std::string_view literal_text = text_builder.append(arg.value).commit();
+				TypeCategory literal_type = arg.typeEnum() == TypeCategory::Invalid ? TypeCategory::Int : arg.typeEnum();
+				Token literal_token(
+					Token::Type::Literal,
+					literal_text,
+					source_token.line(),
+					source_token.column(),
+					source_token.file_index());
+				ExpressionNode& literal_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(
+					NumericLiteralNode(
+						literal_token,
+						static_cast<unsigned long long>(arg.value),
+						literal_type,
+						TypeQualifier::None,
+						get_type_size_bits(literal_type)));
+				result.push_back(ASTNode(&literal_expr));
+			}
+			continue;
+		}
+
+		Token type_token = source_token;
+		TypeCategory type_category = arg.typeEnum();
+		if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+			std::string_view type_name = StringTable::getStringView(type_info->name());
+			if (!type_name.empty()) {
+				type_token = Token(
+					Token::Type::Identifier,
+					type_name,
+					source_token.line(),
+					source_token.column(),
+					source_token.file_index());
+			}
+		} else if (std::string_view builtin_name = getTemplateArgTokenText(arg); !builtin_name.empty()) {
+			type_token = Token(
+				Token::Type::Keyword,
+				builtin_name,
+				source_token.line(),
+				source_token.column(),
+				source_token.file_index());
+		}
+
+		TypeSpecifierNode& type_node = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
+			arg.type_index.withCategory(type_category),
+			get_type_size_bits(type_category),
+			type_token,
+			arg.cv_qualifier,
+			arg.ref_qualifier);
+		type_node.set_pack_expansion(arg.is_pack);
+		for (size_t pointer_index = 0; pointer_index < arg.pointer_depth; ++pointer_index) {
+			CVQualifier pointer_cv = pointer_index < arg.pointer_cv_qualifiers.size()
+				? arg.pointer_cv_qualifiers[pointer_index]
+				: CVQualifier::None;
+			type_node.add_pointer_level(pointer_cv);
+		}
+		result.push_back(ASTNode(&type_node));
+	}
+
+	return result;
+}
+
+void syncTemplateArgumentNodeMetadata(
+	std::vector<ASTNode>& template_arg_nodes,
+	const std::vector<TemplateTypeArg>& template_args) {
+	size_t count = std::min(template_arg_nodes.size(), template_args.size());
+	for (size_t i = 0; i < count; ++i) {
+		if (!template_args[i].is_pack) {
+			continue;
+		}
+		if (template_arg_nodes[i].is<TypeSpecifierNode>()) {
+			template_arg_nodes[i].as<TypeSpecifierNode>().set_pack_expansion(true);
+		}
+	}
+}
+}
+
 // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
 // Handles all operator forms: symbols (+, =, <<, etc.), (), [], new/delete, user-defined
 // literals, and conversion operators.
@@ -1065,8 +1195,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			auto function_call_node = emplace_node<ExpressionNode>(
 				FunctionCallNode(*decl_ptr, std::move(args), qual_id.identifier_token()));
 			FunctionCallNode& function_call = std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>());
-			if (template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty()) {
-				function_call.set_template_arguments(std::move(template_arg_nodes));
+			if (template_args.has_value() && !template_args->empty()) {
+				if (template_arg_nodes.empty()) {
+					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
+				} else {
+					syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
+				}
+				if (!template_arg_nodes.empty()) {
+					function_call.set_template_arguments(std::move(template_arg_nodes));
+				}
 			}
 			function_call.set_qualified_name(buildQualifiedNameFromStrings(namespaces, qual_id.name()));
 			// If the function has a pre-computed mangled name, set it on the FunctionCallNode
@@ -1822,6 +1959,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If explicit template arguments were provided, store them in the FunctionCallNode
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
+				if (template_args.has_value() && !template_args->empty() && template_arg_nodes.empty()) {
+					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
+				} else if (template_args.has_value() && !template_args->empty()) {
+					syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
+				}
 				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
 				if (has_explicit_template_args) {
 					FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
@@ -2537,9 +2679,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// If explicit template arguments were provided, store them in the FunctionCallNode
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
-				if (template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty()) {
-					std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_template_arguments(std::move(template_arg_nodes));
-					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode");
+				if (template_args.has_value() && !template_args->empty()) {
+					if (template_arg_nodes.empty()) {
+						template_arg_nodes = materializeTemplateArgumentNodes(*template_args, final_identifier);
+					} else {
+						syncTemplateArgumentNodeMetadata(template_arg_nodes, *template_args);
+					}
+					if (!template_arg_nodes.empty()) {
+						std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_template_arguments(std::move(template_arg_nodes));
+					}
 				}
 
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
@@ -4700,6 +4848,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), identifier_token);
 							ChunkedVector<ASTNode> no_args_vt3;
 							FunctionCallNode& var_call_vt3 = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt3, std::move(no_args_vt3), identifier_token);
+							if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
+								explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
+							} else if (explicit_template_args.has_value()) {
+								syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *explicit_template_args);
+							}
 							if (!explicit_template_arg_nodes.empty())
 								var_call_vt3.set_template_arguments(std::move(explicit_template_arg_nodes));
 							if (!template_name_to_use.empty() && template_name_to_use != identifier_token.value())
@@ -5319,6 +5472,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 										// Store the template arguments in the FunctionCallNode for later resolution
 										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
+										} else if (explicit_template_args.has_value()) {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *explicit_template_args);
+										}
 										if (!explicit_template_arg_nodes.empty()) {
 											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
 										}
