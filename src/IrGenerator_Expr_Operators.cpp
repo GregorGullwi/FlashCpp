@@ -2388,7 +2388,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Step 2: Determine element size using existing getPointerElementSize function
 		// Note: lhs_type_node->size_in_bits() returns the POINTER size (64), not the
 		// pointee size. Use getPointerElementSize which correctly uses the base type size.
-		size_t element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
+		size_t element_size;
+		if (lhs_pointer_depth > 1) {
+			element_size = 8; // Multi-level pointer: element is a pointer
+		} else {
+			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
+		}
 
 		// Step 3: Divide byte difference by element size to get element count
 		TempVar result_var = var_counter.next();
@@ -2415,7 +2420,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		// Note: lhs_type_node->size_in_bits() returns the POINTER size (64), not the
 		// pointee size. Use getPointerElementSize which correctly uses the base type size.
 		size_t element_size;
-		if (lhs_type_node) {
+		if (lhs_pointer_depth > 1) {
+			// Multi-level pointer: element is a pointer, so 8 bytes
+			element_size = 8;
+		} else if (lhs_type_node) {
 			element_size = static_cast<size_t>(getPointerElementSize(lhs_type_node->type_index(), lhs_pointer_depth));
 		} else {
 			// Fallback: derive element size from operand's base type
