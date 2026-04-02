@@ -229,9 +229,6 @@ TypeInfo& add_type_alias_copy(StringHandle name, const TypeInfo& source_type_inf
 		name,
 		source_type_info.registeredTypeIndex().withCategory(source_type_info.typeEnum()),
 		size_bits);
-	if (const TypeSpecifierNode* alias_type_spec = source_type_info.aliasTypeSpecifier()) {
-		type_info.setAliasTypeSpecifier(*alias_type_spec);
-	}
 	return type_info;
 }
 
