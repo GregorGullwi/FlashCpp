@@ -2065,12 +2065,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					// Get return type from the function declaration
 					const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 					TypeCategory return_type = return_type_node.type();
-					int return_size = static_cast<int>(return_type_node.size_in_bits());
+					SizeInBits return_size = return_type_node.sizeBits();
 
 					// Defaulted operator<=> with auto return type actually returns int
 					if (isPlaceholderAutoType(return_type)) {
 						return_type = TypeCategory::Int;
-						return_size = 32;
+						return_size = SizeInBits{32};
 					}
 
 					TypeSpecifierNode resolved_return_type_node = return_type_node;
@@ -2103,13 +2103,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					call_op.result = result_var;
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 					call_op.return_type_index = nativeTypeIndex(return_type);
-					call_op.return_size_in_bits = SizeInBits{return_size};
+					call_op.return_size_in_bits = return_size;
 					call_op.is_member_function = true;
 					call_op.is_variadic = func_decl.is_variadic();
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
 					bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
-					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
+					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size.value, context_->isLLP64());
 
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
@@ -2153,7 +2153,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 					if (op == "<=>") {
-						return makeExprResult(nativeTypeIndex(return_type), SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(return_type), return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					TempVar cmp_result = var_counter.next();

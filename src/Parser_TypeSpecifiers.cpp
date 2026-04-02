@@ -68,12 +68,12 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	// Get type information first (needed for both empty and non-empty cases)
 	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
-	int type_size = 32;
+	SizeInBits type_size{32};
 
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
 		cast_type = builtin_type_info->first;
-		type_size = builtin_type_info->second;
+		type_size = SizeInBits{static_cast<int>(builtin_type_info->second)};
 		// Handle special case for unsigned qualifier
 		if (type_name == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
@@ -85,7 +85,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
 			cast_type = type_info->typeEnum();
-			type_size = static_cast<int>(type_info->sizeInBits().value);
+			type_size = type_info->sizeInBits();
 			if (type_info->isStruct()) {
 				cast_type = TypeCategory::Struct;
 			}

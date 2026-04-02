@@ -192,7 +192,7 @@ ParseResult Parser::parse_qualified_operator_call(const Token& context_token, co
 		if (!consume(")"_tok)) {
 			return ParseResult::error("Expected ')' after operator call arguments", current_token_);
 		}
-		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, op_token, CVQualifier::None, ReferenceQualifier::None);
+		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), SizeInBits{0}, op_token, CVQualifier::None, ReferenceQualifier::None);
 		auto& op_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 		auto func_call = FunctionCallNode(op_decl, std::move(args_result.args), op_token);
 		if (!namespaces.empty()) {
@@ -1731,7 +1731,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						return ParseResult::error("Expected '}' after brace initializer", current_token_);
 					}
 
-					int type_size = struct_info ? static_cast<int>(struct_info->sizeInBits().value) : 0;
+					const SizeInBits type_size = struct_info ? struct_info->sizeInBits() : SizeInBits{};
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
 					return ParseResult::success(*result);
@@ -2414,9 +2414,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							// Create TypeSpecifierNode for the instantiated class
 							const TypeInfo& type_info = *type_it->second;
 							TypeIndex type_index = type_info.type_index_;
-							int type_size = 0;
+							SizeInBits type_size{};
 							if (type_info.struct_info_) {
-								type_size = static_cast<int>(type_info.struct_info_->sizeInBits().value);
+								type_size = type_info.struct_info_->sizeInBits();
 							}
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, final_identifier, CVQualifier::None, ReferenceQualifier::None);
 
@@ -2594,7 +2594,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				// Create TypeSpecifierNode for the class
 				TypeIndex type_index = type_it->second->type_index_;
-				int type_size = getStructTypeSizeBits(type_index);
+				const SizeInBits type_size{getStructTypeSizeBits(type_index)};
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
 				// Create ConstructorCallNode
@@ -3403,7 +3403,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					// Create TypeSpecifierNode for the constructor call
 					TypeIndex type_index = type_it->second->type_index_;
-					int type_size = getStructTypeSizeBits(type_index);
+					const SizeInBits type_size{getStructTypeSizeBits(type_index)};
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
 						type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
@@ -3942,9 +3942,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Create TypeSpecifierNode for the instantiated class
 									const TypeInfo& type_info = *type_it->second;
 									TypeIndex type_index = type_info.type_index_;
-									int type_size = 0;
+									SizeInBits type_size{};
 									if (type_info.struct_info_) {
-										type_size = static_cast<int>(type_info.struct_info_->sizeInBits().value);
+										type_size = type_info.struct_info_->sizeInBits();
 									}
 									auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
@@ -4011,9 +4011,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								if (inst_type_it != getTypesByNameMap().end() && inst_type_it->second->isStruct()) {
 									const TypeInfo& inst_type_info = *inst_type_it->second;
 									TypeIndex inst_type_index = inst_type_info.type_index_;
-									int inst_type_size = 0;
+									SizeInBits inst_type_size{};
 									if (inst_type_info.struct_info_) {
-										inst_type_size = static_cast<int>(inst_type_info.struct_info_->sizeInBits().value);
+										inst_type_size = inst_type_info.struct_info_->sizeInBits();
 									}
 									type_spec_node = emplace_node<TypeSpecifierNode>(inst_type_index.withCategory(TypeCategory::Struct), inst_type_size, inst_type_token, CVQualifier::None, ReferenceQualifier::None);
 								} else {
@@ -4804,7 +4804,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
-						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
+						const SizeInBits type_size = struct_info ? SizeInBits{getStructTypeSizeBits(type_index)} : SizeInBits{};
 						auto type_spec = TypeSpecifierNode(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
@@ -4848,7 +4848,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return ParseResult::error("Expected '}' after brace initializer", current_token_);
 						}
 
-						int type_size = struct_info ? getStructTypeSizeBits(type_index) : 0;
+						const SizeInBits type_size = struct_info ? SizeInBits{getStructTypeSizeBits(type_index)} : SizeInBits{};
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);

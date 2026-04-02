@@ -1203,26 +1203,39 @@ public:
 	TypeSpecifierNode() = default;
 
 	// TypeIndex-first constructor — preferred for new code.
-	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
+	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, SizeInBits sizeInBits,
 					  const Token& token, CVQualifier cv_qualifier)
 		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index) {}
 
 	// TypeCategory constructor — for primitive types without a gTypeInfo index.
-	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
+	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, SizeInBits sizeInBits,
 					  const Token& token, CVQualifier cv_qualifier)
 		: size_(sizeInBits), qualifier_(qualifier), cv_qualifier_(cv_qualifier), token_(token), type_index_(TypeIndex{0, cat}) {}
 
 	// Constructor for struct types with TypeIndex
-	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
+	TypeSpecifierNode(TypeIndex type_index, SizeInBits sizeInBits,
 					  const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
 		: size_(sizeInBits), qualifier_(TypeQualifier::None), cv_qualifier_(cv_qualifier), token_(token), type_index_(type_index), reference_qualifier_(reference_qualifier) {}
+
+	// Compatibility overloads for legacy int-based callers.
+	TypeSpecifierNode(TypeIndex type_index, TypeQualifier qualifier, int sizeInBits,
+					  const Token& token, CVQualifier cv_qualifier)
+		: TypeSpecifierNode(type_index, qualifier, SizeInBits{sizeInBits}, token, cv_qualifier) {}
+	TypeSpecifierNode(TypeCategory cat, TypeQualifier qualifier, int sizeInBits,
+					  const Token& token, CVQualifier cv_qualifier)
+		: TypeSpecifierNode(cat, qualifier, SizeInBits{sizeInBits}, token, cv_qualifier) {}
+	TypeSpecifierNode(TypeIndex type_index, int sizeInBits,
+					  const Token& token, CVQualifier cv_qualifier, ReferenceQualifier reference_qualifier)
+		: TypeSpecifierNode(type_index, SizeInBits{sizeInBits}, token, cv_qualifier, reference_qualifier) {}
 
 	// Returns the TypeCategory for this type specifier.
 	TypeCategory category() const { return type_index_.category(); }
 	// Legacy accessor — returns Type enum for backward compat during migration.
 	TypeCategory type() const { return type_index_.category(); }
-	auto size_in_bits() const { return size_; }
-	void set_size_in_bits(int size_in_bits) { size_ = size_in_bits; }
+	SizeInBits sizeBits() const { return size_; }
+	int size_in_bits() const { return size_.value; }
+	void set_size_in_bits(SizeInBits size_in_bits) { size_ = size_in_bits; }
+	void set_size_in_bits(int size_in_bits) { size_ = SizeInBits{size_in_bits}; }
 	auto qualifier() const { return qualifier_; }
 	auto cv_qualifier() const { return cv_qualifier_; }
 	void set_cv_qualifier(CVQualifier cv) { cv_qualifier_ = cv; }
@@ -1377,7 +1390,7 @@ public:
 	}
 
 private:
-	int size_ = 0;  // Size in bits - changed from unsigned char to int to support large structs
+	SizeInBits size_{};  // Size in bits
 	TypeQualifier qualifier_ = TypeQualifier::None;
 	CVQualifier cv_qualifier_ = CVQualifier::None;  // CV-qualifier for the base type
 	Token token_;

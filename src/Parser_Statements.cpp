@@ -1043,10 +1043,10 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			} else {
 				// Fallback: deduce basic type
 				TypeCategory deduced_type = deduce_type_from_expression(*initializer);
-				unsigned char deduced_size = get_type_size_bits(deduced_type);
+				const SizeInBits deduced_size{get_type_size_bits(deduced_type)};
 				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=",
-						  (int)type_specifier.type(), " size=", (int)deduced_size);
+						  (int)type_specifier.type(), " size=", deduced_size);
 			}
 
 			// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)

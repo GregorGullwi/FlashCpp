@@ -115,9 +115,9 @@ ParseResult Parser::parse_template_brace_initialization(
 	// Create TypeSpecifierNode for the instantiated class
 	const TypeInfo& type_info = *type_it->second;
 	TypeIndex type_index = type_info.type_index_;
-	int type_size = 0;
+	SizeInBits type_size{};
 	if (type_info.struct_info_) {
-		type_size = static_cast<int>(type_info.struct_info_->sizeInBits().value);
+		type_size = type_info.struct_info_->sizeInBits();
 	}
 	Token type_token(Token::Type::Identifier, instantiated_name,
 					 identifier_token.line(), identifier_token.column(), identifier_token.file_index());
@@ -1192,15 +1192,15 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* closure_type = type_it->second;
 			// Get closure size in bits from struct info
-			int closure_size_bits = 64; // Default to pointer size
+			SizeInBits closure_size_bits{64}; // Default to pointer size
 			if (closure_type->getStructInfo()) {
-				closure_size_bits = closure_type->getStructInfo()->sizeInBits().value;
+				closure_size_bits = closure_type->getStructInfo()->sizeInBits();
 			}
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
 
 		// Fallback: return a placeholder struct type
-		return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), 64, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
+			return TypeSpecifierNode(TypeIndex{}.withCategory(TypeCategory::Struct), SizeInBits{64}, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 	}
 
 	if (!expr_node.is<ExpressionNode>()) {
@@ -1497,9 +1497,9 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* closure_type = type_it->second;
 			// Get closure size in bits from struct info
-			int closure_size_bits = 64; // Default to pointer size
+			SizeInBits closure_size_bits{64}; // Default to pointer size
 			if (closure_type->getStructInfo()) {
-				closure_size_bits = closure_type->getStructInfo()->sizeInBits().value;
+				closure_size_bits = closure_type->getStructInfo()->sizeInBits();
 			}
 			return TypeSpecifierNode(closure_type->type_index_.withCategory(TypeCategory::Struct), closure_size_bits, lambda.lambda_token(), CVQualifier::None, ReferenceQualifier::None);
 		}
@@ -1558,7 +1558,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 				if (object_ident.name() == "this" && !member_function_context_stack_.empty()) {
 					const auto& member_ctx = member_function_context_stack_.back();
 				if (const TypeInfo* type_info = tryGetTypeInfo(member_ctx.struct_type_index)) {
-						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), static_cast<int>(type_info->sizeInBits().value), Token{}, CVQualifier::None, ReferenceQualifier::None);
+						object_type_opt = TypeSpecifierNode(type_info->type_index_.withCategory(TypeCategory::Struct), type_info->sizeInBits(), Token{}, CVQualifier::None, ReferenceQualifier::None);
 					}
 				}
 			}

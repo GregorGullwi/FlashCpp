@@ -1064,10 +1064,11 @@ void AstToIr::pushLambdaContext(const LambdaInfo& lambda_info) {
 						const StructMember* member = struct_info->findMember(std::string_view(StringTable::getStringView(var_name)));
 						if (member) {
 							// Create a TypeSpecifierNode from the member type
-							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, static_cast<int>(member->size * 8), Token{}, CVQualifier::None);
+							const SizeInBits member_size_bits{static_cast<int>(member->size * 8)};
+							TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member_size_bits, Token{}, CVQualifier::None);
 							if (member->type_index.isStruct()) {
 								// Need to set type_index for struct types
-								member_type = TypeSpecifierNode(member->type_index.withCategory(member->memberType()), static_cast<int>(member->size * 8), Token(), CVQualifier::None, ReferenceQualifier::None);
+								member_type = TypeSpecifierNode(member->type_index.withCategory(member->memberType()), member_size_bits, Token(), CVQualifier::None, ReferenceQualifier::None);
 							}
 							current_lambda_context_.capture_types[var_name] = member_type;
 						}

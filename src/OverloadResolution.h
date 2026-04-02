@@ -1339,7 +1339,7 @@ inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec
 
 inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	TypeCategory effective_type = type_index.category();
-	int size_bits = 0;
+	SizeInBits size_bits{};
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
@@ -1351,14 +1351,14 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 		}
 
 		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-			size_bits = struct_info->sizeInBits().value;
+			size_bits = struct_info->sizeInBits();
 		} else if (type_info->hasStoredSize()) {
-			size_bits = static_cast<int>(type_info->sizeInBits().value);
+			size_bits = type_info->sizeInBits();
 		}
 	}
 
-	if (size_bits == 0 && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
-		size_bits = get_type_size_bits(effective_type);
+	if (!size_bits.is_set() && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
+		size_bits = SizeInBits{get_type_size_bits(effective_type)};
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {
