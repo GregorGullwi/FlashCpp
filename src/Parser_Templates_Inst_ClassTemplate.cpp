@@ -226,6 +226,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
+		ASTNode rebound_object = recurse(member_call.object());
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : member_call.arguments()) {
 			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
@@ -272,6 +273,12 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				return rebound_call;
 			}
 		}
+
+		return ASTNode::emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(std::move(rebound_object),
+								   member_call.function_declaration(),
+								   std::move(rebound_args),
+								   member_call.called_from()));
 	}
 
 	return node;
