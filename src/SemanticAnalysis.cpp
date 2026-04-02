@@ -2033,6 +2033,21 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
+				// If sema resolved this subscript to operator[], annotate the index
+				// argument against the operator's parameter type using the shared
+				// single-argument annotation helper.
+				if (const FunctionDeclarationNode* op = getResolvedOpSubscript(&e)) {
+					const auto& params = op->parameter_nodes();
+					if (!params.empty() && params[0].is<DeclarationNode>()) {
+						const ASTNode param_type_node = params[0].as<DeclarationNode>().type_node();
+						if (param_type_node.has_value() && param_type_node.is<TypeSpecifierNode>()) {
+							tryAnnotateSingleArgConversion(
+								e.index_expr(),
+								param_type_node.as<TypeSpecifierNode>(),
+								" in subscript operator argument");
+						}
+					}
+				}
 				normalizeExpression(e.array_expr(), ctx);
 				normalizeExpression(e.index_expr(), ctx);
 			} else if constexpr (std::is_same_v<T, SizeofExprNode>) {
@@ -3756,6 +3771,34 @@ std::optional<CallArgReferenceBindingInfo> SemanticAnalysis::buildCallArgReferen
 	return info;
 }
 
+// --- Shared single-argument conversion annotation ---
+// Factored out of the per-argument loops in tryAnnotateCallArgConversions,
+// tryAnnotateMemberFunctionCallArgConversions, and the ArraySubscriptNode
+// operator[] annotation path.
+
+void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
+													  const TypeSpecifierNode& param_type,
+													  const char* context_description) {
+	if (!arg.is<ExpressionNode>())
+		return;
+
+	if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+		buildCallArgReferenceBinding(arg, param_type, context_description);
+		return;
+	}
+
+	const CanonicalTypeId param_type_id = canonicalizeType(param_type);
+	const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+	if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
+		return;
+
+	if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
+												  context_description, arg_type_id)) {
+		tryAnnotateConversion(arg, param_type_id, arg_type_id);
+		diagnoseScopedEnumConversion(arg, param_type_id, context_description, arg_type_id);
+	}
+}
+
 // --- Function call argument conversion annotation ---
 
 void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
@@ -3965,6 +4008,8 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
 			continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+		// Reference parameters: store binding info in the side table for codegen,
+		// then delegate to the shared helper for the value-conversion annotation.
 		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in function argument")) {
 				ref_bindings[i] = *binding;
@@ -3972,17 +4017,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 			continue;
 		}
 
-		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
-		// Quick exit when both types are inferable and already identical (no cast needed).
-		// tryAnnotateConversion will re-infer if arg_type_id is invalid, so no information is lost.
-		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
-			continue;
-		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
-													  " in function argument", arg_type_id)) {
-			tryAnnotateConversion(arg, param_type_id, arg_type_id);
-			diagnoseScopedEnumConversion(arg, param_type_id, " in function argument");
-		}
+		tryAnnotateSingleArgConversion(arg, param_type, " in function argument");
 	}
 }
 
@@ -4013,6 +4048,8 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 			continue;
 		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
 
+		// Reference parameters: store binding info in the side table for codegen,
+		// then delegate to the shared helper for the value-conversion annotation.
 		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
 			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in member function argument")) {
 				ref_bindings[i] = *binding;
@@ -4020,16 +4057,7 @@ void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberF
 			continue;
 		}
 
-		const CanonicalTypeId param_type_id = canonicalizeType(param_type);
-		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
-		if (arg_type_id && canonical_types_match(arg_type_id, param_type_id))
-			continue;
-
-		if (!tryAnnotateCopyInitConvertingConstructor(arg, param_type_id,
-													  " in member function argument", arg_type_id)) {
-			tryAnnotateConversion(arg, param_type_id, arg_type_id);
-			diagnoseScopedEnumConversion(arg, param_type_id, " in member function argument");
-		}
+		tryAnnotateSingleArgConversion(arg, param_type, " in member function argument");
 	}
 }
 

@@ -218,6 +218,14 @@ private:
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
 	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+
+	// Shared helper: annotate a single argument expression against a single parameter type.
+	// Handles reference binding, converting constructors, primitive conversions, and
+	// scoped-enum diagnostics.  Used by call-arg, member-call-arg, and subscript-operator
+	// annotation paths.
+	void tryAnnotateSingleArgConversion(const ASTNode& arg,
+										const TypeSpecifierNode& param_type,
+										const char* context_description);
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
 																			const TypeSpecifierNode& param_type,
 																			const char* context_description);
