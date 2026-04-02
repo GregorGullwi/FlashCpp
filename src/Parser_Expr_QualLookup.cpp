@@ -822,6 +822,7 @@ TypeIndex Parser::substitute_template_parameter(
 				concrete_arg.ref_qualifier = arg_info.ref_qualifier;
 				concrete_arg.cv_qualifier = arg_info.cv_qualifier;
 				concrete_arg.array_size = arg_info.array_size;
+				concrete_arg.is_array = arg_info.is_array;
 				concrete_arg.function_signature = arg_info.function_signature;
 				concrete_arg.dependent_name = arg_info.dependent_name;
 
