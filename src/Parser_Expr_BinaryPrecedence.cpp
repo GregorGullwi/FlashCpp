@@ -30,10 +30,19 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		arg_types.push_back(left_type_spec);
 		arg_types.push_back(right_type_spec);
 
+		// C++20 [basic.lookup.argdep]/1, [over.match.oper]/2: form a single
+		// candidate set from the template registry, ordinary unqualified lookup,
+		// and ADL, then try each template candidate under SFINAE.  We must NOT
+		// short-circuit after the registry hit because an ADL-only hidden friend
+		// template could be a better (more-specialized) match.
+		const FunctionDeclarationNode* best_match = nullptr;
+
+		// Phase 1: try the template registry (covers most non-ADL templates)
 		if (std::optional<ASTNode> instantiated = try_instantiate_template(op_name, arg_types); instantiated.has_value()) {
-			return get_function_decl_node(*instantiated);
+			best_match = get_function_decl_node(*instantiated);
 		}
 
+		// Phase 2: collect remaining candidates via ordinary + ADL-only lookup
 		std::vector<ASTNode> candidates = gSymbolTable.lookup_all(op_name);
 		auto adl_candidates = gSymbolTable.lookup_adl_only(op_name, arg_types);
 		candidates.insert(candidates.end(), adl_candidates.begin(), adl_candidates.end());
@@ -56,9 +65,20 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			if (instantiated.has_value()) {
 				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-					return func_decl;
+					// TODO: When multiple candidates succeed, proper partial ordering
+					// ([temp.func.order]) should select the most specialized one.
+					// For now, prefer the first ADL/lookup_all hit over the registry
+					// hit since ADL candidates (hidden friends) are typically more
+					// specialized than catch-all namespace-scope templates.
+					if (!best_match) {
+						best_match = func_decl;
+					}
 				}
 			}
+		}
+
+		if (best_match) {
+			return best_match;
 		}
 
 		return nullptr;
