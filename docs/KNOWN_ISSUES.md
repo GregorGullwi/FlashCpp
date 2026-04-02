@@ -112,33 +112,6 @@ constexpr/static-initializer path is still not preserving or resolving the
 nested helper call correctly once wrapped in `MemberAccessNode` or
 `ArraySubscriptNode`.
 
-## Static member initializers can fold nested constexpr member calls to zero
-
-Template static member initializers can still compile/link but evaluate
-incorrectly when a same-class constexpr helper call is immediately followed by a
-constexpr member-function call on the temporary result:
-
-```cpp
-template <typename T>
-struct Box {
-    struct Holder {
-        int value;
-        constexpr int get() const { return value; }
-    };
-
-    static constexpr Holder make_holder() {
-        return Holder{int(sizeof(T)) + 38};
-    }
-
-    static constexpr int value = make_holder().get(); // expected 42 for T=int
-};
-```
-
-When reproduced locally while refactoring static-member initializer AST
-traversal, FlashCpp compiled and linked this case but the produced program
-returned `0`. This points to a remaining constexpr/static-initializer issue in
-the nested `MemberFunctionCallNode` path rather than in the visitor refactor.
-
 ## Delayed static member bodies inside `try` statements can still call pattern owners
 
 Delayed parsing of template static member function bodies still has a remaining

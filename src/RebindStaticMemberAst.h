@@ -59,64 +59,6 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 	return {nullptr, nullptr};
 }
 
-inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findMemberFunction(
-	const StructTypeInfo* struct_info,
-	StringHandle function_name,
-	size_t parameter_count,
-	bool require_static) {
-	if (!struct_info) {
-		return {nullptr, nullptr};
-	}
-
-	auto find_in_struct = [function_name, parameter_count, require_static](const StructTypeInfo* candidate_struct)
-		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
-		if (!candidate_struct) {
-			return {nullptr, nullptr};
-		}
-
-		const FunctionDeclarationNode* function_decl_without_definition = nullptr;
-		for (const auto& member_func : candidate_struct->member_functions) {
-			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
-
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.is_static() != require_static ||
-				func_decl.parameter_nodes().size() != parameter_count) {
-				continue;
-			}
-
-			if (func_decl.get_definition().has_value()) {
-				return {&func_decl, candidate_struct};
-			}
-			if (!function_decl_without_definition) {
-				function_decl_without_definition = &func_decl;
-			}
-		}
-
-		return {
-			function_decl_without_definition,
-			function_decl_without_definition ? candidate_struct : nullptr};
-	};
-
-	if (auto found = find_in_struct(struct_info); found.first) {
-		return found;
-	}
-
-	auto struct_type_it = getTypesByNameMap().find(struct_info->name);
-	if (struct_type_it != getTypesByNameMap().end() && struct_type_it->second->isTemplateInstantiation()) {
-		const TypeInfo* struct_type = struct_type_it->second;
-		auto template_type_it = getTypesByNameMap().find(struct_type->baseTemplateName());
-		if (template_type_it != getTypesByNameMap().end() && template_type_it->second->isStruct()) {
-			if (auto found = find_in_struct(template_type_it->second->getStructInfo()); found.first) {
-				return found;
-			}
-		}
-	}
-
-	return {nullptr, nullptr};
-}
-
 template <typename RecurseFn>
 std::vector<ASTNode> rebindFunctionCallTemplateArguments(
 	const FunctionCallNode& call,
@@ -225,7 +167,7 @@ std::optional<ASTNode> tryRebindExpressionChildren(
 			rebound_args.push_back(recurse(arg));
 		}
 		return ASTNode::emplace_node<ExpressionNode>(ConstructorCallNode(
-			recurse(ctor_call.type_node()),
+			ctor_call.type_node(),
 			std::move(rebound_args),
 			ctor_call.called_from()));
 	}
@@ -411,7 +353,7 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 			rebound_initializer = recurse(var_decl.initializer().value());
 		}
 		ASTNode rebound_var = ASTNode::emplace_node<VariableDeclarationNode>(
-			recurse(var_decl.declaration_node()),
+			var_decl.declaration_node(),
 			std::move(rebound_initializer),
 			var_decl.storage_class());
 		auto& rebound_var_ref = rebound_var.as<VariableDeclarationNode>();

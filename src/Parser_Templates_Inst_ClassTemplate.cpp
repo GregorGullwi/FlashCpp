@@ -168,56 +168,6 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		return std::move(rebound_node.value());
 	}
 
-	if (node.is<TypeSpecifierNode>()) {
-		if (!struct_info->own_type_index_.has_value()) {
-			return node;
-		}
-
-		const TypeInfo* current_struct_type = tryGetTypeInfo(*struct_info->own_type_index_);
-		if (!current_struct_type || !current_struct_type->isTemplateInstantiation()) {
-			return node;
-		}
-
-		const auto& type_spec = node.as<TypeSpecifierNode>();
-		const TypeInfo* referenced_type = tryGetTypeInfo(type_spec.type_index());
-		std::string_view base_template_name = StringTable::getStringView(current_struct_type->baseTemplateName());
-		const bool matches_base_template =
-			(referenced_type && referenced_type->name() == current_struct_type->baseTemplateName()) ||
-			type_spec.token().value() == base_template_name;
-		if (!matches_base_template) {
-			return node;
-		}
-
-		TypeSpecifierNode rebound_type = type_spec;
-		rebound_type.set_type_index(*struct_info->own_type_index_);
-		rebound_type.set_category((*struct_info->own_type_index_).category());
-		rebound_type.set_size_in_bits(current_struct_type->sizeInBits());
-		return ASTNode::emplace_node<TypeSpecifierNode>(rebound_type);
-	}
-
-	if (node.is<DeclarationNode>()) {
-		const auto& decl = node.as<DeclarationNode>();
-		ASTNode rebound_decl = ASTNode::emplace_node<DeclarationNode>(
-			recurse(decl.type_node()),
-			decl.identifier_token());
-		auto& rebound_decl_ref = rebound_decl.as<DeclarationNode>();
-		rebound_decl_ref.set_custom_alignment(decl.custom_alignment());
-		rebound_decl_ref.set_parameter_pack(decl.is_parameter_pack());
-		rebound_decl_ref.set_unsized_array(decl.is_unsized_array());
-		if (!decl.array_dimensions().empty()) {
-			std::vector<ASTNode> rebound_dims;
-			rebound_dims.reserve(decl.array_dimensions().size());
-			for (const auto& dim : decl.array_dimensions()) {
-				rebound_dims.push_back(recurse(dim));
-			}
-			rebound_decl_ref.set_array_dimensions(std::move(rebound_dims));
-		}
-		if (decl.has_default_value()) {
-			rebound_decl_ref.set_default_value(recurse(decl.default_value()));
-		}
-		return rebound_decl;
-	}
-
 	if (!node.is<ExpressionNode>()) {
 		return node;
 	}
@@ -276,19 +226,9 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
 		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		ASTNode rebound_object = recurse(member_call.object());
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : member_call.arguments()) {
 			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
-		}
-
-		const FunctionDeclarationNode* rebound_member_function = nullptr;
-		if (member_call.called_from().kind().is_identifier()) {
-			rebound_member_function = RebindStaticMemberAst::findMemberFunction(
-				struct_info,
-				member_call.called_from().handle(),
-				member_call.arguments().size(),
-				member_call.function_declaration().is_static()).first;
 		}
 
 		bool is_implicit_this_call = false;
@@ -332,12 +272,6 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				return rebound_call;
 			}
 		}
-
-		return ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(std::move(rebound_object),
-								   rebound_member_function ? *rebound_member_function : member_call.function_declaration(),
-								   std::move(rebound_args),
-								   member_call.called_from()));
 	}
 
 	return node;
