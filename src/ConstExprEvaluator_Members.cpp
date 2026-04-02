@@ -2951,13 +2951,22 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 							if (resolved_alias.type_index.is_valid()) {
 								input.type_index = resolved_alias.type_index;
 							}
-							input.pointer_depth = resolved_alias.pointer_depth;
-							input.ref_qualifier = resolved_alias.reference_qualifier;
+							// C++20 [temp.alias]/2: aliases are transparent, so accumulate
+							// the alias-resolved metadata on top of any explicit indirection
+							// already present on the template argument (e.g., Ptr* where Ptr = int*
+							// should yield pointer_depth 2, not 1).
+							input.pointer_depth += resolved_alias.pointer_depth;
+							// Reference collapsing (C++20 [dcl.ref]/6): & always wins.
+							if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
+								input.ref_qualifier = ReferenceQualifier::LValueReference;
+							} else if (input.ref_qualifier == ReferenceQualifier::None) {
+								input.ref_qualifier = resolved_alias.reference_qualifier;
+							}
 							if (resolved_alias.isArray()) {
 								input.is_array = true;
-								input.array_size = resolved_alias.array_dimensions.empty()
-													   ? std::nullopt
-													   : std::optional<size_t>(resolved_alias.array_dimensions.front());
+								if (!input.array_size.has_value() && !resolved_alias.array_dimensions.empty()) {
+									input.array_size = resolved_alias.array_dimensions.front();
+								}
 							}
 							input.struct_info = resolved_alias.terminal_type_info
 													? resolved_alias.terminal_type_info->getStructInfo()
