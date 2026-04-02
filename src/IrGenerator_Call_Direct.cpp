@@ -47,6 +47,65 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 												: call_op.result.size_in_bits;
 }
 
+ExprResult AstToIr::buildCallReturnResult(
+	const TypeSpecifierNode& return_type,
+	TempVar ret_var,
+	ExpressionContext context,
+	const Token& source_token) {
+	// ── Reference-returning functions ──────────────────────────────────────
+	if (return_type.is_reference() || return_type.is_rvalue_reference()) {
+		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+		int referenced_size_bits = getTypeSpecSizeBits(return_type);
+		if (return_type.is_rvalue_reference()) {
+			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
+		} else {
+			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
+		}
+
+		if (context != ExpressionContext::LValueAddress) {
+			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
+			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
+				return makeExprResult(
+					return_type.type_index().withCategory(return_type.type()),
+					SizeInBits{referenced_size_bits},
+					IrOperand{ret_var},
+					return_pointer_depth,
+					ValueStorage::ContainsAddress);
+			}
+
+			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
+			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
+			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
+			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), source_token);
+			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
+			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
+			return makeExprResult(
+				return_type.type_index().withCategory(pointee_type),
+				SizeInBits{pointee_size_bits},
+				IrOperand{loaded_value},
+				return_pointer_depth,
+				ValueStorage::ContainsData);
+		}
+	}
+
+	// ── Non-reference (or LValueAddress context for references) ───────────
+	int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+						  ? 64
+						  : static_cast<int>(return_type.size_in_bits());
+	TypeIndex type_index_result = isIrStructType(toIrType(return_type.type()))
+									  ? return_type.type_index()
+									  : TypeIndex{};
+	ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
+						  ? ValueStorage::ContainsAddress
+						  : ValueStorage::ContainsData;
+	return makeExprResult(
+		type_index_result.withCategory(return_type.type()),
+		SizeInBits{result_size},
+		IrOperand{ret_var},
+		PointerDepth{static_cast<int>(return_type.pointer_depth())},
+		st);
+}
+
 // Convert a member EvalResult to its raw bit-pattern, preserving IEEE 754 for float/double.
 static unsigned long long evalResultMemberToRaw(const ConstExpr::EvalResult& r, TypeCategory member_type) {
 	if (member_type == TypeCategory::Float) {
@@ -1658,63 +1717,5 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		// Add the function call instruction with typed payload
 	ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), functionCallNode.called_from()));
 
-		// Reference-returning functions produce glvalues that refer to the object behind
-		// the returned address. Model them as indirect lvalues/xvalues so assignment and
-		// compound assignment store through the reference target instead of a temporary.
-	if (return_type.is_reference() || return_type.is_rvalue_reference()) {
-		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-		int referenced_size_bits = getTypeSpecSizeBits(return_type);
-		if (return_type.is_rvalue_reference()) {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
-		} else {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
-		}
-
-		if (context != ExpressionContext::LValueAddress) {
-			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
-			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
-				return makeExprResult(
-					return_type.type_index().withCategory(return_type.type()),
-					SizeInBits{referenced_size_bits},
-					IrOperand{ret_var},
-					return_pointer_depth,
-					ValueStorage::ContainsAddress);
-			}
-
-			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
-			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
-			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
-			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), functionCallNode.called_from());
-			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
-			return makeExprResult(
-				return_type.type_index().withCategory(pointee_type),
-				SizeInBits{pointee_size_bits},
-				IrOperand{loaded_value},
-				return_pointer_depth,
-				ValueStorage::ContainsData);
-		}
-	}
-
-		// Return the result variable with its type and size
-		// For references, return 64-bit size (address size)
-	int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-						  ? 64
-						  : static_cast<int>(return_type.size_in_bits());
-		// Return type_index for struct types so structured bindings can decompose the result.
-		// Use IrType to catch both Type::Struct and Type::UserDefined.
-	TypeIndex type_index_result = isIrStructType(toIrType(return_type.type()))
-									  ? return_type.type_index()
-									  : TypeIndex{};
-	{
-		ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
-							  ? ValueStorage::ContainsAddress
-							  : ValueStorage::ContainsData;
-		return makeExprResult(
-			type_index_result.withCategory(return_type.type()),
-			SizeInBits{result_size},
-			IrOperand{ret_var},
-			PointerDepth{static_cast<int>(return_type.pointer_depth())},
-			st);
-	}
+	return buildCallReturnResult(return_type, ret_var, context, functionCallNode.called_from());
 }

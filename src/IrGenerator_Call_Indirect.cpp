@@ -1725,67 +1725,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
 	}
 
-	// Return the result variable with its type and size
-	// If we found the actual member function from the struct, use its return type
-	// Otherwise fall back to the placeholder function declaration
+	// Build the final ExprResult from the return type — handles reference metadata,
+	// auto-dereference, size/type_index computation, and ValueStorage selection.
 	const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 								  : func_decl_node.type_node().as<TypeSpecifierNode>();
-	if (return_type.is_reference() || return_type.is_rvalue_reference()) {
-		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-		int referenced_size_bits = getTypeSpecSizeBits(return_type);
-		if (return_type.is_rvalue_reference()) {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
-		} else {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
-		}
-
-		if (context != ExpressionContext::LValueAddress) {
-			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
-			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
-				return makeExprResult(
-					return_type.type_index().withCategory(return_type.type()),
-					SizeInBits{referenced_size_bits},
-					IrOperand{ret_var},
-					return_pointer_depth,
-					ValueStorage::ContainsAddress);
-			}
-
-			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
-			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
-			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
-			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), memberFunctionCallNode.called_from());
-			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
-			return makeExprResult(
-				return_type.type_index().withCategory(pointee_type),
-				SizeInBits{pointee_size_bits},
-				IrOperand{loaded_value},
-				return_pointer_depth,
-				ValueStorage::ContainsData);
-		}
-	}
-
-	// For pointer/reference return types, use 64 bits (pointer size on x64)
-	// Otherwise, use the type's natural size
-	int return_size_bits = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-							   ? 64
-							   : static_cast<int>(return_type.size_in_bits());
-
-	TypeIndex ret_type_index = isIrStructType(toIrType(return_type.type()))
-								   ? return_type.type_index()
-								   : TypeIndex{};
-	{
-		ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
-							  ? ValueStorage::ContainsAddress
-							  : ValueStorage::ContainsData;
-		return makeExprResult(
-			ret_type_index.withCategory(return_type.type()),
-			SizeInBits{return_size_bits},
-			IrOperand{ret_var},
-			PointerDepth{static_cast<int>(return_type.pointer_depth())},
-			st);
-	}
+	return buildCallReturnResult(return_type, ret_var, context, memberFunctionCallNode.called_from());
 }
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
