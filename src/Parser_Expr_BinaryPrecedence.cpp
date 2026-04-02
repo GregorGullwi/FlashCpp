@@ -65,14 +65,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 			if (instantiated.has_value()) {
 				if (const FunctionDeclarationNode* func_decl = get_function_decl_node(*instantiated)) {
-					// TODO: When multiple candidates succeed, proper partial ordering
-					// ([temp.func.order]) should select the most specialized one.
-					// For now, prefer the first ADL/lookup_all hit over the registry
-					// hit since ADL candidates (hidden friends) are typically more
-					// specialized than catch-all namespace-scope templates.
-					if (!best_match) {
-						best_match = func_decl;
-					}
+					// C++20 [over.match.best]/1, [temp.func.order]: all candidates
+					// (registry, ordinary lookup, ADL) form a single overload set
+					// and the most specialized viable function wins.  Full partial
+					// ordering is not yet implemented; as an approximation, prefer
+					// ADL/lookup_all hits over the Phase 1 registry hit because
+					// hidden-friend templates (ADL-only) are defined inside the
+					// class body and are almost always more specialized than
+					// catch-all namespace-scope templates from the registry.
+					best_match = func_decl;
 				}
 			}
 		}
