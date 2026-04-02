@@ -773,6 +773,8 @@ struct TypeInfo {
 
 	// For aliases, preserve the original aliased type specifier so consumers can
 	// recover array/pointer/reference metadata by following the alias chain.
+	// pointer_depth_, reference_qualifier_, and function_signature_ remain as a
+	// fallback for older alias entries that predate alias_type_spec_.
 	std::unique_ptr<TypeSpecifierNode> alias_type_spec_;
 
 	// For template instantiations: store metadata to avoid name parsing
@@ -1389,6 +1391,9 @@ struct ResolvedAliasTypeInfo {
 	bool isArray() const { return !array_dimensions.empty(); }
 };
 
+// Follow a TypeAlias chain until a non-alias terminal type is reached while
+// accumulating alias-applied indirection, reference collapsing, function
+// signatures, and array extents in outermost-to-innermost order.
 inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 	ResolvedAliasTypeInfo resolved;
 	resolved.type_index = type_index;

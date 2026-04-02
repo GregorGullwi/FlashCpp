@@ -158,6 +158,9 @@ void Parser::populateTemplateParamSubstitutions(
 			continue;
 		const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
 		if (template_param.is_variadic()) {
+			// template_param_substitutions_ stores scalar substitutions only.
+			// Packs are replayed via pack_param_info_ and direct template_args access so
+			// fold expansion and pack indexing keep the full argument list intact.
 			continue;
 		}
 		const TemplateTypeArg& arg = template_args[i];

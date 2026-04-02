@@ -103,6 +103,10 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 						continue;
 					}
 					if (resolved_struct_info != nullptr) {
+						FLASH_LOG(Types, Warning,
+								  "Ambiguous nested instantiated struct lookup for alias-remapped type '",
+								  type_name, "' while matching nested name '", nested_name,
+								  "' under base template '", base_template_name, "'");
 						return nullptr;
 					}
 					resolved_struct_info = candidate_type_info->getStructInfo();
