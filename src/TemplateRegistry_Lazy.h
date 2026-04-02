@@ -974,7 +974,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
 						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
-							// type_size_ is in bits, convert to bytes
+							// fallback_size_bits_ is in bits, convert to bytes
 							return static_cast<long long>(toSizeT(arg_ti->sizeInBytes()));
 						}
 						// Fallback for primitive types without type_index (e.g., int, char, etc.)
@@ -990,7 +990,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 				auto type_handle = StringTable::getOrInternStringHandle(type_name);
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
-					// type_size_ is in bits, convert to bytes
+					// fallback_size_bits_ is in bits, convert to bytes
 					return static_cast<long long>(toSizeT(type_it->second->sizeInBytes()));
 				}
 			} else {

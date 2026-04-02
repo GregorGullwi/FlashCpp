@@ -2362,7 +2362,7 @@ ParseResult Parser::parse_template_declaration() {
 				// the original struct_info pointer without hitting moved-from state.
 				struct_type_info.setStructInfo(std::move(struct_info));
 				if (struct_type_info.getStructInfo()) {
-					struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+					struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 				}
 			}
 
@@ -3879,7 +3879,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Parse delayed function bodies for partial specialization member functions

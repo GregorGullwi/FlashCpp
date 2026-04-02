@@ -2898,7 +2898,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					const TypeInfo* type_alias_info = type_alias_it->second;
 					element_type = type_alias_info->category();
 					element_type_index = type_alias_info->type_index_;
-					element_size = type_alias_info->type_size_;
+					element_size = type_alias_info->fallback_size_bits_;
 					if (element_size == 0) {
 						element_size = get_type_size_bits(element_type);
 					}

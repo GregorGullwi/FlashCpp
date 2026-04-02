@@ -838,7 +838,7 @@ ParseResult Parser::parse_type_specifier() {
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
 					TypeInfo& placeholder_type = add_empty_type_entry();
-					placeholder_type.type_size_ = 0;
+					placeholder_type.fallback_size_bits_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1114,7 +1114,7 @@ ParseResult Parser::parse_type_specifier() {
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 											TypeInfo& placeholder_type = add_empty_type_entry();
-											placeholder_type.type_size_ = 0;
+											placeholder_type.fallback_size_bits_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
 											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
@@ -1251,7 +1251,7 @@ ParseResult Parser::parse_type_specifier() {
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 								TypeInfo& placeholder_type = add_empty_type_entry();
-								placeholder_type.type_size_ = 0;
+								placeholder_type.fallback_size_bits_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
 								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
@@ -1311,7 +1311,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
 							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.type_size_ = 0;
+							placeholder_type.fallback_size_bits_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
 							getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1347,7 +1347,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						// Create a new dependent placeholder with template instantiation metadata
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_size_ = 0;
+							type_info.fallback_size_bits_ = 0;
 						type_info.name_ = type_handle;
 						getTypesByNameMap()[type_handle] = &type_info;
 
@@ -1747,7 +1747,7 @@ ParseResult Parser::parse_type_specifier() {
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							TypeInfo& type_info = add_empty_type_entry();
-							type_info.type_size_ = 0; // Unknown size for dependent type
+							type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
 							size_t sep_pos = qualified_type_name.rfind("::");
@@ -2042,7 +2042,7 @@ ParseResult Parser::parse_type_specifier() {
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
-					type_info.type_size_ = 0; // Unknown size for dependent type
+					type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
 
@@ -2226,7 +2226,7 @@ ParseResult Parser::parse_type_specifier() {
 										 "parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder",
 										 type_name);
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_size_ = 0; // Unknown size for dependent type
+						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
 						getTypesByNameMap()[type_name_handle] = &type_info;

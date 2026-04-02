@@ -435,7 +435,7 @@ int get_type_size_bits(TypeCategory cat) {
 		// Fallback only: when code still carries TypeCategory::Enum but lost the concrete
 		// enum metadata, assume the common default underlying type (int, 32 bits).
 		// This is expected only for still-buggy dependent/template instantiation paths;
-		// normal enum sizing should come from the enum's TypeIndex/type_size_.
+		// normal enum sizing should come from the enum's TypeIndex/fallback_size_bits_.
 		return 32;
 	case TypeCategory::FunctionPointer:
 	case TypeCategory::MemberFunctionPointer:

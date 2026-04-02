@@ -648,9 +648,9 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
-			// Update type_size_ from the finalized struct's total size
+			// Update fallback_size_bits_ from the finalized struct's total size
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Parse the typedef alias name
@@ -1874,9 +1874,9 @@ ParseResult Parser::parse_typedef_declaration() {
 
 		// Store struct info
 		struct_type_info.setStructInfo(std::move(struct_info));
-		// Update type_size_ from the finalized struct's total size
+		// Update fallback_size_bits_ from the finalized struct's total size
 		if (struct_type_info.getStructInfo()) {
-			struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+			struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 		}
 
 		// Create type specifier for the struct

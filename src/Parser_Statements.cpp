@@ -246,10 +246,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 		}
 		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef
-			// A typedef can be detected either by type_size_ > 0 (for primitive typedefs) or by isTypeAlias() flag
+			// A typedef can be detected either by fallback_size_bits_ > 0 (for primitive typedefs) or by isTypeAlias() flag
 			// The isTypeAlias() flag is set during template instantiation for typedefs like 'typedef T value_type'
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
-							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+							  (type_info_ctx->fallback_size_bits_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
 				// Need to check if this is a functional cast / temporary construction
 				// followed by a member access, like: TypeName(args).member()

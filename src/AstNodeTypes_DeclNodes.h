@@ -752,8 +752,8 @@ struct QualifiedIdentifier {
 
 struct TypeInfo {
 	TypeInfo() = default;
-	TypeInfo(StringHandle name, TypeIndex idx, int type_size)
-		: name_(name), type_index_(idx), registered_type_index_(idx), type_size_(type_size) {
+	TypeInfo(StringHandle name, TypeIndex idx, int fallback_size_bits)
+		: name_(name), type_index_(idx), registered_type_index_(idx), fallback_size_bits_(fallback_size_bits) {
 	}
 
 	StringHandle name_;	// Pure StringHandle — qualified name baked in (e.g., "ns::Foo")
@@ -775,7 +775,7 @@ struct TypeInfo {
 
 	// Generic fallback size in bits for aliases, incomplete types, and forward declarations.
 	// Struct layout remains authoritative in StructTypeInfo::total_size.
-	int type_size_ = 0;	// Changed from unsigned char to int for large types
+	int fallback_size_bits_ = 0;	// Changed from unsigned char to int for large types
 
 	// For typedef of pointer types, store the pointer depth
 	size_t pointer_depth_ = 0;
@@ -900,7 +900,7 @@ struct TypeInfo {
 
 	void setEnumInfo(std::unique_ptr<EnumTypeInfo> info) {
 		if (info) {
-			type_size_ = info->underlying_size.value;
+			fallback_size_bits_ = info->underlying_size.value;
 		}
 		enum_info_ = std::move(info);
 	}
@@ -912,7 +912,7 @@ struct TypeInfo {
 		if (enum_info_) {
 			return enum_info_->sizeInBits();
 		}
-		return SizeInBits{type_size_};
+		return SizeInBits{fallback_size_bits_};
 	}
 
 	SizeInBytes sizeInBytes() const {
@@ -1527,7 +1527,7 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 // Compute the size in bits of the value type described by a TypeSpecifierNode.
 // Per C++20 [expr.sizeof], this returns the object representation size for complete types.
 // For Struct/UserDefined: authoritative lookup via toBits(StructTypeInfo::total_size).value,
-//   falling back to TypeInfo::type_size_ for typedefs/aliases.
+//   falling back to TypeInfo::fallback_size_bits_ for typedefs/aliases.
 // For scalars: delegates to get_type_size_bits().
 // Final fallback: type_spec.size_in_bits() (set during parsing).
 // Returns 0 only for genuinely incomplete or void types.

@@ -3404,9 +3404,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
-	// Update type_size_ from the finalized struct's total size
+	// Update fallback_size_bits_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
 
 	// If this is a nested class, also register it with its qualified name
@@ -3593,13 +3593,13 @@ ParseResult Parser::parse_enum_declaration() {
 		// We mark this as a forward declaration
 		enum_ref.set_is_forward_declaration(true);
 
-		// Set size on TypeInfo for forward-declared enum (use type_size_)
+		// Set size on TypeInfo for forward-declared enum (use fallback_size_bits_)
 		if (enum_ref.has_underlying_type()) {
 			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-			enum_type_info.type_size_ = type_spec.size_in_bits();
+			enum_type_info.fallback_size_bits_ = type_spec.size_in_bits();
 		} else if (is_scoped) {
 			// Scoped enums without underlying type default to int (32 bits)
-			enum_type_info.type_size_ = 32;
+			enum_type_info.fallback_size_bits_ = 32;
 		}
 
 		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));

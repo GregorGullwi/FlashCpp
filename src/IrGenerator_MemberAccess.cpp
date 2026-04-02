@@ -1686,7 +1686,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(toSizeT(struct_info->total_size))}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
-						// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
+						// Fallback: use fallback_size_bits_ from TypeInfo (works for template instantiations at global scope)
 						if (type_info->hasStoredSize()) {
 							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info->sizeInBits().value)}, PointerDepth{}, ValueStorage::ContainsData);
 						}

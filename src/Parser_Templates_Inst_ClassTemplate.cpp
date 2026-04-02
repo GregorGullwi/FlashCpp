@@ -526,7 +526,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			StringHandle inst_handle = StringTable::getOrInternStringHandle(inst_name);
 			if (getTypesByNameMap().find(inst_handle) == getTypesByNameMap().end()) {
 				TypeInfo& type_info = add_empty_type_entry();
-				type_info.type_size_ = 0;
+				type_info.fallback_size_bits_ = 0;
 				type_info.name_ = inst_handle;
 				auto template_args_info = convertToTemplateArgInfo(template_args);
 				InlineVector<StringHandle, 4> placeholder_param_names;
@@ -2372,7 +2372,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 			struct_type_info.setStructInfo(std::move(struct_info));
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Register type aliases from the pattern with qualified names
@@ -2539,7 +2539,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						alias_array_dimensions.end(),
 						size_t{1},
 						std::multiplies<size_t>()) * 8);
-					alias_type_info.type_size_ = substituted_size;
+					alias_type_info.fallback_size_bits_ = substituted_size;
 				}
 				(void)alias_type_info;
 
@@ -5241,7 +5241,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto& nested_type_info = add_instantiated_type(qualified_name, TypeCategory::Struct, 0); // Placeholder size
 			nested_type_info.setStructInfo(std::move(nested_struct_info));
 			if (nested_type_info.getStructInfo()) {
-				nested_type_info.type_size_ = nested_type_info.getStructInfo()->sizeInBits().value;
+				nested_type_info.fallback_size_bits_ = nested_type_info.getStructInfo()->sizeInBits().value;
 			}
 
  // Propagate the outer type's instantiation context to the nested type.
@@ -5379,7 +5379,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 				si->total_size = toSizeInBytes((new_total + new_alignment - 1) & ~(new_alignment - 1));
 				si->alignment = new_alignment;
-				struct_type_info.type_size_ = si->sizeInBits().value;
+				struct_type_info.fallback_size_bits_ = si->sizeInBits().value;
 				FLASH_LOG(Templates, Debug, "Re-laid out struct ", instantiated_name,
 						  " after nested class fixup, total_size=", si->total_size);
 			}
@@ -5465,7 +5465,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				alias_array_dimensions.end(),
 				size_t{1},
 				std::multiplies<size_t>()) * 8);
-			alias_type_info.type_size_ = substituted_size;
+			alias_type_info.fallback_size_bits_ = substituted_size;
 		}
 		if (substituted_type == TypeCategory::Enum && substituted_type_index.is_valid()) {
 			if (const TypeInfo* enum_alias_ti = tryGetTypeInfo(substituted_type_index)) {
@@ -5541,9 +5541,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
 
-	// Update type_size_ from the finalized struct's total size
+	// Update fallback_size_bits_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = struct_type_info.getStructInfo()->sizeInBits().value;
+		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
 
 	// Register member template aliases with the instantiated name

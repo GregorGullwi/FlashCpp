@@ -30,12 +30,12 @@ void registerTypeParamsInScope(
 			param_names[i],
 			arg.typeEnum(), 0);
 		if (is_builtin_type(arg.typeEnum())) {
-			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.category()));
+			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
 		} else {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-				type_info.type_size_ = arg_type_info->sizeInBits().value;
+				type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
 			} else {
-				type_info.type_size_ = 0;
+				type_info.fallback_size_bits_ = 0;
 			}
 		}
 		if (preserve_ref_qualifier) {

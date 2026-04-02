@@ -376,7 +376,7 @@ int AstToIr::getRuntimeValueSizeBits(TypeIndex type_index, int semantic_size_bit
 			if (const EnumTypeInfo* enum_info = ti->getEnumInfo()) {
 				return enum_info->sizeInBits().value;
 			}
-			// Forward-declared enums / aliases may only have type_size_.
+			// Forward-declared enums / aliases may only have fallback_size_bits_.
 			if (ti->hasStoredSize()) {
 				return ti->sizeInBits().value;
 			}
