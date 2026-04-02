@@ -41,7 +41,7 @@ The callee descriptor should be rich enough to distinguish:
 - resolved free function declaration
 - resolved member function declaration
 - unresolved placeholder declaration
-- calls through a named callable object or function pointer
+- calls through a named callable object, function pointer, or member function pointer
 
 ## Migration plan
 
