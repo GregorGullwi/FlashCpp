@@ -19,7 +19,7 @@ The unified call node should cover:
 - free-function calls
 - static member function calls
 - non-static member function calls
-- operator calls that are currently represented as either free or member calls
+- operator calls that are currently represented as either free or member calls (including operator[] and operator())
 - explicit-template calls
 - indirect callable-object calls once the callee shape can describe them cleanly
 
