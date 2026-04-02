@@ -4480,11 +4480,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
 				ensure_instantiated_static_member_type(substituted_type_index);
+				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
 				resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_to_use);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolve_array_alias_dimensions(
-						type_spec, template_params, template_args_to_use);
+					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
 				is_array_member = !resolved_array_dimensions.empty();
 
@@ -4971,11 +4971,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
 				substituted_type_index = substitute_template_parameter(
 					type_spec, template_params, template_args_to_use);
+				ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
 				resolved_array_dimensions = resolve_array_dimensions(
 					decl, template_params, template_args_to_use);
 				if (resolved_array_dimensions.empty()) {
-					resolved_array_dimensions = resolve_array_alias_dimensions(
-						type_spec, template_params, template_args_to_use);
+					resolved_array_dimensions = resolved_member_alias.array_dimensions;
 				}
 				is_array_member = !resolved_array_dimensions.empty();
 
