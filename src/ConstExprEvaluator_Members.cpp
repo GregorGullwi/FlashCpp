@@ -4399,13 +4399,20 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	// First, we need to get the struct type from the object to look up the actual function
 	std::string_view var_name;
 	const IdentifierNode* object_identifier = nullptr;
+	EvalResult complex_object_result = EvalResult::from_int(0LL);
+	bool has_complex_object_result = false;
 
 	auto extracted = extract_identifier_from_expression(object_expr);
 	if (!extracted) {
-		return EvalResult::error("Complex object expressions not yet supported in constexpr member function calls");
+		complex_object_result = evaluate(object_expr, context);
+		if (!complex_object_result.success()) {
+			return complex_object_result;
+		}
+		has_complex_object_result = true;
+	} else {
+		object_identifier = extracted->identifier;
+		var_name = extracted->name;
 	}
-	object_identifier = extracted->identifier;
-	var_name = extracted->name;
 
 	if (placeholder_func.is_static() && object_identifier && object_identifier->name() == "this") {
 		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
@@ -4415,34 +4422,39 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 	const VariableDeclarationNode* var_decl = nullptr;
 	ResolvedConstexprObject resolved_object;
-	if (auto resolve_error = resolve_constexpr_object_source(
-			object_identifier,
-			var_name,
-			context,
-			"member function call",
-			resolved_object)) {
-		return *resolve_error;
-	}
+	const std::optional<ASTNode>* initializer = nullptr;
+	TypeIndex declared_type_index{0};
 
-	var_decl = resolved_object.var_decl;
-	if (var_decl && !var_decl->is_constexpr()) {
-		return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
-	}
+	if (!has_complex_object_result) {
+		if (auto resolve_error = resolve_constexpr_object_source(
+				object_identifier,
+				var_name,
+				context,
+				"member function call",
+				resolved_object)) {
+			return *resolve_error;
+		}
 
-	const std::optional<ASTNode>* initializer = resolved_object.initializer;
-	TypeIndex declared_type_index = resolved_object.declared_type_index;
-	if (!initializer->has_value()) {
-		return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
-	}
+		var_decl = resolved_object.var_decl;
+		if (var_decl && !var_decl->is_constexpr()) {
+			return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
+		}
 
-	if (!var_decl) {
-		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
-			return *static_member_result;
+		initializer = resolved_object.initializer;
+		declared_type_index = resolved_object.declared_type_index;
+		if (!initializer->has_value()) {
+			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+		}
+
+		if (!var_decl) {
+			if (auto static_member_result = try_evaluate_current_struct_static_member()) {
+				return *static_member_result;
+			}
 		}
 	}
 
 	// Check if this is a lambda call (operator() on a lambda object)
-	if (is_operator_call) {
+	if (is_operator_call && !has_complex_object_result) {
 		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(*initializer);
 		if (lambda) {
 			return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
@@ -4456,8 +4468,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		}
 	}
 
-	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(*initializer);
-	if (!ctor_call_ptr && !(*initializer)->is<InitializerListNode>()) {
+	const ConstructorCallNode* ctor_call_ptr =
+		(has_complex_object_result || initializer == nullptr) ? nullptr : extract_constructor_call(*initializer);
+	if (!has_complex_object_result && !ctor_call_ptr && !(*initializer)->is<InitializerListNode>()) {
 		return EvalResult::error("Member function calls require struct/class objects");
 	}
 
@@ -4467,7 +4480,13 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	const StructTypeInfo* struct_info = nullptr;
 	TypeIndex type_index{0};
 
-	if (ctor_call_ptr) {
+	if (has_complex_object_result) {
+		type_index = complex_object_result.object_type_index;
+		declared_type_index = type_index;
+		if (const TypeInfo* object_type_info = tryGetTypeInfo(type_index)) {
+			struct_info = object_type_info->getStructInfo();
+		}
+	} else if (ctor_call_ptr) {
 		const ConstructorCallNode& ctor_call = *ctor_call_ptr;
 		const ASTNode& type_node = ctor_call.type_node();
 		if (!type_node.is<TypeSpecifierNode>()) {
@@ -4534,10 +4553,16 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 	// Extract member values from the object for 'this' access
 	std::unordered_map<std::string_view, EvalResult> member_bindings;
-
-	auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
-	if (!member_extraction_result.success()) {
-		return member_extraction_result;
+	if (has_complex_object_result) {
+		if (complex_object_result.object_member_bindings.empty()) {
+			return EvalResult::error("Complex object expression did not materialize constexpr members");
+		}
+		member_bindings = complex_object_result.object_member_bindings;
+	} else {
+		auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
+		if (!member_extraction_result.success()) {
+			return member_extraction_result;
+		}
 	}
 
 	// Evaluate function arguments and add to bindings
