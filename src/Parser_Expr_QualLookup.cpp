@@ -1606,7 +1606,10 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 					TypeSpecifierNode member_type(member_result.member->memberType(), TypeQualifier::None, member_result.member->size * 8, Token{}, CVQualifier::None);
 					member_type.set_type_index(member_result.member->type_index);
 					if (member_result.member->is_array) {
-						member_type.set_array_dimensions(member_result.member->array_dimensions);
+						member_type.set_array(true);
+						if (!member_result.member->array_dimensions.empty()) {
+							member_type.set_array_dimensions(member_result.member->array_dimensions);
+						}
 					}
 					if (member_result.member->pointer_depth > 0) {
 						member_type.add_pointer_levels(member_result.member->pointer_depth);

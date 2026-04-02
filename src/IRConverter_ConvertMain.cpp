@@ -8275,7 +8275,6 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 				{
 					auto lv_info_opt = getTempVarLValueInfo(return_var);
 					auto return_meta = getTempVarMetadata(return_var);
-					FLASH_LOG(Codegen, Debug, "handleReturn: lvalue metadata present=", lv_info_opt.has_value(), ", returns_reference=", current_function_returns_reference_, ", is_address=", return_meta.is_address);
 					if (lv_info_opt.has_value() && (current_function_returns_reference_ || return_meta.is_address)) {
 						const LValueInfo& lv_info = lv_info_opt.value();
 						auto loadBaseAddress = [&](const std::variant<StringHandle, TempVar>& base, bool base_is_pointer) -> bool {
