@@ -279,7 +279,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 			// initialize sub-aggregate members recursively.
 			if (const StructTypeInfo* nested_struct_info = tryGetStructTypeInfo(member.type_index)) {
 				// Build a temporary TypeSpecifierNode for the nested struct type
-				int nested_size_bits = static_cast<int>(nested_struct_info->total_size * 8);
+				int nested_size_bits = static_cast<int>(nested_struct_info->sizeInBits().value);
 				TypeSpecifierNode nested_type_spec(member.type_index.withCategory(member.memberType()), nested_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None);
 				auto nested_result = generateDefaultStructArg(init_expr.as<InitializerListNode>(), nested_type_spec);
 				if (nested_result.has_value()) {
@@ -313,7 +313,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(ms), Token()));
 	}
 
-	int actual_size_bits = static_cast<int>(struct_info->total_size * 8);
+	int actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 	TypedValue result;
 	result.setType(TypeCategory::Struct);
 	result.ir_type = IrType::Struct;
@@ -331,7 +331,7 @@ void AstToIr::applyTypeNodeMetadata(TypedValue& value, const TypeSpecifierNode& 
 	} else if (type_node.category() == TypeCategory::Struct && type_node.type_index().is_valid()) {
 		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_node.type_index());
 		if (struct_info) {
-			value.size_in_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
+			value.size_in_bits = SizeInBits{static_cast<int>(struct_info->sizeInBits().value)};
 		} else {
 			value.size_in_bits = SizeInBits{type_node.size_in_bits()};
 		}
@@ -1514,7 +1514,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
 						const TypeInfo& alias_type_info = *alias_it->second;
-						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, alias_type_info.type_size_, type_spec.token(), type_spec.cv_qualifier());
+						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, static_cast<int>(alias_type_info.sizeInBits().value), type_spec.token(), type_spec.cv_qualifier());
 						resolved.set_type_index(alias_type_info.type_index_);
 						resolved.copy_indirection_from(type_spec);
 						resolved.set_reference_qualifier(type_spec.reference_qualifier());
@@ -1773,7 +1773,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			int actual_return_size = static_cast<int>(return_type.size_in_bits());
 			if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(ret_struct->total_size * 8);
+					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
 				}
 			}
 			call_op.return_size_in_bits = SizeInBits{actual_return_size};
@@ -1920,7 +1920,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (actual_return_size == 0 && resolved_cat == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				// Look up struct size from type info
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(ret_struct->total_size * 8);
+					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
 				}
 			}
 			call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
@@ -2065,12 +2065,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					// Get return type from the function declaration
 					const auto& return_type_node = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 					TypeCategory return_type = return_type_node.type();
-					int return_size = static_cast<int>(return_type_node.size_in_bits());
+					SizeInBits return_size = return_type_node.sizeBits();
 
 					// Defaulted operator<=> with auto return type actually returns int
 					if (isPlaceholderAutoType(return_type)) {
 						return_type = TypeCategory::Int;
-						return_size = 32;
+						return_size = SizeInBits{32};
 					}
 
 					TypeSpecifierNode resolved_return_type_node = return_type_node;
@@ -2103,13 +2103,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					call_op.result = result_var;
 					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
 					call_op.return_type_index = nativeTypeIndex(return_type);
-					call_op.return_size_in_bits = SizeInBits{return_size};
+					call_op.return_size_in_bits = return_size;
 					call_op.is_member_function = true;
 					call_op.is_variadic = func_decl.is_variadic();
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
 					bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());
-					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size, context_->isLLP64());
+					bool needs_hidden_return_param = needsHiddenReturnParam(return_type, return_type_node.pointer_depth(), return_type_node.is_reference(), return_size.value, context_->isLLP64());
 
 					FLASH_LOG_FORMAT(Codegen, Debug,
 									 "Spaceship operator call: return_size={}, threshold={}, returns_struct={}, needs_hidden={}",
@@ -2153,7 +2153,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 					ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 					if (op == "<=>") {
-						return makeExprResult(nativeTypeIndex(return_type), SizeInBits{static_cast<int>(return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+						return makeExprResult(nativeTypeIndex(return_type), return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 					}
 
 					TempVar cmp_result = var_counter.next();
@@ -2198,7 +2198,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 			if (ordering_type) {
 				const int ordering_size = static_cast<int>(ordering_type->struct_info_
-															   ? ordering_type->struct_info_->total_size * 8
+															   ? ordering_type->struct_info_->sizeInBits().value
 															   : 8);
 
 				// Compute three-way result: (a > b) - (a < b) -> -1, 0, or 1.
@@ -3139,7 +3139,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 			// Check return type for self-referential struct
 			if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				const TypeInfo* rti = tryGetTypeInfo(return_type.type_index());
-				if (!rti || !rti->struct_info_ || rti->struct_info_->total_size == 0) {
+				if (!rti || !rti->struct_info_ || !rti->struct_info_->total_size.is_set()) {
 					needs_resolution = true;
 				}
 			}
@@ -3149,7 +3149,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 						const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 						if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
 							const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
-							if (!ti || !ti->struct_info_ || ti->struct_info_->total_size == 0) {
+							if (!ti || !ti->struct_info_ || !ti->struct_info_->total_size.is_set()) {
 								needs_resolution = true;
 								break;
 							}
@@ -4396,10 +4396,8 @@ bool AstToIr::handleLValueAssignment(const ExprResult& lhs_operands,
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
-				} else {
-					inferred_size_bits = static_cast<int>(type_info->type_size_);
+				if (type_info->hasStoredSize()) {
+					inferred_size_bits = type_info->sizeInBits().value;
 				}
 			}
 		} else {
@@ -4630,10 +4628,8 @@ bool AstToIr::handleLValueCompoundAssignment(const ExprResult& lhs_operands,
 		// typedef-to-struct aliases also use the struct-layout path.
 		if (isIrStructType(toIrType(lvalue_cat))) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(lhs_operands.type_index)) {
-				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-					inferred_size_bits = static_cast<int>(struct_info->total_size * 8);
-				} else {
-					inferred_size_bits = static_cast<int>(type_info->type_size_);
+				if (type_info->hasStoredSize()) {
+					inferred_size_bits = type_info->sizeInBits().value;
 				}
 			}
 		} else {

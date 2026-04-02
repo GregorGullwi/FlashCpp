@@ -278,7 +278,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 				const TypeInfo& type_info = getTypeInfo(element_type_index);
 				const StructTypeInfo* struct_info = type_info.getStructInfo();
 				if (struct_info) {
-					element_size_bits = static_cast<int>(struct_info->total_size * 8);
+					element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 				}
 			}
 
@@ -552,7 +552,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						const TypeInfo& type_info = getTypeInfo(element_type_index);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info) {
-							element_size_bits = static_cast<int>(struct_info->total_size * 8);
+							element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 						}
 					}
 				}
@@ -583,7 +583,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 						const TypeInfo& type_info = getTypeInfo(element_type_index);
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						if (struct_info) {
-							element_size_bits = static_cast<int>(struct_info->total_size * 8);
+							element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 						}
 					}
 					if (element_size_bits == 0) {
@@ -1261,7 +1261,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		// If size is 0 for struct types, look up from type info
 		if (sm_size_bits == 0 && static_member->type_index.is_valid()) {
 			if (const StructTypeInfo* sm_si = tryGetStructTypeInfo(static_member->type_index)) {
-				sm_size_bits = static_cast<int>(sm_si->total_size * 8);
+				sm_size_bits = static_cast<int>(sm_si->sizeInBits().value);
 			}
 		}
 
@@ -1459,7 +1459,7 @@ std::optional<size_t> AstToIr::calculateArraySize(const DeclarationNode& decl) {
 	// For struct types, get size from gTypeInfo instead of size_in_bits()
 	if (element_size == 0 && type_spec.category() == TypeCategory::Struct) {
 		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-			element_size = struct_info->total_size;
+			element_size = toSizeT(struct_info->total_size);
 		}
 	}
 
@@ -1526,7 +1526,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						size_t ref_size = get_type_size_bits(static_member->memberType()) / 8;
 						if (ref_size == 0 && static_member->memberType() == TypeCategory::Struct && static_member->type_index.is_valid()) {
 							if (const StructTypeInfo* si = tryGetStructTypeInfo(static_member->type_index)) {
-								ref_size = si->total_size;
+								ref_size = toSizeT(si->total_size);
 							}
 						}
 						FLASH_LOG(Codegen, Debug, "sizeof(struct_member): found static ref member, referenced type size=", ref_size);
@@ -1640,7 +1640,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				return ExprResult{};
 			}
 
-			size_in_bytes = struct_info->total_size;
+			size_in_bytes = toSizeT(struct_info->total_size);
 		} else {
 			// For primitive types, convert bits to bytes
 			size_in_bytes = type_spec.size_in_bits() / 8;
@@ -1682,13 +1682,13 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 				if (var_type.category() == TypeCategory::Struct) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(var_type.type_index())) {
 						if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-							if (struct_info->total_size > 0) {
-								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(struct_info->total_size)}, PointerDepth{}, ValueStorage::ContainsData);
+							if (struct_info->total_size.is_set()) {
+								return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(toSizeT(struct_info->total_size))}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
-						// Fallback: use type_size_ from TypeInfo (works for template instantiations at global scope)
-						if (type_info->type_size_ > 0) {
-							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info->type_size_)}, PointerDepth{}, ValueStorage::ContainsData);
+						// Fallback: use fallback_size_bits_ from TypeInfo (works for template instantiations at global scope)
+						if (type_info->hasStoredSize()) {
+							return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{static_cast<unsigned long long>(type_info->sizeInBits().value)}, PointerDepth{}, ValueStorage::ContainsData);
 						}
 					}
 					// Fallback: use size_in_bits from the type specifier node
@@ -1820,7 +1820,7 @@ ExprResult AstToIr::generateSizeofIr(const SizeofExprNode& sizeofNode) {
 						// Handle struct element types
 						if (element_size == 0 && var_type.category() == TypeCategory::Struct) {
 							if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(var_type.type_index())) {
-								element_size = struct_info->total_size;
+								element_size = toSizeT(struct_info->total_size);
 							}
 						}
 
@@ -3032,7 +3032,7 @@ ExprResult AstToIr::generateTypeTraitIr(const TypeTraitExprNode& traitNode) {
 				const EnumTypeInfo* enum_info = type_info->getEnumInfo();
 				if (enum_info) {
 					// Return the enum's declared underlying type
-					return makeExprResult(nativeTypeIndex(enum_info->underlying_type), SizeInBits{enum_info->underlying_size}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+					return makeExprResult(nativeTypeIndex(enum_info->underlying_type), enum_info->underlying_size, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 			// Fallback to int if no enum info

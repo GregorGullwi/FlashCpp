@@ -979,7 +979,7 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 						if (ti->isStruct()) {
 							const StructTypeInfo* si = ti->getStructInfo();
 							if (si) {
-								size_in_bits = si->total_size * 8;
+								size_in_bits = si->sizeInBits().value;
 							}
 						}
 					}

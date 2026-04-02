@@ -2362,7 +2362,7 @@ ParseResult Parser::parse_template_declaration() {
 				// the original struct_info pointer without hitting moved-from state.
 				struct_type_info.setStructInfo(std::move(struct_info));
 				if (struct_type_info.getStructInfo()) {
-					struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+					struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 				}
 			}
 
@@ -2387,8 +2387,8 @@ ParseResult Parser::parse_template_declaration() {
 
 				if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
 					if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-						member_size = member_struct_info->total_size;
-						referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+						member_size = toSizeT(member_struct_info->total_size);
+						referenced_size_bits = static_cast<size_t>(member_struct_info->sizeInBits().value);
 						member_alignment = member_struct_info->alignment;
 					}
 				}
@@ -3879,7 +3879,7 @@ ParseResult Parser::parse_template_declaration() {
 			// Store struct info
 			struct_type_info.setStructInfo(std::move(struct_info));
 			if (struct_type_info.getStructInfo()) {
-				struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+				struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 			}
 
 			// Parse delayed function bodies for partial specialization member functions

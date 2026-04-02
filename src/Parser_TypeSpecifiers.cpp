@@ -68,12 +68,12 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	// Get type information first (needed for both empty and non-empty cases)
 	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
-	int type_size = 32;
+	SizeInBits type_size{32};
 
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
 		cast_type = builtin_type_info->first;
-		type_size = builtin_type_info->second;
+		type_size = SizeInBits{static_cast<int>(builtin_type_info->second)};
 		// Handle special case for unsigned qualifier
 		if (type_name == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
@@ -85,7 +85,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
 			cast_type = type_info->typeEnum();
-			type_size = type_info->type_size_;
+			type_size = type_info->sizeInBits();
 			if (type_info->isStruct()) {
 				cast_type = TypeCategory::Struct;
 			}
@@ -315,7 +315,7 @@ ParseResult Parser::parse_type_specifier() {
 			if (enum_type_info.enum_info_) {
 				const EnumTypeInfo* enum_info = enum_type_info.enum_info_.get();
 				TypeCategory underlying = enum_info->underlying_type;
-				int underlying_size = enum_info->underlying_size;
+				int underlying_size = enum_info->sizeInBits().value;
 				FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
@@ -327,7 +327,7 @@ ParseResult Parser::parse_type_specifier() {
 		if (type_info.enum_info_) {
 			const EnumTypeInfo* enum_info = type_info.enum_info_.get();
 			TypeCategory underlying = enum_info->underlying_type;
-			int underlying_size = enum_info->underlying_size;
+			int underlying_size = enum_info->sizeInBits().value;
 			FLASH_LOG(Parser, Debug, "parse_type_specifier: __underlying_type resolved to ", static_cast<int>(underlying));
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				underlying, TypeQualifier::None, underlying_size, underlying_token, CVQualifier::None));
@@ -662,7 +662,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
+				type_size = static_cast<int>(struct_info->sizeInBits().value); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -693,7 +693,7 @@ ParseResult Parser::parse_type_specifier() {
 		if (type_it != getTypesByNameMap().end()) {
 			return ParseResult::success(emplace_node<TypeSpecifierNode>(
 				TypeCategory::UserDefined, TypeQualifier::None,
-				static_cast<int>(type_it->second->type_size_),
+				static_cast<int>(type_it->second->sizeInBits().value),
 				va_list_token, cv_qualifier));
 		}
 		// Fallback: treat as void*
@@ -761,13 +761,13 @@ ParseResult Parser::parse_type_specifier() {
 		if (type_it != getTypesByNameMap().end()) {
 			const TypeInfo* type_info = type_it->second;
 			TypeIndex user_type_index = type_info->type_index_;
-			int type_size_bits = static_cast<int>(type_info->type_size_);
+			int type_size_bits = static_cast<int>(type_info->sizeInBits().value);
 
 			// Determine the correct Type value from the found TypeInfo
 			if (type_info->isStruct()) {
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info) {
-					type_size_bits = static_cast<int>(struct_info->total_size * 8);
+					type_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 				}
 				return ParseResult::success(emplace_node<TypeSpecifierNode>(
 					user_type_index.withCategory(TypeCategory::Struct), type_size_bits, type_name_token, cv_qualifier, ReferenceQualifier::None));
@@ -838,7 +838,7 @@ ParseResult Parser::parse_type_specifier() {
 				TypeIndex type_idx;
 				if (type_it == getTypesByNameMap().end()) {
 					TypeInfo& placeholder_type = add_empty_type_entry();
-					placeholder_type.type_size_ = 0;
+					placeholder_type.fallback_size_bits_ = 0;
 					placeholder_type.name_ = type_handle;
 					placeholder_type.is_incomplete_instantiation_ = true;
 					getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1108,13 +1108,13 @@ ParseResult Parser::parse_type_specifier() {
 											FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 											return ParseResult::success(emplace_node<TypeSpecifierNode>(
 												member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
-												static_cast<unsigned char>(member_type_info->type_size_),
+												static_cast<unsigned char>(member_type_info->sizeInBits().value),
 												member_token, cv_qualifier, ReferenceQualifier::None));
 										} else {
 											// Member type not found - might be a dependent type
 											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 											TypeInfo& placeholder_type = add_empty_type_entry();
-											placeholder_type.type_size_ = 0;
+											placeholder_type.fallback_size_bits_ = 0;
 											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 											placeholder_type.is_incomplete_instantiation_ = true;
 											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
@@ -1127,7 +1127,7 @@ ParseResult Parser::parse_type_specifier() {
 								// Create the final type specifier
 								auto new_type_spec = emplace_node<TypeSpecifierNode>(
 									type_idx.withCategory(TypeCategory::Struct),
-									static_cast<unsigned char>(new_ti.type_size_),
+									static_cast<unsigned char>(new_ti.sizeInBits().value),
 									Token(),
 									CVQualifier::None,
 									ReferenceQualifier::None);
@@ -1188,7 +1188,7 @@ ParseResult Parser::parse_type_specifier() {
 							if (is_struct_type(arg.category())) {
 								// Look up the struct size from type_index
 								const TypeInfo& ti = getTypeInfo(arg.type_index);
-								size_bits = static_cast<unsigned char>(ti.type_size_);
+								size_bits = static_cast<unsigned char>(ti.sizeInBits().value);
 							} else {
 								// Use standard type sizes
 								size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
@@ -1245,13 +1245,13 @@ ParseResult Parser::parse_type_specifier() {
 								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
 									member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
-									static_cast<unsigned char>(member_type_info->type_size_),
+									static_cast<unsigned char>(member_type_info->sizeInBits().value),
 									member_token, cv_qualifier, ReferenceQualifier::None));
 							} else {
 								// Member type not found - might be a dependent type
 								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
 								TypeInfo& placeholder_type = add_empty_type_entry();
-								placeholder_type.type_size_ = 0;
+								placeholder_type.fallback_size_bits_ = 0;
 								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
 								placeholder_type.is_incomplete_instantiation_ = true;
 								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
@@ -1311,7 +1311,7 @@ ParseResult Parser::parse_type_specifier() {
 						if (type_it == getTypesByNameMap().end()) {
 							// Create a new placeholder type
 							TypeInfo& placeholder_type = add_empty_type_entry();
-							placeholder_type.type_size_ = 0;
+							placeholder_type.fallback_size_bits_ = 0;
 							placeholder_type.name_ = type_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
 							getTypesByNameMap()[type_handle] = &placeholder_type;
@@ -1347,7 +1347,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						// Create a new dependent placeholder with template instantiation metadata
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_size_ = 0;
+							type_info.fallback_size_bits_ = 0;
 						type_info.name_ = type_handle;
 						getTypesByNameMap()[type_handle] = &type_info;
 
@@ -1380,10 +1380,10 @@ ParseResult Parser::parse_type_specifier() {
 
 					// Fallback: no template args - just reference the template parameter type
 					auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
-					if (type_it != getTypesByNameMap().end()) {
-						TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &getTypeInfo(TypeIndex{0}))};
-						auto type_spec_node = emplace_node<TypeSpecifierNode>(
-							type_idx.withCategory(TypeCategory::UserDefined),
+			if (type_it != getTypesByNameMap().end()) {
+				TypeIndex type_idx = TypeIndex{static_cast<size_t>(type_it->second - &getTypeInfo(TypeIndex{0}))};
+				auto type_spec_node = emplace_node<TypeSpecifierNode>(
+					type_idx.withCategory(TypeCategory::UserDefined),
 							0, // Size unknown for dependent type
 							type_name_token,
 							CVQualifier::None,
@@ -1747,7 +1747,7 @@ ParseResult Parser::parse_type_specifier() {
 							FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent type placeholder for {}", qualified_type_name);
 							auto type_idx = StringTable::getOrInternStringHandle(qualified_type_name);
 							TypeInfo& type_info = add_empty_type_entry();
-							type_info.type_size_ = 0; // Unknown size for dependent type
+							type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
 							size_t sep_pos = qualified_type_name.rfind("::");
@@ -1785,7 +1785,7 @@ ParseResult Parser::parse_type_specifier() {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 
 							if (struct_info) {
-								type_size = static_cast<int>(struct_info->total_size * 8);
+								type_size = static_cast<int>(struct_info->sizeInBits().value);
 							} else {
 								type_size = 0;
 							}
@@ -1795,7 +1795,7 @@ ParseResult Parser::parse_type_specifier() {
 							// This is a type alias - return the aliased type
 							ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 								type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-							type_size = static_cast<unsigned char>(type_info->type_size_);
+							type_size = static_cast<unsigned char>(type_info->sizeInBits().value);
 							auto type_spec_node = emplace_node<TypeSpecifierNode>(
 								resolved_alias.type_index, type_size, type_name_token, cv_qualifier, ReferenceQualifier::None);
 							type_spec_node.as<TypeSpecifierNode>().add_pointer_levels(resolved_alias.pointer_depth);
@@ -1851,7 +1851,7 @@ ParseResult Parser::parse_type_specifier() {
 								int member_type_size = 0;
 								if (member_type_info->isStruct()) {
 									if (const StructTypeInfo* member_struct_info = member_type_info->getStructInfo()) {
-										member_type_size = static_cast<int>(member_struct_info->total_size * 8);
+										member_type_size = static_cast<int>(member_struct_info->sizeInBits().value);
 									}
 								}
 								return ParseResult::success(emplace_node<TypeSpecifierNode>(
@@ -1957,7 +1957,7 @@ ParseResult Parser::parse_type_specifier() {
 									if (is_struct_type(arg.category())) {
 										// Look up the struct size from type_index
 										const TypeInfo& ti = getTypeInfo(arg.type_index);
-										size_bits = static_cast<unsigned char>(ti.type_size_);
+								size_bits = static_cast<unsigned char>(ti.sizeInBits().value);
 									} else {
 										// Use standard type sizes
 										size_bits = static_cast<unsigned char>(get_type_size_bits(arg.category()));
@@ -2022,7 +2022,7 @@ ParseResult Parser::parse_type_specifier() {
 						// Return existing struct type
 						const StructTypeInfo* struct_info = existing_type->getStructInfo();
 						if (struct_info) {
-							type_size = static_cast<int>(struct_info->total_size * 8);
+							type_size = static_cast<int>(struct_info->sizeInBits().value);
 						} else {
 							type_size = 0;
 						}
@@ -2042,7 +2042,7 @@ ParseResult Parser::parse_type_specifier() {
 					FLASH_LOG_FORMAT(Templates, Debug, "Creating dependent template placeholder for '{}'", instantiated_name);
 					auto type_idx = StringTable::getOrInternStringHandle(instantiated_name);
 					TypeInfo& type_info = add_empty_type_entry();
-					type_info.type_size_ = 0; // Unknown size for dependent type
+					type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 					type_info.name_ = type_idx;
 					getTypesByNameMap()[type_idx] = &type_info;
 
@@ -2188,7 +2188,7 @@ ParseResult Parser::parse_type_specifier() {
 					const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
 
 					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+						type_size = static_cast<int>(struct_info->sizeInBits().value);
 					} else {
 						type_size = 0;
 					}
@@ -2226,7 +2226,7 @@ ParseResult Parser::parse_type_specifier() {
 										 "parse_type_specifier: '{}' is a template parameter (not yet registered), creating placeholder",
 										 type_name);
 						TypeInfo& type_info = add_empty_type_entry();
-						type_info.type_size_ = 0; // Unknown size for dependent type
+						type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 						type_info.name_ = type_name_handle;
 						type_info.is_incomplete_instantiation_ = true;
 						getTypesByNameMap()[type_name_handle] = &type_info;
@@ -2314,7 +2314,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 
 			if (struct_info) {
-				type_size = static_cast<int>(struct_info->total_size * 8); // Convert bytes to bits
+				type_size = static_cast<int>(struct_info->sizeInBits().value); // Convert bytes to bits
 			} else {
 				// Struct is being defined but not yet finalized (e.g., in member function parameters)
 				// Use a placeholder size of 0 - it will be updated when the struct is finalized
@@ -2350,7 +2350,7 @@ ParseResult Parser::parse_type_specifier() {
 			const EnumTypeInfo* enum_info = enum_type_info->getEnumInfo();
 
 			if (enum_info) {
-				type_size = enum_info->underlying_size;
+				type_size = enum_info->sizeInBits().value;
 			} else {
 				// Enum is being defined but not yet finalized
 				type_size = 32; // Default to int size
@@ -2369,7 +2369,7 @@ ParseResult Parser::parse_type_specifier() {
 				user_type_index.withCategory(type_info_ctx->typeEnum()));
 			// If this is a typedef (has a stored type and size, but is not a struct/enum), use the underlying type
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
-							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+							  (type_info_ctx->hasStoredSize() && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			bool has_alias_type_shape = resolved_alias.pointer_depth != 0 ||
 										resolved_alias.reference_qualifier != ReferenceQualifier::None ||
 										resolved_alias.function_signature.has_value() ||
@@ -2387,7 +2387,7 @@ ParseResult Parser::parse_type_specifier() {
 			}
 			if (is_typedef) {
 				resolved_type = resolved_alias.typeEnum();
-				type_size = type_info_ctx->type_size_;
+				type_size = static_cast<unsigned char>(type_info_ctx->sizeInBits().value);
 				// Create TypeSpecifierNode and add pointer levels and reference qualifiers from typedef
 				auto type_spec_node = emplace_node<TypeSpecifierNode>(
 					resolved_alias.type_index.is_valid() ? resolved_alias.type_index : user_type_index.withCategory(resolved_type),
@@ -2412,7 +2412,7 @@ ParseResult Parser::parse_type_specifier() {
 				if (actual_type_info.isStruct()) {
 					const StructTypeInfo* struct_info = actual_type_info.getStructInfo();
 					if (struct_info) {
-						type_size = static_cast<int>(struct_info->total_size * 8);
+						type_size = static_cast<int>(struct_info->sizeInBits().value);
 					}
 				}
 			}

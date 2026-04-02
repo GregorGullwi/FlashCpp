@@ -50,7 +50,7 @@ void AstToIr::visitUsingEnumNode(const UsingEnumNode& node) {
 			Token enum_type_token(Token::Type::Identifier,
 								  StringTable::getStringView(enum_name), 0, 0, 0);
 			auto enum_type_node = ASTNode::emplace_node<TypeSpecifierNode>(
-				enum_type_index.withCategory(TypeCategory::Enum), enum_info->underlying_size, enum_type_token,
+				enum_type_index.withCategory(TypeCategory::Enum), enum_info->sizeInBits().value, enum_type_token,
 				CVQualifier::None, ReferenceQualifier::None);
 
 				// Create a declaration node for the enumerator
@@ -103,7 +103,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				// Look up the struct by return type index or name
 			for (size_t i = 0; i < getTypeInfoCount(); ++i) {
 				if (getTypeInfo(TypeIndex{i}).struct_info_ &&
-					static_cast<int>(getTypeInfo(TypeIndex{i}).struct_info_->total_size * 8) == return_size) {
+					static_cast<int>(getTypeInfo(TypeIndex{i}).struct_info_->sizeInBits().value) == return_size) {
 					struct_info = getTypeInfo(TypeIndex{i}).struct_info_.get();
 					break;
 				}

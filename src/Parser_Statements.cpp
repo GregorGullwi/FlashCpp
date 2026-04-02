@@ -246,10 +246,10 @@ ParseResult Parser::parse_statement_or_declaration() {
 		}
 		if (type_info_ctx) {
 			// Check if it's a struct, enum, or typedef
-			// A typedef can be detected either by type_size_ > 0 (for primitive typedefs) or by isTypeAlias() flag
+			// A typedef can be detected either by fallback_size_bits_ > 0 (for primitive typedefs) or by isTypeAlias() flag
 			// The isTypeAlias() flag is set during template instantiation for typedefs like 'typedef T value_type'
 			bool is_typedef = type_info_ctx->isTypeAlias() ||
-							  (type_info_ctx->type_size_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
+							  (type_info_ctx->fallback_size_bits_ > 0 && !type_info_ctx->isStruct() && !type_info_ctx->isEnum());
 			if (type_info_ctx->isStruct() || type_info_ctx->isEnum() || is_typedef) {
 				// Need to check if this is a functional cast / temporary construction
 				// followed by a member access, like: TypeName(args).member()
@@ -1043,10 +1043,10 @@ std::optional<ASTNode> Parser::parse_copy_initialization(DeclarationNode& decl_n
 			} else {
 				// Fallback: deduce basic type
 				TypeCategory deduced_type = deduce_type_from_expression(*initializer);
-				unsigned char deduced_size = get_type_size_bits(deduced_type);
+				const SizeInBits deduced_size{get_type_size_bits(deduced_type)};
 				type_specifier = TypeSpecifierNode(deduced_type, TypeQualifier::None, deduced_size, decl_node.identifier_token(), original_cv_qual);
 				FLASH_LOG(Parser, Debug, "Deduced auto variable type (fallback): type=",
-						  (int)type_specifier.type(), " size=", (int)deduced_size);
+						  (int)type_specifier.type(), " size=", deduced_size);
 			}
 
 			// Restore the original reference qualifier and CV qualifier (for const auto&, auto&, auto&& etc.)
@@ -1454,7 +1454,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				if (const TypeInfo* elem_info = tryGetTypeInfo(first_member.type_index)) {
 					TypeCategory elem_type = elem_info->resolvedType();
 					const TypeCategory elem_cat = elem_info->category();
-					int elem_size = elem_info->type_size_ > 0 ? elem_info->type_size_ : get_type_size_bits(elem_type);
+					int elem_size = elem_info->hasStoredSize() ? static_cast<int>(elem_info->sizeInBits().value) : get_type_size_bits(elem_type);
 
 					auto elem_type_spec = emplace_node<TypeSpecifierNode>(
 						elem_type,
@@ -1760,7 +1760,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 			if (is_struct_type(target_member.type_index.category())) {
 				member_type_spec = TypeSpecifierNode(
 					target_member.type_index.withCategory(member_type_info->resolvedType()),
-					member_type_info->type_size_ * 8,
+					static_cast<int>(member_type_info->sizeInBits().value),
 					Token(),
 					CVQualifier::None,
 					ReferenceQualifier::None);
@@ -1768,7 +1768,7 @@ ParseResult Parser::parse_brace_initializer(const TypeSpecifierNode& type_specif
 				member_type_spec = TypeSpecifierNode(
 					target_member.memberType(),
 					TypeQualifier::None,
-					member_type_info->type_size_ * 8,
+					static_cast<int>(member_type_info->sizeInBits().value),
 					Token(),
 					CVQualifier::None);
 				member_type_spec.set_type_index(target_member.type_index);
@@ -2293,7 +2293,7 @@ bool Parser::instantiate_deduced_template(std::string_view class_name,
 	const TypeInfo* struct_type_info = type_it->second;
 	int size_bits = 0;
 	if (const StructTypeInfo* struct_info = struct_type_info->getStructInfo()) {
-		size_bits = static_cast<int>(struct_info->total_size * 8);
+		size_bits = static_cast<int>(struct_info->sizeInBits().value);
 	}
 
 	TypeSpecifierNode resolved(struct_type_info->type_index_.withCategory(TypeCategory::Struct), size_bits, type_specifier.token(), type_specifier.cv_qualifier(), ReferenceQualifier::None);

@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -1159,7 +1159,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 	// For non-capturing lambdas, create a 1-byte struct (like Clang does)
 	if (lambda_captures.empty()) {
-		closure_struct_info->total_size = 1;
+		closure_struct_info->total_size = toSizeInBytes(1);
 		closure_struct_info->alignment = 1;
 	} else {
 		// Add captured variables as members to the closure struct
@@ -1207,12 +1207,12 @@ ParseResult Parser::parse_lambda_expression() {
 							closure_struct_info->addMember(
 								copy_this_member_handle,			 // Special member name for copied this
 								enclosing_type->type_index_,		 // Type index of enclosing struct
-								enclosing_struct->total_size,		  // Size of the entire struct
+								toSizeT(enclosing_struct->total_size),		  // Size of the entire struct
 								enclosing_struct->alignment,		 // Alignment from enclosing struct
 								AccessSpecifier::Public,
 								std::nullopt,						  // No initializer
 								ReferenceQualifier::None,			  // Not a reference
-								enclosing_struct->total_size * 8	 // Size in bits
+								enclosing_struct->sizeInBits().value	 // Size in bits
 							);
 						}
 					}
@@ -1308,7 +1308,7 @@ ParseResult Parser::parse_lambda_expression() {
 				referenced_size_bits = var_type.size_in_bits();
 				if (referenced_size_bits == 0 && var_type.category() == TypeCategory::Struct) {
 					if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(var_type.type_index())) {
-						referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+						referenced_size_bits = member_struct_info->sizeInBits().value;
 					}
 				}
 			}
@@ -1325,8 +1325,8 @@ ParseResult Parser::parse_lambda_expression() {
 		}
 
 		// addMember() already updates total_size and alignment, but ensure minimum size of 1
-		if (closure_struct_info->total_size == 0) {
-			closure_struct_info->total_size = 1;
+		if (!closure_struct_info->total_size.is_set()) {
+			closure_struct_info->total_size = toSizeInBytes(1);
 		}
 	}
 

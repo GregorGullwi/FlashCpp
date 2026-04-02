@@ -1,4 +1,4 @@
-﻿#include "Parser.h"
+#include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -985,7 +985,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									max_alignment = member.alignment;
 								}
 							}
-							anon_struct_info->total_size = max_size;
+							anon_struct_info->total_size = toSizeInBytes(max_size);
 							anon_struct_info->alignment = max_alignment;
 						} else {
 							// Struct layout: members are laid out sequentially
@@ -1006,7 +1006,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							if (max_alignment > 0) {
 								offset = (offset + max_alignment - 1) / max_alignment * max_alignment;
 							}
-							anon_struct_info->total_size = offset;
+							anon_struct_info->total_size = toSizeInBytes(offset);
 							anon_struct_info->alignment = max_alignment;
 						}
 
@@ -1024,7 +1024,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							// Create a TypeSpecifierNode for the anonymous type
 							TypeSpecifierNode anon_type_spec(
 								anon_type_info.type_index_.withCategory(TypeCategory::Struct),
-								static_cast<unsigned char>(anon_struct_info->total_size),
+								static_cast<unsigned char>(toSizeT(anon_struct_info->total_size)),
 								Token(Token::Type::Identifier, StringTable::getStringView(anon_type_name_handle), 0, 0, 0),
 								CVQualifier::None,
 								ReferenceQualifier::None);
@@ -1232,8 +1232,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// For struct types, get size and alignment from the struct type info
 						if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
 							if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
-								member_size = member_struct_info->total_size;
-								referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+								member_size = toSizeT(member_struct_info->total_size);
+								referenced_size_bits = member_struct_info->sizeInBits().value;
 								member_alignment = member_struct_info->alignment;
 							}
 						}
@@ -2621,7 +2621,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			const AnonymousUnionInfo& union_info = anon_unions[next_union_idx];
 
 			// Process all anonymous union members at the same offset
-			size_t union_start_offset = struct_info->total_size;
+			size_t union_start_offset = toSizeT(struct_info->total_size);
 			size_t union_max_size = 0;
 			size_t union_max_alignment = 1;
 
@@ -2666,7 +2666,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Update total_size to account for the union (largest member)
-			struct_info->total_size = aligned_union_start + union_max_size;
+			struct_info->total_size = toSizeInBytes(aligned_union_start + union_max_size);
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;
@@ -2693,8 +2693,8 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// For struct types, get size and alignment from the struct type info
 		if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
 			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-				member_size = member_struct_info->total_size;
-				referenced_size_bits = static_cast<size_t>(member_struct_info->total_size * 8);
+				member_size = toSizeT(member_struct_info->total_size);
+				referenced_size_bits = member_struct_info->sizeInBits().value;
 				member_alignment = member_struct_info->alignment;
 			}
 		}
@@ -3039,7 +3039,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::Const, // const qualifier
 			ReferenceQualifier::None);
@@ -3082,7 +3082,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3103,7 +3103,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: const Type& other
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::Const, // const qualifier
 			ReferenceQualifier::None);
@@ -3150,7 +3150,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3191,7 +3191,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		TypeIndex struct_type_index = struct_type_info.type_index_;
 		auto return_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3212,7 +3212,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// Create parameter: Type&& other (rvalue reference)
 		auto move_param_type_node = emplace_node<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
-			static_cast<int>(struct_info->total_size * 8), // size in bits
+			struct_info->sizeInBits().value, // size in bits
 			name_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
@@ -3282,7 +3282,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// Create parameter: const Type& other
 			auto param_type_node = emplace_node<TypeSpecifierNode>(
 				struct_type_index.withCategory(TypeCategory::Struct),
-				static_cast<int>(struct_info->total_size * 8), // size in bits
+				struct_info->sizeInBits().value, // size in bits
 				name_token,
 				CVQualifier::Const, // const qualifier
 				ReferenceQualifier::None);
@@ -3404,9 +3404,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 	// Store struct info in type info
 	struct_type_info.setStructInfo(std::move(struct_info));
-	// Update type_size_ from the finalized struct's total size
+	// Update fallback_size_bits_ from the finalized struct's total size
 	if (struct_type_info.getStructInfo()) {
-		struct_type_info.type_size_ = struct_type_info.getStructInfo()->total_size;
+		struct_type_info.fallback_size_bits_ = struct_type_info.getStructInfo()->sizeInBits().value;
 	}
 
 	// If this is a nested class, also register it with its qualified name
@@ -3593,13 +3593,13 @@ ParseResult Parser::parse_enum_declaration() {
 		// We mark this as a forward declaration
 		enum_ref.set_is_forward_declaration(true);
 
-		// Set size on TypeInfo for forward-declared enum (use type_size_)
+		// Set size on TypeInfo for forward-declared enum (use fallback_size_bits_)
 		if (enum_ref.has_underlying_type()) {
 			const auto& type_spec = enum_ref.underlying_type()->as<TypeSpecifierNode>();
-			enum_type_info.type_size_ = type_spec.size_in_bits();
+			enum_type_info.fallback_size_bits_ = type_spec.size_in_bits();
 		} else if (is_scoped) {
 			// Scoped enums without underlying type default to int (32 bits)
-			enum_type_info.type_size_ = 32;
+			enum_type_info.fallback_size_bits_ = 32;
 		}
 
 		FLASH_LOG(Parser, Debug, "Parsed enum forward declaration: ", std::string(StringTable::getStringView(enum_name)));
@@ -3623,7 +3623,7 @@ ParseResult Parser::parse_enum_declaration() {
 		underlying_size = type_spec.size_in_bits();
 	}
 	enum_info->underlying_type = underlying_type;
-	enum_info->underlying_size = underlying_size;
+	enum_info->underlying_size = SizeInBits{underlying_size};
 
 	// Store enum info early so ConstExprEvaluator can look up values during parsing
 	enum_type_info.setEnumInfo(std::move(enum_info));
@@ -3879,7 +3879,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 							max_alignment = nested_member.alignment;
 						}
 					}
-					nested_anon_struct_info->total_size = max_size;
+					nested_anon_struct_info->total_size = toSizeInBytes(max_size);
 					nested_anon_struct_info->alignment = max_alignment;
 				} else {
 					// Struct layout: sequential members with alignment
@@ -3900,7 +3900,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					if (max_alignment > 0) {
 						current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
 					}
-					nested_anon_struct_info->total_size = current_offset;
+					nested_anon_struct_info->total_size = toSizeInBytes(current_offset);
 					nested_anon_struct_info->alignment = max_alignment;
 				}
 
@@ -3915,7 +3915,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				advance(); // consume the member name
 
 				// Calculate size for the nested anonymous type
-				size_t nested_type_size = nested_anon_type_info.getStructInfo()->total_size;
+				size_t nested_type_size = toSizeT(nested_anon_type_info.getStructInfo()->total_size);
 				size_t nested_type_alignment = nested_anon_type_info.getStructInfo()->alignment;
 
 				// Add member to the outer anonymous type

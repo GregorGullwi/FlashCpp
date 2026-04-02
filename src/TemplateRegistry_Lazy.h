@@ -885,7 +885,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 					if (template_param_names[i] == type_name) {
 						const auto& arg = template_args[i];
 						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
-							return static_cast<long long>((arg_ti->type_size_ + 7) / 8);
+							return static_cast<long long>(toSizeT(arg_ti->sizeInBytes()));
 						}
 						long long size = static_cast<long long>(get_type_size_bits(arg.category()) / 8);
 						if (size > 0) {
@@ -948,7 +948,7 @@ inline std::optional<long long> evaluateConstraintExpression(
 											// For a simple type alias like HasType<T>::type = T,
 											// return the size of the template argument
 											if (const TypeInfo* pack_arg_ti = tryGetTypeInfo(pack_arg.type_index)) {
-												long long size = static_cast<long long>((pack_arg_ti->type_size_ + 7) / 8);
+												long long size = static_cast<long long>(toSizeT(pack_arg_ti->sizeInBytes()));
 												FLASH_LOG(Templates, Debug, "  Resolved sizeof(", template_name, "<...>::type) = ", size);
 												return size;
 											}
@@ -974,8 +974,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 						// Found the template parameter - use the substituted type's size
 						const auto& arg = template_args[i];
 						if (const TypeInfo* arg_ti = tryGetTypeInfo(arg.type_index)) {
-							// type_size_ is in bits, convert to bytes
-							return static_cast<long long>((arg_ti->type_size_ + 7) / 8);
+							// fallback_size_bits_ is in bits, convert to bytes
+							return static_cast<long long>(toSizeT(arg_ti->sizeInBytes()));
 						}
 						// Fallback for primitive types without type_index (e.g., int, char, etc.)
 						// This handles cases where type_index is 0 but base_type is valid
@@ -990,8 +990,8 @@ inline std::optional<long long> evaluateConstraintExpression(
 				auto type_handle = StringTable::getOrInternStringHandle(type_name);
 				auto type_it = getTypesByNameMap().find(type_handle);
 				if (type_it != getTypesByNameMap().end()) {
-					// type_size_ is in bits, convert to bytes
-					return static_cast<long long>((type_it->second->type_size_ + 7) / 8);
+					// fallback_size_bits_ is in bits, convert to bytes
+					return static_cast<long long>(toSizeT(type_it->second->sizeInBytes()));
 				}
 			} else {
 				// Built-in type - get size from type info

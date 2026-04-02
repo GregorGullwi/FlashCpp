@@ -1287,7 +1287,7 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
 	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size != 0)
+	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size.is_set())
 		return param_idx;
 	// param refers to an uninstantiated template (total_size==0); check name family
 	auto template_base_name = StringTable::getStringView(param_ti.name());
@@ -1339,7 +1339,7 @@ inline bool isUserDefinedBinaryOperatorOperandType(const TypeSpecifierNode& spec
 
 inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 	TypeCategory effective_type = type_index.category();
-	int size_bits = 0;
+	SizeInBits size_bits{};
 
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 		if (effective_type == TypeCategory::Invalid || effective_type == TypeCategory::Void || binaryOperatorUsesTypeIndexIdentity(effective_type)) {
@@ -1351,14 +1351,14 @@ inline TypeSpecifierNode makeBinaryOperatorTypeSpecifier(TypeIndex type_index) {
 		}
 
 		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-			size_bits = static_cast<int>(struct_info->total_size * 8);
-		} else if (type_info->type_size_ > 0) {
-			size_bits = type_info->type_size_;
+			size_bits = struct_info->sizeInBits();
+		} else if (type_info->hasStoredSize()) {
+			size_bits = type_info->sizeInBits();
 		}
 	}
 
-	if (size_bits == 0 && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
-		size_bits = get_type_size_bits(effective_type);
+	if (!size_bits.is_set() && effective_type != TypeCategory::Invalid && effective_type != TypeCategory::Void) {
+		size_bits = SizeInBits{get_type_size_bits(effective_type)};
 	}
 
 	if (binaryOperatorUsesTypeIndexIdentity(effective_type) || type_index.is_valid()) {

@@ -1108,7 +1108,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 			if (struct_info) {
 				// Layout is already computed during minimal instantiation
 				// Just verify it's valid
-				if (struct_info->total_size == 0 && !struct_info->members.empty()) {
+				if (!struct_info->total_size.is_set() && !struct_info->members.empty()) {
 					FLASH_LOG(Templates, Warning, "Struct has members but zero size: ", instantiated_name);
 				}
 			}
@@ -1267,7 +1267,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		size_t member_alignment = member_size > 0 ? member_size : 1;
 		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
 			if (member_type_info->getStructInfo()) {
-				member_size = member_type_info->getStructInfo()->total_size;
+				member_size = toSizeT(member_type_info->getStructInfo()->total_size);
 				member_alignment = member_type_info->getStructInfo()->alignment;
 			}
 		}

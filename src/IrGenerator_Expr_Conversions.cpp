@@ -280,7 +280,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 		if (result.final_type_index.category() == TypeCategory::Struct && !result.final_size_bits.is_set()) {
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_node->type_index());
 				const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr) {
-				result.final_size_bits = SizeInBits{static_cast<int>(struct_info->total_size * 8)};
+				result.final_size_bits = SizeInBits{static_cast<int>(struct_info->sizeInBits().value)};
 			}
 		}
 		result.pointer_depth = PointerDepth{static_cast<int>(type_node->pointer_depth())};
@@ -372,7 +372,7 @@ std::optional<AstToIr::AddressComponents> AstToIr::analyzeAddressExpression(
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
 						const StructTypeInfo* struct_info = type_info->getStructInfo();
 						if (struct_info) {
-							element_size_bits = static_cast<int>(struct_info->total_size * 8);
+							element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 						}
 					}
 				} else {
@@ -675,7 +675,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 									if (const TypeInfo* type_info = tryGetTypeInfo(type_index_from_decl)) {
 										const StructTypeInfo* struct_info = type_info->getStructInfo();
 										if (struct_info) {
-											element_size_bits = static_cast<int>(struct_info->total_size * 8);
+											element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 										}
 									}
 								} else {
@@ -945,7 +945,7 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 							const StructTypeInfo* struct_info = type_info->getStructInfo();
 							if (struct_info) {
-								element_size_bits = static_cast<int>(struct_info->total_size * 8);
+								element_size_bits = static_cast<int>(struct_info->sizeInBits().value);
 							}
 						}
 					} else {
@@ -1675,7 +1675,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	if (!call_op.return_size_in_bits.is_set()) {
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
 			return_type_info && return_type_info->struct_info_) {
-			call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_info->struct_info_->total_size * 8)};
+			call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_info->struct_info_->sizeInBits().value)};
 		}
 	}
 	call_op.is_member_function = true;
@@ -1885,7 +1885,7 @@ ExprResult AstToIr::generateBuiltinIncDec(
 						auto type_it = getTypesByNameMap().find(current_struct_name_);
 						if (type_it != getTypesByNameMap().end() && type_it->second) {
 							const TypeInfo& type_info = *type_it->second;
-							object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), type_info.type_size_ * 8, Token{}, CVQualifier::None, ReferenceQualifier::None);
+							object_type_opt = TypeSpecifierNode(type_info.type_index_.withCategory(TypeCategory::Struct), static_cast<int>(type_info.sizeInBits().value), Token{}, CVQualifier::None, ReferenceQualifier::None);
 						}
 					} else if (auto symbol = symbol_table.lookup(identifier->name()); symbol.has_value()) {
 						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
@@ -2584,8 +2584,8 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	}
 
 	int actual_size_bits = static_cast<int>(target_type.size_in_bits());
-	if (target_struct_info->total_size > 0) {
-		actual_size_bits = static_cast<int>(target_struct_info->total_size * 8);
+	if (target_struct_info->total_size.is_set()) {
+		actual_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
 	}
 
 	TempVar result_var = var_counter.next();

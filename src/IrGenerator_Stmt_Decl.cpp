@@ -374,7 +374,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									 init_data,
 									 *elem_struct,
 									 member_result.array_elements[elem_i],
-									 abs_offset + elem_i * elem_struct->total_size,
+									 abs_offset + elem_i * toSizeT(elem_struct->total_size),
 									 depth + 1);
 							}
 							continue;
@@ -533,7 +533,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					const StructTypeInfo* struct_info_ptr = type_info ? type_info->getStructInfo() : nullptr;
 					if (struct_info_ptr) {
 							// Struct aggregate initialization: pack values into init_data using member bit offsets
-						op.init_data.resize(struct_info_ptr->total_size, 0);
+						op.init_data.resize(toSizeT(struct_info_ptr->total_size), 0);
 						fillAggregateInitData(op.init_data, *struct_info_ptr, init_list, evalToValue);
 					} else {
 							// Fallback: array-like behavior
@@ -552,7 +552,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index());
 						const StructTypeInfo* elem_struct = type_info ? type_info->getStructInfo() : nullptr;
 						if (elem_struct) {
-							op.init_data.resize(op.element_count * elem_struct->total_size, 0);
+							op.init_data.resize(op.element_count * toSizeT(elem_struct->total_size), 0);
 							for (size_t elem_i = 0; elem_i < initializers.size(); ++elem_i) {
 								const ASTNode& elem_init = initializers[elem_i];
 								if (elem_init.is<InitializerListNode>()) {
@@ -561,11 +561,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										*elem_struct,
 										elem_init.as<InitializerListNode>(),
 										evalToValue,
-										elem_i * elem_struct->total_size);
+										elem_i * toSizeT(elem_struct->total_size));
 								} else {
 									unsigned long long value = evalToValue(elem_init, type_node.type());
-									size_t byte_off = elem_i * elem_struct->total_size;
-									size_t write_bytes = (elem_struct->total_size < sizeof(unsigned long long)) ? elem_struct->total_size : sizeof(unsigned long long);
+									size_t byte_off = elem_i * toSizeT(elem_struct->total_size);
+									size_t write_bytes = (toSizeT(elem_struct->total_size) < sizeof(unsigned long long)) ? toSizeT(elem_struct->total_size) : sizeof(unsigned long long);
 									for (size_t b = 0; b < write_bytes && (byte_off + b) < op.init_data.size(); ++b)
 										op.init_data[byte_off + b] = static_cast<char>((value >> (b * 8)) & 0xFF);
 								}
@@ -593,7 +593,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					auto constexpr_result = ConstExpr::Evaluator::evaluate(init_node, constexpr_ctx);
 					if (constexpr_result.success() && !constexpr_result.object_member_bindings.empty()) {
 						op.is_initialized = true;
-						op.init_data.resize(si->total_size, 0);
+						op.init_data.resize(toSizeT(si->total_size), 0);
 						packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *si, constexpr_result, 0, 0);
 						ctor_evaluated = true;
 					}
@@ -656,7 +656,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 						if (args_ok) {
 							op.is_initialized = true;
-							op.init_data.resize(si->total_size, 0);
+							op.init_data.resize(toSizeT(si->total_size), 0);
 							for (const auto& member : si->members) {
 								unsigned long long member_val = 0;
 								for (const auto& mem_init : matching_ctor->member_initializers()) {
@@ -678,7 +678,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				if (!ctor_evaluated) {
 						// Fallback: zero-initialize for default constructor or failed eval
 					op.is_initialized = true;
-					op.init_data.resize(si ? si->total_size : element_size, 0);
+					op.init_data.resize(si ? toSizeT(si->total_size) : element_size, 0);
 				}
 			} else if (init_node.is<ExpressionNode>()) {
 					// Single value initialization
@@ -841,7 +841,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						const TypeInfo* struct_type_info = resolveToConcreteStructTypeInfo(type_node.type_index());
 						const StructTypeInfo* struct_info = struct_type_info ? struct_type_info->getStructInfo() : nullptr;
 						if (struct_info && !eval_result.object_member_bindings.empty()) {
-							op.init_data.resize(struct_info->total_size, 0);
+							op.init_data.resize(toSizeT(struct_info->total_size), 0);
 							packStructEvalResultIntoInitData(packStructEvalResultIntoInitData, op.init_data, *struct_info, eval_result, 0, 0);
 						} else {
 							unsigned long long value = evalResultMemberToRaw(eval_result, type_node.type());
@@ -900,7 +900,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// object in static storage with a direct vtable relocation.
 				if (isStaticVptrInitEligible()) {
 					op.is_initialized = true;
-					op.init_data.resize(struct_info->total_size, 0);
+					op.init_data.resize(toSizeT(struct_info->total_size), 0);
 					op.reloc_target = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
 				} else if (struct_info && !struct_info->members.empty()) {
 						// Check if any members have default initializers
@@ -915,7 +915,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					if (has_default_inits) {
 							// Build initial data from default member initializers
 						op.is_initialized = true;
-						op.init_data.resize(struct_info->total_size, 0);	 // Start with zeros
+						op.init_data.resize(toSizeT(struct_info->total_size), 0);	 // Start with zeros
 
 						for (const auto& member : struct_info->members) {
 							if (member.default_initializer.has_value()) {
@@ -1823,7 +1823,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					struct_info_ptr = type_info->struct_info_.get();
 				}
 			}
-			int element_size_bytes = struct_info_ptr ? static_cast<int>(struct_info_ptr->total_size) : (size_in_bits / 8);
+			int element_size_bytes = struct_info_ptr ? static_cast<int>(toSizeT(struct_info_ptr->total_size)) : (size_in_bits / 8);
 
 				// Generate store for each element
 			for (size_t i = 0; i < initializers.size(); i++) {
@@ -2214,7 +2214,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									const std::string_view target_name = StringTable::getStringView(type_info->name());
 									const bool suppress_explicit_ctor_error =
 										is_integer_type(init_type) && type_info->struct_info_ &&
-										type_info->struct_info_->total_size == 1 &&
+										toSizeT(type_info->struct_info_->total_size) == 1 &&
 										isExactComparisonCategoryType(type_info->type_index_);
 									if (!suppress_explicit_ctor_error) {
 										FLASH_LOG(General, Error, "Cannot use copy initialization with explicit constructor for type '",
@@ -2898,7 +2898,7 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 					const TypeInfo* type_alias_info = type_alias_it->second;
 					element_type = type_alias_info->category();
 					element_type_index = type_alias_info->type_index_;
-					element_size = type_alias_info->type_size_;
+					element_size = type_alias_info->fallback_size_bits_;
 					if (element_size == 0) {
 						element_size = get_type_size_bits(element_type);
 					}

@@ -13,61 +13,10 @@
 #include "AstNodeTypes.h"
 #include "IrType.h"
 #include "Log.h"
+#include "SizeTypes.h"
 
 // Forward declare IrInstruction for circular dependency resolution
 class IrInstruction;
-
-// ============================================================================
-// Strong wrapper for a size expressed in bits (e.g. 8, 16, 32, 64).
-//
-// Design intent:
-//   - Explicit construction prevents accidentally passing a plain int where a
-//     bit-size is expected (e.g. mixing up bytes and bits).
-//   - No implicit conversion to int; use .value at read sites explicitly.
-//   - Defined here alongside PointerDepth so all IR structs share the same type.
-// ============================================================================
-struct SizeInBits {
-	int value = 0;
-	constexpr SizeInBits() noexcept = default;
-	constexpr explicit SizeInBits(int v) noexcept : value(v) {}
-	constexpr auto operator<=>(const SizeInBits&) const noexcept = default;
-	// True when a bit-size has been set (non-zero).
-	constexpr bool is_set() const noexcept { return value != 0; }
-};
-
-template <>
-struct std::formatter<SizeInBits, char> : std::formatter<int, char> {
-	auto format(const SizeInBits& s, std::format_context& ctx) const {
-		return std::formatter<int, char>::format(s.value, ctx);
-	}
-};
-
-inline std::ostream& operator<<(std::ostream& os, const SizeInBits& s) {
-	return os << s.value;
-}
-
-// ============================================================================
-// Strong wrapper for a size expressed in bytes (e.g. 1, 2, 4, 8).
-//
-// Design intent:
-//   - Explicit construction prevents accidentally passing a plain int where a
-//     byte-size is expected (e.g. mixing up bytes and bits).
-//   - No implicit conversion to int to prevent mixing bytes and bits.
-//   - Use .value explicitly at callsites that need the raw integer.
-// ============================================================================
-struct SizeInBytes {
-	int value = 0;
-	constexpr SizeInBytes() noexcept = default;
-	constexpr explicit SizeInBytes(int v) noexcept : value(v) {}
-	constexpr auto operator<=>(const SizeInBytes&) const noexcept = default;
-};
-
-template <>
-struct std::formatter<SizeInBytes, char> : std::formatter<int, char> {
-	auto format(const SizeInBytes& s, std::format_context& ctx) const {
-		return std::formatter<int, char>::format(s.value, ctx);
-	}
-};
 
 // ============================================================================
 // Strong wrapper for pointer indirection depth.

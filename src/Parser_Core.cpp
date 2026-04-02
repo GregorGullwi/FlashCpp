@@ -121,12 +121,9 @@ const StructTypeInfo* tryGetStructTypeInfo(TypeIndex type_index) {
 }
 
 size_t getResolvedTypeSizeBytes(const TypeSpecifierNode& type_spec, TypeIndex resolved_type_index) {
-	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_type_index)) {
-		return struct_info->total_size;
-	}
 	if (const TypeInfo* type_info = tryGetTypeInfo(resolved_type_index)) {
-		if (type_info->type_size_ > 0) {
-			return static_cast<size_t>(type_info->type_size_) / 8;
+		if (type_info->hasStoredSize()) {
+			return toSizeT(type_info->sizeInBytes());
 		}
 	}
 	TypeCategory resolved_category = resolved_type_index.category();
@@ -163,8 +160,8 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	}
 	// For UserDefined and other types, use type_index for direct O(1) lookup
 	if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
-		if (type_info->type_size_ > 0) {
-			return type_info->type_size_;
+		if (type_info->hasStoredSize()) {
+			return static_cast<size_t>(type_info->sizeInBits().value);
 		}
 	}
 	return 0;  // Will be resolved during member access
@@ -388,8 +385,8 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {
 	if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
-		if (type_info->struct_info_) {
-			return static_cast<int>(type_info->struct_info_->total_size * 8);
+		if (type_info->hasStoredSize()) {
+			return type_info->sizeInBits().value;
 		}
 	}
 

@@ -951,18 +951,17 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				std::string_view type_name = type_spec.token().value();
 				for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
 					if (context.template_param_names[i] == type_name) {
-						const TemplateTypeArg& arg = context.template_args[i];
-						if (arg.isTypeArgument()) {
-							size_t param_size = get_type_size_bits(arg.category()) / 8;
-							if (param_size == 0 && arg.category() == TypeCategory::Struct) {
-								const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
-								const StructTypeInfo* si = type_info ? type_info->getStructInfo() : nullptr;
-								if (si)
-									param_size = si->total_size;
-							}
-							if (param_size > 0) {
-								return EvalResult::from_int(static_cast<long long>(param_size));
-							}
+							const TemplateTypeArg& arg = context.template_args[i];
+							if (arg.isTypeArgument()) {
+								size_t param_size = get_type_size_bits(arg.category()) / 8;
+								if (param_size == 0 && arg.category() == TypeCategory::Struct) {
+									const TypeInfo* type_info = tryGetTypeInfo(arg.type_index);
+									if (type_info)
+										param_size = toSizeT(type_info->sizeInBytes());
+								}
+								if (param_size > 0) {
+									return EvalResult::from_int(static_cast<long long>(param_size));
+								}
 						}
 						break;
 					}
@@ -4497,14 +4496,10 @@ EvalResult Evaluator::materializeFromConstantBytes(
 /* extractScalar removed: use local extractLeafScalar inside materializeLeaf for leaf byte extraction. */
 
 	auto getElementByteSize = [](TypeIndex current_type_index) -> size_t {
-		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(current_type_index)) {
-			return struct_info->total_size;
-		}
-
 		if (const TypeInfo* type_info = tryGetTypeInfo(current_type_index)) {
-			if (type_info->type_size_ > 0) {
-				return static_cast<size_t>(type_info->type_size_) / 8;
-			}
+			SizeInBytes size = type_info->sizeInBytes();
+			if (size.is_set())
+				return toSizeT(size);
 		}
 
 		return static_cast<size_t>(get_type_size_bits(current_type_index.category()) / 8);

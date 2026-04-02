@@ -50,12 +50,12 @@ void registerTypeParamsInScope(
 			param_names[i],
 			arg.typeEnum(), 0);
 		if (is_builtin_type(arg.typeEnum())) {
-			type_info.type_size_ = static_cast<unsigned char>(get_type_size_bits(arg.category()));
+			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
 		} else {
 			if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index)) {
-				type_info.type_size_ = arg_type_info->type_size_;
+				type_info.fallback_size_bits_ = arg_type_info->sizeInBits().value;
 			} else {
-				type_info.type_size_ = 0;
+				type_info.fallback_size_bits_ = 0;
 			}
 		}
 		if (preserve_ref_qualifier) {
@@ -114,7 +114,7 @@ void registerOuterBindingInScope(
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
 		uint32_t size = get_type_size_bits(arg.typeEnum());
 		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index))
-			size = arg_type_info->type_size_;
+			size = static_cast<uint32_t>(arg_type_info->sizeInBits().value);
 		auto& type_info = add_template_param_type(
 			outer_binding.param_names[i], arg.typeEnum(), size);
 		scope.addParameter(&type_info);
@@ -630,7 +630,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
-						int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
+						int resolved_size_bits = resolved_info->hasStoredSize()
+							? static_cast<int>(resolved_info->sizeInBits().value)
+							: get_type_size_bits(resolved_info->typeEnum());
 						TypeSpecifierNode resolved_spec(
 							resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 							resolved_size_bits,
@@ -1704,7 +1706,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 				if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 					const TypeInfo* resolved_info = qualified_type_it->second;
-					int resolved_size_bits = resolved_info->type_size_ > 0 ? resolved_info->type_size_ : get_type_size_bits(resolved_info->typeEnum());
+					int resolved_size_bits = resolved_info->hasStoredSize()
+						? static_cast<int>(resolved_info->sizeInBits().value)
+						: get_type_size_bits(resolved_info->typeEnum());
 					TypeSpecifierNode resolved_spec(
 						resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
 						resolved_size_bits,
