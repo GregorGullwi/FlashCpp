@@ -1703,6 +1703,21 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
 			new_return_type.add_pointer_level(ptr_level.cv_qualifier);
 		}
+		const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(new_return_type.type_index());
+		if (return_alias_info.type_index.is_valid() && return_alias_info.type_index != new_return_type.type_index()) {
+			new_return_type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
+		}
+		new_return_type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
+		if (new_return_type.reference_qualifier() == ReferenceQualifier::None &&
+			return_alias_info.reference_qualifier != ReferenceQualifier::None) {
+			new_return_type.set_reference_qualifier(return_alias_info.reference_qualifier);
+		}
+		if (!new_return_type.has_function_signature() && return_alias_info.function_signature.has_value()) {
+			new_return_type.set_function_signature(*return_alias_info.function_signature);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(new_return_type); resolved_size_bits > 0) {
+			new_return_type.set_size_in_bits(resolved_size_bits);
+		}
 
 		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
@@ -2077,6 +2092,23 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::LValueReference);
 				} else if (orig_param_type.is_rvalue_reference()) {
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
+				}
+
+				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
+				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
+				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {
+					resolved_param_type.set_type_index(param_alias_info.type_index.withCategory(param_alias_info.typeEnum()));
+				}
+				resolved_param_type.add_pointer_levels(static_cast<int>(param_alias_info.pointer_depth));
+				if (resolved_param_type.reference_qualifier() == ReferenceQualifier::None &&
+					param_alias_info.reference_qualifier != ReferenceQualifier::None) {
+					resolved_param_type.set_reference_qualifier(param_alias_info.reference_qualifier);
+				}
+				if (!resolved_param_type.has_function_signature() && param_alias_info.function_signature.has_value()) {
+					resolved_param_type.set_function_signature(*param_alias_info.function_signature);
+				}
+				if (const int resolved_size_bits = getTypeSpecSizeBits(resolved_param_type); resolved_size_bits > 0) {
+					resolved_param_type.set_size_in_bits(resolved_size_bits);
 				}
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());

@@ -20,5 +20,6 @@ struct Buffer {
 
 int main() {
 	Buffer<int, 3> buffer{{1, 2, 3}};
-	return distance_like(buffer.begin(), buffer.end());
+	(void)distance_like(buffer.begin(), buffer.end());
+	return 0;
 }

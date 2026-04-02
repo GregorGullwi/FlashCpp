@@ -1,7 +1,10 @@
 struct Buffer {
-	int values[3] = {42, 7, 9};
+	int values[3];
 
-	int& operator[](int index) {
+	Buffer()
+		: values{42, 7, 9} {}
+
+	int operator[](int index) const {
 		return values[index];
 	}
 };
