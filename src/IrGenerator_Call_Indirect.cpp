@@ -509,7 +509,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// For immediate lambda invocation, object_decl can be nullptr
 	// In that case, we still need object_type to be set correctly
 
-	auto matchesCurrentInstantiationPattern = [&](std::string_view candidate_name) {
+	auto isSameClassAsCurrentInstantiation = [&](std::string_view candidate_name) {
 		if (!current_struct_name_.isValid() || candidate_name.empty()) {
 			return false;
 		}
@@ -539,12 +539,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// member definition instead of emitting stale `Box::member` references.
 	if (object_type.type_index().is_valid() &&
 		memberFunctionCallNode.function_declaration().is_member_function() &&
-		matchesCurrentInstantiationPattern(memberFunctionCallNode.function_declaration().parent_struct_name())) {
+		isSameClassAsCurrentInstantiation(memberFunctionCallNode.function_declaration().parent_struct_name())) {
 		if (const TypeInfo* object_type_info = tryGetTypeInfo(object_type.type_index())) {
 			if (object_type_info->isStruct() &&
-				matchesCurrentInstantiationPattern(StringTable::getStringView(object_type_info->name()))) {
+				isSameClassAsCurrentInstantiation(StringTable::getStringView(object_type_info->name()))) {
 				auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
-				if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
+				if (current_struct_it != getTypesByNameMap().end() &&
+					current_struct_it->second->isStruct()) {
 					const TypeInfo* current_struct_type_info = current_struct_it->second;
 					object_type.set_type_index(current_struct_type_info->type_index_.withCategory(TypeCategory::Struct));
 					object_type.set_size_in_bits(current_struct_type_info->sizeInBits());
