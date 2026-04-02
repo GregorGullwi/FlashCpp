@@ -4557,7 +4557,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		if (complex_object_result.object_member_bindings.empty()) {
 			return EvalResult::error("Complex object expression did not materialize constexpr members");
 		}
-		member_bindings = complex_object_result.object_member_bindings;
+		member_bindings = std::move(complex_object_result.object_member_bindings);
 	} else {
 		auto member_extraction_result = extract_object_members(object_expr, member_bindings, context);
 		if (!member_extraction_result.success()) {
