@@ -370,6 +370,62 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
 					setTempVarMetadata(address_temp, std::move(address_meta));
 					operands.value = address_temp;
+				} else if (lv_info.kind == LValueInfo::Kind::ArrayElement &&
+						   lv_info.array_index.has_value()) {
+					// Materialize an ArrayElementAddress instruction for returning a reference
+					// to an array element (e.g., return values[index]).
+					// This converts the metadata-only representation into an explicit IR instruction
+					// that the code generator can handle directly.
+					ArrayElementAddressOp elem_addr;
+					TempVar address_temp = var_counter.next();
+					elem_addr.result = address_temp;
+					elem_addr.element_type_index = current_function_return_type_index_;
+					// Use base type size, not return size (which is 64 for reference returns)
+					elem_addr.element_size_in_bits = get_type_size_bits(current_function_return_type_index_.category());
+
+					// When the base is a StringHandle like "this.values", the code generator's
+					// handleArrayElementAddress can't handle qualified names. Emit an AddressOfMember
+					// first to compute the base pointer, then use the TempVar result.
+					bool base_is_pointer = lv_info.is_pointer_to_array;
+					if (std::holds_alternative<StringHandle>(lv_info.base)) {
+						StringHandle base_sh = std::get<StringHandle>(lv_info.base);
+						std::string_view base_sv = StringTable::getStringView(base_sh);
+						size_t dot_pos = base_sv.find('.');
+						if (dot_pos != std::string_view::npos) {
+							// Qualified name like "this.values" - emit AddressOfMember to resolve
+							StringHandle obj_name = StringTable::getOrInternStringHandle(base_sv.substr(0, dot_pos));
+							TempVar base_addr_temp = var_counter.next();
+							AddressOfMemberOp addr_op;
+							addr_op.result = base_addr_temp;
+							addr_op.base_object = obj_name;
+							addr_op.member_offset = lv_info.offset;
+							addr_op.member_type_index = current_function_return_type_index_;
+							addr_op.member_size_in_bits = elem_addr.element_size_in_bits;
+							ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_op), node.return_token()));
+							elem_addr.array = base_addr_temp;
+							base_is_pointer = true;
+						} else {
+							elem_addr.array = base_sh;
+						}
+					} else {
+						// TempVar base (e.g., from AddressOfMember/emitArrayMemberDecay)
+						// holds a computed pointer, so the code generator must load it first.
+						elem_addr.array = std::get<TempVar>(lv_info.base);
+						base_is_pointer = true;
+					}
+					elem_addr.is_pointer_to_array = base_is_pointer;
+
+					// Convert IrValue index to TypedValue
+					const IrValue& idx_val = *lv_info.array_index;
+					elem_addr.index.setType(TypeCategory::Int);
+					elem_addr.index.ir_type = IrType::Integer;
+					elem_addr.index.size_in_bits = SizeInBits{32};
+					elem_addr.index.value = idx_val;
+					ir_.addInstruction(IrInstruction(IrOpcode::ArrayElementAddress, std::move(elem_addr), node.return_token()));
+					TempVarMetadata address_meta = TempVarMetadata::makeReference(currentFunctionReturnTypeIndex(), SizeInBits{current_function_return_size_}, ValueCategory::LValue);
+					address_meta.lvalue_info = LValueInfo(LValueInfo::Kind::Indirect, address_temp, 0);
+					setTempVarMetadata(address_temp, std::move(address_meta));
+					operands.value = address_temp;
 				} else if (lv_info.kind == LValueInfo::Kind::Global &&
 						   std::holds_alternative<StringHandle>(lv_info.base)) {
 					TempVar address_temp = emitAddressOf(

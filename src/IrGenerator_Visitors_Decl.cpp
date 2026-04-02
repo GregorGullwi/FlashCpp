@@ -105,10 +105,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
 		}
 			// else: keep current_struct_name_ from visitStructDeclarationNode context
-	} else if (!current_struct_name_.isValid()) {
-			// Clear current_struct_name_ only if we don't already have a struct context
-			// (e.g., from visitStructDeclarationNode visiting this function as a member).
-			// Template instantiation may not set is_member_function_ on pattern-derived functions.
+	} else if (node.parent_struct_name().empty()) {
+			// Clear current_struct_name_ for free functions (no parent struct association).
+			// Previously this only cleared when current_struct_name_ was already invalid,
+			// which caused free functions (like distance_like) to retain a stale struct
+			// context from a previously-visited member function.
+			// We preserve the struct context when parent_struct_name is non-empty, which
+			// covers template-instantiated member functions that may not set is_member_function_.
 		current_struct_name_ = StringHandle();
 	}
 
