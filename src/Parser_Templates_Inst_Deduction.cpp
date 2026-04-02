@@ -4,6 +4,26 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+template <typename ParamContainer, typename ArgContainer>
+static void propagateFunctionSignatureFromTemplateArg(
+	TypeSpecifierNode& substituted_type,
+	const TypeSpecifierNode& orig_type,
+	TypeIndex substituted_type_index,
+	const ParamContainer& template_params,
+	const ArgContainer& template_args) {
+	if (orig_type.has_function_signature()) {
+		substituted_type.set_function_signature(orig_type.function_signature());
+	} else if (substituted_type_index.category() == TypeCategory::FunctionPointer ||
+			   substituted_type_index.category() == TypeCategory::MemberFunctionPointer) {
+		if (const auto* arg = findTemplateArgByName(
+				orig_type.token().value(), template_params, template_args)) {
+			if (arg->function_signature.has_value()) {
+				substituted_type.set_function_signature(*arg->function_signature);
+			}
+		}
+	}
+}
+
 // Helper: register type-kind template parameters as TypeInfo / getTypesByNameMap() entries so
 // that body re-parsing can resolve their names.  Non-type (value) parameters are
 // intentionally skipped: makeValue() leaves base_type as the value-type (e.g. Type::Int
@@ -713,9 +733,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 			return_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 		}
 		return_type_ref.set_reference_qualifier(orig_return_type.reference_qualifier());
-		if (orig_return_type.has_function_signature()) {
-			return_type_ref.set_function_signature(orig_return_type.function_signature());
-		}
+		propagateFunctionSignatureFromTemplateArg(
+			return_type_ref,
+			orig_return_type,
+			substituted_return_type_index,
+			template_params,
+			template_args);
 
 		auto new_decl = emplace_node<DeclarationNode>(return_type, mangled_token);
 		auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
@@ -757,9 +780,12 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					param_type_ref.add_pointer_level(ptr_level.cv_qualifier);
 				}
 				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
-				if (orig_param_type.has_function_signature()) {
-					param_type_ref.set_function_signature(orig_param_type.function_signature());
-				}
+				propagateFunctionSignatureFromTemplateArg(
+					param_type_ref,
+					orig_param_type,
+					substituted_type_index,
+					template_params,
+					template_args);
 
 				auto new_param_decl = emplace_node<DeclarationNode>(param_type, param_decl.identifier_token());
 			// Preserve default argument value from the original template declaration
@@ -1641,9 +1667,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 
 		// Preserve reference qualifiers from original return type
 		new_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
-		if (orig_return_type.has_function_signature()) {
-			new_return_type.set_function_signature(orig_return_type.function_signature());
-		}
+		propagateFunctionSignatureFromTemplateArg(
+			new_return_type,
+			orig_return_type,
+			return_type_index,
+			template_params,
+			template_args);
 
 		// Preserve pointer levels
 		for (const auto& ptr_level : orig_return_type.pointer_levels()) {
@@ -1992,9 +2021,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						Token(),
 						orig_param_type.cv_qualifier());
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
-					if (orig_param_type.has_function_signature()) {
-						param_type.as<TypeSpecifierNode>().set_function_signature(orig_param_type.function_signature());
-					}
+					propagateFunctionSignatureFromTemplateArg(
+						param_type.as<TypeSpecifierNode>(),
+						orig_param_type,
+						subst_type_index,
+						template_params,
+						template_args);
 
 					// Preserve pointer levels from the original declaration
 					for (const auto& ptr_level : orig_param_type.pointer_levels()) {
