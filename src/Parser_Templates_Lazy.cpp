@@ -1027,6 +1027,11 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 		original_type_spec, lazy_info.template_params, lazy_info.template_args);
 
 	size_t substituted_size = get_type_size_bits(substituted_type_index.category()) / 8;
+	if (lazy_info.is_array) {
+		for (size_t dim_size : lazy_info.array_dimensions) {
+			substituted_size *= dim_size;
+		}
+	}
 
 	// Update the existing static member with the computed initializer
 	// (The member was already added during template instantiation with std::nullopt initializer)
@@ -1041,7 +1046,9 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			substituted_initializer,
 			lazy_info.cv_qualifier,
 			lazy_info.reference_qualifier,
-			lazy_info.pointer_depth);
+			lazy_info.pointer_depth,
+			lazy_info.is_array,
+			lazy_info.array_dimensions);
 	}
 
 	// Mark as instantiated (remove from lazy registry)

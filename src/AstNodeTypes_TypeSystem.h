@@ -1211,6 +1211,8 @@ struct StructStaticMember {
 	std::optional<ASTNode> initializer;	// Optional initializer expression
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifiers (const, volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
+	bool is_array = false;
+	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;  // Pointer indirection level (e.g., int* = 1, int** = 2)
 
 	// Pre-materialized initializer (Phase C).
@@ -1228,6 +1230,11 @@ struct StructStaticMember {
 					   ReferenceQualifier ref_qual = ReferenceQualifier::None, int ptr_depth = 0)
 		: name(n), type_index(tidx), size(sz), alignment(align), access(acc),
 		  initializer(init), cv_qualifier(cv_qual), reference_qualifier(ref_qual), pointer_depth(ptr_depth) {}
+
+	void setArrayInfo(bool is_arr, std::vector<size_t> dims) {
+		is_array = is_arr;
+		array_dimensions = std::move(dims);
+	}
 
 	StringHandle getName() const {
 		return name;

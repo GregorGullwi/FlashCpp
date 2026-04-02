@@ -249,16 +249,18 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 				rebound_owner = found_owner;
 			}
 
-			if (rebound_function || member_call.function_declaration().is_static()) {
+			const bool can_use_rebound_function =
+				rebound_function && rebound_function->get_definition().has_value();
+			if (can_use_rebound_function || member_call.function_declaration().is_static()) {
 				const DeclarationNode& target_decl =
-					rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();
+					can_use_rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();
 				ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
 					FunctionCallNode(target_decl, std::move(rebound_args), member_call.called_from()));
 				auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
 
-				if (rebound_function && rebound_function->has_mangled_name()) {
+				if (can_use_rebound_function && rebound_function->has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
-				} else if (!rebound_function && member_call.function_declaration().has_mangled_name()) {
+				} else if (member_call.function_declaration().has_mangled_name()) {
 					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
 				}
 				if (set_qualified_name && rebound_function && rebound_owner) {
@@ -2262,6 +2264,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							}
 						}
 
+						if (static_member.is_array) {
+							for (size_t dim_size : static_member.array_dimensions) {
+								substituted_size *= dim_size;
+							}
+						}
 						struct_info->addStaticMember(
 							static_member_name_handle,
 							substituted_type_index,
@@ -2271,7 +2278,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							substituted_initializer,
 							static_member.cv_qualifier,
 							static_member.reference_qualifier,
-							static_member.pointer_depth);
+							static_member.pointer_depth,
+							static_member.is_array,
+							static_member.array_dimensions);
 					}
 				}
 			}
@@ -2298,6 +2307,16 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						original_type_spec, template_params, template_args);
 
 					size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+					if (static_member.is_array) {
+						for (size_t dim_size : static_member.array_dimensions) {
+							substituted_size *= dim_size;
+						}
+					}
+					if (static_member.is_array) {
+						for (size_t dim_size : static_member.array_dimensions) {
+							substituted_size *= dim_size;
+						}
+					}
 
 					// Substitute template parameters in the static member initializer
 					// Use ExpressionSubstitutor to handle all types of template-dependent expressions
@@ -2331,7 +2350,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_initializer,
 						static_member.cv_qualifier,
 						static_member.reference_qualifier,
-						static_member.pointer_depth);
+						static_member.pointer_depth,
+						static_member.is_array,
+						static_member.array_dimensions);
 				}
 			}
 
@@ -2571,6 +2592,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				TypeIndex substituted_type_index = substitute_template_parameter(
 					original_type_spec, template_params, template_args_for_pattern);
 				size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+				if (static_member.is_array) {
+					for (size_t dim_size : static_member.array_dimensions) {
+						substituted_size *= dim_size;
+					}
+				}
 				std::optional<ASTNode> substituted_initializer = static_member.initializer.has_value()
 																	 ? std::optional<ASTNode>(substituteTemplateParameters(
 																		   *static_member.initializer, template_params, template_args_for_pattern))
@@ -2584,7 +2610,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_initializer,
 					static_member.cv_qualifier,
 					static_member.reference_qualifier,
-					static_member.pointer_depth);
+					static_member.pointer_depth,
+					static_member.is_array,
+					static_member.array_dimensions);
 			}
 
 			// Copy member functions to AST node WITH CORRECT PARENT STRUCT NAME
@@ -4394,6 +4422,119 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return false;
 		};
 
+		auto find_ast_static_member_decl = [&](StringHandle member_name) -> const StaticMemberDecl* {
+			for (const auto& candidate : class_decl.static_members()) {
+				if (candidate.name == member_name) {
+					return &candidate;
+				}
+			}
+			return nullptr;
+		};
+
+		auto ensure_instantiated_static_member_type = [&](TypeIndex& member_type_index) {
+			if (const TypeInfo* member_type_info = (is_struct_type(member_type_index.category())) ? tryGetTypeInfo(member_type_index) : nullptr) {
+				std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
+				bool needs_instantiation = false;
+				if (member_type_info->isTemplateInstantiation()) {
+					if (!member_type_info->getStructInfo() || member_type_info->getStructInfo()->total_size == 0) {
+						member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
+						needs_instantiation = true;
+					}
+				}
+
+				if (needs_instantiation) {
+					auto inst_result = try_instantiate_class_template(member_struct_name, template_args_to_use);
+					(void)inst_result;
+
+					std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, template_args_to_use);
+					auto inst_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name_view));
+					if (inst_type_it != getTypesByNameMap().end()) {
+						member_type_index = inst_type_it->second->type_index_;
+						member_type_index.setCategory(inst_type_it->second->typeEnum());
+					}
+				}
+			}
+
+			if (member_type_index.is_valid()) {
+				if (const TypeInfo* member_fix_info = tryGetTypeInfo(member_type_index)) {
+					if (member_fix_info->getStructInfo() && member_type_index.category() == TypeCategory::UserDefined) {
+						member_type_index.setCategory(member_fix_info->typeEnum());
+					}
+				}
+			}
+		};
+
+		auto compute_substituted_static_member_layout =
+			[&](const StructStaticMember& static_member) -> std::tuple<TypeIndex, size_t, size_t, bool, std::vector<size_t>> {
+			TypeIndex substituted_type_index = static_member.type_index;
+			size_t substituted_size = static_member.size;
+			size_t substituted_alignment = static_member.alignment;
+			bool is_array_member = static_member.is_array;
+			std::vector<size_t> resolved_array_dimensions = static_member.array_dimensions;
+
+			if (const StaticMemberDecl* ast_static_member = find_ast_static_member_decl(static_member.getName());
+				ast_static_member && ast_static_member->declaration.has_value() &&
+				ast_static_member->declaration->is<DeclarationNode>()) {
+				const DeclarationNode& decl = ast_static_member->declaration->as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				substituted_type_index = substitute_template_parameter(
+					type_spec, template_params, template_args_to_use);
+				ensure_instantiated_static_member_type(substituted_type_index);
+				resolved_array_dimensions = resolve_array_dimensions(
+					decl, template_params, template_args_to_use);
+				if (resolved_array_dimensions.empty()) {
+					resolved_array_dimensions = resolve_array_alias_dimensions(
+						type_spec, template_params, template_args_to_use);
+				}
+				is_array_member = !resolved_array_dimensions.empty();
+
+				TypeSpecifierNode substituted_type_spec(
+					substituted_type_index.category(),
+					type_spec.qualifier(),
+					get_type_size_bits(substituted_type_index.category()),
+					Token{},
+					type_spec.cv_qualifier());
+				substituted_type_spec.set_type_index(substituted_type_index);
+				for (const auto& ptr_level : type_spec.pointer_levels()) {
+					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+				}
+
+				if (is_array_member) {
+					size_t total_elements = 1;
+					for (size_t dim_size : resolved_array_dimensions) {
+						total_elements *= dim_size;
+					}
+					size_t element_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
+					substituted_size = element_size * total_elements;
+				} else {
+					substituted_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
+				}
+
+				substituted_alignment = get_type_alignment(substituted_type_index.category(), substituted_size);
+				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					substituted_alignment = sizeof(void*);
+				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+					substituted_alignment = member_struct_info->alignment;
+				}
+			} else {
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
+				original_type_spec.set_type_index(static_member.type_index);
+				substituted_type_index = substitute_template_parameter(
+					original_type_spec, template_params, template_args_to_use);
+				ensure_instantiated_static_member_type(substituted_type_index);
+				substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+				if (is_array_member) {
+					for (size_t dim_size : resolved_array_dimensions) {
+						substituted_size *= dim_size;
+					}
+				}
+			}
+
+			return {substituted_type_index, substituted_size, substituted_alignment, is_array_member, std::move(resolved_array_dimensions)};
+		};
+
 		for (const auto& static_member : template_struct_info->static_members) {
 			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.getName()));
 
@@ -4416,6 +4557,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				lazy_info.initializer = static_member.initializer;
 				lazy_info.cv_qualifier = static_member.cv_qualifier;
 				lazy_info.reference_qualifier = static_member.reference_qualifier;
+				lazy_info.is_array = static_member.is_array;
+				lazy_info.array_dimensions = static_member.array_dimensions;
 				lazy_info.pointer_depth = static_member.pointer_depth;
 				lazy_info.template_params = template_params;
 				lazy_info.template_args = template_args_to_use;
@@ -4425,25 +4568,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				// Still add the member to struct_info for name lookup, but without initializer
 				// Type substitution is still done eagerly (for sizeof, alignof, etc.)
-				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
-				original_type_spec.set_type_index(static_member.type_index);
-
-				TypeIndex substituted_type_index = substitute_template_parameter(
-					original_type_spec, template_params, template_args_to_use);
-
-				size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+				auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
+					compute_substituted_static_member_layout(static_member);
 
 				// Add with nullopt initializer - will be filled in during lazy instantiation
 				struct_info->addStaticMember(
 					static_member.getName(),
 					substituted_type_index,
 					substituted_size,
-					static_member.alignment,
+					substituted_alignment,
 					static_member.access,
 					std::nullopt, // Initializer will be computed lazily
 					static_member.cv_qualifier,
 					static_member.reference_qualifier,
-					static_member.pointer_depth);
+					static_member.pointer_depth,
+					is_array_member,
+					resolved_array_dimensions);
 
 				continue; // Skip the eager processing below
 			}
@@ -4719,17 +4859,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			}
 
-			// Substitute type if it's a template parameter (e.g., "T" in "static constexpr T value = v;")
-			// Create a TypeSpecifierNode from the static member's type info to use substitute_template_parameter
-			TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
-			original_type_spec.set_type_index(static_member.type_index);
-
-			// Use substitute_template_parameter for consistent template parameter matching
-			TypeIndex substituted_type_index = substitute_template_parameter(
-				original_type_spec, template_params, template_args_to_use);
-
-			// Calculate the substituted size based on the substituted type
-			size_t substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+			auto [substituted_type_index, substituted_size, substituted_alignment, is_array_member, resolved_array_dimensions] =
+				compute_substituted_static_member_layout(static_member);
 			std::optional<NormalizedInitializer> normalized_initializer =
 				tryEarlyNormalizeTemplateStaticMemberInitializer(
 					substituted_initializer,
@@ -4750,12 +4881,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				static_member.getName(),
 				substituted_type_index,
 				substituted_size,
-				static_member.alignment,
+				substituted_alignment,
 				static_member.access,
 				substituted_initializer,
 				static_member.cv_qualifier,
 				static_member.reference_qualifier,
-				static_member.pointer_depth);
+				static_member.pointer_depth,
+				is_array_member,
+				resolved_array_dimensions);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.getName())) {
@@ -4827,6 +4960,68 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 			}
 
+			TypeIndex substituted_type_index = static_member.type_index;
+			size_t substituted_size = static_member.size;
+			size_t substituted_alignment = static_member.alignment;
+			bool is_array_member = static_member.is_array;
+			std::vector<size_t> resolved_array_dimensions = static_member.array_dimensions;
+
+			if (static_member.declaration.has_value() && static_member.declaration->is<DeclarationNode>()) {
+				const DeclarationNode& decl = static_member.declaration->as<DeclarationNode>();
+				const TypeSpecifierNode& type_spec = decl.type_node().as<TypeSpecifierNode>();
+				substituted_type_index = substitute_template_parameter(
+					type_spec, template_params, template_args_to_use);
+				resolved_array_dimensions = resolve_array_dimensions(
+					decl, template_params, template_args_to_use);
+				if (resolved_array_dimensions.empty()) {
+					resolved_array_dimensions = resolve_array_alias_dimensions(
+						type_spec, template_params, template_args_to_use);
+				}
+				is_array_member = !resolved_array_dimensions.empty();
+
+				TypeSpecifierNode substituted_type_spec(
+					substituted_type_index.category(),
+					type_spec.qualifier(),
+					get_type_size_bits(substituted_type_index.category()),
+					Token{},
+					type_spec.cv_qualifier());
+				substituted_type_spec.set_type_index(substituted_type_index);
+				for (const auto& ptr_level : type_spec.pointer_levels()) {
+					substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+				}
+
+				if (is_array_member) {
+					size_t total_elements = 1;
+					for (size_t dim_size : resolved_array_dimensions) {
+						total_elements *= dim_size;
+					}
+					size_t element_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
+					substituted_size = element_size * total_elements;
+				} else {
+					substituted_size = calculateResolvedMemberSizeAndAlignment(
+						substituted_type_spec, substituted_type_index).size;
+				}
+
+				substituted_alignment = get_type_alignment(substituted_type_index.category(), substituted_size);
+				if (type_spec.is_pointer() || type_spec.is_reference() || type_spec.is_rvalue_reference()) {
+					substituted_alignment = sizeof(void*);
+				} else if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+					substituted_alignment = member_struct_info->alignment;
+				}
+			} else {
+				TypeSpecifierNode original_type_spec(static_member.memberType(), TypeQualifier::None, static_member.size * 8, Token{}, CVQualifier::None);
+				original_type_spec.set_type_index(static_member.type_index);
+				substituted_type_index = substitute_template_parameter(
+					original_type_spec, template_params, template_args_to_use);
+				substituted_size = get_substituted_type_size_bytes(substituted_type_index);
+				if (is_array_member) {
+					for (size_t dim_size : resolved_array_dimensions) {
+						substituted_size *= dim_size;
+					}
+				}
+			}
+
 			std::optional<NormalizedInitializer> normalized_initializer =
 				tryEarlyNormalizeTemplateStaticMemberInitializer(
 					substituted_initializer,
@@ -4835,21 +5030,23 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					struct_info.get(),
 					template_params,
 					template_args_to_use,
-					static_member.type_index,
-					static_member.size,
+					substituted_type_index,
+					substituted_size,
 					static_member.reference_qualifier,
 					static_member.pointer_depth);
 
 			struct_info->addStaticMember(
 				static_member.name,
-				static_member.type_index,
-				static_member.size,
-				static_member.alignment,
+				substituted_type_index,
+				substituted_size,
+				substituted_alignment,
 				static_member.access,
 				substituted_initializer,
 				static_member.cv_qualifier,
 				static_member.reference_qualifier,
-				static_member.pointer_depth);
+				static_member.pointer_depth,
+				is_array_member,
+				resolved_array_dimensions);
 			if (normalized_initializer.has_value()) {
 				if (StructStaticMember* instantiated_static_member =
 						struct_info->findStaticMember(static_member.name)) {
@@ -4987,7 +5184,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_initializer,
 						static_member.cv_qualifier,
 						static_member.reference_qualifier,
-						static_member.pointer_depth);
+						static_member.pointer_depth,
+						static_member.is_array,
+						static_member.array_dimensions);
 					instantiated_nested_struct_ref.add_static_member(
 						static_member.getName(),
 						substituted_type_index,
@@ -4997,7 +5196,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_initializer,
 						static_member.cv_qualifier,
 						static_member.reference_qualifier,
-						static_member.pointer_depth);
+						static_member.pointer_depth,
+						static_member.is_array,
+						static_member.array_dimensions);
 				}
 			};
 
@@ -5417,7 +5618,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			static_member.initializer,
 			static_member.cv_qualifier,
 			static_member.reference_qualifier,
-			static_member.pointer_depth);
+			static_member.pointer_depth,
+			static_member.is_array,
+			static_member.array_dimensions);
 	}
 
 	for (auto& nested_class_node : instantiated_nested_class_nodes) {
@@ -6709,7 +6912,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Add the static member to the instantiated struct (or update if it already exists)
 		if (out_of_line_var.type_node.is<TypeSpecifierNode>()) {
 			const TypeSpecifierNode& type_spec = out_of_line_var.type_node.as<TypeSpecifierNode>();
-			auto [member_size, member_alignment] = calculateMemberSizeAndAlignment(type_spec);
+			auto [member_size, member_alignment] =
+				calculateResolvedMemberSizeAndAlignment(type_spec, type_spec.type_index());
+			bool is_array = false;
+			std::vector<size_t> array_dimensions;
 
 			StringHandle static_member_name_handle = out_of_line_var.member_name;
 
@@ -6724,6 +6930,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							  " in instantiated struct ", instantiated_name);
 				}
 			} else {
+				if (type_spec.is_array()) {
+					is_array = true;
+					for (size_t dim_size : type_spec.array_dimensions()) {
+						array_dimensions.push_back(dim_size);
+						member_size *= dim_size;
+					}
+				}
 				struct_info_ptr->addStaticMember(
 					static_member_name_handle,
 					type_spec.type_index(),
@@ -6733,7 +6946,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					substituted_initializer,
 					type_spec.cv_qualifier(), // cv_qualifier
 					type_spec.reference_qualifier(),
-					static_cast<int>(type_spec.pointer_depth()));
+					static_cast<int>(type_spec.pointer_depth()),
+					is_array,
+					std::move(array_dimensions));
 
 				FLASH_LOG(Templates, Debug, "Added out-of-line static member ", out_of_line_var.member_name,
 						  " to instantiated struct ", instantiated_name);
@@ -6992,7 +7207,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_initializer, // Use substituted initializer if sizeof... was replaced
 						static_member.cv_qualifier,
 						static_member.reference_qualifier,
-						static_member.pointer_depth);
+						static_member.pointer_depth,
+						static_member.is_array,
+						static_member.array_dimensions);
 				}
 			}
 		}

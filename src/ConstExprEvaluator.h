@@ -843,12 +843,16 @@ private:
 	// array_dimensions(), member class, and function signatures.
 	static bool typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const TypeSpecifierNode& rhs);
 
- // Phase C: Materialize an EvalResult from pre-packed constant bytes.
- // For struct types, populates object_member_bindings with scalar member values
- // extracted from the byte buffer.
+	// Phase C: Materialize an EvalResult from pre-packed constant bytes.
+	// For struct types, populates object_member_bindings with scalar member values
+	// extracted from the byte buffer.
 	static EvalResult materializeFromConstantBytes(
 		const std::vector<char>& bytes,
 		TypeIndex type_index);
+	static EvalResult materializeFromConstantBytes(
+		const std::vector<char>& bytes,
+		TypeIndex type_index,
+		const std::vector<size_t>& array_dimensions);
 
 	// Try to obtain the source expression's type from an already-evaluated
 	// result (exact_type) or by asking the parser for the AST node's type.

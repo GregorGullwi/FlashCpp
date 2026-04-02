@@ -726,6 +726,7 @@ struct TypeAliasDecl {
 // Static member declaration (for AST storage in templates/partial specializations)
 struct StaticMemberDecl {
 	StringHandle name;			   // The member name
+	std::optional<ASTNode> declaration; // Original declaration AST for template substitution
 	TypeIndex type_index;		  // Type index for user-defined types (TypeCategory embedded)
 	size_t size;				  // Size in bytes
 	size_t alignment;			  // Alignment requirement
@@ -733,6 +734,8 @@ struct StaticMemberDecl {
 	std::optional<ASTNode> initializer;	// AST node for initializer expression (e.g., sizeof(T)), used for template parameter substitution during instantiation
 	CVQualifier cv_qualifier = CVQualifier::None;  // CV qualifiers (const, volatile)
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;  // None, LValueReference (&), or RValueReference (&&)
+	bool is_array = false;
+	std::vector<size_t> array_dimensions;
 	int pointer_depth = 0;		   // Pointer indirection level (e.g., int* = 1, int** = 2)
 
 	// Returns the legacy Type enum derived from the embedded TypeCategory.
@@ -744,6 +747,15 @@ struct StaticMemberDecl {
 		: name(name_), type_index(type_index_), size(size_), alignment(alignment_),
 		  access(access_), initializer(initializer_), cv_qualifier(cv_qual_),
 		  reference_qualifier(ref_qual_), pointer_depth(ptr_depth_) {}
+
+	void setArrayInfo(bool is_arr, std::vector<size_t> dims) {
+		is_array = is_arr;
+		array_dimensions = std::move(dims);
+	}
+
+	void setDeclaration(ASTNode decl) {
+		declaration = std::move(decl);
+	}
 };
 
 class StructDeclarationNode {
@@ -872,6 +884,21 @@ public:
 						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
 						   ReferenceQualifier ref_qual, int ptr_depth) {
 		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+	}
+
+	void add_static_member(StringHandle name, TypeIndex type_index, size_t size, size_t alignment,
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions) {
+		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
+	}
+
+	void add_static_member(StringHandle name, ASTNode declaration, TypeIndex type_index, size_t size, size_t alignment,
+						   AccessSpecifier access, std::optional<ASTNode> initializer, CVQualifier cv_qual,
+						   ReferenceQualifier ref_qual, int ptr_depth, bool is_array, std::vector<size_t> array_dimensions) {
+		static_members_.emplace_back(name, type_index, size, alignment, access, initializer, cv_qual, ref_qual, ptr_depth);
+		static_members_.back().setDeclaration(std::move(declaration));
+		static_members_.back().setArrayInfo(is_array, std::move(array_dimensions));
 	}
 
 	const std::vector<StaticMemberDecl>& static_members() const {
