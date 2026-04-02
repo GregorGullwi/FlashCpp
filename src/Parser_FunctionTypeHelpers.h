@@ -31,10 +31,6 @@ inline const FunctionDeclarationNode* findFunctionDeclarationForSymbol(const AST
 		const auto& decl = symbol.as<DeclarationNode>();
 		return findFunctionDeclarationForIdentifier(decl.identifier_token().value(), decl.identifier_token());
 	}
-	if (symbol.is<VariableDeclarationNode>()) {
-		const auto& decl = symbol.as<VariableDeclarationNode>().declaration();
-		return findFunctionDeclarationForIdentifier(decl.identifier_token().value(), decl.identifier_token());
-	}
 	return nullptr;
 }
 
