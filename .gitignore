@@ -28,3 +28,4 @@ src/*.pch
 *.result
 a.out
 package-lock.json
+.copilot-fleet/*
