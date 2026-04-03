@@ -1875,12 +1875,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the full array so the pointer can be dereferenced at any
+						// valid offset in a different scope (e.g., p[0]+p[1]+p[2] after
+						// cross-scope call).  This mirrors refreshPointerSnapshotsForBindingInMap.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.pointer_value_snapshot = {arr_eval->array_elements[idx]};
+							if (!arr_eval->array_elements.empty()) {
+								ptr_result.pointer_value_snapshot = arr_eval->array_elements;
+							} else if (!arr_eval->array_values.empty()) {
+								ptr_result.pointer_value_snapshot.reserve(arr_eval->array_values.size());
+								for (int64_t v : arr_eval->array_values) {
+									ptr_result.pointer_value_snapshot.push_back(EvalResult::from_int(v));
+								}
+							}
 						}
 						return ptr_result;
 					}
@@ -2093,12 +2100,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the full array so the pointer can be dereferenced at any
+						// valid offset in a different scope (e.g., p[0]+p[1]+p[2] after
+						// cross-scope call).  This mirrors refreshPointerSnapshotsForBindingInMap.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.pointer_value_snapshot = {arr_eval->array_elements[idx]};
+							if (!arr_eval->array_elements.empty()) {
+								ptr_result.pointer_value_snapshot = arr_eval->array_elements;
+							} else if (!arr_eval->array_values.empty()) {
+								ptr_result.pointer_value_snapshot.reserve(arr_eval->array_values.size());
+								for (int64_t v : arr_eval->array_values) {
+									ptr_result.pointer_value_snapshot.push_back(EvalResult::from_int(v));
+								}
+							}
 						}
 						return ptr_result;
 					}
