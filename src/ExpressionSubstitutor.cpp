@@ -1,26 +1,8 @@
 #include "ExpressionSubstitutor.h"
+#include "CallNodeHelpers.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
-
-namespace {
-// Copy call metadata from source to target. By default all metadata is copied
-// including template_arguments. Pass copy_template_args=false when the caller
-// will substitute and set template arguments explicitly (avoids a redundant
-// shallow copy of potentially-unsubstituted dependent template parameters).
-void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& source, bool copy_template_args = true) {
-	target.set_indirect_call(source.is_indirect_call());
-	if (source.has_mangled_name()) {
-		target.set_mangled_name(source.mangled_name());
-	}
-	if (source.has_qualified_name()) {
-		target.set_qualified_name(source.qualified_name());
-	}
-	if (copy_template_args && source.has_template_arguments()) {
-		target.set_template_arguments(std::vector<ASTNode>(source.template_arguments().begin(), source.template_arguments().end()));
-	}
-}
-}
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
@@ -415,7 +397,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						func_decl.decl_node(),
 						std::move(substituted_args_nodes),
 						call.called_from());
-					copyFunctionCallMetadata(new_call, call, /*copy_template_args=*/false);
+					CallMetadataCopyOptions copy_options;
+					copy_options.copy_template_arguments = false;
+					copyCallMetadata(new_call, call, copy_options);
 					if (func_decl.has_mangled_name()) {
 						new_call.set_mangled_name(func_decl.mangled_name());
 					}
@@ -567,7 +551,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					instantiated_func.decl_node(),
 					std::move(substituted_args),
 					call.called_from());
-				copyFunctionCallMetadata(new_call, call);
+				copyCallMetadata(new_call, call);
 
 				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 				return ASTNode(&new_expr);
@@ -649,7 +633,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 
 			FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
 				*target_decl, std::move(substituted_args), new_func_token);
-			copyFunctionCallMetadata(new_call, call);
+			copyCallMetadata(new_call, call);
 			new_call.set_qualified_name(new_func_name);
 			if (target_func && target_func->has_mangled_name()) {
 				new_call.set_mangled_name(target_func->mangled_name());
