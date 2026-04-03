@@ -246,7 +246,9 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 											 std::string(param_name),
 										 EvalErrorType::TemplateDependentExpression);
 			}
-			return EvalResult::error("Unsupported non-type template parameter category in constant expression: " +
+			return EvalResult::error("Unsupported non-type template parameter category '" +
+										 std::string(TemplateRegistry::typeToString(arg->category())) +
+										 "' in constant expression: " +
 										 std::string(param_name),
 									 EvalErrorType::Other);
 		}
@@ -1971,7 +1973,9 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			return *resolved;
 		}
 		if (arg->is_value) {
-			return EvalResult::error("Unsupported non-type template parameter category in constant expression: " +
+			return EvalResult::error("Unsupported non-type template parameter category '" +
+										 std::string(TemplateRegistry::typeToString(arg->category())) +
+										 "' in constant expression: " +
 										 std::string(var_name),
 									 EvalErrorType::Other);
 		}
