@@ -369,7 +369,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 			}
 
 			const auto& type_spec = node.as<TypeSpecifierNode>();
-			return !type_spec.type_index().is_valid();
+			return type_spec.type_index().needsTypeIndex() && !type_spec.type_index().is_valid();
 		};
 
 		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
