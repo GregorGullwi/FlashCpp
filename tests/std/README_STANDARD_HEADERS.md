@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~281ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1060ms (targeted retest 2026-04-03). The new placeholder materialization fixes move `_M_is_engaged()` past the earlier `_Optional_base<_Tp>` non-struct placeholder failure, but libstdc++ still hits later base/member issues: one `_Optional_base<...>` path still reaches codegen with `type_index=0`, and `_Optional_payload<...>` member lookups still fail to find `_M_engaged`. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1400ms (targeted retest 2026-04-03). Chained member-access IR now keeps the concrete `_Optional_payload<...>` type index instead of collapsing back to `type_index=0`, but libstdc++ still fails later because one `_Optional_payload<...>` path is not recovered as a struct during deferred member codegen and inherited `_M_engaged` lookups still fail. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~271ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
@@ -47,7 +47,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<typeindex>` | N/A | ✅ Compiled | ~284ms |
 | `<numeric>` | `test_std_numeric.cpp` | ✅ Compiled | ~632ms |
 | `<iterator>` | `test_std_iterator.cpp` | ✅ Compiled | ~1669ms (some codegen warnings) |
-| `<variant>` | `test_std_variant.cpp` | ❌ Parse Error | Parser fails to close `_Copy_assign_base` struct body |
+| `<variant>` | `test_std_variant.cpp` | ❌ Codegen Error | ~1200ms (targeted retest 2026-04-03). The earlier post-parse `PackExpansionExprNode` blocker is gone; libstdc++ now gets through the pattern-struct boundary and fails later on variant visitation instantiation / Itanium mangling (`unknown type`). |
 | `<csetjmp>` | N/A | ✅ Compiled | ~18ms |
 | `<csignal>` | N/A | ✅ Compiled | ~103ms |
 | `<stdfloat>` | N/A | ✅ Compiled | ~3ms (C++23) |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-04-03):** `<optional>`, `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<atomic>`, and `<latch>` were re-checked individually after the 2026-04-03 placeholder-materialization / builtin-registration work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type, and the old `<atomic>` / `<latch>` phase-1 `__builtin_memcmp` stop is gone. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-03):** `<optional>`, `<variant>`, `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<atomic>`, and `<latch>` were re-checked individually after the 2026-04-03 placeholder-materialization / builtin-registration / template-pattern-boundary work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type, chained member-access IR now preserves concrete user-defined payload types in simple inherited cases, the old `<variant>` post-parse pack-expansion stop is gone, and the old `<atomic>` / `<latch>` phase-1 `__builtin_memcmp` stop is gone. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -120,7 +120,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
    - Core fix areas: `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_Deduction.cpp`, and `TypeInfo::TemplateArgInfo` / outer-template binding serialization.
    - Regression test: `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
 
-3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, but later CRTP/deferred-body codegen still has remaining gaps where defaulted base specializations or inherited payload members are not fully reconstructed. `<optional>` no longer dies on the first `_Optional_base<_Tp>` placeholder, but later `_Optional_base<...>` / `_Optional_payload<...>` paths still lose struct info or inherited `_M_engaged` lookup during codegen.
+3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, and chained member access no longer immediately erases concrete payload types back to `type_index=0`, but later CRTP/deferred-body codegen still has remaining gaps where instantiated payload structs are not always recovered as full structs and inherited members are not fully reconstructed. `<optional>` now reaches the later `_Optional_payload<...>` / `_M_engaged` failures with concrete type index `2758`, but those deferred paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
 4. **GCC/Clang `__atomic*` builtin typing is still incomplete**: Compiler-known declarations and `__has_builtin` coverage now exist for the libstdc++ atomic builtin names, but pointer/integral generic signatures are not modeled precisely enough yet. `<atomic>` / `<latch>` now get past the older `__builtin_memcmp` phase-1 error and stop later on `__atomic_add_fetch(&_M_p, _M_type_size(1), ...)` with "No matching function for call". Affects: `<atomic>`, `<latch>`.
 
@@ -128,7 +128,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 6. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
-7. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
+7. **Variant visitation / mangling follow-ons after the pattern-struct boundary fix**: `<variant>` no longer stops on unexpanded `PackExpansionExprNode` nodes from parser-owned `$pattern__` structs, but it now exposes later template-instantiation gaps around `__get`, `__emplace`, `_S_apply_all_alts`, and an eventual Itanium mangling `unknown type` abort. Affects: `<variant>`.
 
 8. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
 
@@ -147,6 +147,8 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 3. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
 
 4. **Template-parameter substitution now materializes concrete class-template placeholders without regressing alias-member or template-template lookups**: when a substituted type argument is itself a concrete-but-lazy template-instantiation placeholder, qualified lookup now eagerly resolves it to the registered instantiated class name, but only for the cases that are safe to do before the dedicated `::type` and template-template parameter paths run. This fixes deferred codegen for direct CRTP-style base casts and defaulted placeholder bases while preserving earlier array-alias and template-template regressions. Regression tests: `tests/test_deferred_base_placeholder_codegen_ret0.cpp`, `tests/test_deferred_base_default_arg_placeholder_ret0.cpp`, plus existing `tests/test_template_type_alias_array_member_brace_init_ret0.cpp` and `tests/template_template_with_member_ret0.cpp`.
+
+5. **Post-parse boundary checking now skips parser-owned template-pattern structs, and chained member-access results keep concrete user-defined payload `TypeIndex` values**: the sema boundary no longer walks `$pattern__` class templates that intentionally still contain pack-expansion helpers, which moves `<variant>` past its earlier post-parse `PackExpansionExprNode` stop. Separately, member-load IR now preserves valid non-native payload type indices across chained accesses, which keeps simple inherited payload accesses working instead of collapsing them back to category-only placeholders. Regression tests: new `tests/test_member_chain_payload_base_ret0.cpp`, plus targeted std-header retest `tests/std/test_std_variant.cpp`.
 
 ### Recent Fixes (2026-04-02)
 
