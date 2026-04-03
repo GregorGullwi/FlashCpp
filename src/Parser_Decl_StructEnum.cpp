@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -3373,7 +3374,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 
 			// Create member function call: this->operator<=>(other)
 			auto spaceship_call = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
+				makeResolvedMemberCallExpr(this_node, *spaceship_func, std::move(spaceship_args), operator_name_token));
 
 			// Create numeric literal for 0
 			Token zero_token(Token::Type::Literal, "0"sv,

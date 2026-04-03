@@ -221,6 +221,25 @@ inline CallExprNode makeIndirectCallExpr(const DeclarationNode& decl, ChunkedVec
 	return CallExprNode(CalleeDescriptor::indirectCall(decl), std::move(arguments), called_from_token);
 }
 
+inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	if (callee_node.is<FunctionDeclarationNode>()) {
+		return makeResolvedCallExpr(callee_node.as<FunctionDeclarationNode>(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<DeclarationNode>()) {
+		return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<VariableDeclarationNode>()) {
+		return makeDirectCallExpr(callee_node.as<VariableDeclarationNode>().declaration(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<TemplateFunctionDeclarationNode>()) {
+		const ASTNode& function_decl = callee_node.as<TemplateFunctionDeclarationNode>().function_declaration();
+		if (function_decl.is<FunctionDeclarationNode>()) {
+			return makeResolvedCallExpr(function_decl.as<FunctionDeclarationNode>(), std::move(arguments), called_from_token);
+		}
+	}
+	return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);
+}
+
 inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
 	CalleeDescriptor callee = func_decl.is_static()
 		? CalleeDescriptor::staticMemberFunction(func_decl)
@@ -238,6 +257,10 @@ inline void setCallMangledName(ExpressionNode& expr, std::string_view name) {
 	}
 }
 
+inline void setCallMangledName(CallExprNode& call_expr, std::string_view name) {
+	call_expr.set_mangled_name(name);
+}
+
 inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
 	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
 		function_call->set_qualified_name(name);
@@ -248,6 +271,10 @@ inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
 	}
 }
 
+inline void setCallQualifiedName(CallExprNode& call_expr, std::string_view name) {
+	call_expr.set_qualified_name(name);
+}
+
 inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&& template_args) {
 	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
 		function_call->set_template_arguments(std::move(template_args));
@@ -256,6 +283,10 @@ inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_template_arguments(std::move(template_args));
 	}
+}
+
+inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {
+	call_expr.set_template_arguments(std::move(template_args));
 }
 
 inline void setCallIndirect(ExpressionNode& expr) {
@@ -271,4 +302,13 @@ inline void setCallIndirect(ExpressionNode& expr) {
 		copyCallMetadata(indirect_call, *call_expr);
 		expr = std::move(indirect_call);
 	}
+}
+
+inline void setCallIndirect(CallExprNode& call_expr) {
+	CallExprNode indirect_call = makeIndirectCallExpr(
+		call_expr.callee().declaration(),
+		copyCallArguments(call_expr.arguments()),
+		call_expr.called_from());
+	copyCallMetadata(indirect_call, call_expr);
+	call_expr = std::move(indirect_call);
 }
