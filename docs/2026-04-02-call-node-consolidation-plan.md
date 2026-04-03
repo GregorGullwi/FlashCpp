@@ -62,7 +62,7 @@ The callee descriptor should be rich enough to distinguish:
 - Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path without re-materializing legacy free-call nodes.
 - Constexpr evaluation now consumes `CallExprNode` directly for free/member dispatch, bound-call handling, noexcept lookup, and static-member cycle detection.
 - Semantic analysis now routes callable-operator lookup, overload recovery, argument conversion, and reference-binding annotation through shared `CallInfo`-based helpers; the legacy per-node entry points remain only as thin wrappers.
-- The remaining IR entry points now read the shared sema lookup tables through generic call-key accessors, but the deeper member-call lowering code still uses legacy node types internally and still contains synthetic member-to-free conversions.
+- The remaining IR entry points now read the shared sema lookup tables through generic call-key accessors, and the member-to-free fallback now reuses the original unified `CallExprNode` when available, but the deeper member-call lowering code still uses legacy node types internally and still contains other synthetic conversions.
 - The only `materializeLegacy*` remnants left in the tree are the helper definitions in `src/CallNodeHelpers.h`; no current caller still relies on them.
 - The remaining work is now centered on pushing the rest of IR lowering onto direct `CallExprNode` handling before deleting the duplicate legacy nodes.
 

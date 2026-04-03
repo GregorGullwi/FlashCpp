@@ -597,7 +597,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
 		// This is a namespace-qualified function call, not a member function call
 		// Treat it as a regular function call instead
-		return convertMemberCallToFunctionCall(memberFunctionCallNode, context);
+		return convertMemberCallToFunctionCall(memberFunctionCallNode, context, unified_call_key);
 	}
 
 	// Verify this is a struct type BEFORE checking other cases
@@ -606,7 +606,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (!isIrStructType(toIrType(object_type.type()))) {
 		// The object is not a struct - this might be a namespace identifier or other non-struct type
 		// Treat this as a regular function call instead of a member function call
-		return convertMemberCallToFunctionCall(memberFunctionCallNode, context);
+		return convertMemberCallToFunctionCall(memberFunctionCallNode, context, unified_call_key);
 	}
 
 	// Get the function declaration directly from the node (no need to look it up)
@@ -1821,7 +1821,13 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 // Used when a member function call syntax is used but the object is not a struct
-ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
+ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode,
+													 ExpressionContext context,
+													 const CallExprNode* unified_call_key) {
+	if (unified_call_key) {
+		return generateFunctionCallIr(*unified_call_key, context);
+	}
+
 	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
 	const DeclarationNode& decl_node = func_decl.decl_node();
 

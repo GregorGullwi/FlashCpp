@@ -531,9 +531,12 @@ private:
 		int base_offset,
 		const Token& token);
 
-	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
-	// Used when a member function call syntax is used but the object is not a struct
-	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+	// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
+	// When available, the original unified CallExprNode is preferred so the fallback preserves
+	// shared call metadata without re-materializing a legacy FunctionCallNode.
+	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode,
+											   ExpressionContext context,
+											   const CallExprNode* unified_call_key);
 
 	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
 	// Returns nullptr if the type is not a struct.
