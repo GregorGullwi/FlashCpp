@@ -189,23 +189,6 @@ inline ChunkedVector<ASTNode> copyCallArguments(const ChunkedVector<ASTNode>& ar
 	return copied_arguments;
 }
 
-inline FunctionCallNode materializeLegacyFunctionCall(const CallExprNode& source) {
-	FunctionCallNode legacy_call(
-		source.callee().declaration(),
-		copyCallArguments(source.arguments()),
-		source.called_from());
-	copyCallMetadata(legacy_call, source);
-	return legacy_call;
-}
-
-inline MemberFunctionCallNode materializeLegacyMemberFunctionCall(const CallExprNode& source) {
-	return MemberFunctionCallNode(
-		source.receiver(),
-		*source.callee().function_declaration_or_null(),
-		copyCallArguments(source.arguments()),
-		source.called_from());
-}
-
 inline CallExprNode makeDirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
 	return CallExprNode(CalleeDescriptor::freeFunction(decl), std::move(arguments), called_from_token);
 }

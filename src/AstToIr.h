@@ -280,7 +280,7 @@ private:
 	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
-	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
@@ -534,9 +534,9 @@ private:
 	// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
 	// When available, the original unified CallExprNode is preferred so the fallback preserves
 	// shared call metadata without re-materializing a legacy FunctionCallNode.
-	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode,
+	ExprResult convertMemberCallToFunctionCall(const CallExprNode& callExprNode,
 											   ExpressionContext context,
-											   const CallExprNode* unified_call_key);
+											   const void* sema_call_key);
 
 	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
 	// Returns nullptr if the type is not a struct.

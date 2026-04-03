@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "CallNodeHelpers.h"
 
 void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
@@ -901,9 +902,9 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		// Create member function calls: range.begin() and range.end()
 	ChunkedVector<ASTNode> empty_args;
 	auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-		MemberFunctionCallNode(range_object_expr,
-							   begin_func_decl,
-							   std::move(empty_args), Token()));
+		makeResolvedMemberCallExpr(range_object_expr,
+								   begin_func_decl,
+								   std::move(empty_args), Token()));
 
 	auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
 	visit(begin_var_decl_node);
@@ -912,9 +913,9 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
 	ChunkedVector<ASTNode> empty_args2;
 	auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
-		MemberFunctionCallNode(range_object_expr,
-							   end_func_decl,
-							   std::move(empty_args2), Token()));
+		makeResolvedMemberCallExpr(range_object_expr,
+								   end_func_decl,
+								   std::move(empty_args2), Token()));
 
 	auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);
 	visit(end_var_decl_node);
@@ -999,7 +1000,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		}
 		ChunkedVector<ASTNode> dereference_args;
 		ASTNode dereference_call = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(
+			makeResolvedMemberCallExpr(
 				ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token)),
 				*dereference_func,
 				std::move(dereference_args),

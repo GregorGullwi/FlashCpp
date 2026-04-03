@@ -3,33 +3,28 @@
 #include "CallNodeHelpers.h"
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
-	return generateMemberFunctionCallIr(memberFunctionCallNode, context, nullptr);
+	CallExprNode call_expr = makeResolvedMemberCallExpr(
+		memberFunctionCallNode.object(),
+		memberFunctionCallNode.function_declaration(),
+		copyCallArguments(memberFunctionCallNode.arguments()),
+		memberFunctionCallNode.called_from());
+	return generateMemberFunctionCallIr(call_expr, context, &memberFunctionCallNode);
 }
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
-	if (!callExprNode.has_receiver()) {
-		throw InternalError("CallExprNode without receiver routed to member-call IR generation");
-	}
-	const FunctionDeclarationNode* function_decl = callExprNode.callee().function_declaration_or_null();
-	if (!function_decl) {
-		throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
-	}
-	MemberFunctionCallNode member_call(
-		callExprNode.receiver(),
-		*function_decl,
-		copyCallArguments(callExprNode.arguments()),
-		callExprNode.called_from());
-	return generateMemberFunctionCallIr(member_call, context, &callExprNode);
+	return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
 }
 
-ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key) {
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key) {
 	std::vector<IrOperand> irOperands;
-	irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4); // ret + name + this + ~4 per arg
+	irOperands.reserve(5 + callExprNode.arguments().size() * 4); // ret + name + this + ~4 per arg
+
+	const FunctionDeclarationNode& member_func_decl = *callExprNode.callee().function_declaration_or_null();
 
 	FLASH_LOG(Codegen, Debug, "=== generateMemberFunctionCallIr START ===");
 
 	// Get the object expression
-	ASTNode object_node = memberFunctionCallNode.object();
+	ASTNode object_node = callExprNode.receiver();
 	std::optional<StringHandle> immediate_lambda_object_name;
 	std::optional<TypeSpecifierNode> immediate_lambda_object_type;
 
@@ -90,7 +85,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 			// Build TypeSpecifierNode for return type (needed for mangling)
 			// Per C++20 §7.5.5.1, a lambda with no return statements deduces void
-			TypeSpecifierNode return_type_node(TypeIndex{}.withCategory(TypeCategory::Void), 0, memberFunctionCallNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
+			TypeSpecifierNode return_type_node(TypeIndex{}.withCategory(TypeCategory::Void), 0, callExprNode.called_from(), CVQualifier::None, ReferenceQualifier::None);
 			if (lambda.return_type().has_value()) {
 				const auto& ret_type = lambda.return_type()->as<TypeSpecifierNode>();
 				return_type_node = ret_type;
@@ -110,7 +105,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			if (is_generic) {
 				// First, collect argument types
 				std::vector<TypeSpecifierNode> arg_types;
-				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				callExprNode.arguments().visit([&](ASTNode argument) {
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 					if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 						const auto& identifier = std::get<IdentifierNode>(arg_expr);
@@ -231,7 +226,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			call_op.is_variadic = false; // Lambdas cannot be variadic in C++20
 
 			// Add arguments
-			memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+			callExprNode.arguments().visit([&](ASTNode argument) {
 				const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 				ExprResult argument_result = visitExpressionNode(arg_expr);
 				if (std::holds_alternative<IdentifierNode>(arg_expr)) {
@@ -258,7 +253,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			int lambda_return_size = call_op.return_size_in_bits.value;
 
 			// Add the function call instruction with typed payload
-			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 
 			// Return the result with actual return type from lambda
 			return makeExprResult(nativeTypeIndex(lambda_return_type), SizeInBits{static_cast<int>(lambda_return_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
@@ -272,7 +267,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		immediate_lambda_object_type = TypeSpecifierNode(
 			lambda_result.type_index.withCategory(TypeCategory::Struct),
 			static_cast<int>(lambda_result.size_in_bits.value),
-			memberFunctionCallNode.called_from(),
+			callExprNode.called_from(),
 			CVQualifier::None,
 			ReferenceQualifier::None);
 
@@ -426,7 +421,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// We need to resolve the type of o.inner to get Inner, then check if callback is a function pointer member
 
 		const MemberAccessNode& member_access = std::get<MemberAccessNode>(*object_expr);
-		const FunctionDeclarationNode& check_func_decl = memberFunctionCallNode.function_declaration();
+		const FunctionDeclarationNode& check_func_decl = member_func_decl;
 		std::string_view called_func_name = check_func_decl.decl_node().identifier_token().value();
 		bool resolved_member_object_type = false;
 
@@ -447,7 +442,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 				TempVar ret_var = var_counter.next();
 				std::vector<TypedValue> arguments;
-				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				callExprNode.arguments().visit([&](ASTNode argument) {
 					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 					arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 				});
@@ -456,7 +451,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					.result = ret_var,
 					.function_pointer = std::move(function_pointer),
 					.arguments = std::move(arguments)};
-				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
 
 				if (!resolved_member->function_signature) {
 					throw InternalError("Function pointer member missing function_signature for indirect call return type");
@@ -505,7 +500,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 								// Build arguments for the indirect call
 								std::vector<TypedValue> arguments;
-								memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+								callExprNode.arguments().visit([&](ASTNode argument) {
 									ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 									arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 								});
@@ -514,7 +509,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 									.result = ret_var,
 									.function_pointer = func_ptr_temp,
 									.arguments = std::move(arguments)};
-								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
 
 								// Use the function pointer's stored return type
 								if (!member.function_signature) {
@@ -576,8 +571,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	// the active instantiated owner so later overload/mangling picks the concrete
 	// member definition instead of emitting stale `Box::member` references.
 	if (object_type.type_index().is_valid() &&
-		memberFunctionCallNode.function_declaration().is_member_function() &&
-		isSameClassAsCurrentInstantiation(memberFunctionCallNode.function_declaration().parent_struct_name())) {
+		member_func_decl.is_member_function() &&
+		isSameClassAsCurrentInstantiation(member_func_decl.parent_struct_name())) {
 		if (const TypeInfo* object_type_info = tryGetTypeInfo(object_type.type_index())) {
 			if (object_type_info->isStruct() &&
 				isSameClassAsCurrentInstantiation(StringTable::getStringView(object_type_info->name()))) {
@@ -597,7 +592,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (object_expr && std::holds_alternative<QualifiedIdentifierNode>(*object_expr)) {
 		// This is a namespace-qualified function call, not a member function call
 		// Treat it as a regular function call instead
-		return convertMemberCallToFunctionCall(memberFunctionCallNode, context, unified_call_key);
+		return convertMemberCallToFunctionCall(callExprNode, context, sema_call_key);
 	}
 
 	// Verify this is a struct type BEFORE checking other cases
@@ -606,11 +601,11 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (!isIrStructType(toIrType(object_type.type()))) {
 		// The object is not a struct - this might be a namespace identifier or other non-struct type
 		// Treat this as a regular function call instead of a member function call
-		return convertMemberCallToFunctionCall(memberFunctionCallNode, context, unified_call_key);
+		return convertMemberCallToFunctionCall(callExprNode, context, sema_call_key);
 	}
 
 	// Get the function declaration directly from the node (no need to look it up)
-	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
+	const FunctionDeclarationNode& func_decl = member_func_decl;
 	const DeclarationNode& func_decl_node = func_decl.decl_node();
 
 	// consteval enforcement: every call to a consteval function is an immediate invocation
@@ -629,7 +624,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		ctx.parser = parser_;
 		// Step 1: Try evaluation via the member-function path (handles constexpr objects
 		// with 'this' access correctly).
-		auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(memberFunctionCallNode);
+		auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
 		auto eval_result = ConstExpr::Evaluator::evaluate(member_eval_node, ctx);
 		if (!eval_result.success()) {
 			// Step 2: Fall back to a synthetic FunctionCallNode (no object-constexpr
@@ -640,10 +635,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			// variables" error from the fallback).
 			auto first_error = eval_result;
 			ChunkedVector<ASTNode> args_copy;
-			memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
+			callExprNode.arguments().visit([&](ASTNode arg) {
 				args_copy.push_back(arg);
 			});
-			FunctionCallNode synth_call(func_decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
+			FunctionCallNode synth_call(func_decl_node, std::move(args_copy), callExprNode.called_from());
 			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
 			eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 			if (!eval_result.success()) {
@@ -676,7 +671,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		if (!eval_result.object_member_bindings.empty()) {
 			auto agg = materializeConstevalAggregateResult(
 				eval_result, ret_spec, ret_type, ret_size,
-				memberFunctionCallNode.called_from());
+				callExprNode.called_from());
 			if (agg.category() != TypeCategory::Void)
 				return agg;
 		}
@@ -724,7 +719,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		}
 		return true;
 	};
-	const size_t explicit_arg_count = memberFunctionCallNode.arguments().size();
+	const size_t explicit_arg_count = callExprNode.arguments().size();
 	auto isViableMemberOverload = [&](const FunctionDeclarationNode& candidate) {
 		const auto& params = candidate.parameter_nodes();
 		if (explicit_arg_count > params.size()) {
@@ -956,7 +951,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 					// Add arguments
 					std::vector<TypedValue> arguments;
-					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+					callExprNode.arguments().visit([&](ASTNode argument) {
 						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
 					});
@@ -965,7 +960,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						.result = ret_var,
 						.function_pointer = func_ptr_temp,
 						.arguments = std::move(arguments)};
-					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
 
 					// Use the function pointer's stored return type
 					if (!member.function_signature) {
@@ -998,7 +993,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				// Deduce template argument types from call arguments
 				std::vector<TypeIndex> arg_types;
 				// DEBUG removed
-				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				callExprNode.arguments().visit([&](ASTNode argument) {
 					// DEBUG removed
 					if (!argument.is<ExpressionNode>()) {
 						FLASH_LOG(Codegen, Debug, "Argument is not an ExpressionNode");
@@ -1208,7 +1203,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		vcall_op.is_pointer_access = (object_type.pointer_depth() > 0) || object_type.is_reference() || object_type.is_rvalue_reference();
 
 		// Generate IR for function arguments
-		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+		callExprNode.arguments().visit([&](ASTNode argument) {
 			ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
 
 			// For variables, we need to add the type and size
@@ -1233,7 +1228,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		});
 
 		// Add the virtual call instruction
-		ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(vcall_op), memberFunctionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::VirtualCall, std::move(vcall_op), callExprNode.called_from()));
 	} else {
 		// Generate regular (non-virtual) member function call using CallOp typed payload
 
@@ -1262,7 +1257,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 				// Deduce template arguments from call arguments
 				InlineVector<TemplateTypeArg, 4> template_args;
-				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+				callExprNode.arguments().visit([&](ASTNode argument) {
 					if (!argument.is<ExpressionNode>())
 						return;
 					const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
@@ -1314,7 +1309,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					// For generic lambdas, we need to deduce auto parameter types from arguments
 					// Collect argument types first
 					std::vector<TypeSpecifierNode> arg_types;
-					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+					callExprNode.arguments().visit([&](ASTNode argument) {
 						const ExpressionNode& arg_expr = argument.as<ExpressionNode>();
 						if (std::holds_alternative<IdentifierNode>(arg_expr)) {
 							const auto& identifier = std::get<IdentifierNode>(arg_expr);
@@ -1529,7 +1524,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 				addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 				addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 				addr_op.operand.value = obj_temp;
-				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 				this_arg_value = IrValue(this_addr);
 			}
 		} else if (object_is_pointer_like) {
@@ -1545,7 +1540,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			addr_op.operand.size_in_bits = SizeInBits{object_type.size_in_bits()};
 			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(object_type.pointer_depth())};
 			addr_op.operand.value = StringTable::getOrInternStringHandle(object_name);
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), memberFunctionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 			this_arg_value = IrValue(this_addr);
 		}
 		call_op.args.push_back(makeTypedValue(object_type.type(), SizeInBits{64}, this_arg_value));
@@ -1565,7 +1560,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			actual_func_decl = &called_member_func->function_decl.as<FunctionDeclarationNode>();
 		}
 
-		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+		callExprNode.arguments().visit([&](ASTNode argument) {
 			// Get the parameter type from the function declaration to check if it's a reference
 			// For generic lambdas, use the deduced types from param_types instead of the original auto types
 			const TypeSpecifierNode* param_type = nullptr;
@@ -1588,8 +1583,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 			if (param_type && sema_) {
 				sema_ref_binding = sema_->getCallRefBinding(
-					unified_call_key ? static_cast<const void*>(unified_call_key)
-									 : static_cast<const void*>(&memberFunctionCallNode),
+					sema_call_key,
 					arg_index);
 			}
 
@@ -1603,7 +1597,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 													: ExpressionContext::Load;
 				sema_evaluated_arg = visitExpressionNode(argument.as<ExpressionNode>(), arg_context);
 				if (auto sema_bound_arg = tryApplySemaCallArgReferenceBinding(
-						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, memberFunctionCallNode.called_from())) {
+						*sema_evaluated_arg, argument, *param_type, sema_ref_binding, callExprNode.called_from())) {
 					TypedValue typed_arg = toTypedValue(*sema_bound_arg);
 					typed_arg.cv_qualifier = param_type->cv_qualifier();
 					typed_arg.pointer_depth = PointerDepth{static_cast<int>(param_type->pointer_depth())};
@@ -1658,10 +1652,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 													: visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
 							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result, argument, *param_type, callExprNode.called_from())) {
 								arg_result = *materialized;
 							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
 							}
 						}
 						call_op.args.push_back(toTypedValue(arg_result));
@@ -1696,10 +1690,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 													: visitExpressionNode(argument.as<ExpressionNode>());
 						if (param_type) {
 							if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-									arg_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+									arg_result, argument, *param_type, callExprNode.called_from())) {
 								arg_result = *materialized;
 							} else {
-								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, memberFunctionCallNode.called_from());
+								arg_result = applyConstructorArgConversion(arg_result, argument, *param_type, callExprNode.called_from());
 							}
 						}
 						call_op.args.push_back(toTypedValue(arg_result));
@@ -1711,10 +1705,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 													 : visitExpressionNode(argument.as<ExpressionNode>());
 					if (param_type) {
 						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result, argument, *param_type, callExprNode.called_from())) {
 							argument_result = *materialized;
 						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
 						}
 					}
 					call_op.args.push_back(toTypedValue(argument_result));
@@ -1789,10 +1783,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					// Parameter doesn't expect a reference - pass through as-is
 					if (param_type) {
 						if (auto materialized = tryMaterializeSemaSelectedConvertingConstructor(
-								argument_result, argument, *param_type, memberFunctionCallNode.called_from())) {
+								argument_result, argument, *param_type, callExprNode.called_from())) {
 							argument_result = *materialized;
 						} else {
-							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, memberFunctionCallNode.called_from());
+							argument_result = applyConstructorArgConversion(argument_result, argument, *param_type, callExprNode.called_from());
 						}
 					}
 					call_op.args.push_back(toTypedValue(argument_result));
@@ -1808,7 +1802,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		}
 
 		// Add the function call instruction with typed payload
-		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberFunctionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), callExprNode.called_from()));
 	}
 
 	// Build the final ExprResult from the return type — handles reference metadata,
@@ -1816,27 +1810,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	const auto& return_type = (called_member_func && called_member_func->function_decl.is<FunctionDeclarationNode>())
 								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 								  : func_decl_node.type_node().as<TypeSpecifierNode>();
-	return buildCallReturnResult(return_type, ret_var, context, memberFunctionCallNode.called_from());
+	return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
 }
 
-// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
-// Used when a member function call syntax is used but the object is not a struct
-ExprResult AstToIr::convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode,
+// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
+ExprResult AstToIr::convertMemberCallToFunctionCall(const CallExprNode& callExprNode,
 													 ExpressionContext context,
-													 const CallExprNode* unified_call_key) {
-	if (unified_call_key) {
-		return generateFunctionCallIr(*unified_call_key, context);
-	}
-
-	const FunctionDeclarationNode& func_decl = memberFunctionCallNode.function_declaration();
-	const DeclarationNode& decl_node = func_decl.decl_node();
-
-	// Copy the arguments using the visit method
-	ChunkedVector<ASTNode> args_copy;
-	memberFunctionCallNode.arguments().visit([&](ASTNode arg) {
-		args_copy.push_back(arg);
-	});
-
-	FunctionCallNode function_call(decl_node, std::move(args_copy), memberFunctionCallNode.called_from());
-	return generateFunctionCallIr(function_call, context);
+													 const void* sema_call_key) {
+	return generateFunctionCallIr(callExprNode, context, sema_call_key);
 }

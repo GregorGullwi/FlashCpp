@@ -52,7 +52,7 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
 - [x] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
 - [x] Merge the remaining constexpr evaluation, substitution, and direct IR entry points onto direct `CallExprNode` handling so the old `materializeLegacy*` adapters are no longer needed there.
-- [ ] Merge the deeper shared IR lowering pipeline so the remaining member-call lowering, virtual dispatch, and member-to-free fallback paths stop depending on `MemberFunctionCallNode` / `FunctionCallNode` internals.
+- [x] Merge the deeper shared IR lowering pipeline so the remaining member-call lowering, virtual dispatch, and member-to-free fallback paths stop depending on `MemberFunctionCallNode` / `FunctionCallNode` internals.
 - [x] Remove temporary call-form conversions such as member-to-function fallback nodes in constexpr evaluation, substitution, and the top-level direct/member IR entry points once those downstream sites read the unified representation directly.
 - [ ] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
 
@@ -62,9 +62,9 @@ The callee descriptor should be rich enough to distinguish:
 - Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path without re-materializing legacy free-call nodes.
 - Constexpr evaluation now consumes `CallExprNode` directly for free/member dispatch, bound-call handling, noexcept lookup, and static-member cycle detection.
 - Semantic analysis now routes callable-operator lookup, overload recovery, argument conversion, and reference-binding annotation through shared `CallInfo`-based helpers; the legacy per-node entry points remain only as thin wrappers.
-- The remaining IR entry points now read the shared sema lookup tables through generic call-key accessors, and the member-to-free fallback now reuses the original unified `CallExprNode` when available, but the deeper member-call lowering code still uses legacy node types internally and still contains other synthetic conversions.
-- The only `materializeLegacy*` remnants left in the tree are the helper definitions in `src/CallNodeHelpers.h`; no current caller still relies on them.
-- The remaining work is now centered on pushing the rest of IR lowering onto direct `CallExprNode` handling before deleting the duplicate legacy nodes.
+- IR lowering unification is now complete: the deeper member-call lowering, virtual dispatch, and member-to-free fallback paths have been flipped so the 3-arg `generateMemberFunctionCallIr` and `convertMemberCallToFunctionCall` both take `const CallExprNode&` as the primary type, exactly matching the pattern already done for `generateFunctionCallIr`. The 2-arg `MemberFunctionCallNode` entry is now a thin forwarding wrapper. The `materializeLegacyFunctionCall` and `materializeLegacyMemberFunctionCall` helpers have been removed from `CallNodeHelpers.h` as there are no remaining callers.
+- The three synthetic `MemberFunctionCallNode` constructions in range-for lowering (`IrGenerator_Stmt_Control.cpp`) have been replaced with `makeResolvedMemberCallExpr` calls.
+- The remaining work is now centered on deleting the legacy duplicate call nodes after all call sites and visitors stop depending on them.
 
 ## Important implementation notes
 

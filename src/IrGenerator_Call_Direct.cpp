@@ -434,12 +434,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 				ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
 					IdentifierNode(func_ptr_decl->identifier_token()));
-				MemberFunctionCallNode member_call(
+				CallExprNode member_call = makeResolvedMemberCallExpr(
 					object_expr,
 					*operator_call,
 					std::move(member_args),
 					callExprNode.called_from());
-				return generateMemberFunctionCallIr(member_call, context, nullptr);
+				return generateMemberFunctionCallIr(member_call, context, sema_call_key);
 			}
 		}
 
