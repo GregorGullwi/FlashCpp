@@ -2210,6 +2210,130 @@ private:
 	bool is_indirect_call_ = false;	// True for function pointer/reference calls
 };
 
+// ============================================================================
+// Unified call-expression node (consolidation plan step 1)
+// ============================================================================
+
+// Describes what kind of call site this is.
+enum class CalleeKind : uint8_t {
+	FreeFunction,           // Direct call to a free/namespace-scoped function
+	MemberFunction,         // Call on a receiver object (non-static member)
+	StaticMemberFunction,   // Qualified call to a static member function
+	IndirectCall,           // Call through a function pointer or reference
+};
+
+// Identifies the callee target of a unified call expression.
+// Holds a reference to the declaration being called, and optionally
+// the full FunctionDeclarationNode when available.
+class CalleeDescriptor {
+public:
+	// Factory: free-function call with only a DeclarationNode
+	static CalleeDescriptor freeFunction(const DeclarationNode& decl) {
+		return CalleeDescriptor(&decl, nullptr, CalleeKind::FreeFunction);
+	}
+
+	// Factory: free-function call with a resolved FunctionDeclarationNode
+	static CalleeDescriptor freeFunctionResolved(const FunctionDeclarationNode& func_decl) {
+		return CalleeDescriptor(&func_decl.decl_node(), &func_decl, CalleeKind::FreeFunction);
+	}
+
+	// Factory: non-static member function call
+	static CalleeDescriptor memberFunction(const FunctionDeclarationNode& func_decl) {
+		return CalleeDescriptor(&func_decl.decl_node(), &func_decl, CalleeKind::MemberFunction);
+	}
+
+	// Factory: static member function call
+	static CalleeDescriptor staticMemberFunction(const FunctionDeclarationNode& func_decl) {
+		return CalleeDescriptor(&func_decl.decl_node(), &func_decl, CalleeKind::StaticMemberFunction);
+	}
+
+	// Factory: indirect call (function pointer / reference)
+	static CalleeDescriptor indirectCall(const DeclarationNode& decl) {
+		return CalleeDescriptor(&decl, nullptr, CalleeKind::IndirectCall);
+	}
+
+	CalleeKind kind() const { return kind_; }
+
+	// The underlying DeclarationNode — always available.
+	const DeclarationNode& declaration() const { return *decl_; }
+
+	// The full FunctionDeclarationNode — only available when the callee
+	// was resolved to a concrete function (member or free).
+	const FunctionDeclarationNode* function_declaration_or_null() const { return func_decl_; }
+	bool has_function_declaration() const { return func_decl_ != nullptr; }
+
+	bool is_member() const { return kind_ == CalleeKind::MemberFunction; }
+	bool is_static_member() const { return kind_ == CalleeKind::StaticMemberFunction; }
+	bool is_indirect() const { return kind_ == CalleeKind::IndirectCall; }
+
+private:
+	CalleeDescriptor(const DeclarationNode* decl, const FunctionDeclarationNode* func_decl, CalleeKind kind)
+		: decl_(decl), func_decl_(func_decl), kind_(kind) {}
+
+	const DeclarationNode* decl_;
+	const FunctionDeclarationNode* func_decl_;
+	CalleeKind kind_;
+};
+
+// Unified call-expression node.
+// Covers free-function calls, member-function calls, static-member calls,
+// and indirect (function-pointer) calls.  Existing FunctionCallNode and
+// MemberFunctionCallNode remain for now; downstream code will be migrated
+// incrementally (see docs/2026-04-02-call-node-consolidation-plan.md).
+class CallExprNode {
+public:
+	// For calls without a receiver (free functions, static members, indirect)
+	explicit CallExprNode(CalleeDescriptor callee, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: callee_(callee), receiver_(), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+
+	// For calls with a receiver (member function calls)
+	explicit CallExprNode(CalleeDescriptor callee, ASTNode receiver, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
+		: callee_(callee), receiver_(receiver), arguments_(std::move(arguments)), called_from_(called_from_token) {}
+
+	// --- Callee ---
+	const CalleeDescriptor& callee() const { return callee_; }
+	CalleeKind call_kind() const { return callee_.kind(); }
+
+	// --- Receiver ---
+	bool has_receiver() const { return receiver_.has_value(); }
+	ASTNode receiver() const { return receiver_; }
+
+	// --- Arguments ---
+	const ChunkedVector<ASTNode>& arguments() const { return arguments_; }
+	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+
+	// --- Source token ---
+	Token called_from() const { return called_from_; }
+
+	// --- Pre-computed mangled name ---
+	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view mangled_name() const { return mangled_name_.view(); }
+	StringHandle mangled_name_handle() const { return mangled_name_; }
+	bool has_mangled_name() const { return mangled_name_.isValid(); }
+
+	// --- Qualified source name ---
+	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view qualified_name() const { return qualified_name_.view(); }
+	StringHandle qualified_name_handle() const { return qualified_name_; }
+	bool has_qualified_name() const { return qualified_name_.isValid(); }
+
+	// --- Explicit template arguments ---
+	void set_template_arguments(std::vector<ASTNode>&& template_args) {
+		template_arguments_ = std::move(template_args);
+	}
+	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
+	bool has_template_arguments() const { return !template_arguments_.empty(); }
+
+private:
+	CalleeDescriptor callee_;
+	ASTNode receiver_;                   // Object for member-style calls (empty when absent)
+	ChunkedVector<ASTNode> arguments_;
+	Token called_from_;
+	StringHandle mangled_name_;          // Pre-computed mangled name
+	StringHandle qualified_name_;        // Source-level qualified name (e.g., "ns::func")
+	std::vector<ASTNode> template_arguments_;  // Explicit template arguments
+};
+
 // Constructor call node - represents constructor calls like T(args)
 class ConstructorCallNode {
 public:
