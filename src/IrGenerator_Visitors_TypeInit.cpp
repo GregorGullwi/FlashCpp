@@ -346,18 +346,37 @@ void AstToIr::generateStaticMemberDeclarations() {
 			data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
 		}
 	};
+	using InstantiatedStaticMembersByTemplate =
+		std::unordered_map<StringHandle, std::unordered_set<StringHandle, StringHandleHash>, StringHandleHash>;
+	InstantiatedStaticMembersByTemplate instantiated_static_members_by_template;
+	for (const auto& [candidate_name, candidate_type] : getTypesByNameMap()) {
+		if (!candidate_type->isTemplateInstantiation() || !candidate_type->isStruct()) {
+			continue;
+		}
+		const StructTypeInfo* candidate_struct = candidate_type->getStructInfo();
+		if (!candidate_struct) {
+			continue;
+		}
+		auto& member_names = instantiated_static_members_by_template[candidate_type->baseTemplateName()];
+		for (const auto& static_member : candidate_struct->static_members) {
+			member_names.insert(static_member.getName());
+		}
+	}
 	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
-		auto isDependentTypeOperand = [](const ASTNode& operand_node) {
-			if (!operand_node.is<TypeSpecifierNode>()) {
+		auto hasUnresolvedTypeSpecifier = [](const ASTNode& node) {
+			if (!node.is<TypeSpecifierNode>()) {
 				return false;
 			}
 
-			const auto& type_spec = operand_node.as<TypeSpecifierNode>();
+			const auto& type_spec = node.as<TypeSpecifierNode>();
 			return !type_spec.type_index().is_valid();
 		};
 
 		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
 			if (current.is<SizeofPackNode>() || current.is<TemplateParameterReferenceNode>()) {
+				return true;
+			}
+			if (hasUnresolvedTypeSpecifier(current)) {
 				return true;
 			}
 
@@ -378,12 +397,12 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 			if (current.is<SizeofExprNode>()) {
 				const auto& sizeof_expr = current.as<SizeofExprNode>();
-				return sizeof_expr.is_type() && isDependentTypeOperand(sizeof_expr.type_or_expr());
+				return sizeof_expr.is_type() && hasUnresolvedTypeSpecifier(sizeof_expr.type_or_expr());
 			}
 
 			if (current.is<AlignofExprNode>()) {
 				const auto& alignof_expr = current.as<AlignofExprNode>();
-				return alignof_expr.is_type() && isDependentTypeOperand(alignof_expr.type_or_expr());
+				return alignof_expr.is_type() && hasUnresolvedTypeSpecifier(alignof_expr.type_or_expr());
 			}
 
 			return false;
@@ -629,19 +648,9 @@ void AstToIr::generateStaticMemberDeclarations() {
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
 				if (gTemplateRegistry.isClassTemplate(type_name) && !type_info->isTemplateInstantiation()) {
-					bool has_instantiated_owner = false;
-					for (const auto& [candidate_name, candidate_type] : getTypesByNameMap()) {
-						if (candidate_name == type_name || !candidate_type->isTemplateInstantiation() ||
-							candidate_type->baseTemplateName() != type_name) {
-							continue;
-						}
-						if (const StructTypeInfo* candidate_struct = candidate_type->getStructInfo();
-							candidate_struct && candidate_struct->findStaticMember(static_member.getName()) != nullptr) {
-							has_instantiated_owner = true;
-							break;
-						}
-					}
-					if (has_instantiated_owner) {
+					auto inst_it = instantiated_static_members_by_template.find(type_name);
+					if (inst_it != instantiated_static_members_by_template.end() &&
+						inst_it->second.count(static_member.getName()) > 0) {
 						FLASH_LOG(Codegen, Debug, "Skipping template-pattern static member '",
 								  static_member.getName(), "' in type '", type_name,
 								  "' because an instantiated owner already exists");

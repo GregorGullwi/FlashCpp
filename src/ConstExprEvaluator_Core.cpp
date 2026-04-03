@@ -64,29 +64,34 @@ void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNo
 	}
 }
 
-std::optional<EvalResult> tryResolveTemplateValueParameter(std::string_view param_name, const EvaluationContext& context) {
-	// Resolve a non-type template parameter from the active evaluation context.
-	// Returns std::nullopt when the name is not bound or the binding is a type
-	// parameter rather than a value parameter.
+const TemplateTypeArg* findTemplateValueParameterBinding(std::string_view param_name, const EvaluationContext& context) {
 	for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
-		if (context.template_param_names[i] != param_name) {
-			continue;
+		if (context.template_param_names[i] == param_name) {
+			return &context.template_args[i];
 		}
+	}
+	return nullptr;
+}
 
-		const TemplateTypeArg& arg = context.template_args[i];
-		if (!arg.is_value) {
-			return std::nullopt;
-		}
-
-		if (arg.category() == TypeCategory::Bool) {
-			return EvalResult::from_bool(arg.value != 0);
-		}
-		if (is_unsigned_integer_type(arg.category())) {
-			return EvalResult::from_uint(static_cast<unsigned long long>(arg.value));
-		}
+std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
+	// Resolve a non-type template parameter from the active evaluation context.
+	// Returns std::nullopt when the bound parameter uses a category that the
+	// constexpr evaluator cannot yet materialize directly as an EvalResult.
+	if (!arg.is_value) {
+		return std::nullopt;
+	}
+	if (arg.category() == TypeCategory::Bool) {
+		return EvalResult::from_bool(arg.value != 0);
+	}
+	if (arg.category() == TypeCategory::Enum) {
 		return EvalResult::from_int(arg.value);
 	}
-
+	if (is_unsigned_integer_type(arg.category())) {
+		return EvalResult::from_uint(static_cast<unsigned long long>(arg.value));
+	}
+	if (isIntegralType(arg.category())) {
+		return EvalResult::from_int(arg.value);
+	}
 	return std::nullopt;
 }
 
@@ -232,15 +237,18 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 		const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
 		std::string_view param_name = StringTable::getStringView(template_param.param_name());
-		if (auto resolved = tryResolveTemplateValueParameter(param_name, context)) {
-			return *resolved;
-		}
-		for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
-			if (context.template_param_names[i] == param_name) {
+		if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(param_name, context)) {
+			if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
+				return *resolved;
+			}
+			if (!arg->is_value) {
 				return EvalResult::error("Type template parameter used as value in constant expression: " +
 											 std::string(param_name),
 										 EvalErrorType::TemplateDependentExpression);
 			}
+			return EvalResult::error("Unsupported non-type template parameter category in constant expression: " +
+										 std::string(param_name),
+									 EvalErrorType::Other);
 		}
 
 		// Template parameter remains unresolved at template definition time.
@@ -1958,8 +1966,15 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	std::string_view var_name = identifier.name();
 	StringHandle name_handle = identifier.getOrInternNameHandle();
-	if (auto resolved = tryResolveTemplateValueParameter(var_name, context)) {
-		return *resolved;
+	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(var_name, context)) {
+		if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
+			return *resolved;
+		}
+		if (arg->is_value) {
+			return EvalResult::error("Unsupported non-type template parameter category in constant expression: " +
+										 std::string(var_name),
+									 EvalErrorType::Other);
+		}
 	}
 
 	auto try_materialize_current_struct_static = [&](
