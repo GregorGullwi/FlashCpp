@@ -490,19 +490,19 @@ void refreshPointerSnapshotsForBindingInMap(
 		}
 
 		if (target_value.is_array) {
-			binding_value.array_elements.clear();
+			binding_value.pointer_value_snapshot.clear();
 			if (!target_value.array_elements.empty()) {
-				binding_value.array_elements = target_value.array_elements;
+				binding_value.pointer_value_snapshot = target_value.array_elements;
 			} else {
-				binding_value.array_elements.reserve(target_value.array_values.size());
+				binding_value.pointer_value_snapshot.reserve(target_value.array_values.size());
 				for (int64_t element_value : target_value.array_values) {
-					binding_value.array_elements.push_back(EvalResult::from_int(element_value));
+					binding_value.pointer_value_snapshot.push_back(EvalResult::from_int(element_value));
 				}
 			}
 			continue;
 		}
 
-		binding_value.array_elements = {target_value};
+		binding_value.pointer_value_snapshot = {target_value};
 	}
 }
 
@@ -1862,7 +1862,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
-						ptr_result.array_elements = {*snap};
+						ptr_result.pointer_value_snapshot = {*snap};
 					return ptr_result;
 				}
 				// &arr[i]: address of array element → pointer with offset.
@@ -1875,12 +1875,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the full array so the pointer can be dereferenced at any
+						// valid offset in a different scope (e.g., p[0]+p[1]+p[2] after
+						// cross-scope call).  This mirrors refreshPointerSnapshotsForBindingInMap.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.array_elements = {arr_eval->array_elements[idx]};
+							if (!arr_eval->array_elements.empty()) {
+								ptr_result.pointer_value_snapshot = arr_eval->array_elements;
+							} else if (!arr_eval->array_values.empty()) {
+								ptr_result.pointer_value_snapshot.reserve(arr_eval->array_values.size());
+								for (int64_t v : arr_eval->array_values) {
+									ptr_result.pointer_value_snapshot.push_back(EvalResult::from_int(v));
+								}
+							}
 						}
 						return ptr_result;
 					}
@@ -1899,7 +1906,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
-			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+			return EvalResult::error(
+				"Dereference operator (*) on a non-pointer value in constant expressions",
+				EvalErrorType::NotConstantExpression);
 		}
 
 		return apply_unary_op(operand_result, op);
@@ -2078,7 +2087,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
-						ptr_result.array_elements = {*snap};
+						ptr_result.pointer_value_snapshot = {*snap};
 					return ptr_result;
 				}
 				// &arr[i]: address of array element → pointer with offset.
@@ -2091,12 +2100,19 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 							return idx_result;
 						int64_t elem_offset = idx_result.as_int();
 						EvalResult ptr_result = EvalResult::from_pointer(arr_name, elem_offset);
-						// Snapshot the element so the pointer can be dereferenced in a different scope.
+						// Snapshot the full array so the pointer can be dereferenced at any
+						// valid offset in a different scope (e.g., p[0]+p[1]+p[2] after
+						// cross-scope call).  This mirrors refreshPointerSnapshotsForBindingInMap.
 						const EvalResult* arr_eval = findBindingValue(arr_name, bindings, context);
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
-							size_t idx = static_cast<size_t>(elem_offset);
-							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.array_elements = {arr_eval->array_elements[idx]};
+							if (!arr_eval->array_elements.empty()) {
+								ptr_result.pointer_value_snapshot = arr_eval->array_elements;
+							} else if (!arr_eval->array_values.empty()) {
+								ptr_result.pointer_value_snapshot.reserve(arr_eval->array_values.size());
+								for (int64_t v : arr_eval->array_values) {
+									ptr_result.pointer_value_snapshot.push_back(EvalResult::from_int(v));
+								}
+							}
 						}
 						return ptr_result;
 					}
@@ -2147,7 +2163,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
-			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+			return EvalResult::error(
+				"Dereference operator (*) on a non-pointer value in constant expressions",
+				EvalErrorType::NotConstantExpression);
 		}
 
 		return apply_unary_op(operand_result, op);
@@ -2221,10 +2239,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 													 "' not found at offset " + std::to_string(ptr_eval.pointer_offset));
 						}
 						// Check snapshot first (covers pointers to local / outer-scope variables).
-						// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
-						// "array_elements field reused for pointer value snapshot").
-						if (!ptr_eval.array_elements.empty()) {
-							const EvalResult& snapshot = ptr_eval.array_elements[0];
+						if (!ptr_eval.pointer_value_snapshot.empty()) {
+							const EvalResult& snapshot = ptr_eval.pointer_value_snapshot[0];
 							auto member_it = snapshot.object_member_bindings.find(member_name);
 							if (member_it != snapshot.object_member_bindings.end()) {
 								return member_it->second;
@@ -2478,11 +2494,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			if (!lhs_is_ptr && rhs_is_ptr) {
 				// n + ptr
@@ -2490,11 +2510,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(rhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !rhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = rhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			return EvalResult::error("Addition of two pointers is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 		}
@@ -2505,11 +2529,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array
