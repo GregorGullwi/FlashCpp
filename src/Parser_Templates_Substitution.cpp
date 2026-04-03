@@ -876,9 +876,9 @@ ASTNode Parser::substituteTemplateParameters(
 				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
 			}
 			return emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(substituted_object,
-									   const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
-									   std::move(substituted_args), member_call.called_from()));
+				makeResolvedMemberCallExpr(substituted_object,
+										   member_call.function_declaration(),
+										   std::move(substituted_args), member_call.called_from()));
 		}
 
 		if (std::holds_alternative<CallExprNode>(expr)) {
@@ -1452,16 +1452,14 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			for (size_t i = 0; i < call.arguments().size(); ++i) {
 				new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
 			}
-			ASTNode new_call = emplace_node<ExpressionNode>(
-				FunctionCallNode(call.function_declaration(), std::move(new_args), call.called_from()));
-			FunctionCallNode& new_call_ref = std::get<FunctionCallNode>(new_call.as<ExpressionNode>());
+			CallExprNode new_call_expr = makeDirectCallExpr(call.function_declaration(), std::move(new_args), call.called_from());
 			copyCallMetadataWithTransformedTemplateArguments(
-				new_call_ref,
+				new_call_expr,
 				call,
 				[&](const ASTNode& template_arg) {
 					return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
 				});
-			return new_call;
+			return emplace_node<ExpressionNode>(std::move(new_call_expr));
 		}
 
 		if (std::holds_alternative<CallExprNode>(expr_variant)) {

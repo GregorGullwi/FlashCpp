@@ -4334,10 +4334,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 
 								if (has_dependent_args) {
-									// Defer evaluation - create a FunctionCallNode to preserve the concept application
+									// Defer evaluation - create a CallExprNode to preserve the concept application
 									FLASH_LOG_FORMAT(Parser, Debug, "Found concept '{}' with DEPENDENT template arguments - deferring evaluation", identifier_token.value());
 
-									// Create a FunctionCallNode that will be evaluated during instantiation
+									// Create a CallExprNode that will be evaluated during instantiation
 									// The concept name is stored in the token, template args are already parsed
 									Token concept_token = identifier_token;
 
@@ -4347,7 +4347,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										TypeIndex{}.withCategory(TypeCategory::Void), 0, void_token, CVQualifier::None, ReferenceQualifier::None);
 									auto concept_decl = emplace_node<DeclarationNode>(void_type, concept_token);
 
-									auto [func_call_node, func_call_ref] = emplace_node_ref<FunctionCallNode>(
+									CallExprNode concept_call = makeDirectCallExpr(
 										concept_decl.as<DeclarationNode>(),
 										ChunkedVector<ASTNode>(),
 										concept_token);
@@ -4369,9 +4369,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											template_arg_nodes.push_back(type_node);
 										}
 									}
-									func_call_ref.set_template_arguments(std::move(template_arg_nodes));
+									concept_call.set_template_arguments(std::move(template_arg_nodes));
 
-									result = emplace_node<ExpressionNode>(func_call_node.as<FunctionCallNode>());
+									result = emplace_node<ExpressionNode>(std::move(concept_call));
 									return ParseResult::success(*result);
 								}
 
