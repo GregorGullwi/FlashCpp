@@ -476,6 +476,47 @@ EvalResult* findMutableBindingValue(
 	return it == bindings.end() ? nullptr : &it->second;
 }
 
+void refreshPointerSnapshotsForBindingInMap(
+	std::unordered_map<std::string_view, EvalResult>& binding_map,
+	std::string_view target_name,
+	const EvalResult& target_value) {
+	for (auto& [binding_name, binding_value] : binding_map) {
+		(void)binding_name;
+		if (!binding_value.pointer_to_var.isValid()) {
+			continue;
+		}
+		if (StringTable::getStringView(binding_value.pointer_to_var) != target_name) {
+			continue;
+		}
+
+		if (target_value.is_array) {
+			binding_value.array_elements.clear();
+			if (!target_value.array_elements.empty()) {
+				binding_value.array_elements = target_value.array_elements;
+			} else {
+				binding_value.array_elements.reserve(target_value.array_values.size());
+				for (int64_t element_value : target_value.array_values) {
+					binding_value.array_elements.push_back(EvalResult::from_int(element_value));
+				}
+			}
+			continue;
+		}
+
+		binding_value.array_elements = {target_value};
+	}
+}
+
+void refreshPointerSnapshotsForBinding(
+	std::string_view target_name,
+	const EvalResult& target_value,
+	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context) {
+	if (context.local_bindings && context.local_bindings != &bindings) {
+		refreshPointerSnapshotsForBindingInMap(*context.local_bindings, target_name, target_value);
+	}
+	refreshPointerSnapshotsForBindingInMap(bindings, target_name, target_value);
+}
+
 	// Extract the variable/member name for the address-of + array-subscript pattern.
 	// Handles:  &data[i]       → "data" (plain identifier)
 	//           &this->data[i] → "data" (member access via this)
@@ -1445,8 +1486,10 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					if (op == "=") {
 						if (target_binding) {
 							*target_binding = rhs_result;
+							refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
 						} else {
 							bindings[var_name] = rhs_result;
+							refreshPointerSnapshotsForBinding(var_name, bindings[var_name], bindings, context);
 						}
 						return rhs_result;
 					} else {
@@ -1454,7 +1497,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (!target_binding) {
 							return EvalResult::error("Variable not found for compound assignment: " + std::string(var_name));
 						}
-						return apply_op_to(*target_binding, rhs_result);
+						auto result = apply_op_to(*target_binding, rhs_result);
+						if (result.success()) {
+							refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
+						}
+						return result;
 					}
 				}
 
@@ -1576,7 +1623,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						auto rhs_result = evaluate_expression_with_bindings(bin_op.get_rhs(), bindings, context);
 						if (!rhs_result.success())
 							return rhs_result;
-						return apply_op_to(member_it->second, rhs_result);
+						auto result = apply_op_to(member_it->second, rhs_result);
+						if (result.success()) {
+							refreshPointerSnapshotsForBinding(obj_id->name(), *obj_binding, bindings, context);
+						}
+						return result;
 					};
 					if (auto result = dot_assign())
 						return *result;
@@ -1623,7 +1674,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 							if (idx < 0 || static_cast<size_t>(idx) >= bound->array_elements.size()) {
 								return EvalResult::error("Array index out of bounds in constexpr subscript assignment");
 							}
-							return apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
+							auto result = apply_op_to(bound->array_elements[static_cast<size_t>(idx)], rhs_result);
+							if (result.success()) {
+								refreshPointerSnapshotsForBinding(arr_name, *bound, bindings, context);
+							}
+							return result;
 						}
 					}
 					// Case 3: nested subscript assignment for multi-dimensional arrays
@@ -1657,7 +1712,11 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 										if (idx < 0 || static_cast<size_t>(idx) >= row.array_elements.size()) {
 											return EvalResult::error("Inner array index out of bounds in constexpr 2D subscript assignment");
 										}
-										return apply_op_to(row.array_elements[static_cast<size_t>(idx)], rhs_result);
+										auto result = apply_op_to(row.array_elements[static_cast<size_t>(idx)], rhs_result);
+										if (result.success()) {
+											refreshPointerSnapshotsForBinding(base_name, *base_bound, bindings, context);
+										}
+										return result;
 									}
 								}
 							}
@@ -1769,6 +1828,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					}
 
 					*target_binding = new_value;
+					refreshPointerSnapshotsForBinding(var_name, *target_binding, bindings, context);
 
 					// Return old value for postfix, new value for prefix
 					if (unary_op.is_prefix()) {
