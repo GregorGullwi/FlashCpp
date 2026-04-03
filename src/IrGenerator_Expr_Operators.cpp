@@ -2684,7 +2684,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	if (lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
 			// Keep the codegen-side fallback for standard arithmetic conversions so valid
-			// expressions (for example alias-heavy integer arithmetic) still lower correctly
+			// expressions (for example, alias-heavy integer arithmetic) still lower correctly
 			// while sema annotations are tightened incrementally.
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsCat) && is_standard_arithmetic_type(commonType))
 				FLASH_LOG(Codegen, Warning, "Phase 15 fallback: sema missed binary LHS conversion (",
@@ -2708,7 +2708,7 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	} else if (rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
 			// Keep the codegen-side fallback for standard arithmetic conversions so valid
-			// expressions (for example alias-heavy integer arithmetic) still lower correctly
+			// expressions (for example, alias-heavy integer arithmetic) still lower correctly
 			// while sema annotations are tightened incrementally.
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsCat) && is_standard_arithmetic_type(commonType))
 				FLASH_LOG(Codegen, Warning, "Phase 15 fallback: sema missed binary RHS conversion (",

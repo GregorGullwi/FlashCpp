@@ -1824,11 +1824,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				}
 			}
 			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
+				const size_t element_size_bytes = static_cast<size_t>(size_in_bits / 8);
+				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
+					throw InternalError("Local array initializer size overflow");
 				StructMember array_member(
 					decl.identifier_token().handle(),
 					type_node.type_index(),
 					0,
-					static_cast<size_t>(size_in_bits / 8) * array_count,
+					element_size_bytes * array_count,
 					decl.custom_alignment(),
 					AccessSpecifier::Public,
 					std::nullopt,
