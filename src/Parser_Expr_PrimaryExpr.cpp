@@ -5433,8 +5433,40 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
+									bool resolved_as_struct_member = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
+										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
+											if (!member_function_context_stack_.empty()) {
+												std::string_view struct_name =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+												if (!struct_name.empty()) {
+													if (auto member_inst = try_instantiate_member_function_template_explicit(
+															struct_name,
+															identifier_token.value(),
+															*effective_template_args)) {
+														return member_inst;
+													}
+												}
+											}
+
+											if (!struct_parsing_context_stack_.empty()) {
+												const auto& struct_ctx = struct_parsing_context_stack_.back();
+												if (!struct_ctx.struct_name.empty()) {
+													return try_instantiate_member_function_template_explicit(
+														struct_ctx.struct_name,
+														identifier_token.value(),
+														*effective_template_args);
+												}
+											}
+
+											return std::nullopt;
+										};
+
+										instantiated_func = try_instantiate_current_struct_member_template();
+										resolved_as_struct_member = instantiated_func.has_value();
+										if (!resolved_as_struct_member) {
+											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
+										}
 									}
 									if (instantiated_func.has_value()) {
 										// Check if the function is deleted
@@ -5453,12 +5485,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return ParseResult::error("Invalid template instantiation", identifier_token);
 										}
 										result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										if (explicit_template_arg_nodes.empty()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
+										} else {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
+										}
+										if (!explicit_template_arg_nodes.empty()) {
+											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+										}
+										auto set_current_struct_qualified_name = [&](std::string_view struct_name) {
+											if (!struct_name.empty()) {
+												func_call.set_qualified_name(
+													StringBuilder()
+														.append(struct_name)
+														.append("::")
+														.append(identifier_token.value())
+														.commit());
+											}
+										};
+										if (resolved_as_struct_member) {
+											std::string_view struct_name_for_qual;
+											if (!member_function_context_stack_.empty()) {
+												struct_name_for_qual =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+											} else if (!struct_parsing_context_stack_.empty()) {
+												struct_name_for_qual =
+													struct_parsing_context_stack_.back().struct_name;
+											}
+											set_current_struct_qualified_name(struct_name_for_qual);
+										}
 
 										// Copy mangled name if available
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
 											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 											if (func_decl.has_mangled_name()) {
-												std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+												func_call.set_mangled_name(func_decl.mangled_name());
 											}
 										}
 									} else if (has_dependent_template_args) {
