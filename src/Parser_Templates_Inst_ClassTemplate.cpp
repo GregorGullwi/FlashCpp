@@ -3624,12 +3624,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
 									auto instantiated = try_instantiate_class_template(base_template_name, instantiated_args);
+									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+										ast_nodes_.push_back(*instantiated);
+									}
 									std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
 									if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
 										instantiated = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
 									}
 									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										ast_nodes_.push_back(*instantiated);
 										inst_name = StringTable::getStringView(instantiated->as<StructDeclarationNode>().name());
 									}
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
