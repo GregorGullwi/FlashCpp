@@ -726,9 +726,13 @@ private:
 					visit(*e.expression());
 				}
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// Recurse into receiver and arguments like the other call nodes.
+				// Recurse into receiver, template arguments, and arguments
+				// like the other call nodes.
 				if (e.has_receiver()) {
 					visit(e.receiver());
+				}
+				for (const auto& template_arg : e.template_arguments()) {
+					visit(template_arg);
 				}
 				for (const auto& arg : e.arguments()) {
 					visit(arg);
@@ -2158,9 +2162,15 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 					normalizeExpression(*e.expression(), ctx);
 				}
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// Recurse into receiver and arguments like the other call nodes.
+				// TODO(call-node-consolidation): add tryAnnotateCallArgConversions /
+				// tryResolveCallableOperator equivalents once CallExprNode is emitted.
+				// Recurse into receiver, template arguments, and arguments
+				// like the other call nodes.
 				if (e.has_receiver()) {
 					normalizeExpression(e.receiver(), ctx);
+				}
+				for (const auto& template_arg : e.template_arguments()) {
+					normalizeExpression(template_arg, ctx);
 				}
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
@@ -2770,8 +2780,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// Infer return type from the callee's declaration.
-				return inferExpressionType(e.callee().declaration().type_node());
+				// Infer return type from the callee's declaration,
+				// mirroring the FunctionCallNode handler above.
+				const DeclarationNode& decl = e.callee().declaration();
+				const ASTNode ret_type_node = decl.type_node();
+				if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& type_node = ret_type_node.as<TypeSpecifierNode>();
+					if (!isPlaceholderAutoType(type_node.type())) {
+						return canonicalizeType(type_node);
+					}
+				}
+				return {};
 			}
 			return {};
 		},
