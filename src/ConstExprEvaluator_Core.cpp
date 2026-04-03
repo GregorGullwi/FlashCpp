@@ -503,7 +503,9 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				StringTable::getStringView(operand_result.pointer_to_var),
 				context, operand_result.pointer_offset);
 		}
-		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+		return EvalResult::error(
+			"Dereference operator (*) on a non-pointer value in constant expressions",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	return apply_unary_op(operand_result, op);
@@ -521,7 +523,8 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-										 std::string(var_name) + "' has already been deleted");
+										 std::string(var_name) + "' has already been deleted",
+									 EvalErrorType::NotConstantExpression);
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -529,19 +532,25 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-					return EvalResult::error("Array access out of bounds in constant expression (heap)");
+					return EvalResult::error(
+						"Array access out of bounds in constant expression (heap)",
+						EvalErrorType::NotConstantExpression);
 				}
 				return heap_val.array_elements[static_cast<size_t>(offset)];
 			}
 			if (offset != 0) {
-				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
+				return EvalResult::error(
+					"Non-zero offset on non-array heap object in constant expression",
+					EvalErrorType::NotConstantExpression);
 			}
 			return heap_val;
 		}
 	}
 
 	if (!context.symbols) {
-		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
+		return EvalResult::error(
+			"Cannot dereference constexpr pointer: no symbol table available",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	auto evaluate_array_element = [&](const ASTNode& element, TypeIndex element_type_index) -> EvalResult {
@@ -611,24 +620,34 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		}
 	}
 	if (!symbol.has_value()) {
-		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
+		return EvalResult::error(
+			"Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found",
+			EvalErrorType::NotConstantExpression);
 	}
 	// The symbol should be a VariableDeclarationNode; evaluate its initializer.
 	if (!symbol->is<VariableDeclarationNode>()) {
-		return EvalResult::error("Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable");
+		return EvalResult::error(
+			"Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable",
+			EvalErrorType::NotConstantExpression);
 	}
 	const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
 	if (!var_decl.is_constexpr()) {
-		return EvalResult::error("Cannot dereference pointer to non-constexpr variable: " + std::string(var_name));
+		return EvalResult::error(
+			"Cannot dereference pointer to non-constexpr variable: " + std::string(var_name),
+			EvalErrorType::NotConstantExpression);
 	}
 	const auto& initializer = var_decl.initializer();
 	if (!initializer.has_value()) {
-		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer");
+		return EvalResult::error(
+			"Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	// Reject negative pointer offsets regardless of variable type.
 	if (offset < 0) {
-		return EvalResult::error("Negative pointer offset " + std::to_string(offset) + " in constant expression");
+		return EvalResult::error(
+			"Negative pointer offset " + std::to_string(offset) + " in constant expression",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	// Check if the target variable is an array — if so, always use array element access.
@@ -669,12 +688,16 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 				return EvalResult::from_int(arr_result.array_values[static_cast<size_t>(offset)]);
 			}
 		}
-		return EvalResult::error("Cannot dereference pointer with offset: variable '" + std::string(var_name) + "' is not evaluable as an array");
+		return EvalResult::error(
+			"Cannot dereference pointer with offset: variable '" + std::string(var_name) + "' is not evaluable as an array",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	// Non-array variable: only offset 0 is valid (pointer to scalar)
 	if (offset != 0) {
-		return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
+		return EvalResult::error(
+			"Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'",
+			EvalErrorType::NotConstantExpression);
 	}
 
 	EvalResult result = evaluate(initializer.value(), context);
@@ -703,7 +726,8 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-										 std::string(var_name) + "' has already been deleted");
+										 std::string(var_name) + "' has already been deleted",
+									 EvalErrorType::NotConstantExpression);
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -711,12 +735,16 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-					return EvalResult::error("Array access out of bounds in constant expression (heap)");
+					return EvalResult::error(
+						"Array access out of bounds in constant expression (heap)",
+						EvalErrorType::NotConstantExpression);
 				}
 				return heap_val.array_elements[static_cast<size_t>(offset)];
 			}
 			if (offset != 0) {
-				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
+				return EvalResult::error(
+					"Non-zero offset on non-array heap object in constant expression",
+					EvalErrorType::NotConstantExpression);
 			}
 			return heap_val;
 		}
@@ -728,22 +756,30 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		const EvalResult& bound = it->second;
 		if (bound.is_array) {
 			if (offset < 0)
-				return EvalResult::error("Negative pointer offset in dereference");
+				return EvalResult::error(
+					"Negative pointer offset in dereference",
+					EvalErrorType::NotConstantExpression);
 			size_t idx = static_cast<size_t>(offset);
 			if (!bound.array_elements.empty()) {
 				if (idx >= bound.array_elements.size())
-					return EvalResult::error("Array index out of bounds in constant expression");
+					return EvalResult::error(
+						"Array index out of bounds in constant expression",
+						EvalErrorType::NotConstantExpression);
 				return bound.array_elements[idx];
 			}
 			if (!bound.array_values.empty()) {
 				if (idx >= bound.array_values.size())
-					return EvalResult::error("Array index out of bounds in constant expression");
+					return EvalResult::error(
+						"Array index out of bounds in constant expression",
+						EvalErrorType::NotConstantExpression);
 				return EvalResult::from_int(bound.array_values[idx]);
 			}
 		} else if (offset == 0) {
 			return bound;
 		} else {
-			return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
+			return EvalResult::error(
+				"Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'",
+				EvalErrorType::NotConstantExpression);
 		}
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
@@ -753,18 +789,24 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	// after the original binding has gone out of scope.
 	if (!ptr.pointer_value_snapshot.empty()) {
 		if (offset < 0) {
-			return EvalResult::error("Negative pointer offset in dereference");
+			return EvalResult::error(
+				"Negative pointer offset in dereference",
+				EvalErrorType::NotConstantExpression);
 		}
 		size_t idx = static_cast<size_t>(offset);
 		if (ptr.pointer_value_snapshot.size() == 1) {
 			// Single-element snapshot (e.g., &arr[i] stored only element i).
 			if (idx != 0) {
-				return EvalResult::error("Array index out of bounds in constant expression");
+				return EvalResult::error(
+					"Array index out of bounds in constant expression",
+					EvalErrorType::NotConstantExpression);
 			}
 			return ptr.pointer_value_snapshot[0];
 		}
 		if (idx >= ptr.pointer_value_snapshot.size()) {
-			return EvalResult::error("Array index out of bounds in constant expression");
+			return EvalResult::error(
+				"Array index out of bounds in constant expression",
+				EvalErrorType::NotConstantExpression);
 		}
 		return ptr.pointer_value_snapshot[idx];
 	}

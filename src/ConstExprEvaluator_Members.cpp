@@ -1899,7 +1899,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
-			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+			return EvalResult::error(
+				"Dereference operator (*) on a non-pointer value in constant expressions",
+				EvalErrorType::NotConstantExpression);
 		}
 
 		return apply_unary_op(operand_result, op);
@@ -2147,7 +2149,9 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			if (operand_result.pointer_to_var.isValid()) {
 				return deref_pointer_with_bindings(operand_result, bindings, context);
 			}
-			return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
+			return EvalResult::error(
+				"Dereference operator (*) on a non-pointer value in constant expressions",
+				EvalErrorType::NotConstantExpression);
 		}
 
 		return apply_unary_op(operand_result, op);
