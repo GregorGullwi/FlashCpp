@@ -49,18 +49,7 @@ ASTNode Parser::substituteTemplateParameters(
 			return "unknown";
 		}
 	};
-	auto substituteFunctionCallWithExpressionSubstitutor = [&](const FunctionCallNode& call) -> ASTNode {
-		ChunkedVector<ASTNode> substituted_args;
-		for (const auto& arg : call.arguments()) {
-			substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
-		}
-
-		FunctionCallNode& substituted_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-			call.function_declaration(),
-			std::move(substituted_args),
-			call.called_from());
-		substituteFunctionCallExtras(substituted_call, call, template_params, template_args);
-
+	auto substituteWithExpressionSubstitutor = [&](const ASTNode& substituted_call_node) -> ASTNode {
 		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
 		std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map;
 		size_t arg_index = 0;
@@ -95,31 +84,51 @@ ASTNode Parser::substituteTemplateParameters(
 		}
 
 		ExpressionSubstitutor substitutor(param_map, pack_map, *this);
-		return substitutor.substitute(ASTNode(&substituted_call));
+		return substitutor.substitute(substituted_call_node);
+	};
+	auto substituteFunctionCallWithExpressionSubstitutor = [&](const FunctionCallNode& call) -> ASTNode {
+		ChunkedVector<ASTNode> substituted_args;
+		for (const auto& arg : call.arguments()) {
+			substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
+		}
+
+		FunctionCallNode& substituted_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+			call.function_declaration(),
+			std::move(substituted_args),
+			call.called_from());
+		substituteFunctionCallExtras(substituted_call, call, template_params, template_args);
+		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
 	};
 	auto substituteCallExprWithExpressionSubstitutor = [&](const CallExprNode& call) -> ASTNode {
+		std::optional<ASTNode> substituted_receiver;
 		if (call.has_receiver()) {
-			ASTNode substituted_receiver = substituteTemplateParameters(call.receiver(), template_params, template_args);
-			ChunkedVector<ASTNode> substituted_args;
-			for (const auto& arg : call.arguments()) {
-				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
-			}
-			CallExprNode substituted_call(
+			substituted_receiver = substituteTemplateParameters(call.receiver(), template_params, template_args);
+		}
+		ChunkedVector<ASTNode> substituted_args;
+		for (const auto& arg : call.arguments()) {
+			substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
+		}
+		CallExprNode substituted_call = call.has_receiver()
+			? CallExprNode(
 				call.callee(),
-				substituted_receiver,
+				*substituted_receiver,
+				std::move(substituted_args),
+				call.called_from())
+			: CallExprNode(
+				call.callee(),
 				std::move(substituted_args),
 				call.called_from());
-			copyCallMetadataWithTransformedTemplateArguments(
-				substituted_call,
-				call,
-				[&](const ASTNode& template_arg) {
-					return substituteTemplateParameters(template_arg, template_params, template_args);
-				});
+		copyCallMetadataWithTransformedTemplateArguments(
+			substituted_call,
+			call,
+			[&](const ASTNode& template_arg) {
+				return substituteTemplateParameters(template_arg, template_params, template_args);
+			});
+		if (call.has_receiver()) {
 			return emplace_node<ExpressionNode>(substituted_call);
 		}
 
-		FunctionCallNode legacy_call = materializeLegacyFunctionCall(call);
-		return substituteFunctionCallWithExpressionSubstitutor(legacy_call);
+		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
 	};
 
 	// Handle different node types

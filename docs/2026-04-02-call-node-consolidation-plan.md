@@ -58,8 +58,8 @@ The callee descriptor should be rich enough to distinguish:
 ### Current status
 
 - Parser normalization is now complete for the ordinary free-call and member-call paths; those parser sites emit `CallExprNode` and the rebased Windows suite is green after the downstream compatibility fixes.
-- Template substitution/rebinding, constexpr evaluation, and the current IR compatibility layer can all carry the migrated parser output, but several paths still materialize `FunctionCallNode` or `MemberFunctionCallNode` as temporary bridges.
-- The remaining work is centered on collapsing semantic-analysis and IR lowering onto direct `CallExprNode` handling, then removing those temporary legacy conversions before deleting the duplicate legacy nodes.
+- Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path; the remaining temporary bridges are concentrated in constexpr evaluation and direct/member IR lowering.
+- The remaining work is centered on collapsing semantic-analysis and IR lowering onto direct `CallExprNode` handling, then removing those last legacy conversions before deleting the duplicate legacy nodes.
 
 ## Important implementation notes
 
