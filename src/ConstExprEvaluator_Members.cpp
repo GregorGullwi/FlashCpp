@@ -91,6 +91,79 @@ EvalResult make_shift_result(const std::optional<TypeSpecifierNode>& promoted_ty
 	}
 	return result;
 }
+} // namespace
+
+bool Evaluator::isConstexprMemberLookupCandidate(
+	const FunctionDeclarationNode& func_decl,
+	size_t argument_count,
+	EvaluationContext& context,
+	MemberFunctionLookupMode lookup_mode,
+	bool require_static) {
+	if (require_static && !func_decl.is_static()) {
+		return false;
+	}
+	if (func_decl.parameter_nodes().size() != argument_count) {
+		return false;
+	}
+
+	if (lookup_mode == Evaluator::MemberFunctionLookupMode::ConstexprEvaluable) {
+		bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
+							(context.storage_duration == ConstExpr::StorageDuration::Static);
+		if (!can_evaluate || !func_decl.get_definition().has_value()) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_target(
+	const MemberFunctionCallNode& member_func_call,
+	const StructTypeInfo* struct_info,
+	size_t argument_count,
+	EvaluationContext& context,
+	MemberFunctionLookupMode lookup_mode,
+	bool require_static) {
+	const FunctionDeclarationNode& lowered_func = member_func_call.function_declaration();
+	if (!lowered_func.has_outer_template_bindings() &&
+		!lowered_func.has_non_type_template_args() &&
+		!lowered_func.has_mangled_name()) {
+		return nullptr;
+	}
+	if (struct_info) {
+		for (const auto& member_func : struct_info->member_functions) {
+			if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+				continue;
+			}
+			const auto& candidate = member_func.function_decl.as<FunctionDeclarationNode>();
+			if (!isConstexprMemberLookupCandidate(
+					candidate,
+					argument_count,
+					context,
+					lookup_mode,
+					require_static)) {
+				continue;
+			}
+			if (&candidate.decl_node() == &lowered_func.decl_node()) {
+				return &candidate;
+			}
+			if (candidate.has_mangled_name() && lowered_func.has_mangled_name() &&
+				candidate.mangled_name() == lowered_func.mangled_name()) {
+				return &candidate;
+			}
+		}
+	}
+	if (!isConstexprMemberLookupCandidate(
+			lowered_func,
+			argument_count,
+			context,
+			lookup_mode,
+			require_static)) {
+		return nullptr;
+	}
+	return &lowered_func;
+}
+namespace {
 
 std::optional<size_t> try_get_constexpr_pointer_upper_bound(
 	std::string_view var_name,
@@ -776,28 +849,37 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		write_back_to_object_binding = true;
 	}
 
-	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	auto member_function_match = object_name == "this"
-									 ? find_current_struct_member_function_candidate(
-										   func_name_handle,
-										   member_func_call.arguments().size(),
-										   context,
-										   MemberFunctionLookupMode::LookupOnly,
-										   false,
-										   true)
-									 : find_member_function_candidate(
-										   bound_struct_info,
-										   func_name_handle,
-										   member_func_call.arguments().size(),
-										   context,
-										   MemberFunctionLookupMode::LookupOnly,
-										   false,
-										   true);
-	if (member_function_match.ambiguous) {
-		return EvalResult::error("Ambiguous member function overload in constant expression");
-	}
+	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
+		member_func_call,
+		bound_struct_info,
+		member_func_call.arguments().size(),
+		context,
+		MemberFunctionLookupMode::LookupOnly,
+		false);
+	if (!actual_func) {
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		auto member_function_match = object_name == "this"
+										 ? find_current_struct_member_function_candidate(
+											   func_name_handle,
+											   member_func_call.arguments().size(),
+											   context,
+											   MemberFunctionLookupMode::LookupOnly,
+											   false,
+											   true)
+										 : find_member_function_candidate(
+											   bound_struct_info,
+											   func_name_handle,
+											   member_func_call.arguments().size(),
+											   context,
+											   MemberFunctionLookupMode::LookupOnly,
+											   false,
+											   true);
+		if (member_function_match.ambiguous) {
+			return EvalResult::error("Ambiguous member function overload in constant expression");
+		}
 
-	const FunctionDeclarationNode* actual_func = member_function_match.function;
+		actual_func = member_function_match.function;
+	}
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
@@ -1073,16 +1155,13 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_member_function_candi
 		if (require_static && !func_decl.is_static()) {
 			continue;
 		}
-		if (func_decl.parameter_nodes().size() != argument_count) {
+		if (!isConstexprMemberLookupCandidate(
+				func_decl,
+				argument_count,
+				context,
+				lookup_mode,
+				require_static)) {
 			continue;
-		}
-
-		if (lookup_mode == MemberFunctionLookupMode::ConstexprEvaluable) {
-			bool can_evaluate = func_decl.is_constexpr() || func_decl.is_consteval() ||
-								(context.storage_duration == ConstExpr::StorageDuration::Static);
-			if (!can_evaluate || !func_decl.get_definition().has_value()) {
-				continue;
-			}
 		}
 
 		if (result.function && detect_ambiguity) {
@@ -4372,15 +4451,24 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 
 	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
-		StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
-		auto current_match = find_current_struct_member_function_candidate(
-			fn_handle,
+		const FunctionDeclarationNode* matched_function = try_get_lowered_constexpr_member_call_target(
+			member_func_call,
+			context.struct_info,
 			member_func_call.arguments().size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
-			true,
-			false);
-		const FunctionDeclarationNode* matched_function = current_match.function;
+			true);
+		if (!matched_function) {
+			StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
+			auto current_match = find_current_struct_member_function_candidate(
+				fn_handle,
+				member_func_call.arguments().size(),
+				context,
+				MemberFunctionLookupMode::ConstexprEvaluable,
+				true,
+				false);
+			matched_function = current_match.function;
+		}
 
 		if (!matched_function) {
 			return std::nullopt;
@@ -4522,19 +4610,28 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 	// Look up the actual member function in the struct's type info
 	const auto& arguments = member_func_call.arguments();
-	StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-	auto member_function_match = find_member_function_candidate(
+	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
+		member_func_call,
 		struct_info,
-		func_name_handle,
 		arguments.size(),
 		context,
 		MemberFunctionLookupMode::LookupOnly,
-		false,
-		true);
-	if (member_function_match.ambiguous) {
-		return EvalResult::error("Ambiguous member function overload in constant expression");
+		false);
+	if (!actual_func) {
+		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+		auto member_function_match = find_member_function_candidate(
+			struct_info,
+			func_name_handle,
+			arguments.size(),
+			context,
+			MemberFunctionLookupMode::LookupOnly,
+			false,
+			true);
+		if (member_function_match.ambiguous) {
+			return EvalResult::error("Ambiguous member function overload in constant expression");
+		}
+		actual_func = member_function_match.function;
 	}
-	const FunctionDeclarationNode* actual_func = member_function_match.function;
 
 	if (!actual_func) {
 		return EvalResult::error("Member function not found: " + std::string(func_name));

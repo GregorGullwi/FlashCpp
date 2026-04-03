@@ -787,6 +787,19 @@ private:
 		const EvalResult& object,
 		std::string_view func_name,
 		EvaluationContext& context);
+	static bool isConstexprMemberLookupCandidate(
+		const FunctionDeclarationNode& func_decl,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static);
+	static const FunctionDeclarationNode* try_get_lowered_constexpr_member_call_target(
+		const MemberFunctionCallNode& member_func_call,
+		const StructTypeInfo* struct_info,
+		size_t argument_count,
+		EvaluationContext& context,
+		MemberFunctionLookupMode lookup_mode,
+		bool require_static);
 	static ResolvedMemberFunctionCandidate find_call_operator_candidate(
 		const StructTypeInfo* struct_info,
 		size_t argument_count,
