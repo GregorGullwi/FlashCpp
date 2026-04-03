@@ -275,9 +275,9 @@ private:
 	ExprResult generateGetExceptionCodeIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateAbnormalTerminationIntrinsic(const CallExprNode& callExprNode);
 	ExprResult generateGetExceptionInformationIntrinsic(const CallExprNode& callExprNode);
-	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
+
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
-	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);

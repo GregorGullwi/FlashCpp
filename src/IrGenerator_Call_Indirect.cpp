@@ -2,14 +2,6 @@
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
 
-ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
-	CallExprNode call_expr = makeResolvedMemberCallExpr(
-		memberFunctionCallNode.object(),
-		memberFunctionCallNode.function_declaration(),
-		copyCallArguments(memberFunctionCallNode.arguments()),
-		memberFunctionCallNode.called_from());
-	return generateMemberFunctionCallIr(call_expr, context, &memberFunctionCallNode);
-}
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
 	return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);

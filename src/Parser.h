@@ -962,11 +962,7 @@ public:	// Public methods for template instantiation
 private:	 // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
-	void substituteFunctionCallExtras(
-		FunctionCallNode& new_call,
-		const FunctionCallNode& old_call,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+
 	void register_builtin_functions();  // Register compiler builtin functions
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();

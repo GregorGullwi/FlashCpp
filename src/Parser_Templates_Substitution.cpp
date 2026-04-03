@@ -1544,18 +1544,6 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 	return expr;
 }
 
-void Parser::substituteFunctionCallExtras(
-	FunctionCallNode& new_call,
-	const FunctionCallNode& old_call,
-	const InlineVector<ASTNode, 4>& template_params,
-	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	copyCallMetadataWithTransformedTemplateArguments(
-		new_call,
-		old_call,
-		[&](const ASTNode& template_arg) {
-			return substituteTemplateParameters(template_arg, template_params, template_args);
-		});
-}
 
 // Return true if the expression tree contains an IdentifierNode whose name equals pack_name.
 // Uses std::visit for exhaustive coverage of the ExpressionNode variant, including

@@ -177,26 +177,6 @@ private:
 	bool is_arrow_;			// true for ->*, false for .*
 };
 
-// Member function call node (e.g., obj.method(args))
-class MemberFunctionCallNode {
-public:
-	explicit MemberFunctionCallNode(ASTNode object, const FunctionDeclarationNode& func_decl,
-									ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: object_(object), func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
-
-	ASTNode object() const { return object_; }
-	const auto& arguments() const { return arguments_; }
-	const auto& function_declaration() const { return func_decl_; }
-	Token called_from() const { return called_from_; }
-
-	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
-
-private:
-	ASTNode object_;					 // The object on which the method is called
-	const FunctionDeclarationNode& func_decl_; // The member function declaration
-	ChunkedVector<ASTNode> arguments_;   // Arguments to the function call
-	Token called_from_;					// Token for error reporting
-};
 
 // Pseudo-destructor call: obj.~Type() or ptr->~Type()
 // Used in patterns like: decltype(declval<T&>().~T())

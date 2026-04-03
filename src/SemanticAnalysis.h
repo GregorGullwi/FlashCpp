@@ -19,7 +19,7 @@ class NamespaceDeclarationNode;
 class ArraySubscriptNode;
 class BinaryOperatorNode;
 class UnaryOperatorNode;
-class FunctionCallNode;
+
 class ConstructorCallNode;
 class InitializerListNode;
 class RangedForStatementNode;
@@ -79,9 +79,7 @@ public:
 	bool hasUnresolvedCallArgs(const void* call) const {
 		return unresolved_call_args_.count(call) > 0;
 	}
-	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
-		return hasUnresolvedCallArgs(static_cast<const void*>(call));
-	}
+
 	bool hasUnresolvedCallArgs(const CallExprNode* call) const {
 		return hasUnresolvedCallArgs(static_cast<const void*>(call));
 	}
@@ -98,11 +96,10 @@ public:
 	// Look up the pre-resolved callable operator() for a call node.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
-	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
+
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
-	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
-	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
+
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
 
 	// Look up the pre-resolved operator[] for an ArraySubscriptNode.
@@ -226,11 +223,11 @@ private:
 	void tryAnnotateContextualBool(const ASTNode& expr_node);
 
 	// Annotate function-call arguments with their parameter-type conversions.
-	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+
 	void tryAnnotateCallArgConversions(const CallExprNode& call_node);
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
-	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+
 
 	// Shared helper: annotate a single argument expression against a single parameter type.
 	// Handles reference binding, converting constructors, primitive conversions, and
@@ -270,7 +267,7 @@ private:
 	// Resolve the callable operator() for a FunctionCallNode whose callee is a struct-typed
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.
-	void tryResolveCallableOperator(const FunctionCallNode& call_node);
+
 	void tryResolveCallableOperator(const CallExprNode& call_node);
 	void tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key);
 

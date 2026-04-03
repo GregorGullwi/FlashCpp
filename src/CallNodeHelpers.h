@@ -7,8 +7,7 @@
 // ============================================================================
 // CallInfo — a lightweight read-only view over any call-expression node.
 //
-// Provides a uniform interface for extracting call metadata from
-// FunctionCallNode, MemberFunctionCallNode, or the new CallExprNode.
+// Provides a uniform interface for extracting call metadata from CallExprNode.
 // Downstream code can construct a CallInfo and then inspect fields without
 // branching on the concrete node type.
 //
@@ -40,36 +39,6 @@ struct CallInfo {
 	bool is_indirect;
 
 	// --- Factory helpers ---------------------------------------------------
-
-	static CallInfo from(const FunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration();
-		info.function_declaration  = nullptr;
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = ASTNode();
-		info.has_receiver          = false;
-		info.mangled_name          = node.mangled_name_handle();
-		info.qualified_name        = node.qualified_name_handle();
-		info.template_arguments    = &node.template_arguments();
-		info.is_indirect           = node.is_indirect_call();
-		return info;
-	}
-
-	static CallInfo from(const MemberFunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration().decl_node();
-		info.function_declaration  = &node.function_declaration();
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = node.object();
-		info.has_receiver          = true;
-		info.mangled_name          = StringHandle();
-		info.qualified_name        = StringHandle();
-		info.template_arguments    = nullptr;
-		info.is_indirect           = false;
-		return info;
-	}
 
 	static CallInfo from(const CallExprNode& node) {
 		CallInfo info;

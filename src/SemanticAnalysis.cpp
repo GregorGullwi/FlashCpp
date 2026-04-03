@@ -2229,9 +2229,6 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* k
 	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
-const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
-	return getResolvedOpCall(static_cast<const void*>(key));
-}
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
 	return getResolvedOpCall(static_cast<const void*>(key));
@@ -2250,13 +2247,6 @@ const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const voi
 	return &it->second[arg_index];
 }
 
-const CallArgReferenceBindingInfo* SemanticAnalysis::getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const {
-	return getCallRefBinding(static_cast<const void*>(key), arg_index);
-}
-
-const CallArgReferenceBindingInfo* SemanticAnalysis::getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const {
-	return getCallRefBinding(static_cast<const void*>(key), arg_index);
-}
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const {
 	return getCallRefBinding(static_cast<const void*>(key), arg_index);
@@ -3610,9 +3600,6 @@ void SemanticAnalysis::tryResolveCallableOperatorImpl(const CallInfo& call_info,
 					 best_match->parameter_nodes().size());
 }
 
-void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_node) {
-	tryResolveCallableOperatorImpl(CallInfo::from(call_node), &call_node);
-}
 
 void SemanticAnalysis::tryResolveCallableOperator(const CallExprNode& call_node) {
 	tryResolveCallableOperatorImpl(CallInfo::from(call_node), &call_node);
@@ -4022,17 +4009,11 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
 }
 
-void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
-	tryAnnotateCallArgConversionsImpl(CallInfo::from(call_node), &call_node, " in function argument");
-}
 
 void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_node) {
 	tryAnnotateCallArgConversionsImpl(CallInfo::from(call_node), &call_node, " in call argument");
 }
 
-void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node) {
-	tryAnnotateCallArgConversionsImpl(CallInfo::from(call_node), &call_node, " in member function argument");
-}
 
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {
 	// Get the type being constructed.

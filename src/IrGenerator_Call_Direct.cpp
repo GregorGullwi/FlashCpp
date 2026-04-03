@@ -213,14 +213,6 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 	return generateFunctionCallIr(callExprNode, context);
 }
 
-ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context) {
-	CallExprNode call_expr = makeDirectCallExpr(
-		functionCallNode.function_declaration(),
-		copyCallArguments(functionCallNode.arguments()),
-		functionCallNode.called_from());
-	copyCallMetadata(call_expr, functionCallNode);
-	return generateFunctionCallIr(call_expr, context, &functionCallNode);
-}
 
 ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
 	return generateFunctionCallIr(callExprNode, context, &callExprNode);
