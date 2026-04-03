@@ -43,7 +43,6 @@ inline constexpr CliOptionInfo all_cli_flags[] = {
 	{"fgcc-compat", "", "Use GCC/Clang compatible built-in macros", "", false},
 	{"fclang-compat", "", "Use GCC/Clang compatible built-in macros", "", true},
 	{"fno-exceptions", "", "Disable exception handling", "", false},
-	{"eager-template-instantiation", "", "Instantiate all template members eagerly (default: lazy)", "", false},
 };
 
 // Compile-time lookup: _opt user-defined literal.
