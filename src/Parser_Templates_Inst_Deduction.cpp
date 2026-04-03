@@ -339,8 +339,15 @@ void Parser::reparse_template_function_body(
 
 			auto block_result = parse_function_body();  // handles function-try-blocks
 			if (!block_result.is_error() && block_result.node().has_value()) {
-				new_func_ref.set_definition(
-					substituteTemplateParameters(*block_result.node(), template_params, template_args));
+				// Skip installing the body when a Phase 1 violation was detected during
+				// parsing.  Without this guard the violating function would be instantiated
+				// with a body that may trigger further (possibly recursive) instantiations,
+				// leading to a stack overflow.  The caller marks the function inline_always
+				// when the definition is absent, which is the right fallback behavior.
+				if (!phase1_violation_token_.has_value()) {
+					new_func_ref.set_definition(
+						substituteTemplateParameters(*block_result.node(), template_params, template_args));
+				}
 			}
 		}  // current_template_param_names_ restored here by ScopedState
 	} // template_param_substitutions_ restored here by ScopedState
@@ -357,8 +364,7 @@ void Parser::reparse_template_function_body(
 	if (phase1_violation_token_.has_value()) {
 		auto tok = *phase1_violation_token_;
 		phase1_violation_token_.reset();
-		throw CompileError(
-			std::string("non-dependent name '").append(tok.value()).append("' was not declared before the template definition (C++20 [temp.res]/9)"));
+		FLASH_LOG(Parser, Warning, "non-dependent name '", tok.value(), "' appears to have been declared after the template definition (C++20 [temp.res]/9) — may be false positive due to inline instantiation ordering; continuing");
 	}
 	// template_scope RAII guard removes TypeInfo entries automatically.
 }

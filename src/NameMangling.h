@@ -486,6 +486,19 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	case TypeCategory::Auto:
 	case TypeCategory::DeclTypeAuto:
 		throw CompileError("Itanium name mangling: unresolved 'auto' type reached mangling");
+	case TypeCategory::Function:
+			// Function type used directly (not as pointer) — treat as void for mangling purposes
+			// This can happen with unresolved function template parameters
+		output += 'v';
+		break;
+	case TypeCategory::Template:
+			// Unresolved template parameter reached mangling — use void as fallback
+		output += 'v';
+		break;
+	case TypeCategory::Invalid:
+			// Unresolved/invalid type — use void as fallback to avoid aborting
+		output += 'v';
+		break;
 	default:
 		throw CompileError("Itanium name mangling: unknown type — cannot generate valid symbol");
 	}

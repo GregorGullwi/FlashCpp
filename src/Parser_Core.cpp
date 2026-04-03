@@ -1122,10 +1122,15 @@ void Parser::register_builtin_functions() {
 	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 	// These __atomic* builtins are type-generic in GCC/Clang. We currently register
 	// them with a wide integer placeholder for value positions so phase-1 lookup and
-	// most unqualified builtin-name binding succeed in libstdc++ headers. Pointer-
-	// typed operations still need proper generic signature modeling, which is why
-	// <atomic>/<latch> now fail later on __atomic_add_fetch rather than at name lookup.
+	// most unqualified builtin-name binding succeed in libstdc++ headers.
+	// We also register depth-2 pointer variants for pointer atomic operations like
+	// __atomic_add_fetch(&ptr_member, ptrdiff, order) where the first arg is T**.
 	const ASTNode generic_atomic_value_type = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 0);
+	// ptrdiff_t: long on LP64 (Linux), long long on LLP64 (Windows)
+	const TypeCategory ptrdiff_base = context_.isLLP64() ? TypeCategory::LongLong : TypeCategory::Long;
+	const ASTNode ptrdiff_type = make_builtin_type(ptrdiff_base, CVQualifier::None, 0);
+	// volatile void** for pointer atomic operations
+	const ASTNode volatile_void_ptr2 = make_builtin_type(TypeCategory::Void, CVQualifier::Volatile, 2);
 
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
@@ -1160,7 +1165,11 @@ void Parser::register_builtin_functions() {
 	register_extern_c_builtin("__atomic_fetch_or", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_fetch_xor", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_add_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	// Pointer-variant: __atomic_add_fetch(&ptr_member, ptrdiff_t, int) -> void*
+	register_extern_c_builtin("__atomic_add_fetch", void_ptr, {volatile_void_ptr2, ptrdiff_type, int_type});
 	register_extern_c_builtin("__atomic_sub_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	// Pointer-variant: __atomic_sub_fetch(&ptr_member, ptrdiff_t, int) -> void*
+	register_extern_c_builtin("__atomic_sub_fetch", void_ptr, {volatile_void_ptr2, ptrdiff_type, int_type});
 	register_extern_c_builtin("__atomic_and_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_or_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_xor_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});

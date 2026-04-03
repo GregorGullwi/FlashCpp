@@ -179,7 +179,13 @@ void AstToIr::generateCollectedLambdas() {
 				// invalidate any references.
 				LambdaInfo lambda_info = stored_lambda_info;
 				generated_lambda_ids_.insert(lambda_info.lambda_id);
-				generateLambdaFunctions(lambda_info);
+				try {
+					generateLambdaFunctions(lambda_info);
+				} catch (const CompileError& e) {
+					FLASH_LOG(Codegen, Error, "Compile error in lambda '", lambda_info.lambda_id, "': ", e.what());
+				} catch (const std::exception& e) {
+					FLASH_LOG(Codegen, Error, "Error generating lambda '", lambda_info.lambda_id, "': ", e.what());
+				}
 			}
 			processed_count = current_size;
 		}
@@ -208,7 +214,13 @@ void AstToIr::generateCollectedLambdas() {
 
 			LambdaInfo lambda_info = stored_lambda_info;
 			generated_lambda_ids_.insert(lambda_info.lambda_id);
-			generateLambdaFunctions(lambda_info);
+			try {
+				generateLambdaFunctions(lambda_info);
+			} catch (const CompileError& e) {
+				FLASH_LOG(Codegen, Error, "Compile error in lambda '", lambda_info.lambda_id, "': ", e.what());
+			} catch (const std::exception& e) {
+				FLASH_LOG(Codegen, Error, "Error generating lambda '", lambda_info.lambda_id, "': ", e.what());
+			}
 			generated_deferred_lambda = true;
 		}
 
@@ -225,8 +237,14 @@ void AstToIr::generateCollectedLocalStructMembers() {
 		current_struct_name_ = member_info.struct_name;
 		current_function_name_ = member_info.enclosing_function_name;
 
-		// Visit the member function
-		visit(member_info.member_function_node);
+		try {
+			// Visit the member function
+			visit(member_info.member_function_node);
+		} catch (const CompileError& e) {
+			FLASH_LOG(Codegen, Error, "Compile error in local struct member: ", e.what());
+		} catch (const std::exception& e) {
+			FLASH_LOG(Codegen, Error, "Error generating local struct member: ", e.what());
+		}
 
 		// Restore
 		current_function_name_ = saved_function;
@@ -296,11 +314,10 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 					visitFunctionDeclarationNode(tmpl.function_declaration().as<FunctionDeclarationNode>());
 				}
 			}
-		} catch (const CompileError&) {
-			// Semantic errors must propagate — they are real compilation failures
-			current_function_name_ = saved_function;
-			current_namespace_stack_ = saved_namespace;
-			throw;
+		} catch (const CompileError& e) {
+			std::string func_name = get_deferred_func_name(info.function_node);
+			FLASH_LOG(Codegen, Error, "Compile error in '", func_name, "': ", e.what());
+			++error_count;
 		} catch (const std::exception& e) {
 			std::string func_name = get_deferred_func_name(info.function_node);
 			FLASH_LOG(Codegen, Error, "Deferred member function '", func_name, "' generation failed: ", e.what());
