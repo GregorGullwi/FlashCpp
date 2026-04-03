@@ -3605,27 +3605,28 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved_args.push_back(subst);
 								resolved = true;
 							} else {
+								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
 								if (resolved_ti->isTemplateInstantiation() &&
-									(!resolved_ti->getStructInfo() || !resolved_ti->getStructInfo()->total_size.is_set())) {
+									(!resolved_struct_info || !resolved_struct_info->total_size.is_set())) {
 									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
 									auto instantiated = try_instantiate_class_template(base_template_name, instantiated_args);
 									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 										ast_nodes_.push_back(*instantiated);
-									}
-									std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
-									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-									if (inst_it != getTypesByNameMap().end()) {
-										TemplateTypeArg inst_arg;
-										inst_arg.type_index = inst_it->second->registeredTypeIndex();
-										inst_arg.type_index.setCategory(inst_it->second->typeEnum());
-										inst_arg.pointer_depth = type_spec.pointer_depth();
-										inst_arg.ref_qualifier = type_spec.reference_qualifier();
-										inst_arg.cv_qualifier = type_spec.cv_qualifier();
-										resolved_args.push_back(inst_arg);
-										resolved = true;
-										FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
-														 type_name, inst_name);
+										std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
+										auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+										if (inst_it != getTypesByNameMap().end()) {
+											TemplateTypeArg inst_arg;
+											inst_arg.type_index = inst_it->second->registeredTypeIndex();
+											inst_arg.type_index.setCategory(inst_it->second->typeEnum());
+											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.ref_qualifier = type_spec.reference_qualifier();
+											inst_arg.cv_qualifier = type_spec.cv_qualifier();
+											resolved_args.push_back(inst_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
+															 type_name, inst_name);
+										}
 									}
 								}
 
