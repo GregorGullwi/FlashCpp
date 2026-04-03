@@ -831,7 +831,7 @@ TypeIndex Parser::substitute_template_parameter(
 			}
 
 			std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
-			auto instantiated = try_instantiate_class_template(base_template_name, concrete_args);
+			auto instantiated = try_instantiate_class_template(base_template_name, concrete_args, /*force_eager=*/false);
 			if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 				ast_nodes_.push_back(*instantiated);
 			} else if (!base_template_name.empty()) {
