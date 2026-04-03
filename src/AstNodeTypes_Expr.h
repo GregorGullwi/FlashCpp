@@ -954,7 +954,7 @@ private:
 // `PackExpansionExprNode` are parser/template-only helpers there and are
 // guarded by the lightweight post-parse boundary checker before sema runs.
 using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, StringLiteralNode, NumericLiteralNode, BoolLiteralNode,
-									BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, FunctionCallNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode, MemberFunctionCallNode,
+									BinaryOperatorNode, UnaryOperatorNode, TernaryOperatorNode, ConstructorCallNode, MemberAccessNode, PointerToMemberAccessNode,
 									ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 									DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode,
 									CallExprNode>;

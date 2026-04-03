@@ -89,10 +89,6 @@ struct CallInfo {
 	// Build a CallInfo from an ExpressionNode that holds one of the three
 	// call-node alternatives.  Returns std::nullopt for any other alternative.
 	static std::optional<CallInfo> tryFrom(const ExpressionNode& expr) {
-		if (auto* p = std::get_if<FunctionCallNode>(&expr))
-			return from(*p);
-		if (auto* p = std::get_if<MemberFunctionCallNode>(&expr))
-			return from(*p);
 		if (auto* p = std::get_if<CallExprNode>(&expr))
 			return from(*p);
 		return std::nullopt;
@@ -231,10 +227,6 @@ inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionD
 }
 
 inline void setCallMangledName(ExpressionNode& expr, std::string_view name) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_mangled_name(name);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_mangled_name(name);
 	}
@@ -245,10 +237,6 @@ inline void setCallMangledName(CallExprNode& call_expr, std::string_view name) {
 }
 
 inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_qualified_name(name);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_qualified_name(name);
 	}
@@ -259,10 +247,6 @@ inline void setCallQualifiedName(CallExprNode& call_expr, std::string_view name)
 }
 
 inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&& template_args) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_template_arguments(std::move(template_args));
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_template_arguments(std::move(template_args));
 	}
@@ -273,10 +257,6 @@ inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNod
 }
 
 inline void setCallIndirect(ExpressionNode& expr) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_indirect_call(true);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		CallExprNode indirect_call = makeIndirectCallExpr(
 			call_expr->callee().declaration(),
