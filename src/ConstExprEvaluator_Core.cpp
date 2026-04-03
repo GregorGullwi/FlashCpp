@@ -89,6 +89,11 @@ std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg
 	if (is_unsigned_integer_type(arg.category())) {
 		return EvalResult::from_uint(static_cast<unsigned long long>(arg.value));
 	}
+	if (arg.category() == TypeCategory::WChar) {
+		return (g_target_data_model == TargetDataModel::LLP64)
+				   ? EvalResult::from_uint(static_cast<unsigned long long>(arg.value))
+				   : EvalResult::from_int(arg.value);
+	}
 	if (isIntegralType(arg.category())) {
 		return EvalResult::from_int(arg.value);
 	}
