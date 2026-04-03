@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CallNodeHelpers.h"
 #include "AstNodeTypes_Stmt.h"
 #include "AstNodeTypes_Template.h"
 #include <type_traits>
@@ -59,20 +60,11 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 	return {nullptr, nullptr};
 }
 
-template <typename RecurseFn>
+template <typename CallNodeT, typename RecurseFn>
 std::vector<ASTNode> rebindFunctionCallTemplateArguments(
-	const FunctionCallNode& call,
+	const CallNodeT& call,
 	RecurseFn&& recurse) {
-	std::vector<ASTNode> rebound_template_args;
-	if (!call.has_template_arguments()) {
-		return rebound_template_args;
-	}
-
-	rebound_template_args.reserve(call.template_arguments().size());
-	for (const auto& template_arg : call.template_arguments()) {
-		rebound_template_args.push_back(recurse(template_arg));
-	}
-	return rebound_template_args;
+	return transformCallTemplateArguments(call, recurse);
 }
 
 template <typename RecurseFn>

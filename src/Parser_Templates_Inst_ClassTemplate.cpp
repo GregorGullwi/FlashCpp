@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "RebindStaticMemberAst.h"
 #include "ConstExprEvaluator.h"
 #include "ExpressionSubstitutor.h"
@@ -203,10 +204,14 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			FunctionCallNode(target_decl, std::move(rebound_args), call.called_from()));
 		auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
 
+		CallMetadataCopyOptions copy_options;
+		copy_options.copy_template_arguments = false;
+		copy_options.copy_qualified_name = false;
+		copyCallMetadata(rebound_call_ref, call, copy_options);
+
 		if (!rebound_template_args.empty()) {
 			rebound_call_ref.set_template_arguments(std::move(rebound_template_args));
 		}
-		rebound_call_ref.set_indirect_call(call.is_indirect_call());
 
 		if (can_use_rebound_function && rebound_function->has_mangled_name()) {
 			rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
