@@ -5453,12 +5453,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return ParseResult::error("Invalid template instantiation", identifier_token);
 										}
 										result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										if (explicit_template_arg_nodes.empty()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
+										} else {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
+										}
+										if (!explicit_template_arg_nodes.empty()) {
+											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+										}
 
 										// Copy mangled name if available
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
 											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 											if (func_decl.has_mangled_name()) {
-												std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+												func_call.set_mangled_name(func_decl.mangled_name());
 											}
 										}
 									} else if (has_dependent_template_args) {
