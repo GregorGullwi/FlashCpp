@@ -61,19 +61,6 @@ still produced an object file and the test linked and returned the wrong value.
 translation unit, or otherwise suppress object emission when any required
 top-level node fails IR generation.
 
-## Virtual reference-return calls can still fail in lowered callers
-
-Minimal virtual calls that return references through a base pointer/reference can
-still hit frontend lowering failures in the caller body (observed as
-`IR conversion failed for node 'main': bad any_cast`), and because function-body
-IR conversion failures are not yet fatal, the compiler may still emit a broken
-object file that later crashes at runtime.
-
-This was observed while trying to add focused runtime coverage for virtual
-`T&&` / `T&` returns through a base-class call path. Direct non-virtual
-reference-return coverage passes; the virtual-reference-return caller path still
-needs dedicated investigation.
-
 ## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
 
 When a non-template derived class inherits a struct-typed static member from a
