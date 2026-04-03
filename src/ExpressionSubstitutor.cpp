@@ -151,7 +151,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode
 			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(*unified_source);
 			return ASTNode(&new_expr);
 		}
-		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+		CallExprNode new_call = makeDirectCallExpr(call.function_declaration(), copyCallArguments(call.arguments()), call.called_from());
+		copyCallMetadata(new_call, call);
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 		return ASTNode(&new_expr);
 	};
 	auto copyMetadataToExpr = [&](ExpressionNode& expr, const CallMetadataCopyOptions& options = {}) {
@@ -172,13 +174,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode
 		}
 	};
 	auto emplaceDirectCallExpr = [&](const DeclarationNode& target_decl, const FunctionDeclarationNode* target_func, ChunkedVector<ASTNode>&& args, const Token& called_from) -> ExpressionNode& {
-		if (unified_source) {
-			CallExprNode new_call = target_func
-				? makeResolvedCallExpr(*target_func, std::move(args), called_from)
-				: makeDirectCallExpr(target_decl, std::move(args), called_from);
-			return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
-		}
-		FunctionCallNode new_call(target_decl, std::move(args), called_from);
+		CallExprNode new_call = target_func
+			? makeResolvedCallExpr(*target_func, std::move(args), called_from)
+			: makeDirectCallExpr(target_decl, std::move(args), called_from);
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
 	std::vector<ASTNode> explicit_template_arg_nodes;

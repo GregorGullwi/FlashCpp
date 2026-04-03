@@ -262,15 +262,15 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
 		const auto& call = std::get<FunctionCallNode>(expr);
+		const CallInfo call_info = CallInfo::from(call);
+
 		ChunkedVector<ASTNode> rebound_args;
 		for (const auto& arg : call.arguments()) {
 			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
 		}
 
 		std::vector<ASTNode> rebound_template_args =
-			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(
-				call,
-				recurse);
+			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(call, recurse);
 
 		const FunctionDeclarationNode* rebound_function = nullptr;
 		const StructTypeInfo* rebound_owner = nullptr;
@@ -283,35 +283,34 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 		const bool can_use_rebound_function =
 			rebound_function && rebound_function->get_definition().has_value();
-		const DeclarationNode& target_decl =
-			can_use_rebound_function ? rebound_function->decl_node() : call.function_declaration();
-		ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
-			FunctionCallNode(target_decl, std::move(rebound_args), call.called_from()));
-		auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+
+		CallExprNode rebound_call = can_use_rebound_function
+			? makeResolvedCallExpr(*rebound_function, std::move(rebound_args), call.called_from())
+			: makeDirectCallExpr(call.function_declaration(), std::move(rebound_args), call.called_from());
 
 		CallMetadataCopyOptions copy_options;
 		copy_options.copy_template_arguments = false;
 		copy_options.copy_qualified_name = false;
-		copyCallMetadata(rebound_call_ref, call, copy_options);
+		copyCallMetadata(rebound_call, call, copy_options);
 
 		if (!rebound_template_args.empty()) {
-			rebound_call_ref.set_template_arguments(std::move(rebound_template_args));
+			rebound_call.set_template_arguments(std::move(rebound_template_args));
 		}
 
 		if (can_use_rebound_function && rebound_function->has_mangled_name()) {
-			rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+			rebound_call.set_mangled_name(rebound_function->mangled_name());
 		} else if (call.has_mangled_name()) {
-			rebound_call_ref.set_mangled_name(call.mangled_name());
+			rebound_call.set_mangled_name(call.mangled_name());
 		}
 		if (!can_use_rebound_function && call.has_qualified_name()) {
-			rebound_call_ref.set_qualified_name(call.qualified_name());
+			rebound_call.set_qualified_name(call.qualified_name());
 		} else if (set_qualified_name && rebound_function && rebound_owner) {
 			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
 				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
-			rebound_call_ref.set_qualified_name(qualified_handle.view());
+			rebound_call.set_qualified_name(qualified_handle.view());
 		}
 
-		return rebound_call;
+		return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
 	}
 
 	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
@@ -343,30 +342,28 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			const bool can_use_rebound_function =
 				rebound_function && rebound_function->get_definition().has_value();
 			if (can_use_rebound_function || member_call.function_declaration().is_static()) {
-				const DeclarationNode& target_decl =
-					can_use_rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();
-				ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
-					FunctionCallNode(target_decl, std::move(rebound_args), member_call.called_from()));
-				auto& rebound_call_ref = std::get<FunctionCallNode>(rebound_call.as<ExpressionNode>());
+				CallExprNode rebound_call = can_use_rebound_function
+					? makeResolvedCallExpr(*rebound_function, std::move(rebound_args), member_call.called_from())
+					: makeResolvedCallExpr(member_call.function_declaration(), std::move(rebound_args), member_call.called_from());
 
 				if (can_use_rebound_function && rebound_function->has_mangled_name()) {
-					rebound_call_ref.set_mangled_name(rebound_function->mangled_name());
+					rebound_call.set_mangled_name(rebound_function->mangled_name());
 				} else if (member_call.function_declaration().has_mangled_name()) {
-					rebound_call_ref.set_mangled_name(member_call.function_declaration().mangled_name());
+					rebound_call.set_mangled_name(member_call.function_declaration().mangled_name());
 				}
 				if (set_qualified_name && rebound_function && rebound_owner) {
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
-					rebound_call_ref.set_qualified_name(qualified_handle.view());
+					rebound_call.set_qualified_name(qualified_handle.view());
 				}
 
-				return rebound_call;
+				return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
 			}
 		}
 
+		// Non-static member call: keep receiver
 		return ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(
-				rebound_object,
+			makeResolvedMemberCallExpr(rebound_object,
 				member_call.function_declaration(),
 				std::move(rebound_args),
 				member_call.called_from()));
