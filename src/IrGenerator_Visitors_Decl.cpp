@@ -201,6 +201,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		struct_name_for_function = ""sv;
 	}
 	func_decl_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_function);
+	StringHandle member_struct_name_handle;
+	const TypeInfo* member_struct_type_info = nullptr;
+	const StructTypeInfo* member_struct_info = nullptr;
+	if (node.is_member_function() && !struct_name_for_function.empty()) {
+		member_struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
+		if (auto type_it = getTypesByNameMap().find(member_struct_name_handle); type_it != getTypesByNameMap().end()) {
+			member_struct_type_info = type_it->second;
+			member_struct_info = member_struct_type_info->getStructInfo();
+		}
+	}
 
 		// Linkage and variadic flag
 	func_decl_op.linkage = node.linkage();
@@ -252,11 +262,9 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				// Always derive namespace from the struct's declaration-site NamespaceHandle
 				// rather than current_namespace_stack_, which may be the instantiation-site
 				// namespace when a template is instantiated from a different namespace.
-			auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_for_function);
-			auto type_it = getTypesByNameMap().find(struct_name_handle);
-			if (type_it != getTypesByNameMap().end()) {
+			if (member_struct_type_info) {
 				struct_found = true;
-				auto ns_views = buildNamespacePathFromHandle(type_it->second->namespaceHandle());
+				auto ns_views = buildNamespacePathFromHandle(member_struct_type_info->namespaceHandle());
 				namespace_for_mangling.reserve(ns_views.size());
 				for (auto sv : ns_views)
 					namespace_for_mangling.emplace_back(sv);
@@ -392,19 +400,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Set up function scope and 'this' pointer
 		symbol_table.enter_scope(ScopeType::Function);
 		if (node.is_member_function()) {
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != getTypesByNameMap().end()) {
-				const TypeInfo* struct_type_info = type_it->second;
-				struct_info = struct_type_info->getStructInfo();
-				if (struct_info) {
-					Token this_token = func_decl.identifier_token();
-					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-						struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
-					this_type.as<TypeSpecifierNode>().add_pointer_level();
-					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
-					symbol_table.insert("this"sv, this_decl);
-					lhs_object_handle = StringTable::getOrInternStringHandle("this");
-				}
+			struct_info = member_struct_info;
+			if (member_struct_type_info && struct_info) {
+				Token this_token = func_decl.identifier_token();
+				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+					member_struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+				this_type.as<TypeSpecifierNode>().add_pointer_level();
+				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+				symbol_table.insert("this"sv, this_decl);
+				lhs_object_handle = StringTable::getOrInternStringHandle("this");
 			}
 		}
 		for (const auto& param : node.parameter_nodes()) {
@@ -678,19 +682,15 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		StringHandle lhs_object_handle;
 		StringHandle rhs_object_handle;
 		if (node.is_member_function()) {
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != getTypesByNameMap().end()) {
-				const TypeInfo* struct_type_info = type_it->second;
-				compare_struct_info = struct_type_info->getStructInfo();
-				if (compare_struct_info) {
-					Token this_token = func_decl.identifier_token();
-					auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-						struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
-					this_type.as<TypeSpecifierNode>().add_pointer_level();
-					auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
-					symbol_table.insert("this"sv, this_decl);
-					lhs_object_handle = StringTable::getOrInternStringHandle("this");
-				}
+			compare_struct_info = member_struct_info;
+			if (member_struct_type_info && compare_struct_info) {
+				Token this_token = func_decl.identifier_token();
+				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+					member_struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+				this_type.as<TypeSpecifierNode>().add_pointer_level();
+				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
+				symbol_table.insert("this"sv, this_decl);
+				lhs_object_handle = StringTable::getOrInternStringHandle("this");
 			}
 		} else if (node.parameter_nodes().size() >= 2) {
 			const auto& lhs_param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
@@ -729,20 +729,16 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Find the operator<=> to call it - generate mangled name from the function signature
 			// (AST mangled name may not be set for user-defined operator<=>)
 		StringHandle spaceship_mangled;
-		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-		if (type_it != getTypesByNameMap().end()) {
-			const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-			if (struct_info) {
-				for (const auto& mf : struct_info->member_functions) {
-					if (mf.operator_kind == OverloadableOperator::Spaceship) {
-						if (mf.function_decl.is<FunctionDeclarationNode>()) {
-							const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
-								// Use generateMangledNameForCall for consistent mangling across platforms
-							spaceship_mangled = StringTable::getOrInternStringHandle(
-								generateMangledNameForCall(spaceship_func, node.parent_struct_name(), {}));
-						}
-						break;
+		if (compare_struct_info) {
+			for (const auto& mf : compare_struct_info->member_functions) {
+				if (mf.operator_kind == OverloadableOperator::Spaceship) {
+					if (mf.function_decl.is<FunctionDeclarationNode>()) {
+						const auto& spaceship_func = mf.function_decl.as<FunctionDeclarationNode>();
+							// Use generateMangledNameForCall for consistent mangling across platforms
+						spaceship_mangled = StringTable::getOrInternStringHandle(
+							generateMangledNameForCall(spaceship_func, struct_name_for_function, {}));
 					}
+					break;
 				}
 			}
 		}
@@ -944,23 +940,17 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Static member functions have no 'this' pointer
 	if (node.is_member_function() && !node.is_static()) {
 			// Look up the struct type to get its type index and size
-		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-		if (type_it != getTypesByNameMap().end()) {
-			const TypeInfo* struct_type_info = type_it->second;
-			const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+		if (member_struct_type_info && member_struct_info) {
+				// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
+			Token this_token = func_decl.identifier_token();	 // Use function token for location
+			auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
+				member_struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
+				// Mark 'this' as a pointer to struct (not a struct value)
+			this_type.as<TypeSpecifierNode>().add_pointer_level();
+			auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
 
-			if (struct_info) {
-					// Create a type specifier for the struct pointer (this is a pointer, so 64 bits)
-				Token this_token = func_decl.identifier_token();	 // Use function token for location
-				auto this_type = ASTNode::emplace_node<TypeSpecifierNode>(
-					struct_type_info->type_index_.withCategory(TypeCategory::Struct), 64, this_token, CVQualifier::None, ReferenceQualifier::None);
-					// Mark 'this' as a pointer to struct (not a struct value)
-				this_type.as<TypeSpecifierNode>().add_pointer_level();
-				auto this_decl = ASTNode::emplace_node<DeclarationNode>(this_type, this_token);
-
-					// Add 'this' to symbol table (it's the implicit first parameter)
-				symbol_table.insert("this"sv, this_decl);
-			}
+				// Add 'this' to symbol table (it's the implicit first parameter)
+			symbol_table.insert("this"sv, this_decl);
 		}
 	}
 
@@ -1012,52 +1002,47 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			}
 
 				// Look up the struct type
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(node.parent_struct_name()));
-			if (type_it != getTypesByNameMap().end()) {
-				const TypeInfo* struct_type_info = type_it->second;
-				const StructTypeInfo* struct_info = struct_type_info->getStructInfo();
+			if (member_struct_info) {
+					// Generate memberwise assignment
+				for (const auto& member : member_struct_info->members) {
+						// First, load the member from source parameter
+					TempVar member_value = var_counter.next();
+					MemberLoadOp member_load;
+					member_load.result.value = member_value;
+					member_load.result.setType(member.type_index.category());
+					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+					member_load.object = source_param_name_handle;  // Load from source parameter
+					member_load.member_name = member.getName();
+					member_load.offset = static_cast<int>(member.offset);
+					member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+					member_load.struct_type_info = nullptr;
 
-				if (struct_info) {
-						// Generate memberwise assignment
-					for (const auto& member : struct_info->members) {
-							// First, load the member from source parameter
-						TempVar member_value = var_counter.next();
-						MemberLoadOp member_load;
-						member_load.result.value = member_value;
-						member_load.result.setType(member.type_index.category());
-						member_load.result.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_load.object = source_param_name_handle;  // Load from source parameter
-						member_load.member_name = member.getName();
-						member_load.offset = static_cast<int>(member.offset);
-						member_load.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_load.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
 
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), func_decl.identifier_token()));
+						// Then, store the member to 'this'
+						// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
+					MemberStoreOp member_store;
+					member_store.value.setType(member.type_index.category());
+					member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
+					member_store.value.value = member_value;
+					member_store.object = StringTable::getOrInternStringHandle("this");
+					member_store.member_name = member.getName();
+					member_store.offset = static_cast<int>(member.offset);
+					member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
+					member_store.struct_type_info = nullptr;
 
-							// Then, store the member to 'this'
-							// Format: [member_type, member_size, object_name, member_name, offset, is_ref, is_rvalue_ref, ref_size_bits, value]
-						MemberStoreOp member_store;
-						member_store.value.setType(member.type_index.category());
-						member_store.value.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
-						member_store.value.value = member_value;
-						member_store.object = StringTable::getOrInternStringHandle("this");
-						member_store.member_name = member.getName();
-						member_store.offset = static_cast<int>(member.offset);
-						member_store.ref_qualifier = ((member.is_rvalue_reference() ? CVReferenceQualifier::RValueReference : ((member.is_reference()) ? CVReferenceQualifier::LValueReference : CVReferenceQualifier::None)));
-						member_store.struct_type_info = nullptr;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
+				}
 
-						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), func_decl.identifier_token()));
-					}
-
-						// Return *this (the return value is the 'this' pointer dereferenced)
-						// Generate: %temp = dereference [Type][Size] %this
-						//           return [Type][Size] %temp
-					TempVar this_deref = var_counter.next();
-					std::vector<IrOperand> deref_operands;
-					deref_operands.emplace_back(this_deref);	 // result variable
-					DereferenceOp deref_op;
-					deref_op.result = this_deref;
-					deref_op.pointer.setType(TypeCategory::Struct);
+					// Return *this (the return value is the 'this' pointer dereferenced)
+					// Generate: %temp = dereference [Type][Size] %this
+					//           return [Type][Size] %temp
+				TempVar this_deref = var_counter.next();
+				std::vector<IrOperand> deref_operands;
+				deref_operands.emplace_back(this_deref);	 // result variable
+				DereferenceOp deref_op;
+				deref_op.result = this_deref;
+				deref_op.pointer.setType(TypeCategory::Struct);
 					deref_op.pointer.type_index = nativeTypeIndex(TypeCategory::Struct);
 					deref_op.pointer.ir_type = IrType::Struct;
 					deref_op.pointer.size_in_bits = SizeInBits{64};	// Pointer is always 64 bits
@@ -1066,7 +1051,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 					ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_op), func_decl.identifier_token()));
 
 						// Return the dereferenced value
-					emitReturn(this_deref, TypeCategory::Struct, struct_info->sizeInBits().value, func_decl.identifier_token());
+					emitReturn(this_deref, TypeCategory::Struct, member_struct_info->sizeInBits().value, func_decl.identifier_token());
 				}
 			}
 		}
