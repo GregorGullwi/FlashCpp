@@ -1112,19 +1112,70 @@ void Parser::register_builtin_functions() {
 	// LLP64 (Windows): unsigned long long (unsigned long is 32-bit)
 	// LP64  (Linux):    unsigned long      (unsigned long is 64-bit)
 	const TypeCategory size_t_base = context_.isLLP64() ? TypeCategory::UnsignedLongLong : TypeCategory::UnsignedLong;
+	const ASTNode void_type = make_builtin_type(TypeCategory::Void, CVQualifier::None, 0);
+	const ASTNode bool_type = make_builtin_type(TypeCategory::Bool, CVQualifier::None, 0);
+	const ASTNode int_type = make_builtin_type(TypeCategory::Int, CVQualifier::None, 0);
+	const ASTNode void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::None, 1);
+	const ASTNode const_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Const, 1);
+	const ASTNode volatile_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::Volatile, 1);
+	const ASTNode const_volatile_void_ptr = make_builtin_type(TypeCategory::Void, CVQualifier::ConstVolatile, 1);
+	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
+	// These __atomic* builtins are type-generic in GCC/Clang. We currently register
+	// them with a wide integer placeholder for value positions so phase-1 lookup and
+	// most unqualified builtin-name binding succeed in libstdc++ headers. Pointer-
+	// typed operations still need proper generic signature modeling, which is why
+	// <atomic>/<latch> now fail later on __atomic_add_fetch rather than at name lookup.
+	const ASTNode generic_atomic_value_type = make_builtin_type(TypeCategory::UnsignedLongLong, CVQualifier::None, 0);
 
 	// __builtin_strlen(const char*) - returns length of string
 	register_extern_c_builtin(
 		"__builtin_strlen",
-		make_builtin_type(size_t_base, CVQualifier::None, 0),
+		size_t_type,
 		{make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1)});
+	register_extern_c_builtin(
+		"__builtin_memcmp",
+		make_builtin_type(TypeCategory::Int, CVQualifier::None, 0),
+		{
+			const_void_ptr,
+			const_void_ptr,
+			size_t_type
+		});
+	register_extern_c_builtin("__atomic_store", void_type, {volatile_void_ptr, const_void_ptr, int_type});
+	register_extern_c_builtin("__atomic_store_n", void_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_load", void_type, {const_volatile_void_ptr, void_ptr, int_type});
+	register_extern_c_builtin("__atomic_load_n", generic_atomic_value_type, {const_volatile_void_ptr, int_type});
+	register_extern_c_builtin("__atomic_exchange", void_type, {volatile_void_ptr, const_void_ptr, void_ptr, int_type});
+	register_extern_c_builtin("__atomic_exchange_n", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin(
+		"__atomic_compare_exchange",
+		bool_type,
+		{volatile_void_ptr, void_ptr, const_void_ptr, bool_type, int_type, int_type});
+	register_extern_c_builtin(
+		"__atomic_compare_exchange_n",
+		bool_type,
+		{volatile_void_ptr, void_ptr, generic_atomic_value_type, bool_type, int_type, int_type});
+	register_extern_c_builtin("__atomic_fetch_add", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_fetch_sub", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_fetch_and", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_fetch_or", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_fetch_xor", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_add_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_sub_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_and_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_or_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_xor_fetch", generic_atomic_value_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
+	register_extern_c_builtin("__atomic_is_lock_free", bool_type, {size_t_type, const_volatile_void_ptr});
+	register_extern_c_builtin("__atomic_always_lock_free", bool_type, {size_t_type, const_volatile_void_ptr});
+	register_extern_c_builtin("__atomic_test_and_set", bool_type, {volatile_void_ptr, int_type});
+	register_extern_c_builtin("__atomic_clear", void_type, {volatile_void_ptr, int_type});
+	register_extern_c_builtin("__atomic_thread_fence", void_type, {int_type});
+	register_extern_c_builtin("__atomic_signal_fence", void_type, {int_type});
 
 	// Wide-character memory/string functions needed by char_traits<wchar_t>.
 	// These are declared in <wchar.h>/<cwchar> but char_traits.h may use them
 	// before those headers are explicitly included.
 	const ASTNode wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::None, 1);
 	const ASTNode const_wchar_t_ptr = make_builtin_type(TypeCategory::WChar, CVQualifier::Const, 1);
-	const ASTNode size_t_type = make_builtin_type(size_t_base, CVQualifier::None, 0);
 
 	register_extern_c_builtin(
 		"wmemcmp",

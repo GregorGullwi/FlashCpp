@@ -520,6 +520,8 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		// __builtin_strlen -> strlen (libc function)
 	if (func_name_view == "__builtin_strlen") {
 		function_name = "strlen";
+	} else if (func_name_view == "__builtin_memcmp") {
+		function_name = "memcmp";
 	}
 
 	bool has_precomputed_mangled = functionCallNode.has_mangled_name();
