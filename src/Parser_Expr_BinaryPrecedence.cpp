@@ -6,7 +6,10 @@
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
 	static thread_local int recursion_depth = 0;
-	constexpr int MAX_RECURSION_DEPTH = 50;
+	// Flat binary chains and simple unary prefixes no longer recurse/iterate artificially,
+	// so this guard only needs to catch genuinely pathological nesting such as very deep
+	// parenthesized/sub-expression recursion while staying comfortably above real tests.
+	constexpr int MAX_RECURSION_DEPTH = 2048;
 
 	// RAII guard to ensure recursion_depth is decremented on all exit paths
 	struct RecursionGuard {
@@ -236,18 +239,26 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		return result;
 	}
 
-	constexpr int MAX_BINARY_OP_ITERATIONS = 100;
-	int binary_op_iteration = 0;
-	while (true) {
-		if (++binary_op_iteration > MAX_BINARY_OP_ITERATIONS) {
-			FLASH_LOG_FORMAT(Parser, Error, "Hit MAX_BINARY_OP_ITERATIONS limit ({}) in parse_expression binary operator loop", MAX_BINARY_OP_ITERATIONS);
-			return ParseResult::error("Parser error: too many binary operator iterations", current_token_);
-		}
+	auto isParserAtSameToken = [](const Token& lhs, const Token& rhs) {
+		return lhs.type() == rhs.type() &&
+			   lhs.value() == rhs.value() &&
+			   lhs.line() == rhs.line() &&
+			   lhs.column() == rhs.column() &&
+			   lhs.file_index() == rhs.file_index();
+	};
 
+	auto makeBinaryLoopStallError = [&]() {
+		Token stalled_token = peek_info();
+		FLASH_LOG(Parser, Error, "parse_expression binary operator loop stalled at token '", stalled_token.value(),
+				  "' on line ", stalled_token.line(), " column ", stalled_token.column());
+		return ParseResult::error("Parser error: stalled while parsing binary expression", stalled_token);
+	};
+	while (true) {
 		// Safety check: ensure we have a token to examine
 		if (peek().is_eof()) {
 			break;
 		}
+		Token loop_start_token = peek_info();
 
 		// Check if the current token is a binary operator or comma (which can be an operator)
 		bool is_operator = peek().is_operator();
@@ -486,12 +497,18 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
 						}
 						result = ParseResult::success(call_node);
+						if (isParserAtSameToken(loop_start_token, peek_info())) {
+							return makeBinaryLoopStallError();
+						}
 						continue;
 					}
 
 					// Not a function call - just a qualified identifier access
 					auto ident_node = emplace_node<ExpressionNode>(IdentifierNode(member_token));
 					result = ParseResult::success(ident_node);
+					if (isParserAtSameToken(loop_start_token, peek_info())) {
+						return makeBinaryLoopStallError();
+					}
 					continue;
 				}
 
@@ -499,6 +516,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// will handle function calls with template arguments. We just needed to prevent
 				// the binary operator loop from consuming '<' as a comparison operator.
 				// Continue to the next iteration to let postfix operators handle this.
+				if (isParserAtSameToken(loop_start_token, peek_info())) {
+					return makeBinaryLoopStallError();
+				}
 				continue;
 			}
 			// If could_be_template_arguments() returned false, fall through to treat '<' as operator
@@ -691,6 +711,9 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);
 				result = ParseResult::success(binary_op);
+				if (isParserAtSameToken(loop_start_token, peek_info())) {
+					return makeBinaryLoopStallError();
+				}
 			}
 		}
 	}
