@@ -279,8 +279,6 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 				collectLambdaCaptureCandidates(inner_node.condition(), capture_candidates, uses_implicit_this_capture);
 				collectLambdaCaptureCandidates(inner_node.true_expr(), capture_candidates, uses_implicit_this_capture);
 				collectLambdaCaptureCandidates(inner_node.false_expr(), capture_candidates, uses_implicit_this_capture);
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				collectLambdaCaptureCandidates(ASTNode(&inner_node), capture_candidates, uses_implicit_this_capture);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (!inner_node.has_receiver()) {
 					if (const FunctionDeclarationNode* func_decl = inner_node.callee().function_declaration_or_null();
@@ -305,11 +303,6 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				collectLambdaCaptureCandidates(inner_node.object(), capture_candidates, uses_implicit_this_capture);
 				collectLambdaCaptureCandidates(inner_node.member_pointer(), capture_candidates, uses_implicit_this_capture);
-			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				collectLambdaCaptureCandidates(inner_node.object(), capture_candidates, uses_implicit_this_capture);
-				for (const auto& argument : inner_node.arguments()) {
-					collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
-				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				collectLambdaCaptureCandidates(inner_node.array_expr(), capture_candidates, uses_implicit_this_capture);
 				collectLambdaCaptureCandidates(inner_node.index_expr(), capture_candidates, uses_implicit_this_capture);

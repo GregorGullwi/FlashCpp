@@ -642,13 +642,6 @@ private:
 				visit(e.condition());
 				visit(e.true_expr());
 				visit(e.false_expr());
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				for (const auto& template_arg : e.template_arguments()) {
-					visit(template_arg);
-				}
-				for (const auto& arg : e.arguments()) {
-					visit(arg);
-				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				for (const auto& arg : e.arguments()) {
 					visit(arg);
@@ -658,11 +651,6 @@ private:
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				visit(e.object());
 				visit(e.member_pointer());
-			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				visit(e.object());
-				for (const auto& arg : e.arguments()) {
-					visit(arg);
-				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				visit(e.array_expr());
 				visit(e.index_expr());
@@ -2022,12 +2010,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				normalizeExpression(e.condition(), ctx);
 				normalizeExpression(e.true_expr(), ctx);
 				normalizeExpression(e.false_expr(), ctx);
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				tryAnnotateCallArgConversions(e);
-				tryResolveCallableOperator(e);
-				for (const auto& arg : e.arguments()) {
-					normalizeExpression(arg, ctx);
-				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				tryAnnotateConstructorCallArgConversions(e);
 				for (const auto& arg : e.arguments()) {
@@ -2038,12 +2020,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
-			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				tryAnnotateMemberFunctionCallArgConversions(e);
-				normalizeExpression(e.object(), ctx);
-				for (const auto& arg : e.arguments()) {
-					normalizeExpression(arg, ctx);
-				}
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				tryAnnotateCallArgConversions(e);
 				tryResolveCallableOperator(e);
@@ -2634,57 +2610,6 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				CanonicalTypeDesc ternary_desc;
 				ternary_desc.type_index = nativeTypeIndex(common_cat);
 				return type_context_.intern(ternary_desc);
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
-					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
-					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
-						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
-					}
-				}
-
-				tryResolveCallableOperator(e);
-				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
-					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
-					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
-						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
-					}
-				}
-
-				// Infer result type from the resolved function declaration's return type.
-				const DeclarationNode& decl = e.function_declaration();
-				const ASTNode ret_type_node = decl.type_node();
-				if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& type_node = ret_type_node.as<TypeSpecifierNode>();
-					if (!isPlaceholderAutoType(type_node.type())) {
-						return canonicalizeType(type_node);
-					}
-				}
-
-				const StringHandle callee_name = decl.identifier_token().handle();
-				const CanonicalTypeId callee_type_id = callee_name.isValid() ? lookupLocalType(callee_name) : CanonicalTypeId{};
-				if (!callee_type_id)
-					return {};
-
-				const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
-				if (callee_desc.category() == TypeCategory::Struct) {
-					const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
-					const StructTypeInfo* struct_info = callee_type_info ? callee_type_info->getStructInfo() : nullptr;
-					if (!struct_info) {
-						return {};
-					}
-
-					for (const auto& member_func : struct_info->member_functions) {
-						if (member_func.operator_kind == OverloadableOperator::Call &&
-							member_func.function_decl.is<FunctionDeclarationNode>()) {
-							return canonicalizeType(
-								member_func.function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>());
-						}
-					}
-				}
-
-				return {};
-			} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-				return canonicalizeType(e.function_declaration().decl_node().type_node().template as<TypeSpecifierNode>());
 			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
 								 std::is_same_v<T, ConstCastNode> ||
 								 std::is_same_v<T, ReinterpretCastNode>) {

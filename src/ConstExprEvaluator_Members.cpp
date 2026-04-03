@@ -618,7 +618,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 					func_call.called_from().column(),
 					func_call.called_from().file_index());
 				ExpressionNode this_expr = IdentifierNode(this_token);
-				MemberFunctionCallNode member_call(
+				CallExprNode member_call = makeResolvedMemberCallExpr(
 					ASTNode(&this_expr),
 					*current_struct_match.function,
 					copyCallArguments(func_call.arguments()),
@@ -677,7 +677,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			func_call.called_from().column(),
 			func_call.called_from().file_index());
 		ExpressionNode this_expr = IdentifierNode(this_token);
-		MemberFunctionCallNode member_call(
+		CallExprNode member_call = makeResolvedMemberCallExpr(
 			ASTNode(&this_expr),
 			func_decl,
 			copyCallArguments(func_call.arguments()),
@@ -739,7 +739,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 					call_expr.called_from().column(),
 					call_expr.called_from().file_index());
 				ExpressionNode this_expr = IdentifierNode(this_token);
-				MemberFunctionCallNode member_call(
+				CallExprNode member_call = makeResolvedMemberCallExpr(
 					ASTNode(&this_expr),
 					*current_struct_match.function,
 					copyCallArguments(call_expr.arguments()),
@@ -798,7 +798,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			call_expr.called_from().column(),
 			call_expr.called_from().file_index());
 		ExpressionNode this_expr = IdentifierNode(this_token);
-		MemberFunctionCallNode member_call(
+		CallExprNode member_call = makeResolvedMemberCallExpr(
 			ASTNode(&this_expr),
 			func_decl,
 			copyCallArguments(call_expr.arguments()),

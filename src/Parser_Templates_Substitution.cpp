@@ -1594,15 +1594,6 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 			using T = std::decay_t<decltype(node)>;
 			if constexpr (std::is_same_v<T, IdentifierNode>) {
 				return node.name() == pack_name;
-			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-				if (argsContain(node.arguments()))
-					return true;
-				if (node.has_template_arguments()) {
-					for (const auto& ta : node.template_arguments())
-						if (exprContainsIdentifier(ta, pack_name))
-							return true;
-				}
-				return false;
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
 				if (node.has_receiver() && exprContainsIdentifier(node.receiver(), pack_name))
 					return true;

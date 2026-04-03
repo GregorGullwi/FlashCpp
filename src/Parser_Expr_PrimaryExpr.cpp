@@ -4247,7 +4247,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 											DeclarationNode& stub_decl_sv = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_sv), identifier_token);
 											ChunkedVector<ASTNode> no_args_sv;
-											FunctionCallNode& var_call_sv = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_sv, std::move(no_args_sv), identifier_token);
+											CallExprNode var_call_sv = makeDirectCallExpr(stub_decl_sv, std::move(no_args_sv), identifier_token);
 											std::vector<ASTNode> targ_nodes_sv;
 											for (const auto& targ : *explicit_template_args) {
 												if (targ.is_dependent && targ.dependent_name.isValid()) {
@@ -4264,7 +4264,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!targ_nodes_sv.empty())
 												var_call_sv.set_template_arguments(std::move(targ_nodes_sv));
 											var_call_sv.set_qualified_name(qualified_name);
-											result = emplace_node<ExpressionNode>(var_call_sv);
+											result = emplace_node<ExpressionNode>(std::move(var_call_sv));
 											return ParseResult::success(*result);
 										}
 									}
@@ -4298,7 +4298,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 									DeclarationNode& stub_decl_vt = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt), identifier_token);
 									ChunkedVector<ASTNode> no_args_vt;
-									FunctionCallNode& var_call_vt = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt, std::move(no_args_vt), identifier_token);
+									CallExprNode var_call_vt = makeDirectCallExpr(stub_decl_vt, std::move(no_args_vt), identifier_token);
 									std::vector<ASTNode> targ_nodes_vt;
 									for (const auto& targ : *explicit_template_args) {
 										if (targ.is_dependent && targ.dependent_name.isValid()) {
@@ -4314,7 +4314,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									}
 									if (!targ_nodes_vt.empty())
 										var_call_vt.set_template_arguments(std::move(targ_nodes_vt));
-									result = emplace_node<ExpressionNode>(var_call_vt);
+									result = emplace_node<ExpressionNode>(std::move(var_call_vt));
 									return ParseResult::success(*result);
 								}
 							}
@@ -4852,7 +4852,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), identifier_token);
 							ChunkedVector<ASTNode> no_args_vt3;
-							FunctionCallNode& var_call_vt3 = gChunkedAnyStorage.emplace_back<FunctionCallNode>(stub_decl_vt3, std::move(no_args_vt3), identifier_token);
+							CallExprNode var_call_vt3 = makeDirectCallExpr(stub_decl_vt3, std::move(no_args_vt3), identifier_token);
 							if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
 								explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
 							} else if (explicit_template_args.has_value()) {
@@ -4862,7 +4862,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								var_call_vt3.set_template_arguments(std::move(explicit_template_arg_nodes));
 							if (!template_name_to_use.empty() && template_name_to_use != identifier_token.value())
 								var_call_vt3.set_qualified_name(template_name_to_use);
-							result = emplace_node<ExpressionNode>(var_call_vt3);
+							result = emplace_node<ExpressionNode>(std::move(var_call_vt3));
 							return ParseResult::success(*result);
 						}
 					}

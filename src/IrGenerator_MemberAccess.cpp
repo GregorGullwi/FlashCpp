@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "CallNodeHelpers.h"
 
 AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 	MultiDimMemberArrayAccess result;
@@ -142,7 +143,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
 			ChunkedVector<ASTNode> args;
 			args.push_back(arraySubscriptNode.index_expr());
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				arraySubscriptNode.array_expr(),
 				*op_subscript,
 				std::move(args),

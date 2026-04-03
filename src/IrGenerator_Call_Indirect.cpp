@@ -616,8 +616,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			callExprNode.arguments().visit([&](ASTNode arg) {
 				args_copy.push_back(arg);
 			});
-			FunctionCallNode synth_call(func_decl_node, std::move(args_copy), callExprNode.called_from());
-			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(synth_call);
+			CallExprNode synth_call = makeDirectCallExpr(func_decl_node, std::move(args_copy), callExprNode.called_from());
+			auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(std::move(synth_call));
 			eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 			if (!eval_result.success()) {
 				eval_result = first_error;

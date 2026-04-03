@@ -137,14 +137,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return target_type_node.as<TypeSpecifierNode>();
 			}
 			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-			const ASTNode& return_type_node = inner.function_declaration().type_node();
-			if (return_type_node.is<TypeSpecifierNode>()) {
-				return return_type_node.as<TypeSpecifierNode>();
-			}
-			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-			const ASTNode& return_type_node = inner.function_declaration().decl_node().type_node();
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			const DeclarationNode& decl = inner.callee().declaration();
+			const ASTNode& return_type_node = decl.type_node();
 			if (return_type_node.is<TypeSpecifierNode>()) {
 				return return_type_node.as<TypeSpecifierNode>();
 			}
