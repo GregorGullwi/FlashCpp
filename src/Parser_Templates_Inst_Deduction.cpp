@@ -327,6 +327,7 @@ void Parser::reparse_template_function_body(
 				phase1_cutoff_line_ = it->second.current_token_.line();
 				phase1_cutoff_file_idx_ = it->second.current_token_.file_index();
 				phase1_violation_token_.reset();
+				phase1_violation_decl_token_.reset();
 			}
 		}
 
@@ -363,7 +364,23 @@ void Parser::reparse_template_function_body(
 	phase1_cutoff_file_idx_ = SIZE_MAX;
 	if (phase1_violation_token_.has_value()) {
 		auto tok = *phase1_violation_token_;
+		auto decl_tok = phase1_violation_decl_token_;
 		phase1_violation_token_.reset();
+		phase1_violation_decl_token_.reset();
+
+		bool should_error = false;
+		if (decl_tok.has_value() && context_.getInputFile().has_value()) {
+			const auto& file_paths = lexer_.file_paths();
+			if (decl_tok->file_index() < file_paths.size()) {
+				should_error = file_paths[decl_tok->file_index()] == *context_.getInputFile();
+			}
+		}
+
+		if (should_error) {
+			throw CompileError(
+				std::string("non-dependent name '").append(tok.value()).append("' was not declared before the template definition (C++20 [temp.res]/9)"));
+		}
+
 		FLASH_LOG(Parser, Warning, "non-dependent name '", tok.value(), "' appears to have been declared after the template definition (C++20 [temp.res]/9) — may be false positive due to inline instantiation ordering; continuing");
 	}
 	// template_scope RAII guard removes TypeInfo entries automatically.

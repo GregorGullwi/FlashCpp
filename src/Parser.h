@@ -483,6 +483,7 @@ private:
 	size_t phase1_cutoff_line_ = 0;
 	size_t phase1_cutoff_file_idx_ = SIZE_MAX;
 	std::optional<Token> phase1_violation_token_;
+	std::optional<Token> phase1_violation_decl_token_;
 
 		// Add parsing depth counter to detect infinite loops
 		// This is incremented/decremented in critical parsing functions
@@ -1465,6 +1466,7 @@ private:	 // Resume private methods
 				decl_tok.file_index() == phase1_cutoff_file_idx_ &&
 				decl_tok.line() > phase1_cutoff_line_) {
 				phase1_violation_token_ = token;
+				phase1_violation_decl_token_ = decl_tok;
 			}
 		};
 
