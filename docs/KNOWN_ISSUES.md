@@ -3,27 +3,6 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
-## Constexpr pointer: snapshot semantics vs. live reference semantics
-
-When `&x` is evaluated where `x` is a local constexpr variable (in bindings),
-the pointer captures a **snapshot** of the value at that point in time.
-In C++ constexpr evaluation, a pointer should observe subsequent mutations
-to the pointed-to object. For example:
-
-```cpp
-constexpr int f() {
-    int x = 1;
-    int* p = &x;
-    x = 2;
-    return *p; // C++ requires 2; FlashCpp returns 1 (snapshot)
-}
-```
-
-Since constexpr variables are immutable and mutable local variables in
-constexpr contexts are rare, this gap is not triggered by typical usage.
-The snapshot approach is an implementation trade-off to enable cross-scope
-pointer passing without a full reference-cell model.
-
 ## Constexpr pointer: `array_elements` field reused for pointer value snapshot
 
 `EvalResult::array_elements` is semantically defined for array support, but
