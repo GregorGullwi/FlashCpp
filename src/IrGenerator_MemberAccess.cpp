@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "CallNodeHelpers.h"
 
 AstToIr::MultiDimMemberArrayAccess AstToIr::collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript) {
 	MultiDimMemberArrayAccess result;
@@ -142,7 +143,7 @@ ExprResult AstToIr::generateArraySubscriptIr(const ArraySubscriptNode& arraySubs
 		if (const FunctionDeclarationNode* op_subscript = sema_->getResolvedOpSubscript(&arraySubscriptNode)) {
 			ChunkedVector<ASTNode> args;
 			args.push_back(arraySubscriptNode.index_expr());
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				arraySubscriptNode.array_expr(),
 				*op_subscript,
 				std::move(args),
@@ -1019,11 +1020,12 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto get_identifier = [&]() -> const IdentifierNode* {
 		return tryGetIdentifier(object_node);
 	};
-	auto get_member_func_call = [&]() -> const MemberFunctionCallNode* {
-		if (expr && std::holds_alternative<MemberFunctionCallNode>(*expr))
-			return &std::get<MemberFunctionCallNode>(*expr);
-		if (object_node.is<MemberFunctionCallNode>())
-			return &object_node.as<MemberFunctionCallNode>();
+
+	auto get_call_expr_with_receiver = [&]() -> const CallExprNode* {
+		if (expr && std::holds_alternative<CallExprNode>(*expr) && std::get<CallExprNode>(*expr).has_receiver())
+			return &std::get<CallExprNode>(*expr);
+		if (object_node.is<CallExprNode>() && object_node.as<CallExprNode>().has_receiver())
+			return &object_node.as<CallExprNode>();
 		return nullptr;
 	};
 
@@ -1115,8 +1117,8 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (is_arrow) {
 				is_pointer_dereference = true;
 			}
-		} else if (const MemberFunctionCallNode* call = get_member_func_call()) {
-			auto call_result = generateMemberFunctionCallIr(*call, ExpressionContext::Load);
+		} else if (const CallExprNode* call_expr = get_call_expr_with_receiver()) {
+			auto call_result = generateMemberFunctionCallIr(*call_expr, ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
@@ -1237,14 +1239,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			auto array_operands = generateArraySubscriptIr(std::get<ArraySubscriptNode>(*expr));
 			if (!extractBaseFromOperands(array_operands, base_object, base_type_index, "array subscript")) {
 				throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
-			}
-		} else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
-			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr), ExpressionContext::Load);
-			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
-				throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
-			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
 			}
 		} else if (expr) {
 			// Materialize direct object expressions (constructor calls, braced construction,

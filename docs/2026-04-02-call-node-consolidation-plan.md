@@ -50,16 +50,23 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Convert metadata copying utilities to operate on the shared call abstraction instead of only `FunctionCallNode`.
 - [x] Refactor postfix/member parsing so `.` and `->` share one call/member-access builder.
 - [x] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
-- [ ] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
-- [ ] Merge IR lowering so there is one common call lowering pipeline with small branches only for receiver passing, virtual dispatch, and indirect-call specifics.
-- [ ] Remove temporary call-form conversions such as member-to-function fallback nodes once all downstream code reads the unified representation directly.
+- [x] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
+- [x] Merge the remaining constexpr evaluation, substitution, and direct IR entry points onto direct `CallExprNode` handling so the old `materializeLegacy*` adapters are no longer needed there.
+- [x] Merge the deeper shared IR lowering pipeline so the remaining member-call lowering, virtual dispatch, and member-to-free fallback paths stop depending on `MemberFunctionCallNode` / `FunctionCallNode` internals.
+- [x] Remove temporary call-form conversions such as member-to-function fallback nodes in constexpr evaluation, substitution, and the top-level direct/member IR entry points once those downstream sites read the unified representation directly.
 - [ ] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
 
 ### Current status
 
 - Parser normalization is now complete for the ordinary free-call and member-call paths; those parser sites emit `CallExprNode` and the rebased Windows suite is green after the downstream compatibility fixes.
-- Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path; the remaining temporary bridges are concentrated in constexpr evaluation and direct/member IR lowering.
-- The remaining work is centered on collapsing semantic-analysis and IR lowering onto direct `CallExprNode` handling, then removing those last legacy conversions before deleting the duplicate legacy nodes.
+- Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path without re-materializing legacy free-call nodes.
+- Constexpr evaluation now consumes `CallExprNode` directly for free/member dispatch, bound-call handling, noexcept lookup, and static-member cycle detection.
+- Semantic analysis now routes callable-operator lookup, overload recovery, argument conversion, and reference-binding annotation through shared `CallInfo`-based helpers; the legacy per-node entry points remain only as thin wrappers.
+- IR lowering unification is now complete: the deeper member-call lowering, virtual dispatch, and member-to-free fallback paths have been flipped so the 3-arg `generateMemberFunctionCallIr` and `convertMemberCallToFunctionCall` both take `const CallExprNode&` as the primary type, exactly matching the pattern already done for `generateFunctionCallIr`. The 2-arg `MemberFunctionCallNode` entry is now a thin forwarding wrapper. The `materializeLegacyFunctionCall` and `materializeLegacyMemberFunctionCall` helpers have been removed from `CallNodeHelpers.h` as there are no remaining callers.
+- The three synthetic `MemberFunctionCallNode` constructions in range-for lowering (`IrGenerator_Stmt_Control.cpp`) have been replaced with `makeResolvedMemberCallExpr` calls.
+- **All construction sites** that previously emitted `FunctionCallNode` or `MemberFunctionCallNode` have been converted to produce `CallExprNode`: `ExpressionSubstitutor.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` (rebind-static), `Parser_Templates_Substitution.cpp` (template-param substitution + pack-identifier replacement), and `Parser_Expr_PrimaryExpr.cpp` (deferred concept evaluation).
+- Several IR-generator consumer sites now use `CallInfo::tryFrom` instead of per-type variant dispatch: `IrGenerator_Call_Indirect.cpp` (merged three object-type-extraction branches into one), `IrGenerator_MemberAccess.cpp` (removed dead `FunctionCallNode` branch), and `IrGenerator_Visitors_TypeInit.cpp` (static-member lazy instantiation).
+- The remaining work before legacy-node deletion: convert the constexpr evaluator branches (`ConstExprEvaluator_Core.cpp`, `ConstExprEvaluator_Members.cpp`), the lazy template dispatch in `TemplateRegistry_Lazy.h`, the remaining variant reads in `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Substitution.cpp`, the `get_member_func_call` lambda in `IrGenerator_MemberAccess.cpp`, the `copyMetadataToExpr` legacy branches in `ExpressionSubstitutor.cpp`, and the `CallInfo::from` overloads / `setCall*` helpers in `CallNodeHelpers.h`. Once those are done, `FunctionCallNode` and `MemberFunctionCallNode` can be removed from the `ExpressionNode` variant and their class definitions deleted.
 
 ## Important implementation notes
 

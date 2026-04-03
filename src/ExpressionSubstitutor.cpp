@@ -33,8 +33,6 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	// Dispatch on concrete node types (reached directly or after ExpressionNode unwrap above).
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
-	} else if (expr.is<FunctionCallNode>()) {
-		return substituteFunctionCall(expr.as<FunctionCallNode>());
 	} else if (expr.is<CallExprNode>()) {
 		return substituteCallExpr(expr.as<CallExprNode>());
 	} else if (expr.is<BinaryOperatorNode>()) {
@@ -108,16 +106,12 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	return ASTNode(&new_expr);
 }
 
-ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& call) {
-	return substituteFunctionCallImpl(call, nullptr);
-}
-
-ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode& call, const CallExprNode* unified_source) {
+ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
 	FLASH_LOG(Templates, Debug, "  has_template_arguments: ", call.has_template_arguments());
 
-	const DeclarationNode& decl_node = call.function_declaration();
+	const DeclarationNode& decl_node = call.callee().declaration();
 	std::string_view func_name = call.called_from().value();
 	if (func_name.empty()) {
 		func_name = decl_node.identifier_token().value();
@@ -147,38 +141,18 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode
 		return inst_args;
 	};
 	auto wrapOriginalCall = [&]() -> ASTNode {
-		if (unified_source) {
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(*unified_source);
-			return ASTNode(&new_expr);
-		}
 		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
 		return ASTNode(&new_expr);
 	};
 	auto copyMetadataToExpr = [&](ExpressionNode& expr, const CallMetadataCopyOptions& options = {}) {
-		if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-			if (unified_source) {
-				copyCallMetadata(*function_call, *unified_source, options);
-			} else {
-				copyCallMetadata(*function_call, call, options);
-			}
-			return;
-		}
 		if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
-			if (unified_source) {
-				copyCallMetadata(*call_expr, *unified_source, options);
-			} else {
-				copyCallMetadata(*call_expr, call, options);
-			}
+			copyCallMetadata(*call_expr, call, options);
 		}
 	};
 	auto emplaceDirectCallExpr = [&](const DeclarationNode& target_decl, const FunctionDeclarationNode* target_func, ChunkedVector<ASTNode>&& args, const Token& called_from) -> ExpressionNode& {
-		if (unified_source) {
-			CallExprNode new_call = target_func
-				? makeResolvedCallExpr(*target_func, std::move(args), called_from)
-				: makeDirectCallExpr(target_decl, std::move(args), called_from);
-			return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
-		}
-		FunctionCallNode new_call(target_decl, std::move(args), called_from);
+		CallExprNode new_call = target_func
+			? makeResolvedCallExpr(*target_func, std::move(args), called_from)
+			: makeDirectCallExpr(target_decl, std::move(args), called_from);
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
@@ -693,8 +667,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode
 
 ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 	if (!call.has_receiver()) {
-		FunctionCallNode legacy_call = materializeLegacyFunctionCall(call);
-		return substituteFunctionCallImpl(legacy_call, &call);
+		return substituteFunctionCallImpl(call);
 	}
 
 	ASTNode substituted_receiver = substitute(call.receiver());

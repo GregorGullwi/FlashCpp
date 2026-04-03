@@ -76,8 +76,6 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 }
 
 ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is_arrow_access, const Token& operator_start_token) {
-	const std::string_view access_spelling = is_arrow_access ? "->"sv : "."sv;
-
 	// Expect an identifier (member name) OR ~ for pseudo-destructor call
 	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
 	if (peek() == "~"_tok) {

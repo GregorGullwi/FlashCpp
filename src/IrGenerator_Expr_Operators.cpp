@@ -3198,40 +3198,40 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 		.view();
 }
 
-std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode) {
+std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_name, const CallExprNode& callExprNode) {
 	// Lookup table for intrinsic handlers using if-else chain
 	// More maintainable than multiple nested if statements
 
 	// Variadic argument intrinsics
 	if (func_name == "__builtin_va_start" || func_name == "__va_start") {
-		return generateVaStartIntrinsic(functionCallNode);
+		return generateVaStartIntrinsic(callExprNode);
 	}
 	if (func_name == "__builtin_va_arg") {
-		return generateVaArgIntrinsic(functionCallNode);
+		return generateVaArgIntrinsic(callExprNode);
 	}
 
 	// Integer abs intrinsics
 	if (func_name == "__builtin_labs" || func_name == "__builtin_llabs") {
-		return generateBuiltinAbsIntIntrinsic(functionCallNode);
+		return generateBuiltinAbsIntIntrinsic(callExprNode);
 	}
 
 	// Floating point abs intrinsics
 	if (func_name == "__builtin_fabs" || func_name == "__builtin_fabsf" || func_name == "__builtin_fabsl") {
-		return generateBuiltinAbsFloatIntrinsic(functionCallNode, func_name);
+		return generateBuiltinAbsFloatIntrinsic(callExprNode, func_name);
 	}
 
 	// Optimization hint intrinsics
 	if (func_name == "__builtin_unreachable") {
-		return generateBuiltinUnreachableIntrinsic(functionCallNode);
+		return generateBuiltinUnreachableIntrinsic(callExprNode);
 	}
 	if (func_name == "__builtin_assume") {
-		return generateBuiltinAssumeIntrinsic(functionCallNode);
+		return generateBuiltinAssumeIntrinsic(callExprNode);
 	}
 	if (func_name == "__builtin_expect") {
-		return generateBuiltinExpectIntrinsic(functionCallNode);
+		return generateBuiltinExpectIntrinsic(callExprNode);
 	}
 	if (func_name == "__builtin_launder") {
-		return generateBuiltinLaunderIntrinsic(functionCallNode);
+		return generateBuiltinLaunderIntrinsic(callExprNode);
 	}
 
 	// __builtin_strlen - maps to libc strlen function, not an inline intrinsic
@@ -3240,26 +3240,26 @@ std::optional<ExprResult> AstToIr::tryGenerateIntrinsicIr(std::string_view func_
 
 	// SEH exception intrinsics
 	if (func_name == "GetExceptionCode" || func_name == "_exception_code") {
-		return generateGetExceptionCodeIntrinsic(functionCallNode);
+		return generateGetExceptionCodeIntrinsic(callExprNode);
 	}
 	if (func_name == "GetExceptionInformation" || func_name == "_exception_info") {
-		return generateGetExceptionInformationIntrinsic(functionCallNode);
+		return generateGetExceptionInformationIntrinsic(callExprNode);
 	}
 	if (func_name == "_abnormal_termination" || func_name == "AbnormalTermination") {
-		return generateAbnormalTerminationIntrinsic(functionCallNode);
+		return generateAbnormalTerminationIntrinsic(callExprNode);
 	}
 
 	return std::nullopt; // Not an intrinsic
 }
 
-ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode) {
-	if (functionCallNode.arguments().size() != 1) {
+ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode) {
+	if (callExprNode.arguments().size() != 1) {
 		FLASH_LOG(Codegen, Error, "__builtin_labs/__builtin_llabs requires exactly 1 argument");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Long), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Get the argument
-	ASTNode arg = functionCallNode.arguments()[0];
+	ASTNode arg = callExprNode.arguments()[0];
 	ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 	// Extract argument details
@@ -3273,7 +3273,7 @@ ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& funct
 		.lhs = arg_value,
 		.rhs = makeTypedValue(TypeCategory::Int, SizeInBits{32}, 63ULL),
 		.result = sign_mask};
-	ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(shift_op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::ShiftRight, std::move(shift_op), callExprNode.called_from()));
 
 	// Step 2: XOR with sign mask
 	TempVar xor_result = var_counter.next();
@@ -3281,7 +3281,7 @@ ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& funct
 		.lhs = arg_value,
 		.rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
 		.result = xor_result};
-	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(xor_op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseXor, std::move(xor_op), callExprNode.called_from()));
 
 	// Step 3: Subtract sign mask
 	TempVar abs_result = var_counter.next();
@@ -3289,19 +3289,19 @@ ExprResult AstToIr::generateBuiltinAbsIntIntrinsic(const FunctionCallNode& funct
 		.lhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, xor_result),
 		.rhs = makeTypedValue(arg_type, SizeInBits{static_cast<int>(arg_size)}, sign_mask),
 		.result = abs_result};
-	ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::Subtract, std::move(sub_op), callExprNode.called_from()));
 
 	return makeExprResult(nativeTypeIndex(arg_type), SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name) {
-	if (functionCallNode.arguments().size() != 1) {
+ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const CallExprNode& callExprNode, std::string_view func_name) {
+	if (callExprNode.arguments().size() != 1) {
 		FLASH_LOG(Codegen, Error, func_name, " requires exactly 1 argument");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Double), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Get the argument
-	ASTNode arg = functionCallNode.arguments()[0];
+	ASTNode arg = callExprNode.arguments()[0];
 	ExprResult arg_result = visitExpressionNode(arg.as<ExpressionNode>());
 
 	// Extract argument details
@@ -3319,7 +3319,7 @@ ExprResult AstToIr::generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& fun
 		.lhs = arg_value,
 		.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{static_cast<int>(arg_size)}, mask),
 		.result = abs_result};
-	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::BitwiseAnd, std::move(and_op), callExprNode.called_from()));
 
 	return makeExprResult(nativeTypeIndex(arg_type), SizeInBits{static_cast<int>(arg_size)}, IrOperand{abs_result}, PointerDepth{}, ValueStorage::ContainsData);
 }
@@ -3349,20 +3349,20 @@ bool AstToIr::isVaListPointerType(const ASTNode& arg, const ExprResult& ir_resul
 	return false;
 }
 
-ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallNode) {
+ExprResult AstToIr::generateVaArgIntrinsic(const CallExprNode& callExprNode) {
 	// __builtin_va_arg takes 2 arguments: va_list variable and type
 	// After preprocessing: __builtin_va_arg(args, int) - parser sees this as function call with 2 args
-	if (functionCallNode.arguments().size() != 2) {
+	if (callExprNode.arguments().size() != 2) {
 		FLASH_LOG(Codegen, Error, "__builtin_va_arg requires exactly 2 arguments (va_list and type)");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Get the first argument (va_list variable)
-	ASTNode arg0 = functionCallNode.arguments()[0];
+	ASTNode arg0 = callExprNode.arguments()[0];
 	ExprResult vaListExprResult = visitExpressionNode(arg0.as<ExpressionNode>());
 
 	// Get the second argument (type identifier or type specifier)
-	ASTNode arg1 = functionCallNode.arguments()[1];
+	ASTNode arg1 = callExprNode.arguments()[1];
 
 	// Extract type information from the second argument
 	TypeCategory requested_type = TypeCategory::Int;
@@ -3445,7 +3445,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			load_pointer.result = va_list_struct_ptr;
 			load_pointer.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 			load_pointer.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, var_name_handle);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_pointer), callExprNode.called_from()));
 		}
 
 		// Step 2: Compute address of the appropriate offset field (gp_offset for ints, fp_offset for floats)
@@ -3466,7 +3466,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			fp_offset_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 			fp_offset_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 4ULL);
 			fp_offset_calc.result = fp_offset_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), callExprNode.called_from()));
 
 			// Materialize the address before using it
 			TempVar materialized_fp_addr = var_counter.next();
@@ -3474,7 +3474,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			materialize.result = materialized_fp_addr;
 			materialize.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_fp_addr);
 			materialize.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, fp_offset_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), callExprNode.called_from()));
 
 			// Read 32-bit fp_offset value from [va_list_struct + 4]
 			load_offset.pointer.value = materialized_fp_addr;
@@ -3484,7 +3484,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			load_offset.pointer.value = va_list_struct_ptr;
 		}
 
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), callExprNode.called_from()));
 
 		// Phase 4: Overflow support - check if offset >= limit and use overflow_arg_area if so
 		// For integers: gp_offset limit is 48 (6 registers * 8 bytes)
@@ -3512,17 +3512,17 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		// Adjust limit: need to have slot_size bytes remaining
 		compare_op.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, offset_limit - slot_size + 8);
 		compare_op.result = cmp_result;
-		ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), callExprNode.called_from()));
 
 		// Conditional branch: if (current_offset < limit) goto reg_path else goto overflow_path
 		CondBranchOp cond_branch;
 		cond_branch.label_true = reg_path_label;
 		cond_branch.label_false = overflow_path_label;
 		cond_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_result);
-		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), callExprNode.called_from()));
 
 		// ============ REGISTER PATH ============
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, callExprNode.called_from()));
 
 		// Step 4: Load reg_save_area pointer (at offset 16)
 		TempVar reg_save_area_field_addr = var_counter.next();
@@ -3530,7 +3530,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		reg_save_addr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 		reg_save_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 16ULL);
 		reg_save_addr.result = reg_save_area_field_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), callExprNode.called_from()));
 
 		// Materialize the address before using it
 		TempVar materialized_reg_save_addr = var_counter.next();
@@ -3538,7 +3538,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		materialize_reg.result = materialized_reg_save_addr;
 		materialize_reg.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_reg_save_addr);
 		materialize_reg.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, reg_save_area_field_addr);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), callExprNode.called_from()));
 
 		TempVar reg_save_area_ptr = var_counter.next();
 		DereferenceOp load_reg_save_ptr;
@@ -3549,7 +3549,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64}; // Pointer is always 64 bits
 		load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 		load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), callExprNode.called_from()));
 
 		// Step 5: Compute address: reg_save_area + current_offset
 		TempVar arg_addr = var_counter.next();
@@ -3561,11 +3561,11 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		convert_offset.result = offset_64;
 		convert_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_64);
 		convert_offset.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, current_offset);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), callExprNode.called_from()));
 
 		compute_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_64);
 		compute_addr.result = arg_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), callExprNode.called_from()));
 
 		// Step 6: Read the value at arg_addr
 		TempVar reg_value = var_counter.next();
@@ -3576,14 +3576,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 		read_reg_value.pointer.pointer_depth = PointerDepth{1};
 		read_reg_value.pointer.value = arg_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), callExprNode.called_from()));
 
 		// Assign to result variable
 		AssignmentOp assign_reg_result;
 		assign_reg_result.result = value;
 		assign_reg_result.lhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, value);
 		assign_reg_result.rhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, reg_value);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), callExprNode.called_from()));
 
 		// Step 7: Increment the offset by slot_size and store back
 		// slot_size is 16 for floats (XMM regs), or rounded up to 8-byte boundary for integers/structs
@@ -3592,7 +3592,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		increment_offset.lhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, current_offset);
 		increment_offset.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, slot_size);
 		increment_offset.result = new_offset;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), callExprNode.called_from()));
 
 		// Step 8: Store updated offset back to the appropriate field in the structure
 		TempVar materialized_offset = var_counter.next();
@@ -3600,7 +3600,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		materialize.result = materialized_offset;
 		materialize.lhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, materialized_offset);
 		materialize.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, new_offset);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), callExprNode.called_from()));
 
 		DereferenceStoreOp store_offset;
 		store_offset.pointer.setType(TypeCategory::UnsignedInt);
@@ -3615,14 +3615,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			fp_store_addr_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 			fp_store_addr_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 4ULL);
 			fp_store_addr_calc.result = fp_offset_store_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), callExprNode.called_from()));
 
 			TempVar materialized_addr = var_counter.next();
 			AssignmentOp materialize_addr;
 			materialize_addr.result = materialized_addr;
 			materialize_addr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_addr);
 			materialize_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, fp_offset_store_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), callExprNode.called_from()));
 
 			store_offset.pointer.value = materialized_addr;
 		} else {
@@ -3630,13 +3630,13 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			store_offset.pointer.value = va_list_struct_ptr;
 		}
 		store_offset.value = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, materialized_offset);
-		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), callExprNode.called_from()));
 
 		// Jump to end
-		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, callExprNode.called_from()));
 
 		// ============ OVERFLOW PATH ============
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, callExprNode.called_from()));
 
 		// Load overflow_arg_area pointer (at offset 8)
 		TempVar overflow_field_addr = var_counter.next();
@@ -3644,7 +3644,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		overflow_addr_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 		overflow_addr_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 8ULL);
 		overflow_addr_calc.result = overflow_field_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), callExprNode.called_from()));
 
 		// Materialize before dereferencing
 		TempVar materialized_overflow_addr = var_counter.next();
@@ -3652,7 +3652,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		materialize_overflow.result = materialized_overflow_addr;
 		materialize_overflow.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_overflow_addr);
 		materialize_overflow.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_field_addr);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), callExprNode.called_from()));
 
 		TempVar overflow_ptr = var_counter.next();
 		DereferenceOp load_overflow_ptr;
@@ -3663,7 +3663,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
 		load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 		load_overflow_ptr.pointer.value = materialized_overflow_addr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), callExprNode.called_from()));
 
 		// Read value from overflow_arg_area
 		TempVar overflow_value = var_counter.next();
@@ -3674,14 +3674,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 		read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 		read_overflow_value.pointer.value = overflow_ptr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), callExprNode.called_from()));
 
 		// Assign to result variable
 		AssignmentOp assign_overflow_result;
 		assign_overflow_result.result = value;
 		assign_overflow_result.lhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, value);
 		assign_overflow_result.rhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, overflow_value);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), callExprNode.called_from()));
 
 		// Advance overflow_arg_area by the actual stack argument size (always 8 bytes on x64 stack)
 		// Note: slot_size is for register save area; stack always uses 8-byte slots
@@ -3691,7 +3691,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		advance_overflow.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_ptr);
 		advance_overflow.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_advance);
 		advance_overflow.result = new_overflow_ptr;
-		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), callExprNode.called_from()));
 
 		// Store updated overflow_arg_area back to structure
 		DereferenceStoreOp store_overflow;
@@ -3702,10 +3702,10 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 		store_overflow.pointer.pointer_depth = PointerDepth{1};
 		store_overflow.pointer.value = materialized_overflow_addr;
 		store_overflow.value = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, new_overflow_ptr);
-		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), callExprNode.called_from()));
 
 		// ============ END LABEL ============
-		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, callExprNode.called_from()));
 
 		return makeExprResult(nativeTypeIndex(requested_type), SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 
@@ -3728,7 +3728,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			} else {
 				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 			}
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), callExprNode.called_from()));
 
 			// Load gp_offset (offset 0) for integers, or fp_offset (offset 4) for floats
 			TempVar current_offset = var_counter.next();
@@ -3747,7 +3747,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				fp_offset_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 				fp_offset_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 4ULL);
 				fp_offset_calc.result = fp_offset_addr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_offset_calc), callExprNode.called_from()));
 
 				// Materialize the address before using it
 				TempVar materialized_fp_addr = var_counter.next();
@@ -3755,7 +3755,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				materialize.result = materialized_fp_addr;
 				materialize.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_fp_addr);
 				materialize.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, fp_offset_addr);
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize), callExprNode.called_from()));
 
 				// Read 32-bit fp_offset value from [va_list_struct + 4]
 				load_offset.pointer.value = materialized_fp_addr;
@@ -3763,7 +3763,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				// gp_offset is at offset 0 - read directly from va_list_struct_ptr
 				load_offset.pointer.value = va_list_struct_ptr;
 			}
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_offset), callExprNode.called_from()));
 
 			// Phase 4: Overflow support with conditional branch
 			static size_t va_arg_ptr_counter = 0;
@@ -3788,17 +3788,17 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			// Adjust limit: need to have slot_size bytes remaining
 			compare_op.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, offset_limit - slot_size + 8);
 			compare_op.result = cmp_result;
-			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::UnsignedLessThan, std::move(compare_op), callExprNode.called_from()));
 
 			// Conditional branch
 			CondBranchOp cond_branch;
 			cond_branch.label_true = reg_path_label;
 			cond_branch.label_false = overflow_path_label;
 			cond_branch.condition = makeTypedValue(TypeCategory::Bool, SizeInBits{1}, cmp_result);
-			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), callExprNode.called_from()));
 
 			// ============ REGISTER PATH ============
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = reg_path_label}, callExprNode.called_from()));
 
 			// Load reg_save_area pointer (at offset 16)
 			TempVar reg_save_area_field_addr = var_counter.next();
@@ -3806,14 +3806,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			reg_save_addr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 			reg_save_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 16ULL);
 			reg_save_addr.result = reg_save_area_field_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(reg_save_addr), callExprNode.called_from()));
 
 			TempVar materialized_reg_save_addr = var_counter.next();
 			AssignmentOp materialize_reg;
 			materialize_reg.result = materialized_reg_save_addr;
 			materialize_reg.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_reg_save_addr);
 			materialize_reg.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, reg_save_area_field_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_reg), callExprNode.called_from()));
 
 			TempVar reg_save_area_ptr = var_counter.next();
 			DereferenceOp load_reg_save_ptr;
@@ -3824,7 +3824,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			load_reg_save_ptr.pointer.size_in_bits = SizeInBits{64};
 			load_reg_save_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_reg_save_ptr.pointer.value = materialized_reg_save_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_reg_save_ptr), callExprNode.called_from()));
 
 			// Compute address: reg_save_area + current_offset
 			TempVar offset_64 = var_counter.next();
@@ -3832,14 +3832,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			convert_offset.result = offset_64;
 			convert_offset.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_64);
 			convert_offset.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, current_offset);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(convert_offset), callExprNode.called_from()));
 
 			TempVar arg_addr = var_counter.next();
 			BinaryOp compute_addr;
 			compute_addr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, reg_save_area_ptr);
 			compute_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, offset_64);
 			compute_addr.result = arg_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(compute_addr), callExprNode.called_from()));
 
 			// Read value
 			TempVar reg_value = var_counter.next();
@@ -3850,14 +3850,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			read_reg_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 			read_reg_value.pointer.pointer_depth = PointerDepth{1};
 			read_reg_value.pointer.value = arg_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_reg_value), callExprNode.called_from()));
 
 			// Assign to result
 			AssignmentOp assign_reg_result;
 			assign_reg_result.result = value;
 			assign_reg_result.lhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, value);
 			assign_reg_result.rhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, reg_value);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_reg_result), callExprNode.called_from()));
 
 			// Increment gp_offset by slot_size, or fp_offset by 16
 			TempVar new_offset = var_counter.next();
@@ -3865,14 +3865,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			increment_offset.lhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, current_offset);
 			increment_offset.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, slot_size);
 			increment_offset.result = new_offset;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(increment_offset), callExprNode.called_from()));
 
 			TempVar materialized_offset = var_counter.next();
 			AssignmentOp materialize_off;
 			materialize_off.result = materialized_offset;
 			materialize_off.lhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, materialized_offset);
 			materialize_off.rhs = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, new_offset);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_off), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_off), callExprNode.called_from()));
 
 			DereferenceStoreOp store_offset;
 			store_offset.pointer.setType(TypeCategory::UnsignedInt);
@@ -3887,14 +3887,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				fp_store_addr_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 				fp_store_addr_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 4ULL);
 				fp_store_addr_calc.result = fp_offset_store_addr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(fp_store_addr_calc), callExprNode.called_from()));
 
 				TempVar materialized_addr = var_counter.next();
 				AssignmentOp materialize_addr;
 				materialize_addr.result = materialized_addr;
 				materialize_addr.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_addr);
 				materialize_addr.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, fp_offset_store_addr);
-				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_addr), callExprNode.called_from()));
 
 				store_offset.pointer.value = materialized_addr;
 			} else {
@@ -3902,13 +3902,13 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				store_offset.pointer.value = va_list_struct_ptr;
 			}
 			store_offset.value = makeTypedValue(TypeCategory::UnsignedInt, SizeInBits{32}, materialized_offset);
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_offset), callExprNode.called_from()));
 
 			// Jump to end
-			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = va_arg_end_label}, callExprNode.called_from()));
 
 			// ============ OVERFLOW PATH ============
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = overflow_path_label}, callExprNode.called_from()));
 
 			// Load overflow_arg_area (at offset 8)
 			TempVar overflow_field_addr = var_counter.next();
@@ -3916,14 +3916,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			overflow_addr_calc.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_ptr);
 			overflow_addr_calc.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 8ULL);
 			overflow_addr_calc.result = overflow_field_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(overflow_addr_calc), callExprNode.called_from()));
 
 			TempVar materialized_overflow_addr = var_counter.next();
 			AssignmentOp materialize_overflow;
 			materialize_overflow.result = materialized_overflow_addr;
 			materialize_overflow.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, materialized_overflow_addr);
 			materialize_overflow.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_field_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(materialize_overflow), callExprNode.called_from()));
 
 			TempVar overflow_ptr = var_counter.next();
 			DereferenceOp load_overflow_ptr;
@@ -3934,7 +3934,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			load_overflow_ptr.pointer.size_in_bits = SizeInBits{64};
 			load_overflow_ptr.pointer.pointer_depth = PointerDepth{1};
 			load_overflow_ptr.pointer.value = materialized_overflow_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(load_overflow_ptr), callExprNode.called_from()));
 
 			// Read value from overflow area
 			TempVar overflow_value = var_counter.next();
@@ -3945,14 +3945,14 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			read_overflow_value.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 			read_overflow_value.pointer.pointer_depth = PointerDepth{1};
 			read_overflow_value.pointer.value = overflow_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(read_overflow_value), callExprNode.called_from()));
 
 			// Assign to result
 			AssignmentOp assign_overflow_result;
 			assign_overflow_result.result = value;
 			assign_overflow_result.lhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, value);
 			assign_overflow_result.rhs = makeTypedValue(requested_type, SizeInBits{static_cast<int>(requested_size)}, overflow_value);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_overflow_result), callExprNode.called_from()));
 
 			// Advance overflow_arg_area by the actual stack argument size (always 8 bytes per slot on x64 stack)
 			unsigned long long overflow_advance = (requested_size + 63) / 64 * 8; // Round up to 8-byte boundary
@@ -3961,7 +3961,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			advance_overflow.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_ptr);
 			advance_overflow.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, overflow_advance);
 			advance_overflow.result = new_overflow_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(advance_overflow), callExprNode.called_from()));
 
 			DereferenceStoreOp store_overflow;
 			store_overflow.pointer.setType(TypeCategory::UnsignedLongLong);
@@ -3971,10 +3971,10 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			store_overflow.pointer.pointer_depth = PointerDepth{1};
 			store_overflow.pointer.value = materialized_overflow_addr;
 			store_overflow.value = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, new_overflow_ptr);
-			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::DereferenceStore, std::move(store_overflow), callExprNode.called_from()));
 
 			// ============ END LABEL ============
-			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = va_arg_end_label}, callExprNode.called_from()));
 
 			return makeExprResult(nativeTypeIndex(requested_type), SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 
@@ -3992,7 +3992,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			} else {
 				load_ptr_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 			}
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(load_ptr_op), callExprNode.called_from()));
 
 			// Step 2: Read the value at the current pointer
 			// Win64 ABI: structs > 8 bytes are passed by pointer in variadic calls,
@@ -4013,7 +4013,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				deref_ptr_op.pointer.size_in_bits = SizeInBits{64};
 				deref_ptr_op.pointer.pointer_depth = PointerDepth{1};
 				deref_ptr_op.pointer.value = current_ptr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_ptr_op), callExprNode.called_from()));
 
 				// Step 2b: Dereference the struct pointer to get the actual struct
 				DereferenceOp deref_struct_op;
@@ -4023,7 +4023,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				deref_struct_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 				deref_struct_op.pointer.pointer_depth = PointerDepth{1};
 				deref_struct_op.pointer.value = struct_ptr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_struct_op), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_struct_op), callExprNode.called_from()));
 			} else {
 				// Small types (≤8 bytes): read value directly from stack slot
 				DereferenceOp deref_value_op;
@@ -4033,7 +4033,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				deref_value_op.pointer.size_in_bits = SizeInBits{static_cast<int>(requested_size)};
 				deref_value_op.pointer.pointer_depth = PointerDepth{1};
 				deref_value_op.pointer.value = current_ptr;
-				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), functionCallNode.called_from()));
+				ir_.addInstruction(IrInstruction(IrOpcode::Dereference, std::move(deref_value_op), callExprNode.called_from()));
 			}
 
 			// Step 3: Advance va_list by 8 bytes (always 8 - even for large structs,
@@ -4043,7 +4043,7 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 			add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, current_ptr);
 			add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 8ULL);
 			add_op.result = next_ptr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), callExprNode.called_from()));
 
 			// Step 4: Store the updated pointer back to va_list
 			AssignmentOp assign_op;
@@ -4054,22 +4054,22 @@ ExprResult AstToIr::generateVaArgIntrinsic(const FunctionCallNode& functionCallN
 				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<StringHandle>(va_list_var));
 			}
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, next_ptr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 
 			return makeExprResult(nativeTypeIndex(requested_type), SizeInBits{static_cast<int>(requested_size)}, IrOperand{value}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 }
 
-ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCallNode) {
+ExprResult AstToIr::generateVaStartIntrinsic(const CallExprNode& callExprNode) {
 	// __builtin_va_start takes 2 arguments: va_list (not pointer!), and last fixed parameter
-	if (functionCallNode.arguments().size() != 2) {
+	if (callExprNode.arguments().size() != 2) {
 		FLASH_LOG(Codegen, Error, "__builtin_va_start requires exactly 2 arguments");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Get the first argument (va_list variable)
-	ASTNode arg0 = functionCallNode.arguments()[0];
+	ASTNode arg0 = callExprNode.arguments()[0];
 	ExprResult arg0ExprResult = visitExpressionNode(arg0.as<ExpressionNode>());
 
 	// Get the va_list variable name (needed for assignment later)
@@ -4083,7 +4083,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 	bool va_list_is_pointer = isVaListPointerType(arg0, arg0ExprResult);
 
 	// Get the second argument (last fixed parameter)
-	ASTNode arg1 = functionCallNode.arguments()[1];
+	ASTNode arg1 = callExprNode.arguments()[1];
 	[[maybe_unused]] auto arg1_ir = visitExpressionNode(arg1.as<ExpressionNode>());
 
 	// The second argument should be an identifier (the parameter name)
@@ -4105,7 +4105,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 		// We just need to assign the address of the va_list structure to the user's va_list variable.
 
 		// Get address of the va_list structure
-		TempVar va_list_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+		TempVar va_list_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), callExprNode.called_from());
 
 		// Finally, assign the address of the va_list structure to the user's va_list variable (char* pointer)
 		// Get the va_list variable from arg0ExprResult.value
@@ -4130,7 +4130,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 			final_assign.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 		}
 		final_assign.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_list_struct_addr);
-		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(final_assign), callExprNode.called_from()));
 
 	} else {
 		// va_list is a simple char* pointer type (typedef char* va_list;)
@@ -4155,7 +4155,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 			// This enables proper overflow support when >5 variadic int args are passed
 
 			// Get address of va_list structure
-			TempVar va_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), functionCallNode.called_from());
+			TempVar va_struct_addr = emitAddressOf(TypeCategory::Char, 8, IrValue(StringTable::getOrInternStringHandle("__varargs_va_list_struct__"sv)), callExprNode.called_from());
 
 			// Assign to va_list variable
 			AssignmentOp assign_op;
@@ -4167,7 +4167,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 			}
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_struct_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 		} else {
 			// Windows/MSVC ABI: Compute &last_param + 8 (variadic args are on stack)
 			TempVar last_param_addr = var_counter.next();
@@ -4189,7 +4189,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 			addr_op.operand.size_in_bits = SizeInBits{param_type.size_in_bits()};
 			addr_op.operand.pointer_depth = PointerDepth{static_cast<int>(param_type.pointer_depth())};
 			addr_op.operand.value = StringTable::getOrInternStringHandle(last_param_name);
-			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), callExprNode.called_from()));
 
 			// Add 8 bytes (64 bits) to get to the next parameter slot
 			TempVar va_start_addr = var_counter.next();
@@ -4197,7 +4197,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 			add_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, last_param_addr);
 			add_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, 8ULL);
 			add_op.result = va_start_addr;
-			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Add, std::move(add_op), callExprNode.called_from()));
 
 			// Assign to va_list variable
 			AssignmentOp assign_op;
@@ -4209,7 +4209,7 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 				assign_op.lhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, std::get<TempVar>(va_list_var));
 			}
 			assign_op.rhs = makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{64}, va_start_addr);
-			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), functionCallNode.called_from()));
+			ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), callExprNode.called_from()));
 		}
 	}
 
@@ -4217,9 +4217,9 @@ ExprResult AstToIr::generateVaStartIntrinsic(const FunctionCallNode& functionCal
 	return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode) {
+ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const CallExprNode& callExprNode) {
 	// Verify no arguments (some compilers allow it, we'll be strict)
-	if (functionCallNode.arguments().size() != 0) {
+	if (callExprNode.arguments().size() != 0) {
 		FLASH_LOG(Codegen, Warning, "__builtin_unreachable should not have arguments (ignoring)");
 	}
 
@@ -4235,15 +4235,15 @@ ExprResult AstToIr::generateBuiltinUnreachableIntrinsic(const FunctionCallNode& 
 	return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode) {
-	if (functionCallNode.arguments().size() != 1) {
+ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const CallExprNode& callExprNode) {
+	if (callExprNode.arguments().size() != 1) {
 		FLASH_LOG(Codegen, Error, "__builtin_assume requires exactly 1 argument (condition)");
 		return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Evaluate the condition expression (but we don't use the result)
 	// In a real implementation, we'd use this to inform the optimizer
-	ASTNode condition = functionCallNode.arguments()[0];
+	ASTNode condition = callExprNode.arguments()[0];
 	[[maybe_unused]] auto condition_ir = visitExpressionNode(condition.as<ExpressionNode>());
 
 	// For now, we just evaluate the expression and ignore it
@@ -4258,19 +4258,19 @@ ExprResult AstToIr::generateBuiltinAssumeIntrinsic(const FunctionCallNode& funct
 	return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode) {
-	if (functionCallNode.arguments().size() != 2) {
+ExprResult AstToIr::generateBuiltinExpectIntrinsic(const CallExprNode& callExprNode) {
+	if (callExprNode.arguments().size() != 2) {
 		FLASH_LOG(Codegen, Error, "__builtin_expect requires exactly 2 arguments (expr, expected_value)");
 		// Return a default value matching typical usage (long type)
 		return makeExprResult(nativeTypeIndex(TypeCategory::LongLong), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Evaluate the first argument (the expression)
-	ASTNode expr = functionCallNode.arguments()[0];
+	ASTNode expr = callExprNode.arguments()[0];
 	auto expr_ir = visitExpressionNode(expr.as<ExpressionNode>());
 
 	// Evaluate the second argument (the expected value) but don't use it for now
-	ASTNode expected = functionCallNode.arguments()[1];
+	ASTNode expected = callExprNode.arguments()[1];
 	[[maybe_unused]] auto expected_ir = visitExpressionNode(expected.as<ExpressionNode>());
 
 	// For now, we just return the expression value unchanged
@@ -4285,14 +4285,14 @@ ExprResult AstToIr::generateBuiltinExpectIntrinsic(const FunctionCallNode& funct
 	return expr_ir;
 }
 
-ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode) {
-	if (functionCallNode.arguments().size() != 1) {
+ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const CallExprNode& callExprNode) {
+	if (callExprNode.arguments().size() != 1) {
 		FLASH_LOG(Codegen, Error, "__builtin_launder requires exactly 1 argument (pointer)");
 		return makeExprResult(nativeTypeIndex(TypeCategory::UnsignedLongLong), SizeInBits{64}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
 	}
 
 	// Evaluate the pointer argument
-	ASTNode ptr_arg = functionCallNode.arguments()[0];
+	ASTNode ptr_arg = callExprNode.arguments()[0];
 	ExprResult ptrExprResult = visitExpressionNode(ptr_arg.as<ExpressionNode>());
 
 	// Extract pointer details
@@ -4317,12 +4317,12 @@ ExprResult AstToIr::generateBuiltinLaunderIntrinsic(const FunctionCallNode& func
 	return ptrExprResult;
 }
 
-ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode) {
+ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const CallExprNode& callExprNode) {
 	// The IR opcode produces a 32-bit exception code value.  The declared return type
 	// may differ (e.g., unsigned long vs unsigned int).  Derive the expression type
 	// from the function declaration so the intrinsic result matches what the caller
 	// expects — same as regular function calls derive their type from the declaration.
-	const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
@@ -4331,43 +4331,43 @@ ExprResult AstToIr::generateGetExceptionCodeIntrinsic(const FunctionCallNode& fu
 		// Filter context: EXCEPTION_POINTERS* is in [rsp+8], read ExceptionCode from there
 		SehExceptionIntrinsicOp op;
 		op.result = result;
-		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), callExprNode.called_from()));
 	} else if (seh_has_saved_exception_code_) {
 		// __except body context: read from parent-frame slot saved during filter evaluation
 		SehGetExceptionCodeBodyOp op;
 		op.saved_var = seh_saved_exception_code_var_;
 		op.result = result;
-		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCodeBody, std::move(op), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCodeBody, std::move(op), callExprNode.called_from()));
 	} else {
 		// Fallback (e.g. filter without a saved slot): use the direct filter path
 		SehExceptionIntrinsicOp op;
 		op.result = result;
-		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), functionCallNode.called_from()));
+		ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionCode, std::move(op), callExprNode.called_from()));
 	}
 	return makeExprResult(nativeTypeIndex(result_type), SizeInBits{result_size}, IrOperand{result}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode) {
-	const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+ExprResult AstToIr::generateAbnormalTerminationIntrinsic(const CallExprNode& callExprNode) {
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
 	TempVar result = var_counter.next();
 	SehAbnormalTerminationOp op;
 	op.result = result;
-	ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::SehAbnormalTermination, std::move(op), callExprNode.called_from()));
 	return makeExprResult(nativeTypeIndex(result_type), SizeInBits{result_size}, IrOperand{result}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
-ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode) {
-	const auto& ret_type_spec = functionCallNode.function_declaration().type_node().as<TypeSpecifierNode>();
+ExprResult AstToIr::generateGetExceptionInformationIntrinsic(const CallExprNode& callExprNode) {
+	const auto& ret_type_spec = callExprNode.callee().declaration().type_node().as<TypeSpecifierNode>();
 	const TypeCategory result_type = ret_type_spec.type();
 	const int result_size = static_cast<int>(ret_type_spec.size_in_bits());
 
 	TempVar result = var_counter.next();
 	SehExceptionIntrinsicOp op;
 	op.result = result;
-	ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), functionCallNode.called_from()));
+	ir_.addInstruction(IrInstruction(IrOpcode::SehGetExceptionInfo, std::move(op), callExprNode.called_from()));
 	return makeExprResult(nativeTypeIndex(result_type), SizeInBits{result_size}, IrOperand{result}, PointerDepth{}, ValueStorage::ContainsData);
 }
 

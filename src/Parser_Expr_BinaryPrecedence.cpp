@@ -330,7 +330,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						// Not a known variable, could be a template
 						could_be_template_name = true;
 					}
-				} else if (std::holds_alternative<FunctionCallNode>(expr) ||
+				} else if (CallInfo::tryFrom(expr).has_value() ||
 						   std::holds_alternative<ConstructorCallNode>(expr)) {
 					// Function calls and constructor calls cannot have template arguments after them.
 					// This handles cases like:

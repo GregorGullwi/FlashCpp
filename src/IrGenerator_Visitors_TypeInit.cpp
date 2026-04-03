@@ -1,6 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
-#include "RebindStaticMemberAst.h"
+#include "CallNodeHelpers.h"
 
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
@@ -346,68 +346,6 @@ void AstToIr::generateStaticMemberDeclarations() {
 			data[offset + i] = static_cast<char>((value >> (i * 8)) & 0xFF);
 		}
 	};
-	using InstantiatedStaticMembersByTemplate =
-		std::unordered_map<StringHandle, std::unordered_set<StringHandle, StringHandleHash>, StringHandleHash>;
-	InstantiatedStaticMembersByTemplate instantiated_static_members_by_template;
-	for (const auto& [candidate_name, candidate_type] : getTypesByNameMap()) {
-		if (!candidate_type->isTemplateInstantiation() || !candidate_type->isStruct()) {
-			continue;
-		}
-		const StructTypeInfo* candidate_struct = candidate_type->getStructInfo();
-		if (!candidate_struct) {
-			continue;
-		}
-		auto& member_names = instantiated_static_members_by_template[candidate_type->baseTemplateName()];
-		for (const auto& static_member : candidate_struct->static_members) {
-			member_names.insert(static_member.getName());
-		}
-	}
-	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
-		auto hasUnresolvedTypeSpecifier = [](const ASTNode& node) {
-			if (!node.is<TypeSpecifierNode>()) {
-				return false;
-			}
-
-			const auto& type_spec = node.as<TypeSpecifierNode>();
-			return type_spec.type_index().needsTypeIndex() && !type_spec.type_index().is_valid();
-		};
-
-		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
-			if (current.is<SizeofPackNode>() || current.is<TemplateParameterReferenceNode>()) {
-				return true;
-			}
-			if (hasUnresolvedTypeSpecifier(current)) {
-				return true;
-			}
-
-			if (current.is<IdentifierNode>()) {
-				const auto& identifier = current.as<IdentifierNode>();
-				if (global_symbol_table_->lookup(identifier.name()).has_value()) {
-					return false;
-				}
-
-				StringHandle member_name_handle = identifier.getOrInternNameHandle();
-				if (owner_struct != nullptr &&
-					owner_struct->findStaticMemberRecursive(member_name_handle).first != nullptr) {
-					return false;
-				}
-
-				return true;
-			}
-
-			if (current.is<SizeofExprNode>()) {
-				const auto& sizeof_expr = current.as<SizeofExprNode>();
-				return sizeof_expr.is_type() && hasUnresolvedTypeSpecifier(sizeof_expr.type_or_expr());
-			}
-
-			if (current.is<AlignofExprNode>()) {
-				const auto& alignof_expr = current.as<AlignofExprNode>();
-				return alignof_expr.is_type() && hasUnresolvedTypeSpecifier(alignof_expr.type_or_expr());
-			}
-
-			return false;
-		});
-	};
 	static constexpr size_t kPackStructMaxDepth = 64;
 	auto packStructEvalResultIntoInitData = [&](auto& self, std::vector<char>& init_data, const StructTypeInfo& struct_info, const ConstExpr::EvalResult& eval_result, size_t base_offset, size_t depth) -> void {
 		if (depth >= kPackStructMaxDepth) {
@@ -530,9 +468,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 		if (!eval_result.success()) {
 			if (struct_info && expr_node.is<ExpressionNode>()) {
 				const auto& expr = expr_node.as<ExpressionNode>();
-				if (std::holds_alternative<FunctionCallNode>(expr)) {
-					const auto& func_call = std::get<FunctionCallNode>(expr);
-					StringHandle func_name_handle = func_call.function_declaration().identifier_token().handle();
+				if (auto call_info = CallInfo::tryFrom(expr)) {
+					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
 					if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_info->name, func_name_handle)) {
 						if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_info->name, func_name_handle)) {
@@ -550,7 +487,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
-							func_decl.parameter_nodes().size() != func_call.arguments().size()) {
+							func_decl.parameter_nodes().size() != call_info->arguments->size()) {
 							continue;
 						}
 
@@ -561,7 +498,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 					if (member_function_node) {
 						global_symbol_table_->enter_scope(ScopeType::Block);
-						global_symbol_table_->insert(func_call.function_declaration().identifier_token().value(), *member_function_node);
+						global_symbol_table_->insert(call_info->declaration->identifier_token().value(), *member_function_node);
 
 						ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
 						rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;
@@ -647,26 +584,54 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Generate static members that this struct directly owns
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
-				if (gTemplateRegistry.isClassTemplate(type_name) && !type_info->isTemplateInstantiation()) {
-					auto inst_it = instantiated_static_members_by_template.find(type_name);
-					if (inst_it != instantiated_static_members_by_template.end() &&
-						inst_it->second.count(static_member.getName()) > 0) {
-						FLASH_LOG(Codegen, Debug, "Skipping template-pattern static member '",
-								  static_member.getName(), "' in type '", type_name,
-								  "' because an instantiated owner already exists");
+				bool unresolved_identifier_initializer = false;
+				// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
+				// These are in pattern templates and should only generate code when instantiated
+				if (static_member.initializer.has_value() && static_member.initializer->is<ExpressionNode>()) {
+					const ExpressionNode& expr = static_member.initializer->as<ExpressionNode>();
+					if (std::holds_alternative<SizeofPackNode>(expr)) {
+						// This is an uninstantiated template - skip
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+								  "' with unsubstituted sizeof... in type '", type_name, "'");
 						continue;
 					}
-				}
-
-				// Skip static members with unsubstituted template-dependent initializers.
-				// These belong to the template pattern and should only be emitted for
-				// fully instantiated owners.
-				if (!type_info->isTemplateInstantiation() &&
-					static_member.initializer.has_value() &&
-					hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
-					FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
-							  "' with unsubstituted template-dependent initializer in type '", type_name, "'");
-					continue;
+					if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+						// Template parameter not substituted - this is a template pattern, not an instantiation
+						// Skip it (instantiated versions will have NumericLiteralNode instead)
+						const auto& tparam = std::get<TemplateParameterReferenceNode>(expr);
+						FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+								  "' with unsubstituted template parameter '", tparam.param_name(),
+								  "' in type '", type_name, "'");
+						continue;
+					}
+					// Also skip IdentifierNode that looks like an unsubstituted template parameter
+					// (pattern templates may have IdentifierNode instead of TemplateParameterReferenceNode)
+					if (std::holds_alternative<IdentifierNode>(expr)) {
+						const auto& id = std::get<IdentifierNode>(expr);
+						// If the identifier is not in the global symbol table and is a simple name (no qualified access),
+						// it's likely an unsubstituted template parameter - skip it
+						// Instantiated templates will have NumericLiteralNode or other concrete expressions
+						auto symbol = global_symbol_table_->lookup(id.name());
+						if (!symbol.has_value()) {
+							bool is_current_struct_static_member = false;
+							if (struct_info != nullptr) {
+								StringHandle member_name_handle = id.getOrInternNameHandle();
+								is_current_struct_static_member =
+									struct_info->findStaticMemberRecursive(member_name_handle).first != nullptr;
+							}
+							if (is_current_struct_static_member) {
+								FLASH_LOG(Codegen, Debug, "Static member '", static_member.getName(),
+										  "' references same-struct static member '", id.name(),
+										  "' in type '", type_name, "'; deferring to constexpr evaluation");
+							} else {
+								// Not found in global symbol table - likely a template parameter
+								FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+										  "' with identifier initializer '", id.name(),
+										  "' in type '", type_name, "' (identifier not in symbol table - likely template parameter)");
+								unresolved_identifier_initializer = true;
+							}
+						}
+					}
 				}
 
 				// Build the qualified name for deduplication
@@ -703,7 +668,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				op.var_name = name_handle; // Phase 3: Now using StringHandle instead of string_view
 
 				// Check if static member has an initializer
-				op.is_initialized = static_member.initializer.has_value();
+				op.is_initialized = static_member.initializer.has_value() || unresolved_identifier_initializer;
 
  // Phase C: if a NormalizedInitializer with pre-packed bytes exists, use it
  // directly and skip all AST-based classification / evaluation.
@@ -739,7 +704,11 @@ void AstToIr::generateStaticMemberDeclarations() {
 						}
 					}
 				};
-				if (op.is_initialized) {
+				if (unresolved_identifier_initializer) {
+					FLASH_LOG(Codegen, Debug, "Initializer unresolved; zero-initializing static member '", qualified_name, "'");
+					allowNormalizedWriteBack = false;
+					zero_initialize();
+				} else if (op.is_initialized) {
 					if (static_member.initializer->is<InitializerListNode>()) {
 						const StructTypeInfo* static_struct_info = tryGetStructTypeInfo(static_member.type_index);
 						auto eval_aggregate_leaf = [&](const ASTNode& leaf_expr, TypeCategory target_type) -> unsigned long long {
@@ -902,22 +871,26 @@ void AstToIr::generateStaticMemberDeclarations() {
 									TypeIndex ctor_type_index = ctor_type_spec.type_index();
 									if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
 										const ConstructorDeclarationNode* matching_ctor = nullptr;
-										std::vector<TypeSpecifierNode> arg_types;
-										arg_types.reserve(ctor_call.arguments().size());
-										for (const auto& arg : ctor_call.arguments()) {
-											auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-											if (!arg_type_opt.has_value()) {
-												arg_types.clear();
-												break;
+										if (parser_) {
+											std::vector<TypeSpecifierNode> arg_types;
+											arg_types.reserve(ctor_call.arguments().size());
+											for (const auto& arg : ctor_call.arguments()) {
+												auto arg_type_opt = parser_->get_expression_type(arg);
+												if (!arg_type_opt.has_value()) {
+													arg_types.clear();
+													break;
+												}
+												TypeSpecifierNode arg_type = *arg_type_opt;
+												adjust_argument_type_for_overload_resolution(arg, arg_type);
+												arg_types.push_back(std::move(arg_type));
 											}
-											arg_types.push_back(std::move(*arg_type_opt));
-										}
-										if (arg_types.size() == ctor_call.arguments().size()) {
-											auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
-											if (resolution.is_ambiguous) {
-												throw CompileError("Ambiguous constructor call");
+											if (arg_types.size() == ctor_call.arguments().size()) {
+												auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
+												if (resolution.is_ambiguous) {
+													throw CompileError("Ambiguous constructor call");
+												}
+												matching_ctor = resolution.selected_overload;
 											}
-											matching_ctor = resolution.selected_overload;
 										}
 										if (!matching_ctor) {
 											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);

@@ -144,17 +144,21 @@ bool Evaluator::isConstexprMemberLookupCandidate(
 	return true;
 }
 
+
 const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_target(
-	const MemberFunctionCallNode& member_func_call,
+	const CallExprNode& call_expr,
 	const StructTypeInfo* struct_info,
 	size_t argument_count,
 	EvaluationContext& context,
 	MemberFunctionLookupMode lookup_mode,
 	bool require_static) {
-	const FunctionDeclarationNode& lowered_func = member_func_call.function_declaration();
-	if (!lowered_func.has_outer_template_bindings() &&
-		!lowered_func.has_non_type_template_args() &&
-		!lowered_func.has_mangled_name()) {
+	const FunctionDeclarationNode* lowered_func = call_expr.callee().function_declaration_or_null();
+	if (!lowered_func) {
+		return nullptr;
+	}
+	if (!lowered_func->has_outer_template_bindings() &&
+		!lowered_func->has_non_type_template_args() &&
+		!lowered_func->has_mangled_name()) {
 		return nullptr;
 	}
 	if (struct_info) {
@@ -171,25 +175,26 @@ const FunctionDeclarationNode* Evaluator::try_get_lowered_constexpr_member_call_
 					require_static)) {
 				continue;
 			}
-			if (&candidate.decl_node() == &lowered_func.decl_node()) {
+			if (&candidate.decl_node() == &lowered_func->decl_node()) {
 				return &candidate;
 			}
-			if (candidate.has_mangled_name() && lowered_func.has_mangled_name() &&
-				candidate.mangled_name() == lowered_func.mangled_name()) {
+			if (candidate.has_mangled_name() && lowered_func->has_mangled_name() &&
+				candidate.mangled_name() == lowered_func->mangled_name()) {
 				return &candidate;
 			}
 		}
 	}
 	if (!isConstexprMemberLookupCandidate(
-			lowered_func,
+			*lowered_func,
 			argument_count,
 			context,
 			lookup_mode,
 			require_static)) {
 		return nullptr;
 	}
-	return &lowered_func;
+	return lowered_func;
 }
+
 namespace {
 
 std::optional<size_t> try_get_constexpr_pointer_upper_bound(
@@ -436,20 +441,21 @@ bool Evaluator::identifier_is_array_var(const IdentifierNode& id, EvaluationCont
 	return sym.has_value() && sym->is<VariableDeclarationNode>() && sym->as<VariableDeclarationNode>().declaration().is_array();
 }
 
+
 std::optional<ASTNode> Evaluator::lookup_function_symbol(
-	const FunctionCallNode& func_call,
+	const CallExprNode& call_expr,
 	std::string_view fallback_name,
 	const SymbolTable& symbols) {
-	if (func_call.has_mangled_name()) {
-		auto mangled_symbol = symbols.lookup(func_call.mangled_name_handle());
+	if (call_expr.has_mangled_name()) {
+		auto mangled_symbol = symbols.lookup(call_expr.mangled_name_handle());
 		if (mangled_symbol.has_value()) {
 			return mangled_symbol;
 		}
 	}
 
-	if (func_call.has_qualified_name()) {
+	if (call_expr.has_qualified_name()) {
 		QualifiedIdentifier qi = QualifiedIdentifier::fromQualifiedName(
-			func_call.qualified_name_handle(),
+			call_expr.qualified_name_handle(),
 			symbols.get_current_namespace_handle());
 		auto qualified_symbol = symbols.lookup_qualified(qi);
 		if (qualified_symbol.has_value()) {
@@ -564,11 +570,11 @@ std::string_view getArrayNameForAddressOf(const ASTNode& array_expr) {
 } // namespace
 
 EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
-	const FunctionCallNode& func_call,
+	const CallExprNode& call_expr,
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
-	const DeclarationNode& func_decl_node = func_call.function_declaration();
+	const DeclarationNode& func_decl_node = call_expr.callee().declaration();
 	std::string_view func_name = func_decl_node.identifier_token().value();
 
 	if (!context.symbols) {
@@ -582,18 +588,18 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			mutable_bound_callable = findMutableBindingValue(func_name, *mutable_bindings, context);
 		}
 		if (bound_callable->callable_var_decl) {
-			return evaluate_callable_object(*bound_callable->callable_var_decl, func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+			return evaluate_callable_object(*bound_callable->callable_var_decl, call_expr.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
 		}
-		return evaluate_lambda_call(*bound_callable->callable_lambda, func_call.arguments(), context, &bindings, mutable_bindings,
+		return evaluate_lambda_call(*bound_callable->callable_lambda, call_expr.arguments(), context, &bindings, mutable_bindings,
 									&bound_callable->callable_bindings,
 									mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 	}
 
-	if (!func_call.has_qualified_name() && context.struct_info) {
+	if (!call_expr.has_qualified_name() && context.struct_info) {
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto current_struct_match = find_current_struct_member_function_candidate(
 			func_name_handle,
-			func_call.arguments().size(),
+			call_expr.arguments().size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
 			true,
@@ -606,15 +612,15 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 				Token this_token(
 					Token::Type::Identifier,
 					"this"sv,
-					func_call.called_from().line(),
-					func_call.called_from().column(),
-					func_call.called_from().file_index());
+					call_expr.called_from().line(),
+					call_expr.called_from().column(),
+					call_expr.called_from().file_index());
 				ExpressionNode this_expr = IdentifierNode(this_token);
-				MemberFunctionCallNode member_call(
+				CallExprNode member_call = makeResolvedMemberCallExpr(
 					ASTNode(&this_expr),
 					*current_struct_match.function,
-					copyCallArguments(func_call.arguments()),
-					func_call.called_from());
+					copyCallArguments(call_expr.arguments()),
+					call_expr.called_from());
 				ExpressionNode member_expr = member_call;
 				if (auto bound_member_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, mutable_bindings)) {
 					return *bound_member_result;
@@ -623,16 +629,16 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			}
 			return evaluate_function_call_with_bindings(
 				*current_struct_match.function,
-				func_call.arguments(),
+				call_expr.arguments(),
 				bindings,
 				context);
 		}
 	}
 
-	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
+	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
 	if (!symbol_opt.has_value()) {
-		if (func_call.has_template_arguments() && context.parser) {
-			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+		if (call_expr.has_template_arguments() && context.parser) {
+			auto var_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_result.success()) {
 				return var_result;
 			}
@@ -644,11 +650,11 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	if (!symbol_node.is<FunctionDeclarationNode>()) {
 		if (symbol_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-			return evaluate_callable_object(var_decl, func_call.arguments(), context, &bindings, mutable_bindings);
+			return evaluate_callable_object(var_decl, call_expr.arguments(), context, &bindings, mutable_bindings);
 		}
 
 		if (symbol_node.is<TemplateVariableDeclarationNode>()) {
-			auto var_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+			auto var_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_result.success()) {
 				return var_result;
 			}
@@ -667,15 +673,15 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		Token this_token(
 			Token::Type::Identifier,
 			"this"sv,
-			func_call.called_from().line(),
-			func_call.called_from().column(),
-			func_call.called_from().file_index());
+			call_expr.called_from().line(),
+			call_expr.called_from().column(),
+			call_expr.called_from().file_index());
 		ExpressionNode this_expr = IdentifierNode(this_token);
-		MemberFunctionCallNode member_call(
+		CallExprNode member_call = makeResolvedMemberCallExpr(
 			ASTNode(&this_expr),
 			func_decl,
-			copyCallArguments(func_call.arguments()),
-			func_call.called_from());
+			copyCallArguments(call_expr.arguments()),
+			call_expr.called_from());
 		ExpressionNode member_expr = member_call;
 		if (auto bound_member_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, mutable_bindings)) {
 			return *bound_member_result;
@@ -683,7 +689,7 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 		return evaluate_member_function_call(member_call, context);
 	}
 
-	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
+	return evaluate_function_call_with_bindings(func_decl, call_expr.arguments(), bindings, context);
 }
 
 std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
@@ -691,22 +697,22 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
-	if (!std::holds_alternative<MemberFunctionCallNode>(expr)) {
+	const std::optional<CallInfo> call_info = CallInfo::tryFrom(expr);
+	if (!call_info || !call_info->has_receiver || !call_info->function_declaration) {
 		return std::nullopt;
 	}
 
-	const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
-	std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
+	std::string_view func_name = call_info->function_declaration->decl_node().identifier_token().value();
 	if (overloadableOperatorFromFunctionName(func_name) != OverloadableOperator::Call) {
 		return std::nullopt;
 	}
 
 	auto extract_callable_identifier = [&]() -> const IdentifierNode* {
-		return tryGetIdentifier(member_func_call.object());
+		return tryGetIdentifier(call_info->receiver);
 	};
 
 	auto extract_lambda_from_object_expr = [&]() -> const LambdaExpressionNode* {
-		const ASTNode& object_expr = member_func_call.object();
+		const ASTNode& object_expr = call_info->receiver;
 		if (object_expr.is<LambdaExpressionNode>()) {
 			return &object_expr.as<LambdaExpressionNode>();
 		}
@@ -720,7 +726,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 	};
 
 	if (const LambdaExpressionNode* lambda = extract_lambda_from_object_expr()) {
-		return evaluate_lambda_call(*lambda, member_func_call.arguments(), context, &bindings, mutable_bindings);
+		return evaluate_lambda_call(*lambda, *call_info->arguments, context, &bindings, mutable_bindings);
 	}
 
 	if (const IdentifierNode* callable_id = extract_callable_identifier()) {
@@ -731,9 +737,9 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_operator_call(
 				mutable_bound_callable = findMutableBindingValue(callable_id->name(), *mutable_bindings, context);
 			}
 			if (callable_value->callable_var_decl) {
-				return evaluate_callable_object(*callable_value->callable_var_decl, member_func_call.arguments(), context, &bindings, mutable_bindings, mutable_bound_callable);
+				return evaluate_callable_object(*callable_value->callable_var_decl, *call_info->arguments, context, &bindings, mutable_bindings, mutable_bound_callable);
 			}
-			return evaluate_lambda_call(*callable_value->callable_lambda, member_func_call.arguments(), context, &bindings, mutable_bindings,
+			return evaluate_lambda_call(*callable_value->callable_lambda, *call_info->arguments, context, &bindings, mutable_bindings,
 										&callable_value->callable_bindings,
 										mutable_bound_callable ? &mutable_bound_callable->callable_bindings : nullptr);
 		}
@@ -901,18 +907,18 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	const std::unordered_map<std::string_view, EvalResult>& bindings,
 	EvaluationContext& context,
 	std::unordered_map<std::string_view, EvalResult>* mutable_bindings) {
-	if (!std::holds_alternative<MemberFunctionCallNode>(expr)) {
+	const std::optional<CallInfo> call_info = CallInfo::tryFrom(expr);
+	if (!call_info || !call_info->has_receiver || !call_info->function_declaration) {
 		return std::nullopt;
 	}
 
-	const auto& member_func_call = std::get<MemberFunctionCallNode>(expr);
-	std::string_view func_name = member_func_call.function_declaration().decl_node().identifier_token().value();
+	std::string_view func_name = call_info->function_declaration->decl_node().identifier_token().value();
 	if (overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call) {
 		return std::nullopt;
 	}
 
 	auto extract_object_identifier = [&]() -> const IdentifierNode* {
-		return tryGetIdentifier(member_func_call.object());
+		return tryGetIdentifier(call_info->receiver);
 	};
 
 	const IdentifierNode* object_identifier = extract_object_identifier();
@@ -958,19 +964,24 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		write_back_to_object_binding = true;
 	}
 
-	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
-		member_func_call,
-		bound_struct_info,
-		member_func_call.arguments().size(),
-		context,
-		MemberFunctionLookupMode::LookupOnly,
-		false);
+	const FunctionDeclarationNode* actual_func = [&]() -> const FunctionDeclarationNode* {
+		if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+			return try_get_lowered_constexpr_member_call_target(
+				*call_expr,
+				bound_struct_info,
+				call_info->arguments->size(),
+				context,
+				MemberFunctionLookupMode::LookupOnly,
+				false);
+		}
+		return nullptr;
+	}();
 	if (!actual_func) {
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		auto member_function_match = object_name == "this"
 										 ? find_current_struct_member_function_candidate(
 											   func_name_handle,
-											   member_func_call.arguments().size(),
+											   call_info->arguments->size(),
 											   context,
 											   MemberFunctionLookupMode::LookupOnly,
 											   false,
@@ -978,7 +989,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 										 : find_member_function_candidate(
 											   bound_struct_info,
 											   func_name_handle,
-											   member_func_call.arguments().size(),
+											   call_info->arguments->size(),
 											   context,
 											   MemberFunctionLookupMode::LookupOnly,
 											   false,
@@ -1005,7 +1016,7 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 
 	auto bind_result = bind_evaluated_arguments(
 		actual_func->parameter_nodes(),
-		member_func_call.arguments(),
+		*call_info->arguments,
 		member_bindings,
 		context,
 		"Invalid parameter node in bound constexpr member function",
@@ -2002,22 +2013,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		}
 	}
 
-	// For function calls (for recursion)
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, &bindings);
-	}
-
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		if (call_expr->has_receiver()) {
-			MemberFunctionCallNode legacy_call = materializeLegacyMemberFunctionCall(*call_expr);
-			ExpressionNode legacy_expr = legacy_call;
-			if (auto call_result = try_evaluate_bound_member_operator_call(legacy_expr, bindings, context, &bindings)) {
+			if (auto call_result = try_evaluate_bound_member_operator_call(*call_expr, bindings, context, &bindings)) {
 				return *call_result;
 			}
-			if (auto member_call_result = try_evaluate_bound_member_function_call(legacy_expr, bindings, context, &bindings)) {
+			if (auto member_call_result = try_evaluate_bound_member_function_call(*call_expr, bindings, context, &bindings)) {
 				return *member_call_result;
 			}
-			return evaluate_member_function_call(legacy_call, context);
+			return evaluate_member_function_call(*call_expr, context);
 		}
 
 		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
@@ -2029,7 +2033,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				call_expr->called_from().column(),
 				call_expr->called_from().file_index());
 			ExpressionNode this_expr = IdentifierNode(this_token);
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				ASTNode(&this_expr),
 				*function_decl,
 				copyCallArguments(call_expr->arguments()),
@@ -2044,8 +2048,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return evaluate_member_function_call(member_call, context);
 		}
 
-		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
-		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, &bindings);
+		return evaluate_function_call_with_outer_bindings(*call_expr, bindings, context, &bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
@@ -2301,21 +2304,15 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	}
 
 	// For function calls (for recursion)
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, mutable_bindings);
-	}
-
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		if (call_expr->has_receiver()) {
-			MemberFunctionCallNode legacy_call = materializeLegacyMemberFunctionCall(*call_expr);
-			ExpressionNode legacy_expr = legacy_call;
-			if (auto call_result = try_evaluate_bound_member_operator_call(legacy_expr, bindings, context, mutable_bindings)) {
+			if (auto call_result = try_evaluate_bound_member_operator_call(*call_expr, bindings, context, mutable_bindings)) {
 				return *call_result;
 			}
-			if (auto member_call_result = try_evaluate_bound_member_function_call(legacy_expr, bindings, context, mutable_bindings)) {
+			if (auto member_call_result = try_evaluate_bound_member_function_call(*call_expr, bindings, context, mutable_bindings)) {
 				return *member_call_result;
 			}
-			return evaluate_member_function_call(legacy_call, context);
+			return evaluate_member_function_call(*call_expr, context);
 		}
 
 		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
@@ -2327,7 +2324,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				call_expr->called_from().column(),
 				call_expr->called_from().file_index());
 			ExpressionNode this_expr = IdentifierNode(this_token);
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				ASTNode(&this_expr),
 				*function_decl,
 				copyCallArguments(call_expr->arguments()),
@@ -2342,8 +2339,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			return evaluate_member_function_call(member_call, context);
 		}
 
-		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
-		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, mutable_bindings);
+		return evaluate_function_call_with_outer_bindings(*call_expr, bindings, context, mutable_bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
@@ -3677,14 +3673,6 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				// Array subscript on struct - evaluate array element then access member
 				return evaluate_array_subscript_member_access(*array_subscript, member_name, context);
 			}
-			// Check for FunctionCallNode - evaluate the return type and access static member
-			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
-				const FunctionCallNode& func_call = *function_call;
-				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
-					return *evaluated_member;
-				}
-				return evaluate_function_call_member_access(func_call, member_name, context);
-			}
 			if (const auto* call_expr = std::get_if<CallExprNode>(&expr_node)) {
 				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
 					return *evaluated_member;
@@ -3871,14 +3859,10 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
 		// The initializer may be an ASTNode holding a FunctionCallNode directly,
 		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
-		bool is_func_call = initializer.is<FunctionCallNode>() ||
-						   initializer.is<MemberFunctionCallNode>() ||
-						   initializer.is<CallExprNode>();
+		bool is_func_call = initializer.is<CallExprNode>();
 		if (!is_func_call && initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr = initializer.as<ExpressionNode>();
-			is_func_call = std::holds_alternative<FunctionCallNode>(expr) ||
-						   std::holds_alternative<MemberFunctionCallNode>(expr) ||
-						   std::holds_alternative<CallExprNode>(expr);
+			is_func_call = std::holds_alternative<CallExprNode>(expr);
 		}
 		if (is_func_call) {
 			auto func_result = evaluate(initializer, context);
@@ -4666,8 +4650,19 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 EvalResult Evaluator::evaluate_static_member_initializer_or_default(
 	const StructStaticMember& static_member,
 	EvaluationContext& context) {
+	if (gEvaluatingStaticMembers.contains(&static_member)) {
+		return EvalResult::error("Circular dependency between static member initializers");
+	}
+	StaticMemberEvaluationGuard guard(&static_member);
+
 	if (static_member.initializer.has_value()) {
-		return evaluate(static_member.initializer.value(), context);
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		}
+		context.current_depth++;
+		EvalResult result = evaluate(static_member.initializer.value(), context);
+		context.current_depth--;
+		return result;
 	}
 
 	if (static_member.type_index.category() == TypeCategory::Bool) {
@@ -4683,6 +4678,9 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	StringHandle member_name_handle,
 	std::string_view member_name,
 	EvaluationContext& context) {
+	if (context.current_depth >= context.max_recursion_depth) {
+		return EvalResult::error("Constexpr recursion depth limit exceeded");
+	}
 
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(member_name_handle);
 
@@ -4691,7 +4689,10 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 	}
 
 	if (static_member->initializer.has_value()) {
-		return evaluate(*static_member->initializer, context);
+		context.current_depth++;
+		EvalResult result = evaluate(*static_member->initializer, context);
+		context.current_depth--;
+		return result;
 	}
 
 	StringBuilder qualified_name_builder;
@@ -4706,46 +4707,15 @@ EvalResult Evaluator::evaluate_static_member_from_struct(
 		if (member_node.is<VariableDeclarationNode>()) {
 			const VariableDeclarationNode& var_decl = member_node.as<VariableDeclarationNode>();
 			if (var_decl.is_constexpr() && var_decl.initializer().has_value()) {
-				return evaluate(*var_decl.initializer(), context);
+				context.current_depth++;
+				EvalResult result = evaluate(*var_decl.initializer(), context);
+				context.current_depth--;
+				return result;
 			}
 		}
 	}
 
 	return EvalResult::error("Static member '" + std::string(member_name) + "' found but has no constexpr initializer");
-}
-
-// Evaluate function call followed by member access (e.g., get_struct().member)
-// This is used for accessing static members of the return type
-EvalResult Evaluator::evaluate_function_call_member_access(
-	const FunctionCallNode& func_call,
-	std::string_view member_name,
-	EvaluationContext& context) {
-	const CallInfo call_info = CallInfo::from(func_call);
-	const DeclarationNode& func_decl_node = *call_info.declaration;
-	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-
-	const ASTNode& type_node = func_decl_node.type_node();
-	if (!type_node.is<TypeSpecifierNode>()) {
-		return EvalResult::error("Function return type is not a TypeSpecifierNode");
-	}
-
-	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
-	if (!is_struct_type(return_type.category())) {
-		return EvalResult::error("Function return type is not a struct - cannot access member");
-	}
-
-	TypeIndex type_index = return_type.type_index();
-	const TypeInfo* type_info = tryGetTypeInfo(type_index);
-	if (!type_info) {
-		return EvalResult::error("Invalid type index for function return type");
-	}
-
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
-	if (!struct_info) {
-		return EvalResult::error("Return type is not a struct");
-	}
-
-	return evaluate_static_member_from_struct(struct_info, *type_info, member_name_handle, member_name, context);
 }
 
 EvalResult Evaluator::evaluate_function_call_member_access(
@@ -4780,19 +4750,25 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	return evaluate_static_member_from_struct(struct_info, *type_info, member_name_handle, member_name, context);
 }
 
-// Evaluate constexpr member function call (e.g., p.sum() in constexpr context)
-EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context) {
+
+EvalResult Evaluator::evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context) {
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
 		return EvalResult::error("Constexpr recursion depth limit exceeded in member function call");
 	}
 
 	// Get the object being called on
-	const ASTNode& object_expr = member_func_call.object();
+	if (!call_expr.has_receiver()) {
+		return EvalResult::error("Constexpr member function call is missing a receiver");
+	}
+	const ASTNode& object_expr = call_expr.receiver();
 
 	// Get the function name from the placeholder FunctionDeclarationNode
-	const FunctionDeclarationNode& placeholder_func = member_func_call.function_declaration();
-	std::string_view func_name = placeholder_func.decl_node().identifier_token().value();
+	const FunctionDeclarationNode* placeholder_func = call_expr.callee().function_declaration_or_null();
+	if (!placeholder_func) {
+		return EvalResult::error("Constexpr member function call is missing a function declaration");
+	}
+	std::string_view func_name = placeholder_func->decl_node().identifier_token().value();
 
 	// For lambda calls (operator()), we need special handling
 	const bool is_operator_call = overloadableOperatorFromFunctionName(func_name) == OverloadableOperator::Call;
@@ -4812,15 +4788,15 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		};
 
 		if (const LambdaExpressionNode* object_lambda = extract_lambda_from_object_expr()) {
-			return evaluate_lambda_call(*object_lambda, member_func_call.arguments(), context);
+			return evaluate_lambda_call(*object_lambda, call_expr.arguments(), context);
 		}
 	}
 
 	auto try_evaluate_current_struct_static_member = [&]() -> std::optional<EvalResult> {
 		const FunctionDeclarationNode* matched_function = try_get_lowered_constexpr_member_call_target(
-			member_func_call,
+			call_expr,
 			context.struct_info,
-			member_func_call.arguments().size(),
+			call_expr.arguments().size(),
 			context,
 			MemberFunctionLookupMode::ConstexprEvaluable,
 			true);
@@ -4828,7 +4804,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 			StringHandle fn_handle = StringTable::getOrInternStringHandle(func_name);
 			auto current_match = find_current_struct_member_function_candidate(
 				fn_handle,
-				member_func_call.arguments().size(),
+				call_expr.arguments().size(),
 				context,
 				MemberFunctionLookupMode::ConstexprEvaluable,
 				true,
@@ -4843,7 +4819,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		std::unordered_map<std::string_view, EvalResult> empty_b;
 		return evaluate_function_call_with_template_context(
 			*matched_function,
-			member_func_call.arguments(),
+			call_expr.arguments(),
 			empty_b,
 			context,
 			nullptr,
@@ -4868,7 +4844,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		var_name = extracted->name;
 	}
 
-	if (placeholder_func.is_static() && object_identifier && object_identifier->name() == "this") {
+	if (placeholder_func->is_static() && object_identifier && object_identifier->name() == "this") {
 		if (auto static_member_result = try_evaluate_current_struct_static_member()) {
 			return *static_member_result;
 		}
@@ -4916,14 +4892,14 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	if (is_operator_call && !has_complex_object_result) {
 		const LambdaExpressionNode* lambda = extract_lambda_from_initializer(*initializer);
 		if (lambda) {
-			return evaluate_lambda_call(*lambda, member_func_call.arguments(), context);
+			return evaluate_lambda_call(*lambda, call_expr.arguments(), context);
 		}
 		// Brace-initialized or ConstructorCallNode-initialized callable: delegate to evaluate_callable_object
 		if (initializer->has_value() && ((*initializer)->is<InitializerListNode>() || extract_constructor_call(*initializer))) {
 			if (!var_decl) {
 				return EvalResult::error("Callable object is not a variable");
 			}
-			return evaluate_callable_object(*var_decl, member_func_call.arguments(), context);
+			return evaluate_callable_object(*var_decl, call_expr.arguments(), context);
 		}
 	}
 
@@ -4980,9 +4956,9 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 	}
 
 	// Look up the actual member function in the struct's type info
-	const auto& arguments = member_func_call.arguments();
+	const auto& arguments = call_expr.arguments();
 	const FunctionDeclarationNode* actual_func = try_get_lowered_constexpr_member_call_target(
-		member_func_call,
+		call_expr,
 		struct_info,
 		arguments.size(),
 		context,

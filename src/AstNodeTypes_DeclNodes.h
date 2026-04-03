@@ -2172,54 +2172,6 @@ private:
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
 };
 
-class FunctionCallNode {
-public:
-	explicit FunctionCallNode(const DeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token)
-		: func_decl_(func_decl), arguments_(std::move(arguments)), called_from_(called_from_token) {}
-
-	const auto& arguments() const { return arguments_; }
-	const auto& function_declaration() const { return func_decl_; }
-
-	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
-
-	Token called_from() const { return called_from_; }
-
-	// Pre-computed mangled name support (for namespace-scoped functions)
-	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
-	std::string_view mangled_name() const { return mangled_name_.view(); }
-	StringHandle mangled_name_handle() const { return mangled_name_; }
-	bool has_mangled_name() const { return mangled_name_.isValid(); }
-
-	// Qualified source name support (for template lookup in constexpr evaluation)
-	// This stores the source-level qualified name (e.g., "std::__is_complete_or_unbounded")
-	// which is needed for template function lookup in the template registry
-	void set_qualified_name(std::string_view name) { qualified_name_ = StringTable::getOrInternStringHandle(name); }
-	std::string_view qualified_name() const { return qualified_name_.view(); }
-	StringHandle qualified_name_handle() const { return qualified_name_; }
-	bool has_qualified_name() const { return qualified_name_.isValid(); }
-
-	// Explicit template arguments support (for calls like foo<int>())
-	// These are stored as expression nodes which may contain TemplateParameterReferenceNode for dependent args
-	void set_template_arguments(std::vector<ASTNode>&& template_args) {
-		template_arguments_ = std::move(template_args);
-	}
-	const std::vector<ASTNode>& template_arguments() const { return template_arguments_; }
-	bool has_template_arguments() const { return !template_arguments_.empty(); }
-
-	// Indirect call support (for function pointers and function references)
-	// When true, the call is through a variable holding a function address, not a direct function name
-	void set_indirect_call(bool indirect) { is_indirect_call_ = indirect; }
-	bool is_indirect_call() const { return is_indirect_call_; }
-
-private:
-	const DeclarationNode& func_decl_;
-	ChunkedVector<ASTNode> arguments_;
-	Token called_from_;
-	StringHandle mangled_name_;	// Pre-computed mangled name
-	StringHandle qualified_name_;  // Source-level qualified name (e.g., "std::func")
-	std::vector<ASTNode> template_arguments_;  // Explicit template arguments (e.g., <T> in foo<T>())
-	bool is_indirect_call_ = false;	// True for function pointer/reference calls
-};
 
 // ============================================================================
 // Unified call-expression node (consolidation plan step 1)
@@ -2288,9 +2240,7 @@ private:
 
 // Unified call-expression node.
 // Covers free-function calls, member-function calls, static-member calls,
-// and indirect (function-pointer) calls.  Existing FunctionCallNode and
-// MemberFunctionCallNode remain for now; downstream code will be migrated
-// incrementally (see docs/2026-04-02-call-node-consolidation-plan.md).
+// and indirect (function-pointer) calls.
 class CallExprNode {
 public:
 	// For calls without a receiver (free functions, static members, indirect)

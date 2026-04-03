@@ -7,8 +7,7 @@
 // ============================================================================
 // CallInfo — a lightweight read-only view over any call-expression node.
 //
-// Provides a uniform interface for extracting call metadata from
-// FunctionCallNode, MemberFunctionCallNode, or the new CallExprNode.
+// Provides a uniform interface for extracting call metadata from CallExprNode.
 // Downstream code can construct a CallInfo and then inspect fields without
 // branching on the concrete node type.
 //
@@ -41,36 +40,6 @@ struct CallInfo {
 
 	// --- Factory helpers ---------------------------------------------------
 
-	static CallInfo from(const FunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration();
-		info.function_declaration  = nullptr;
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = ASTNode();
-		info.has_receiver          = false;
-		info.mangled_name          = node.mangled_name_handle();
-		info.qualified_name        = node.qualified_name_handle();
-		info.template_arguments    = &node.template_arguments();
-		info.is_indirect           = node.is_indirect_call();
-		return info;
-	}
-
-	static CallInfo from(const MemberFunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration().decl_node();
-		info.function_declaration  = &node.function_declaration();
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = node.object();
-		info.has_receiver          = true;
-		info.mangled_name          = StringHandle();
-		info.qualified_name        = StringHandle();
-		info.template_arguments    = nullptr;
-		info.is_indirect           = false;
-		return info;
-	}
-
 	static CallInfo from(const CallExprNode& node) {
 		CallInfo info;
 		info.declaration           = &node.callee().declaration();
@@ -89,10 +58,6 @@ struct CallInfo {
 	// Build a CallInfo from an ExpressionNode that holds one of the three
 	// call-node alternatives.  Returns std::nullopt for any other alternative.
 	static std::optional<CallInfo> tryFrom(const ExpressionNode& expr) {
-		if (auto* p = std::get_if<FunctionCallNode>(&expr))
-			return from(*p);
-		if (auto* p = std::get_if<MemberFunctionCallNode>(&expr))
-			return from(*p);
 		if (auto* p = std::get_if<CallExprNode>(&expr))
 			return from(*p);
 		return std::nullopt;
@@ -189,23 +154,6 @@ inline ChunkedVector<ASTNode> copyCallArguments(const ChunkedVector<ASTNode>& ar
 	return copied_arguments;
 }
 
-inline FunctionCallNode materializeLegacyFunctionCall(const CallExprNode& source) {
-	FunctionCallNode legacy_call(
-		source.callee().declaration(),
-		copyCallArguments(source.arguments()),
-		source.called_from());
-	copyCallMetadata(legacy_call, source);
-	return legacy_call;
-}
-
-inline MemberFunctionCallNode materializeLegacyMemberFunctionCall(const CallExprNode& source) {
-	return MemberFunctionCallNode(
-		source.receiver(),
-		*source.callee().function_declaration_or_null(),
-		copyCallArguments(source.arguments()),
-		source.called_from());
-}
-
 inline CallExprNode makeDirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
 	return CallExprNode(CalleeDescriptor::freeFunction(decl), std::move(arguments), called_from_token);
 }
@@ -248,10 +196,6 @@ inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionD
 }
 
 inline void setCallMangledName(ExpressionNode& expr, std::string_view name) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_mangled_name(name);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_mangled_name(name);
 	}
@@ -262,10 +206,6 @@ inline void setCallMangledName(CallExprNode& call_expr, std::string_view name) {
 }
 
 inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_qualified_name(name);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_qualified_name(name);
 	}
@@ -276,10 +216,6 @@ inline void setCallQualifiedName(CallExprNode& call_expr, std::string_view name)
 }
 
 inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&& template_args) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_template_arguments(std::move(template_args));
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		call_expr->set_template_arguments(std::move(template_args));
 	}
@@ -290,10 +226,6 @@ inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNod
 }
 
 inline void setCallIndirect(ExpressionNode& expr) {
-	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		function_call->set_indirect_call(true);
-		return;
-	}
 	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		CallExprNode indirect_call = makeIndirectCallExpr(
 			call_expr->callee().declaration(),

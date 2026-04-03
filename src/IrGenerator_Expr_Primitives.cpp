@@ -21,10 +21,6 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 			return generateTernaryOperatorIr(expr);
-		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-			return generateFunctionCallIr(expr, context);
-		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-			return generateMemberFunctionCallIr(expr, context);
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {

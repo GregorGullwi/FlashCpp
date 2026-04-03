@@ -84,9 +84,10 @@ public:
 private:
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
-	ASTNode substituteFunctionCall(const FunctionCallNode& call);
+
 	ASTNode substituteCallExpr(const CallExprNode& call);
-	ASTNode substituteFunctionCallImpl(const FunctionCallNode& call, const CallExprNode* unified_source);
+	ASTNode substituteFunctionCallImpl(const CallExprNode& call);
+
 	ASTNode substituteBinaryOp(const BinaryOperatorNode& binop);
 	ASTNode substituteUnaryOp(const UnaryOperatorNode& unop);
 	ASTNode substituteTernaryOp(const TernaryOperatorNode& ternary);

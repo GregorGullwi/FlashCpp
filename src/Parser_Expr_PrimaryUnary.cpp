@@ -861,7 +861,6 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 		// The symbol contains a FunctionDeclarationNode, get its underlying DeclarationNode
 		const FunctionDeclarationNode& func_decl_node = builtin_symbol->as<FunctionDeclarationNode>();
-		const DeclarationNode& func_decl = func_decl_node.decl_node();
 
 		// Create arguments vector with both the va_list expression and the type
 		ChunkedVector<ASTNode> args;

@@ -1138,8 +1138,8 @@ inline ConstraintEvaluationResult evaluateConstraint(
 
 	// For function call nodes (concept with template arguments like Integral<T>)
 	// This handles the Concept<T> syntax in requires clauses
-	if (constraint_expr.is<FunctionCallNode>()) {
-		const auto& func_call = constraint_expr.as<FunctionCallNode>();
+	if (constraint_expr.is<CallExprNode>()) {
+		const auto& func_call = constraint_expr.as<CallExprNode>();
 		std::string_view concept_name = func_call.called_from().value();
 
 		// Look up the concept
@@ -1374,9 +1374,9 @@ inline ConstraintEvaluationResult evaluateConstraint(
 					continue;
 				}
 				// Check if this is a function call to a constrained template function
-				if (std::holds_alternative<FunctionCallNode>(expr)) {
-					const FunctionCallNode& call = std::get<FunctionCallNode>(expr);
-					std::string_view called_name = call.function_declaration().identifier_token().value();
+				if (std::holds_alternative<CallExprNode>(expr)) {
+					const CallExprNode& call = std::get<CallExprNode>(expr);
+					std::string_view called_name = call.called_from().value();
 					// Look up if this function is a template with a requires clause
 					const std::vector<ASTNode>* all_templates = gTemplateRegistry.lookupAllTemplates(called_name);
 					if (all_templates) {

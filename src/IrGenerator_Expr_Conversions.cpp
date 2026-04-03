@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
@@ -2102,38 +2103,12 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return cond_noexcept && then_noexcept && else_noexcept;
 	}
 
-	// Function calls: check if function is declared noexcept
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		// Check if function_declaration is available and noexcept
-		// The FunctionCallNode contains a reference to the function's DeclarationNode
-		// We need to look up the FunctionDeclarationNode to check noexcept
-		const DeclarationNode& decl = func_call.function_declaration();
-		std::string_view func_name = decl.identifier_token().value();
-
-		// Look up the function in the symbol table
-		extern SymbolTable gSymbolTable;
-		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
-		if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = symbol->as<FunctionDeclarationNode>();
-			return isFunctionDeclNoexcept(func_decl);
-		}
-		// If we can't determine, conservatively assume it may throw
-		return false;
-	}
-
-	// Member function calls: check if method is declared noexcept
-	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		const FunctionDeclarationNode& func_decl = member_call->function_declaration();
-		return isFunctionDeclNoexcept(func_decl);
-	}
-
-	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
-		if (const FunctionDeclarationNode* func_decl = call_expr->callee().function_declaration_or_null()) {
+	if (const auto call_info = CallInfo::tryFrom(expr)) {
+		if (const FunctionDeclarationNode* func_decl = call_info->function_declaration) {
 			return isFunctionDeclNoexcept(*func_decl);
 		}
 
-		const DeclarationNode& decl = call_expr->callee().declaration();
+		const DeclarationNode& decl = *call_info->declaration;
 		std::string_view func_name = decl.identifier_token().value();
 		extern SymbolTable gSymbolTable;
 		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));

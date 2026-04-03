@@ -10,6 +10,7 @@
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <climits>  // For LLONG_MAX, LLONG_MIN
 #include <charconv>	// For std::from_chars
@@ -52,6 +53,21 @@ class Parser;  // For template instantiation
 
 namespace ConstExpr {
 
+inline thread_local std::unordered_set<const StructStaticMember*> gEvaluatingStaticMembers;
+
+struct StaticMemberEvaluationGuard {
+	const StructStaticMember* member;
+
+	explicit StaticMemberEvaluationGuard(const StructStaticMember* static_member)
+		: member(static_member) {
+		gEvaluatingStaticMembers.insert(member);
+	}
+
+	~StaticMemberEvaluationGuard() {
+		gEvaluatingStaticMembers.erase(member);
+	}
+};
+
 // Error type classification for constexpr evaluation failures
 enum class EvalErrorType {
 	None,						// No error (success)
@@ -62,10 +78,6 @@ enum class EvalErrorType {
 
 // Result of constant expression evaluation
 struct EvalResult {
-	// Itanium encodes null data-member pointers as -1; using the ABI sentinel keeps
-	// constexpr materialization aligned with the object representation on Linux.
-	static constexpr long long kNullMemberPointerSentinel = -1;
-
 	std::variant<
 		bool,					// Boolean constant
 		long long,			   // Signed integer constant
@@ -100,16 +112,6 @@ struct EvalResult {
 	// that this array was loaded from. Enables array-to-pointer decay for the pattern
 	// `return data + N;` inside a constexpr member function where `data` is a member array.
 	StringHandle array_origin_var;
-	// Snapshot used only by constexpr pointers so they can still be dereferenced after
-	// the original binding has gone out of scope. Scalar pointers store one element;
-	// array pointers may store multiple elements so pointer arithmetic still works.
-	std::vector<EvalResult> pointer_value_snapshot;
-	// Constexpr member-object pointer support.
-	// When member_pointer_member is valid, this result represents a member pointer
-	// created from an expression like `&S::member`. `is_null_member_pointer` tracks
-	// null member pointers, which use the target ABI's sentinel representation.
-	StringHandle member_pointer_member;
-	bool is_null_member_pointer = false;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -118,66 +120,49 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}};
 	}
 
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}};
 		return r;
 	}
 
 	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
 	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false};
-		return r;
-	}
-
-	static EvalResult from_member_pointer(StringHandle member_name, int64_t offset) {
-		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
-		r.member_pointer_member = member_name;
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}};
 		return r;
 	}
 
 	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
 		exact_type = type;
-		if ((type.category() == TypeCategory::MemberObjectPointer ||
-			 type.category() == TypeCategory::MemberFunctionPointer) &&
-			!member_pointer_member.isValid() &&
-			!is_null_member_pointer) {
-			value = kNullMemberPointerSentinel;
-			is_null_member_pointer = true;
-		}
 		return *this;
-	}
-
-	bool is_member_pointer() const {
-		return member_pointer_member.isValid() || is_null_member_pointer;
 	}
 
 	// Convenience helpers for common operations
@@ -190,10 +175,6 @@ struct EvalResult {
 		// name (i.e., the pointer was produced by &identifier and points to a known variable).
 		if (pointer_to_var.isValid())
 			return true;
-
-		if (is_member_pointer()) {
-			return !is_null_member_pointer;
-		}
 
 		// Any non-zero value is true
 		if (const auto* b_val = std::get_if<bool>(&value)) {
@@ -478,7 +459,8 @@ public:
 	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
 	static EvalResult evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context);
-	static EvalResult evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context);
+
+	static EvalResult evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
 
@@ -500,10 +482,7 @@ public:
 	static EvalResult evaluate_static_member_initializer_or_default(
 		const StructStaticMember& static_member,
 		EvaluationContext& context);
-	static EvalResult evaluate_function_call_member_access(
-		const FunctionCallNode& func_call,
-		std::string_view member_name,
-		EvaluationContext& context);
+
 	static EvalResult evaluate_function_call_member_access(
 		const CallExprNode& call_expr,
 		std::string_view member_name,
@@ -681,7 +660,8 @@ private:
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
 	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
-	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
+
+	static const FunctionDeclarationNode* resolve_function_call_decl(const CallExprNode& call_expr, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
 	static std::optional<ExtractedIdentifier> extract_identifier_from_expression(const ASTNode& object_expr);
 	static EvalResult materialize_lambda_value(
@@ -713,8 +693,10 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings = nullptr,
 		std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
-	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
-	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
+
+	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context);
+
+	static EvalResult evaluate_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	enum class FunctionCallTemplateBindingLoadMode {
 		IfContextEmpty,
 		ForceCurrentStructIfAvailable,
@@ -780,15 +762,17 @@ private:
 	// Returns true if the identifier resolves to a declared array variable (not a pointer).
 	// Used by evaluate_array_subscript to route array and pointer subscripts correctly.
 	static bool identifier_is_array_var(const IdentifierNode& id, EvaluationContext& context);
+
 	static std::optional<ASTNode> lookup_function_symbol(
-		const FunctionCallNode& func_call,
+		const CallExprNode& call_expr,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
+
 	static EvalResult evaluate_function_call_with_outer_bindings(
-		const FunctionCallNode& func_call,
+		const CallExprNode& call_expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
-		std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
 	static std::optional<EvalResult> try_evaluate_bound_member_operator_call(
 		const ExpressionNode& expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -833,8 +817,9 @@ private:
 		EvaluationContext& context,
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static);
+
 	static const FunctionDeclarationNode* try_get_lowered_constexpr_member_call_target(
-		const MemberFunctionCallNode& member_func_call,
+		const CallExprNode& call_expr,
 		const StructTypeInfo* struct_info,
 		size_t argument_count,
 		EvaluationContext& context,
