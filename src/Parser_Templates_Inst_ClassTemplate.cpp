@@ -190,19 +190,13 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		const StructTypeInfo* rebound_owner = nullptr;
 		if (call.called_from().kind().is_identifier()) {
 			auto [found_function, found_owner] =
-				RebindStaticMemberAst::findStaticMemberFunction(
-					struct_info,
-					call.called_from().handle(),
-					call.has_template_arguments());
+				RebindStaticMemberAst::findStaticMemberFunction(struct_info, call.called_from().handle());
 			rebound_function = found_function;
 			rebound_owner = found_owner;
 		}
 
-		const bool rebound_has_body =
-			rebound_function &&
-			(rebound_function->get_definition().has_value() || rebound_function->has_template_body_position());
 		const bool can_use_rebound_function =
-			rebound_function && (rebound_has_body || call.has_template_arguments());
+			rebound_function && rebound_function->get_definition().has_value();
 		const DeclarationNode& target_decl =
 			can_use_rebound_function ? rebound_function->decl_node() : call.function_declaration();
 		ASTNode rebound_call = ASTNode::emplace_node<ExpressionNode>(
@@ -251,19 +245,13 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 			const StructTypeInfo* rebound_owner = nullptr;
 			if (member_call.called_from().kind().is_identifier()) {
 				auto [found_function, found_owner] =
-					RebindStaticMemberAst::findStaticMemberFunction(
-						struct_info,
-						member_call.called_from().handle(),
-						false);
+					RebindStaticMemberAst::findStaticMemberFunction(struct_info, member_call.called_from().handle());
 				rebound_function = found_function;
 				rebound_owner = found_owner;
 			}
 
-			const bool rebound_has_body =
-				rebound_function &&
-				(rebound_function->get_definition().has_value() || rebound_function->has_template_body_position());
 			const bool can_use_rebound_function =
-				rebound_function && rebound_has_body;
+				rebound_function && rebound_function->get_definition().has_value();
 			if (can_use_rebound_function || member_call.function_declaration().is_static()) {
 				const DeclarationNode& target_decl =
 					can_use_rebound_function ? rebound_function->decl_node() : member_call.function_declaration().decl_node();

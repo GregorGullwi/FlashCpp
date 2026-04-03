@@ -500,63 +500,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;
 
-	if (func_decl.is_static() && func_decl.has_template_body_position()) {
-		FLASH_LOG(Templates, Debug, "Lazy static member function body: re-parsing from saved position");
-		// Re-parse static member bodies with concrete owner bindings so same-class
-		// member-template calls don't keep the pattern-owner instantiation.
-		FlashCpp::TemplateParameterScope template_scope;
-		InlineVector<StringHandle, 4> param_names;
-		param_names.reserve(lazy_info.template_params.size());
-		for (const auto& tparam_node : lazy_info.template_params) {
-			if (tparam_node.is<TemplateParameterNode>()) {
-				param_names.push_back(tparam_node.as<TemplateParameterNode>().nameHandle());
-			}
-		}
-
-		registerTypeParamsInScope(param_names, lazy_info.template_args, template_scope, true);
-
-		SaveHandle current_pos = save_token_position();
-		const FunctionDeclarationNode* saved_current_function = current_function_;
-
-		FlashCpp::ScopedState guard_ptb(parsing_template_depth_);
-		parsing_template_depth_ = 0;
-
-		restore_lexer_position_only(func_decl.template_body_position());
-
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
-
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
-		}
-
-		{
-			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
-			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
-
-			{
-				FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-				for (const auto& pn : param_names) {
-					current_template_param_names_.push_back(pn);
-				}
-
-				auto block_result = parse_function_body();
-
-				if (!block_result.is_error() && block_result.node().has_value()) {
-					body_to_substitute = block_result.node();
-				}
-			}
-		}
-
-		current_function_ = saved_current_function;
-		gSymbolTable.exit_scope();
-
-		restore_lexer_position_only(current_pos);
-		discard_saved_token(current_pos);
-	} else if (func_decl.get_definition().has_value()) {
+	if (func_decl.get_definition().has_value()) {
 		// Use the already-parsed definition
 		body_to_substitute = func_decl.get_definition();
 	} else if (func_decl.has_template_body_position()) {
@@ -633,16 +577,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Substitute template parameters in the function body
 	if (body_to_substitute.has_value()) {
-		if (new_func_ref.is_static()) {
-			auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			if (struct_it != getTypesByNameMap().end()) {
-				body_to_substitute = rebindStaticMemberInitializerFunctionCalls(
-					*body_to_substitute,
-					struct_it->second->getStructInfo(),
-					true);
-			}
-		}
-
 		// Build template argument vector for registration
 		std::vector<TemplateTypeArg> converted_template_args;
 		converted_template_args.reserve(lazy_info.template_args.size());
@@ -668,15 +602,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			*body_to_substitute,
 			lazy_info.template_params,
 			converted_template_args);
-		if (new_func_ref.is_static()) {
-			auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			if (struct_it != getTypesByNameMap().end()) {
-				substituted_body = rebindStaticMemberInitializerFunctionCalls(
-					substituted_body,
-					struct_it->second->getStructInfo(),
-					true);
-			}
-		}
 		new_func_ref.set_definition(substituted_body);
 	}
 

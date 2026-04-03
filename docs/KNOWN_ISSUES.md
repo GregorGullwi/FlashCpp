@@ -112,33 +112,6 @@ constexpr/static-initializer path is still not preserving or resolving the
 nested helper call correctly once wrapped in `MemberAccessNode` or
 `ArraySubscriptNode`.
 
-## Delayed static member bodies inside `try` statements can still call pattern owners
-
-Delayed parsing of template static member function bodies still has a remaining
-resolution bug when the helper call lives inside a `try` statement. A body like:
-
-```cpp
-template <typename T>
-struct Box {
-    static int helper() { return int(sizeof(T)) + 38; }
-
-    static int value() {
-        try {
-            return helper();
-        } catch (...) {
-            return 0;
-        }
-    }
-};
-```
-
-can still lower the instantiated `Box<int>::value()` body with a relocation to
-`Box::helper()` (the pattern owner) instead of `Box$hash::helper()`, leading to
-link failures such as `undefined reference to 'Box::helper()'`.
-
-The AST traversal/rebinding helpers now recurse through `TryStatementNode`, but
-there is still a later owner-resolution gap in this path.
-
 ## Copying a same-type `dynamic_cast` result into another local pointer can drop the value
 
 While trying to add focused regression coverage for recent Windows pointer/local
