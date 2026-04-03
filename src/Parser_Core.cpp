@@ -1134,7 +1134,7 @@ void Parser::register_builtin_functions() {
 		{make_builtin_type(TypeCategory::Char, CVQualifier::Const, 1)});
 	register_extern_c_builtin(
 		"__builtin_memcmp",
-		make_builtin_type(TypeCategory::Int, CVQualifier::None, 0),
+		int_type,
 		{
 			const_void_ptr,
 			const_void_ptr,
