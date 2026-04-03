@@ -74,6 +74,256 @@ const FunctionDeclarationNode* Parser::tryResolveConcreteMemberFunction(
 	return match;
 }
 
+ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is_arrow_access, const Token& operator_start_token) {
+	const std::string_view access_spelling = is_arrow_access ? "->"sv : "."sv;
+
+	// Expect an identifier (member name) OR ~ for pseudo-destructor call
+	// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
+	if (peek() == "~"_tok) {
+		advance(); // consume '~'
+
+		if (!peek().is_identifier()) {
+			return ParseResult::error("Expected type name after '~' in pseudo-destructor call", current_token_);
+		}
+
+		Token destructor_type_token = peek_info();
+		advance(); // consume type name
+
+		std::string qualified_type_name(destructor_type_token.value());
+		while (peek() == "::"_tok) {
+			advance(); // consume '::'
+			if (!peek().is_identifier()) {
+				return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", current_token_);
+			}
+			qualified_type_name += "::";
+			qualified_type_name += peek_info().value();
+			advance(); // consume identifier
+		}
+
+		if (peek() == "<"_tok) {
+			skip_template_arguments();
+		}
+
+		if (peek() != "("_tok) {
+			return ParseResult::error("Expected '(' after destructor name", current_token_);
+		}
+		advance(); // consume '('
+
+		if (peek() != ")"_tok) {
+			return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", current_token_);
+		}
+		advance(); // consume ')'
+
+		FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
+		result = emplace_node<ExpressionNode>(
+			PseudoDestructorCallNode(*result, qualified_type_name, destructor_type_token, is_arrow_access));
+		return ParseResult::success(*result);
+	}
+
+	// Handle member operator call syntax: obj.operator<=>(...) or ptr->operator++(...)
+	if (peek() == "operator"_tok) {
+		Token operator_keyword_token = peek_info();
+		advance(); // consume 'operator'
+
+		std::string_view operator_name;
+		if (auto err = parse_operator_name(operator_keyword_token, operator_name)) {
+			return std::move(*err);
+		}
+
+		Token member_operator_name_token(
+			Token::Type::Identifier,
+			operator_name,
+			operator_keyword_token.line(),
+			operator_keyword_token.column(),
+			operator_keyword_token.file_index());
+
+		if (peek() != "("_tok) {
+			return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
+		}
+		advance(); // consume '('
+
+		auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+			.handle_pack_expansion = true,
+			.collect_types = true,
+			.expand_simple_packs = false});
+		if (!args_result.success) {
+			return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+		}
+		ChunkedVector<ASTNode> args = std::move(args_result.args);
+
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
+		}
+
+		auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
+		auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
+		auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
+
+		result = emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_operator_name_token));
+		return ParseResult::success(*result);
+	}
+
+	if (peek() == "template"_tok)
+		advance();
+
+	if (!peek().is_identifier()) {
+		return ParseResult::error(
+			is_arrow_access ? "Expected member name after '->'" : "Expected member name after '.'",
+			operator_start_token);
+	}
+
+	Token member_name_token = peek_info();
+	advance(); // consume member name
+
+	std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
+	if (peek() == "<"_tok) {
+		explicit_template_args = parse_explicit_template_arguments();
+	}
+
+	if (peek() == "("_tok) {
+		const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
+															   ? nullptr
+															   : tryResolveConcreteMemberFunction(result, member_name_token.value());
+
+		advance(); // consume '('
+
+		auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
+			.handle_pack_expansion = true,
+			.collect_types = true,
+			.expand_simple_packs = false,
+			.callee_decl = known_member_func});
+		if (!args_result.success) {
+			return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
+		}
+		ChunkedVector<ASTNode> args = std::move(args_result.args);
+		std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
+
+		if (!consume(")"_tok)) {
+			return ParseResult::error("Expected ')' after function call arguments", current_token_);
+		}
+
+		std::optional<std::string_view> object_struct_name;
+		if (result->is<ExpressionNode>()) {
+			const ExpressionNode& expr = result->as<ExpressionNode>();
+			if (std::holds_alternative<IdentifierNode>(expr)) {
+				const auto& ident = std::get<IdentifierNode>(expr);
+				auto symbol = lookup_symbol(ident.nameHandle());
+				if (symbol.has_value()) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
+						if (is_struct_type(type_spec.category())) {
+							TypeIndex type_idx = type_spec.type_index();
+							if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+								object_struct_name = StringTable::getStringView(type_info->name());
+								StringHandle type_name = type_info->name();
+								instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
+			StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
+			auto subst_it = sfinae_type_map_.find(obj_name_handle);
+			if (subst_it != sfinae_type_map_.end()) {
+				TypeIndex concrete_idx = subst_it->second;
+				if (const TypeInfo* concrete_type = tryGetTypeInfo(concrete_idx)) {
+					object_struct_name = StringTable::getStringView(concrete_type->name());
+				}
+			}
+			bool member_found = false;
+			for (auto& node : ast_nodes_) {
+				if (node.is<StructDeclarationNode>()) {
+					auto& sn = node.as<StructDeclarationNode>();
+					if (sn.name() == *object_struct_name) {
+						for (const auto& member : sn.members()) {
+							if (member.declaration.is<DeclarationNode>()) {
+								if (member.declaration.as<DeclarationNode>().identifier_token().value() == member_name_token.value()) {
+									member_found = true;
+									break;
+								}
+							}
+						}
+						if (!member_found) {
+							for (const auto& mf : sn.member_functions()) {
+								if (mf.is_constructor || mf.is_destructor)
+									continue;
+								if (mf.function_declaration.is<FunctionDeclarationNode>()) {
+									const auto& func = mf.function_declaration.as<FunctionDeclarationNode>();
+									if (func.decl_node().identifier_token().value() == member_name_token.value()) {
+										member_found = true;
+										break;
+									}
+								}
+							}
+						}
+						break;
+					}
+				}
+			}
+			if (!member_found) {
+				return ParseResult::error("SFINAE: member not found on concrete type", member_name_token);
+			}
+		}
+
+		std::optional<ASTNode> instantiated_func;
+		if (object_struct_name.has_value() && explicit_template_args.has_value()) {
+			instantiated_func = try_instantiate_member_function_template_explicit(
+				*object_struct_name,
+				member_name_token.value(),
+				*explicit_template_args);
+		} else if (object_struct_name.has_value() && !arg_types.empty()) {
+			instantiated_func = try_instantiate_member_function_template(
+				*object_struct_name,
+				member_name_token.value(),
+				arg_types);
+		}
+
+		if (object_struct_name.has_value() && !instantiating_lazy_member_) {
+			std::string_view func_name = member_name_token.value();
+			if (!func_name.empty()) {
+				StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
+				StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
+				if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, func_name_handle)) {
+					FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
+					auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, func_name_handle);
+					if (lazy_info_opt.has_value()) {
+						const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
+						instantiating_lazy_member_ = true;
+						instantiated_func = instantiateLazyMemberFunction(lazy_info);
+						instantiating_lazy_member_ = false;
+						LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle, lazy_info.identity.is_const_method);
+						FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
+					}
+				}
+			}
+		}
+
+		FunctionDeclarationNode* func_ref_ptr = nullptr;
+		if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
+			func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
+		} else if (known_member_func) {
+			func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
+		} else {
+			auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
+			auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
+			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
+			func_ref_ptr = &func_ref;
+		}
+
+		result = emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
+		return ParseResult::success(*result);
+	}
+
+	result = emplace_node<ExpressionNode>(
+		MemberAccessNode(*result, member_name_token, is_arrow_access));
+	return ParseResult::success(*result);
+}
+
 // Apply postfix operators (., ->, [], (), ++, --) to an existing expression result
 // This allows cast expressions (static_cast, dynamic_cast, etc.) to be followed by member access
 // e.g., static_cast<T&&>(t).operator<=>(u)
@@ -102,243 +352,15 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			}
 		}
 
-		// Check for member access (. or ->) - these need special handling for .operator<=>()
-		if (peek().is_punctuator() && peek() == "."_tok) {
-			Token dot_token = peek_info();
-			advance(); // consume '.'
+		// Check for member access (. or ->)
+		if ((peek().is_punctuator() && peek() == "."_tok) || peek() == "->"_tok) {
+			Token member_operator_token = peek_info();
+			bool is_arrow_access = peek() == "->"_tok;
+			advance(); // consume '.' or '->'
 
-			// Check for .operator
-			if (peek() == "operator"_tok) {
-				Token operator_keyword_token = peek_info();
-				advance(); // consume 'operator'
-
-				// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
-				StringBuilder operator_name_builder;
-				operator_name_builder.append("operator");
-
-				if (peek().is_eof()) {
-					return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
-				}
-
-				// Handle various operator symbols including multi-character ones
-				std::string_view op_char = peek_info().value();
-				operator_name_builder.append(op_char);
-				advance();
-
-				// Handle multi-character operators like >>=, <<=, <=>, etc.
-				while (!peek().is_eof()) {
-					std::string_view next = peek_info().value();
-					if (next == "=" || next == ">" || next == "<") {
-						if (op_char == ">" && (next == ">" || next == "=")) {
-							operator_name_builder.append(next);
-							advance();
-							op_char = next;
-						} else if (op_char == "<" && (next == "<" || next == "=" || next == ">")) {
-							operator_name_builder.append(next);
-							advance();
-							op_char = next;
-						} else if (op_char == "=" && next == ">") {
-							// Complete <=> operator
-							operator_name_builder.append(next);
-							advance();
-							break;
-						} else if ((op_char == ">" || op_char == "<" || op_char == "!" || op_char == "=") && next == "=") {
-							operator_name_builder.append(next);
-							advance();
-							break;
-						} else {
-							break;
-						}
-					} else {
-						break;
-					}
-				}
-
-				std::string_view operator_name = operator_name_builder.commit();
-				Token operator_name_token(Token::Type::Identifier, operator_name,
-										  operator_keyword_token.line(), operator_keyword_token.column(),
-										  operator_keyword_token.file_index());
-
-				// Expect '(' for the operator call
-				if (peek() != "("_tok) {
-					return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
-				}
-				advance(); // consume '('
-
-				// Parse function arguments
-				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
-					.handle_pack_expansion = true,
-					.collect_types = true,
-					.expand_simple_packs = false});
-				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
-				}
-				ChunkedVector<ASTNode> args = std::move(args_result.args);
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
-				}
-
-				// Create a member function call node for the operator
-				auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, operator_name_token, CVQualifier::None, ReferenceQualifier::None);
-				auto& operator_decl = emplace_node<DeclarationNode>(type_spec, operator_name_token).as<DeclarationNode>();
-				auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
-
-				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_decl_node, std::move(args), operator_name_token));
-				continue;  // Continue checking for more postfix operators
-			}
-
-			// Not .operator - restore and let the normal postfix handling deal with it
-			// (this is a limitation - we'd need to refactor more to handle regular member access here)
-			// For now, just break and let the caller handle remaining tokens
-			// Actually, we consumed the '.', so we need to handle member access here or error
-
-			// Simple member access without operator
-			// Skip 'template' keyword if present (dependent context disambiguator)
-			// e.g., obj.template emplace<T>(args)
-			if (peek() == "template"_tok)
-				advance();
-
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected member name after '.'", dot_token);
-			}
-
-			Token member_name_token = peek_info();
-			advance();
-
-			// Parse explicit template arguments: obj.template emplace<T>(args)
-			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-			if (peek() == "<"_tok) {
-				explicit_template_args = parse_explicit_template_arguments();
-				// nullopt means disambiguation failed - '<' is a comparison operator, not template args
-			}
-
-			// Check if this is a member function call (followed by '(')
-			if (peek() == "("_tok) {
-				const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
-																	   ? nullptr
-																	   : tryResolveConcreteMemberFunction(result, member_name_token.value());
-				advance(); // consume '('
-
-				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
-					.handle_pack_expansion = true,
-					.collect_types = true,
-					.expand_simple_packs = false,
-					.callee_decl = known_member_func});
-				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
-				}
-				ChunkedVector<ASTNode> args = std::move(args_result.args);
-				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after member function call arguments", current_token_);
-				}
-
-				// Try to resolve object type and instantiate member function template
-				auto instantiated_func = tryResolveMemberFunctionTemplate(
-					result, member_name_token.value(), explicit_template_args, arg_types);
-
-				// Use instantiated function or create placeholder
-				FunctionDeclarationNode* func_ref_ptr = nullptr;
-				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
-				} else if (known_member_func) {
-					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
-				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
-					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
-					func_ref_ptr = &func_decl_node;
-				}
-
-				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
-			} else {
-				// Simple member access
-				result = emplace_node<ExpressionNode>(
-					MemberAccessNode(*result, member_name_token, false)); // false = dot access
-			}
-			continue;
-		}
-
-		// Check for -> member access (-> is a punctuator, not an operator)
-		if (peek() == "->"_tok) {
-			Token arrow_token = peek_info();
-			advance(); // consume '->'
-
-			// Check for ->operator
-			if (peek() == "operator"_tok) {
-				// Similar handling to .operator - for brevity, just error for now
-				// A full implementation would duplicate the .operator handling
-				return ParseResult::error("->operator syntax not yet implemented in apply_postfix_operators", arrow_token);
-			}
-
-			// Simple member access via arrow
-			// Skip 'template' keyword if present (dependent context disambiguator)
-			// e.g., ptr->template emplace<T>(args)
-			if (peek() == "template"_tok)
-				advance();
-
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected member name after '->'", arrow_token);
-			}
-
-			Token member_name_token = peek_info();
-			advance();
-
-			// Parse explicit template arguments: ptr->template emplace<T>(args)
-			std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-			if (peek() == "<"_tok) {
-				explicit_template_args = parse_explicit_template_arguments();
-			}
-
-			// Check if this is a member function call (followed by '(')
-			if (peek() == "("_tok) {
-				const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
-																	   ? nullptr
-																	   : tryResolveConcreteMemberFunction(result, member_name_token.value());
-				advance(); // consume '('
-
-				auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
-					.handle_pack_expansion = true,
-					.collect_types = true,
-					.expand_simple_packs = false,
-					.callee_decl = known_member_func});
-				if (!args_result.success) {
-					return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
-				}
-				ChunkedVector<ASTNode> args = std::move(args_result.args);
-				std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
-
-				if (!consume(")"_tok)) {
-					return ParseResult::error("Expected ')' after arrow member function call arguments", current_token_);
-				}
-
-				// Try to resolve object type and instantiate member function template
-				auto instantiated_func = tryResolveMemberFunctionTemplate(
-					result, member_name_token.value(), explicit_template_args, arg_types);
-
-				// Use instantiated function or create placeholder
-				FunctionDeclarationNode* func_ref_ptr = nullptr;
-				if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-					func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
-				} else if (known_member_func) {
-					func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
-				} else {
-					auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_name_token, CVQualifier::None, ReferenceQualifier::None);
-					auto& member_decl = emplace_node<DeclarationNode>(type_spec, member_name_token).as<DeclarationNode>();
-					auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
-					func_ref_ptr = &func_decl_node;
-				}
-
-				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
-			} else {
-				// Create arrow access node
-				result = emplace_node<ExpressionNode>(
-					MemberAccessNode(*result, member_name_token, true)); // true = arrow access
+			ParseResult member_result = parse_member_postfix(result, is_arrow_access, member_operator_token);
+			if (member_result.is_error()) {
+				return member_result;
 			}
 			continue;
 		}
@@ -1079,349 +1101,10 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 			break;  // No more postfix operators
 		}
 
-		// Expect an identifier (member name) OR ~ for pseudo-destructor call
-		// Pseudo-destructor pattern: obj.~Type() or ptr->~Type()
-		if (peek() == "~"_tok) {
-			advance(); // consume '~'
-
-			// The destructor name follows the ~
-			// This can be a simple identifier (e.g., ~int) or a qualified name (e.g., ~std::string)
-			if (!peek().is_identifier()) {
-				return ParseResult::error("Expected type name after '~' in pseudo-destructor call", current_token_);
-			}
-
-			Token destructor_type_token = peek_info();
-			advance(); // consume type name
-
-			// Build qualified type name if present (e.g., std::string -> handle ~std::string)
-			std::string qualified_type_name(destructor_type_token.value());
-			while (peek() == "::"_tok) {
-				advance(); // consume '::'
-				if (!peek().is_identifier()) {
-					return ParseResult::error("Expected identifier after '::' in pseudo-destructor type", current_token_);
-				}
-				qualified_type_name += "::";
-				qualified_type_name += peek_info().value();
-				advance(); // consume identifier
-			}
-
-			// Skip template arguments if present (e.g., ~_Rb_tree_node<_Val>())
-			if (peek() == "<"_tok) {
-				skip_template_arguments();
-			}
-
-			// Expect '(' for the destructor call
-			if (peek() != "("_tok) {
-				return ParseResult::error("Expected '(' after destructor name", current_token_);
-			}
-			advance(); // consume '('
-
-			// Expect ')' - destructors take no arguments
-			if (peek() != ")"_tok) {
-				return ParseResult::error("Expected ')' - pseudo-destructor takes no arguments", current_token_);
-			}
-			advance(); // consume ')'
-
-			FLASH_LOG(Parser, Debug, "Parsed pseudo-destructor call: ~", qualified_type_name);
-
-			// Create a PseudoDestructorCallNode to properly represent this expression
-			// The result type is always void
-			result = emplace_node<ExpressionNode>(
-				PseudoDestructorCallNode(*result, qualified_type_name, destructor_type_token, is_arrow_access));
-			continue;
+		ParseResult member_result = parse_member_postfix(result, is_arrow_access, operator_start_token);
+		if (member_result.is_error()) {
+			return member_result;
 		}
-
-		// Handle member operator call syntax: obj.operator<=>(...) or ptr->operator++(...)
-		// This is valid C++ syntax for calling an operator as a member function by name
-		if (peek() == "operator"_tok) {
-			Token operator_keyword_token = peek_info();
-			advance(); // consume 'operator'
-
-			// Parse the operator symbol (can be multiple tokens like ==, <=>, () etc.)
-			StringBuilder operator_name_builder;
-			operator_name_builder.append("operator");
-
-			if (peek().is_eof()) {
-				return ParseResult::error("Expected operator symbol after 'operator' keyword", operator_keyword_token);
-			}
-
-			// Handle various operator symbols including multi-character ones
-			std::string_view op = peek_info().value();
-			operator_name_builder.append(op);
-			advance();
-
-			// Handle multi-character operators like >>=, <<=, <=>, (), [], etc.
-			while (!peek().is_eof()) {
-				std::string_view next = peek_info().value();
-				if (next == "=" || next == ">" || next == "<") {
-					// Could be part of >>=, <<=, <=>, ==, !=, etc.
-					if (op == ">" && (next == ">" || next == "=")) {
-						operator_name_builder.append(next);
-						advance();
-						op = next;
-					} else if (op == "<" && (next == "<" || next == "=" || next == ">")) {
-						operator_name_builder.append(next);
-						advance();
-						op = next;
-					} else if (op == "=" && next == ">") {
-						// Complete <=> operator (we already have operator<= from above)
-						operator_name_builder.append(next);
-						advance();
-						break;
-					} else if ((op == ">" || op == "<" || op == "!" || op == "=") && next == "=") {
-						operator_name_builder.append(next);
-						advance();
-						break;
-					} else {
-						break;
-					}
-				} else if (op == ")" && next == "(") {
-					// operator()
-					operator_name_builder.append(next);
-					advance();
-					break;
-				} else if (op == "]" && next == "[") {
-					// operator[]
-					operator_name_builder.append(next);
-					advance();
-					break;
-				} else {
-					break;
-				}
-			}
-
-			std::string_view operator_name = operator_name_builder.commit();
-			Token member_operator_name_token(Token::Type::Identifier, operator_name,
-											 operator_keyword_token.line(), operator_keyword_token.column(),
-											 operator_keyword_token.file_index());
-
-			// Expect '(' for the operator call
-			if (peek() != "("_tok) {
-				return ParseResult::error("Expected '(' after operator name in member operator call", current_token_);
-			}
-			advance(); // consume '('
-
-			// Parse function arguments
-			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
-				.handle_pack_expansion = true,
-				.collect_types = true,
-				.expand_simple_packs = false});
-			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
-			}
-			ChunkedVector<ASTNode> args = std::move(args_result.args);
-
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after member operator call arguments", current_token_);
-			}
-
-			// Create a member function call node for the operator
-			// The operator is treated as a regular member function with a special name
-			auto type_spec = emplace_node<TypeSpecifierNode>(TypeIndex{}.withCategory(TypeCategory::Auto), 0, member_operator_name_token, CVQualifier::None, ReferenceQualifier::None);
-			auto& operator_decl = emplace_node<DeclarationNode>(type_spec, member_operator_name_token).as<DeclarationNode>();
-			auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
-
-			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_operator_name_token));
-			continue;  // Continue checking for more postfix operators
-		}
-
-		// Skip 'template' keyword if present (dependent context disambiguator)
-		if (peek() == "template"_tok)
-			advance();
-
-		if (!peek().is_identifier()) {
-			return ParseResult::error("Expected member name after '.' or '->'", current_token_);
-		}
-
-		Token member_name_token = peek_info();
-		advance(); // consume member name
-
-		// Check for explicit template arguments: obj.method<T>(args)
-		std::optional<std::vector<TemplateTypeArg>> explicit_template_args;
-		if (peek() == "<"_tok) {
-			explicit_template_args = parse_explicit_template_arguments();
-			// nullopt means disambiguation failed - '<' is a comparison operator, not template args
-		}
-
-		// Check if this is a member function call (followed by '(')
-		if (peek() == "("_tok) {
-			// This is a member function call: obj.method(args)
-			const FunctionDeclarationNode* known_member_func = explicit_template_args.has_value()
-																   ? nullptr
-																   : tryResolveConcreteMemberFunction(result, member_name_token.value());
-
-			advance(); // consume '('
-
-			// Parse function arguments using unified helper (collect types for template deduction)
-			auto args_result = parse_function_arguments(FlashCpp::FunctionArgumentContext{
-				.handle_pack_expansion = true,
-				.collect_types = true,
-				.expand_simple_packs = false,
-				.callee_decl = known_member_func});
-			if (!args_result.success) {
-				return ParseResult::error(args_result.error_message, args_result.error_token.value_or(current_token_));
-			}
-			ChunkedVector<ASTNode> args = std::move(args_result.args);
-			std::vector<TypeSpecifierNode> arg_types = std::move(args_result.arg_types);
-
-			if (!consume(")"_tok)) {
-				return ParseResult::error("Expected ')' after function call arguments", current_token_);
-			}
-
-			// Try to get the object's type to check for member function templates
-			std::optional<std::string_view> object_struct_name;
-
-			// Try to deduce the object type from the result expression
-			if (result->is<ExpressionNode>()) {
-				const ExpressionNode& expr = result->as<ExpressionNode>();
-				if (std::holds_alternative<IdentifierNode>(expr)) {
-					const auto& ident = std::get<IdentifierNode>(expr);
-					auto symbol = lookup_symbol(ident.nameHandle());
-					if (symbol.has_value()) {
-						if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-							const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-							if (is_struct_type(type_spec.category())) {
-								TypeIndex type_idx = type_spec.type_index();
-								if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
-									object_struct_name = StringTable::getStringView(type_info->name());
-
-									// Phase 2: Ensure the struct is instantiated to Full phase for member access
-									// This ensures all members are instantiated before accessing them
-									StringHandle type_name = type_info->name();
-									instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
-								}
-							}
-						}
-					}
-				}
-			}
-
-			// SFINAE: resolve template parameter types to concrete struct names and validate member existence
-			if (in_sfinae_context_ && object_struct_name.has_value() && !sfinae_type_map_.empty()) {
-				// The object_struct_name may be a template parameter name (e.g., "U").
-				// Resolve it to the concrete struct name using sfinae_type_map_.
-				StringHandle obj_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
-				auto subst_it = sfinae_type_map_.find(obj_name_handle);
-				if (subst_it != sfinae_type_map_.end()) {
-					TypeIndex concrete_idx = subst_it->second;
-					if (const TypeInfo* concrete_type = tryGetTypeInfo(concrete_idx)) {
-						object_struct_name = StringTable::getStringView(concrete_type->name());
-					}
-				}
-				// Verify the member exists on the resolved struct
-				bool member_found = false;
-				for (auto& node : ast_nodes_) {
-					if (node.is<StructDeclarationNode>()) {
-						auto& sn = node.as<StructDeclarationNode>();
-						if (sn.name() == *object_struct_name) {
-							for (const auto& member : sn.members()) {
-								if (member.declaration.is<DeclarationNode>()) {
-									if (member.declaration.as<DeclarationNode>().identifier_token().value() == member_name_token.value()) {
-										member_found = true;
-										break;
-									}
-								}
-							}
-							if (!member_found) {
-								for (const auto& mf : sn.member_functions()) {
-									if (mf.is_constructor || mf.is_destructor)
-										continue;
-									if (mf.function_declaration.is<FunctionDeclarationNode>()) {
-										const auto& func = mf.function_declaration.as<FunctionDeclarationNode>();
-										if (func.decl_node().identifier_token().value() == member_name_token.value()) {
-											member_found = true;
-											break;
-										}
-									}
-								}
-							}
-							break;
-						}
-					}
-				}
-				if (!member_found) {
-					return ParseResult::error("SFINAE: member not found on concrete type", member_name_token);
-				}
-			}
-
-			// Try to instantiate member function template if applicable
-			std::optional<ASTNode> instantiated_func;
-
-			// If we have explicit template arguments, use them for instantiation
-			if (object_struct_name.has_value() && explicit_template_args.has_value()) {
-				instantiated_func = try_instantiate_member_function_template_explicit(
-					*object_struct_name,
-					member_name_token.value(),
-					*explicit_template_args);
-			}
-			// Otherwise, try argument type deduction
-			else if (object_struct_name.has_value() && !arg_types.empty()) {
-				instantiated_func = try_instantiate_member_function_template(
-					*object_struct_name,
-					member_name_token.value(),
-					arg_types);
-			}
-
-			// Check for lazy template instantiation
-			// If the member function is registered for lazy instantiation, instantiate it now
-			if (object_struct_name.has_value() && !instantiating_lazy_member_) {
-				std::string_view func_name = member_name_token.value();
-
-				if (!func_name.empty()) {
-					StringHandle class_name_handle = StringTable::getOrInternStringHandle(*object_struct_name);
-					StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
-
-					// Check if this function needs lazy instantiation
-					if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(class_name_handle, func_name_handle)) {
-						FLASH_LOG(Templates, Debug, "Lazy instantiation triggered for: ", *object_struct_name, "::", func_name);
-
-						// Get the lazy member info
-						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(class_name_handle, func_name_handle);
-						if (lazy_info_opt.has_value()) {
-							const LazyMemberFunctionInfo& lazy_info = *lazy_info_opt;
-
-							// Set flag to prevent recursive instantiation
-							instantiating_lazy_member_ = true;
-
-							// Instantiate the function body now
-							instantiated_func = instantiateLazyMemberFunction(lazy_info);
-
-							// Clear flag
-							instantiating_lazy_member_ = false;
-
-							// Mark as instantiated
-							LazyMemberInstantiationRegistry::getInstance().markInstantiated(class_name_handle, func_name_handle, lazy_info.identity.is_const_method);
-
-							FLASH_LOG(Templates, Debug, "Lazy instantiation completed for: ", *object_struct_name, "::", func_name);
-						}
-					}
-				}
-			}
-
-			// Use the instantiated function if available, otherwise create temporary placeholder
-			FunctionDeclarationNode* func_ref_ptr = nullptr;
-			if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-				func_ref_ptr = &instantiated_func->as<FunctionDeclarationNode>();
-			} else if (known_member_func) {
-				func_ref_ptr = const_cast<FunctionDeclarationNode*>(known_member_func);
-			} else {
-				// Create a temporary function declaration node for the member function
-				auto temp_type = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, member_name_token, CVQualifier::None);
-				auto temp_decl = emplace_node<DeclarationNode>(temp_type, member_name_token);
-				auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
-				func_ref_ptr = &func_ref;
-			}
-
-			// Create member function call node
-			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
-			continue;
-		}
-
-		// Regular member access (not a function call)
-		result = emplace_node<ExpressionNode>(
-			MemberAccessNode(*result, member_name_token, is_arrow_access));
 		continue;  // Check for more postfix operators (e.g., obj.member1.member2)
 	}
 
