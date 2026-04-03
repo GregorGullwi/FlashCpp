@@ -820,6 +820,16 @@ TypeIndex Parser::substitute_template_parameter(
 			}
 
 			std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+			for (size_t i = 0; i < template_params.size(); ++i) {
+				if (!template_params[i].is<TemplateParameterNode>()) {
+					continue;
+				}
+				const TemplateParameterNode& tparam = template_params[i].as<TemplateParameterNode>();
+				if (tparam.kind() == TemplateParameterKind::Template && tparam.name() == base_template_name) {
+					return false;
+				}
+			}
+
 			std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
 			auto instantiated = try_instantiate_class_template(base_template_name, concrete_args);
 			std::string_view instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
@@ -870,7 +880,7 @@ TypeIndex Parser::substitute_template_parameter(
 
 			if (found_match) {
 				tryResolveConcreteTemplatePlaceholder(result_type, result_type_index);
-			} else {
+			} else if (type_name.find("::") == std::string_view::npos) {
 				found_match = tryResolveConcreteTemplatePlaceholder(result_type, result_type_index);
 			}
 

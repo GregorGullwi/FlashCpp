@@ -14,18 +14,18 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~281ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~940ms (targeted retest 2026-04-03). The older unexpanded-pack parse note is stale. `static_cast<const Derived*>(this)`-style pointer casts now preserve the target semantic type/pointer depth, so `_M_is_engaged()` gets past the earlier `type_index=0` failure and now stops later on a deferred-base placeholder that still materializes as a non-struct `_Optional_base<_Tp>` type during codegen. |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~1060ms (targeted retest 2026-04-03). The new placeholder materialization fixes move `_M_is_engaged()` past the earlier `_Optional_base<_Tp>` non-struct placeholder failure, but libstdc++ still hits later base/member issues: one `_Optional_base<...>` path still reaches codegen with `type_index=0`, and `_Optional_payload<...>` member lookups still fail to find `_M_engaged`. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~271ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
 | `<bit>` | `test_std_bit.cpp` | ✅ Compiled | ~237ms |
-| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~1960ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed; it now gets through `char_traits<wchar_t>` and fails later on ranges/view constraints plus iterator arithmetic (`Operator-`, `make_move_iterator`) |
+| `<string_view>` | `test_std_string_view.cpp` | ❌ Codegen Error | ~3690ms (targeted retest 2026-04-03). The earlier `wmemchr` ambiguity is fixed; current failures are still downstream ranges/iterator follow-ons (`Operator==` / `Operator-`), `__as_const` / reference-size placeholder issues, and later sema/codegen conversion gaps. |
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~4150ms (targeted retest 2026-03-31). Previous function-pointer mangling blocker fixed; now fails later on `Missing identifier: string`, missing `std::basic_string` primary template lookups, and explicit-constructor copy-init errors |
-| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1140ms (targeted retest 2026-04-02). The aggregate brace-init blocker stays fixed; current failures are later iterator/ranges follow-ons (`Operator-` via `operator+`, `make_move_iterator`, and `operator==` hitting missing struct type info) |
-| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2210ms (targeted retest 2026-04-02). Now gets past the earlier free-operator-template blocker but still fails later on ranges/view helpers (`__is_derived_from_view_interface_fn`), `first` member lookup, `_S_empty` / `_S_size`, and fatal `Operator-` follow-ons |
+| `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1360ms (targeted retest 2026-04-03). The aggregate brace-init blocker stays fixed and the old array-alias regression tests remain green; current failures are still later iterator/ranges follow-ons (`Operator-` via `operator+`, `make_move_iterator`, `operator==`, and placeholder-sized helper types). |
+| `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2710ms (targeted retest 2026-04-03). Now gets well into ranges/view lowering, but still fails later on `_S_empty` / `_S_size`, iterator comparisons/arithmetic (`Operator==`, `Operator-`, `Operator<` / `Operator>`), and an eventual unresolved-`auto` mangling path. |
 | `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<vector>` | `test_std_vector.cpp` | ❌ Codegen Error | ~3050ms (targeted retest 2026-04-02). Base-member lookup is no longer the first stop; current failures are later iterator/ranges/codegen issues (`Operator-` / `Operator!=`, `make_move_iterator`, unresolved `auto` in `__addressof`, `first` lookup, and struct type info gaps) |
+| `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~7830ms (targeted retest 2026-04-03). Base-member lookup is no longer the first stop; the current Linux repro now gets much deeper into `__copy_move_a` / `__copy_move_backward_a` / relocation helpers before failing on non-type deduction gaps, static-assert follow-ons, and a later unknown-type Itanium mangling abort. |
 | `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
 | `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-04-03):** `<optional>` was re-checked individually after the 2026-04-03 cast/deferred-base fixes below, and `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, and `<iostream>` were previously re-checked on 2026-04-02. The wide-`wmemchr` ambiguity is gone, infix free operator templates now instantiate in simple cases, and CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-03):** `<optional>`, `<string_view>`, `<array>`, `<algorithm>`, and `<vector>` were re-checked individually after the 2026-04-03 placeholder-materialization work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, and CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -120,7 +120,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
    - Core fix areas: `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_Deduction.cpp`, and `TypeInfo::TemplateArgInfo` / outer-template binding serialization.
    - Regression test: `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
 
-3. **Deferred template-base placeholder materialization**: Some dependent base arguments still fall back to placeholder `TypeSpecifierNode` values instead of the fully instantiated base type, so later CRTP/deferred-body codegen sees non-struct placeholders where a concrete base type should exist. Affects: `<optional>` and likely other CRTP-style standard-library internals.
+3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, but later CRTP/deferred-body codegen still has remaining gaps where defaulted base specializations or inherited payload members are not fully reconstructed. `<optional>` no longer dies on the first `_Optional_base<_Tp>` placeholder, but later `_Optional_base<...>` / `_Optional_payload<...>` paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
 4. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
@@ -141,6 +141,8 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 1. **Pointer/reference cast IR now preserves the canonical target `TypeIndex` and pointer depth**: `static_cast`, `const_cast`, and `reinterpret_cast` no longer collapse pointer targets to category-only placeholder metadata during codegen. This fixes CRTP-style `static_cast<const Derived*>(this)->member` lowering and removes the earlier `<optional>` `_M_is_engaged()` abort caused by `type_index=0`. Regression tests: new `tests/test_crtp_static_cast_this_member_ret0.cpp` plus existing cast coverage `tests/test_static_cast_base_ref_conv_op_ret0.cpp` and `tests/test_xvalue_all_casts_ret0.cpp`.
 
 2. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
+
+3. **Template-parameter substitution now materializes concrete class-template placeholders without regressing alias-member or template-template lookups**: when a substituted type argument is itself a concrete-but-lazy template-instantiation placeholder, qualified lookup now eagerly resolves it to the registered instantiated class name, but only for the cases that are safe to do before the dedicated `::type` and template-template parameter paths run. This fixes deferred codegen for direct CRTP-style base casts and defaulted placeholder bases while preserving earlier array-alias and template-template regressions. Regression tests: `tests/test_deferred_base_placeholder_codegen_ret0.cpp`, `tests/test_deferred_base_default_arg_placeholder_ret0.cpp`, plus existing `tests/test_template_type_alias_array_member_brace_init_ret0.cpp` and `tests/template_template_with_member_ret0.cpp`.
 
 ### Recent Fixes (2026-04-02)
 
