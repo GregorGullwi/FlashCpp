@@ -239,7 +239,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		return result;
 	}
 
-	auto isIdenticalToken = [](const Token& lhs, const Token& rhs) {
+	auto isParserAtSameToken = [](const Token& lhs, const Token& rhs) {
 		return lhs.type() == rhs.type() &&
 			   lhs.value() == rhs.value() &&
 			   lhs.line() == rhs.line() &&
@@ -497,7 +497,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
 						}
 						result = ParseResult::success(call_node);
-						if (isIdenticalToken(loop_start_token, peek_info())) {
+						if (isParserAtSameToken(loop_start_token, peek_info())) {
 							return makeBinaryLoopStallError();
 						}
 						continue;
@@ -506,7 +506,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					// Not a function call - just a qualified identifier access
 					auto ident_node = emplace_node<ExpressionNode>(IdentifierNode(member_token));
 					result = ParseResult::success(ident_node);
-					if (isIdenticalToken(loop_start_token, peek_info())) {
+					if (isParserAtSameToken(loop_start_token, peek_info())) {
 						return makeBinaryLoopStallError();
 					}
 					continue;
@@ -516,7 +516,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// will handle function calls with template arguments. We just needed to prevent
 				// the binary operator loop from consuming '<' as a comparison operator.
 				// Continue to the next iteration to let postfix operators handle this.
-				if (isIdenticalToken(loop_start_token, peek_info())) {
+				if (isParserAtSameToken(loop_start_token, peek_info())) {
 					return makeBinaryLoopStallError();
 				}
 				continue;
@@ -711,7 +711,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);
 				result = ParseResult::success(binary_op);
-				if (isIdenticalToken(loop_start_token, peek_info())) {
+				if (isParserAtSameToken(loop_start_token, peek_info())) {
 					return makeBinaryLoopStallError();
 				}
 			}
