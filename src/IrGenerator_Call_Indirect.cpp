@@ -366,32 +366,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				}
 			}
 		}
-	} else if (object_expr && std::holds_alternative<FunctionCallNode>(*object_expr)) {
-		// Handle function call returning a struct (e.g., getContainer().callback(args))
-		const FunctionCallNode& func_call = std::get<FunctionCallNode>(*object_expr);
-		const DeclarationNode& decl = func_call.function_declaration();
-		if (decl.type_node().is<TypeSpecifierNode>()) {
-			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ret_type.type()))) {
-				object_type = ret_type;
-				// object_name remains empty; expression will be evaluated when needed
-			}
-		}
-	} else if (object_expr && std::holds_alternative<CallExprNode>(*object_expr)) {
-		// Handle unified call nodes returning a struct (e.g., makeBox(42).get(), getContainer().callback(args))
-		const CallExprNode& call_expr = std::get<CallExprNode>(*object_expr);
-		const DeclarationNode& decl = call_expr.callee().declaration();
-		if (decl.type_node().is<TypeSpecifierNode>()) {
-			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ret_type.type()))) {
-				object_type = ret_type;
-				// object_name remains empty; expression will be evaluated when needed
-			}
-		}
-	} else if (object_expr && std::holds_alternative<MemberFunctionCallNode>(*object_expr)) {
-		// Handle member function call returning a struct (e.g., obj.getInner().callback(args))
-		const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(*object_expr);
-		const DeclarationNode& decl = mem_call.function_declaration().decl_node();
+	} else if (object_expr && CallInfo::tryFrom(*object_expr)) {
+		// Handle any call returning a struct (free, member, or unified)
+		auto call_info = CallInfo::tryFrom(*object_expr);
+		const DeclarationNode& decl = *call_info->declaration;
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
 			if (isIrStructType(toIrType(ret_type.type()))) {

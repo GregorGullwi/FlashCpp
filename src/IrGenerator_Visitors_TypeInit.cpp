@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "CallNodeHelpers.h"
 
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
@@ -467,9 +468,8 @@ void AstToIr::generateStaticMemberDeclarations() {
 		if (!eval_result.success()) {
 			if (struct_info && expr_node.is<ExpressionNode>()) {
 				const auto& expr = expr_node.as<ExpressionNode>();
-				if (std::holds_alternative<FunctionCallNode>(expr)) {
-					const auto& func_call = std::get<FunctionCallNode>(expr);
-					StringHandle func_name_handle = func_call.function_declaration().identifier_token().handle();
+				if (auto call_info = CallInfo::tryFrom(expr)) {
+					StringHandle func_name_handle = call_info->declaration->identifier_token().handle();
 
 					if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_info->name, func_name_handle)) {
 						if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_info->name, func_name_handle)) {
@@ -487,7 +487,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 						const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 						if (!func_decl.is_static() || !func_decl.get_definition().has_value() ||
-							func_decl.parameter_nodes().size() != func_call.arguments().size()) {
+							func_decl.parameter_nodes().size() != call_info->arguments->size()) {
 							continue;
 						}
 
@@ -498,7 +498,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 
 					if (member_function_node) {
 						global_symbol_table_->enter_scope(ScopeType::Block);
-						global_symbol_table_->insert(func_call.function_declaration().identifier_token().value(), *member_function_node);
+						global_symbol_table_->insert(call_info->declaration->identifier_token().value(), *member_function_node);
 
 						ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
 						rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;

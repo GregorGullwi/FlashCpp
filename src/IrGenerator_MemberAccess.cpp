@@ -1237,14 +1237,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (!extractBaseFromOperands(array_operands, base_object, base_type_index, "array subscript")) {
 				throw InternalError(std::string("Failed to extract base from array subscript for member '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
-		} else if (expr && std::holds_alternative<FunctionCallNode>(*expr)) {
-			auto call_result = generateFunctionCallIr(std::get<FunctionCallNode>(*expr), ExpressionContext::Load);
-			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "function call")) {
-				throw InternalError(std::string("Failed to extract base from function call result for member '") + std::string(memberAccessNode.member_token().value()) + "'");
-			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
-			}
 		} else if (expr) {
 			// Materialize direct object expressions (constructor calls, braced construction,
 			// casts, conditional expressions, etc.) so member access can operate on the
