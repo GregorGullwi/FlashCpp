@@ -86,19 +86,6 @@ ASTNode Parser::substituteTemplateParameters(
 		ExpressionSubstitutor substitutor(param_map, pack_map, *this);
 		return substitutor.substitute(substituted_call_node);
 	};
-	auto substituteFunctionCallWithExpressionSubstitutor = [&](const FunctionCallNode& call) -> ASTNode {
-		ChunkedVector<ASTNode> substituted_args;
-		for (const auto& arg : call.arguments()) {
-			substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
-		}
-
-		FunctionCallNode& substituted_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-			call.function_declaration(),
-			std::move(substituted_args),
-			call.called_from());
-		substituteFunctionCallExtras(substituted_call, call, template_params, template_args);
-		return substituteWithExpressionSubstitutor(ASTNode(&substituted_call));
-	};
 	auto substituteCallExprWithExpressionSubstitutor = [&](const CallExprNode& call) -> ASTNode {
 		std::optional<ASTNode> substituted_receiver;
 		if (call.has_receiver()) {
@@ -306,8 +293,6 @@ ASTNode Parser::substituteTemplateParameters(
 			const UnaryOperatorNode& unary_op = *unary_operator;
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
-		} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-			return substituteFunctionCallWithExpressionSubstitutor(std::get<FunctionCallNode>(expr));
 		} else if (std::holds_alternative<CallExprNode>(expr)) {
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
@@ -868,19 +853,6 @@ ASTNode Parser::substituteTemplateParameters(
 			return node;
 		}
 
-		if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-			const MemberFunctionCallNode& member_call = std::get<MemberFunctionCallNode>(expr);
-			ASTNode substituted_object = substituteTemplateParameters(member_call.object(), template_params, template_args);
-			ChunkedVector<ASTNode> substituted_args;
-			for (const auto& arg : member_call.arguments()) {
-				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
-			}
-			return emplace_node<ExpressionNode>(
-				makeResolvedMemberCallExpr(substituted_object,
-										   member_call.function_declaration(),
-										   std::move(substituted_args), member_call.called_from()));
-		}
-
 		if (std::holds_alternative<CallExprNode>(expr)) {
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		}
@@ -888,8 +860,6 @@ ASTNode Parser::substituteTemplateParameters(
 		// For other expression types that don't contain subexpressions, return as-is
 		return node;
 
-	} else if (node.is<FunctionCallNode>()) {
-		return substituteFunctionCallWithExpressionSubstitutor(node.as<FunctionCallNode>());
 	} else if (node.is<CallExprNode>()) {
 		return substituteCallExprWithExpressionSubstitutor(node.as<CallExprNode>());
 
@@ -1446,22 +1416,6 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return expr;
 		}
 
-		if (std::holds_alternative<FunctionCallNode>(expr_variant)) {
-			const FunctionCallNode& call = std::get<FunctionCallNode>(expr_variant);
-			ChunkedVector<ASTNode> new_args;
-			for (size_t i = 0; i < call.arguments().size(); ++i) {
-				new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
-			}
-			CallExprNode new_call_expr = makeDirectCallExpr(call.function_declaration(), std::move(new_args), call.called_from());
-			copyCallMetadataWithTransformedTemplateArguments(
-				new_call_expr,
-				call,
-				[&](const ASTNode& template_arg) {
-					return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-				});
-			return emplace_node<ExpressionNode>(std::move(new_call_expr));
-		}
-
 		if (std::holds_alternative<CallExprNode>(expr_variant)) {
 			const CallExprNode& call = std::get<CallExprNode>(expr_variant);
 			ChunkedVector<ASTNode> new_args;
@@ -1561,24 +1515,6 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		return expr;
 	}
 
-	// Handle direct FunctionCallNode
-	if (expr.is<FunctionCallNode>()) {
-		const FunctionCallNode& call = expr.as<FunctionCallNode>();
-		ChunkedVector<ASTNode> new_args;
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			new_args.push_back(replacePackIdentifierInExpr(call.arguments()[i], pack_name, element_index));
-		}
-		ASTNode new_call = emplace_node<FunctionCallNode>(call.function_declaration(), std::move(new_args), call.called_from());
-		FunctionCallNode& new_call_ref = new_call.as<FunctionCallNode>();
-		copyCallMetadataWithTransformedTemplateArguments(
-			new_call_ref,
-			call,
-			[&](const ASTNode& template_arg) {
-				return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-			});
-		return new_call;
-	}
-
 	if (expr.is<CallExprNode>()) {
 		const CallExprNode& call = expr.as<CallExprNode>();
 		ChunkedVector<ASTNode> new_args;
@@ -1638,18 +1574,6 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 
 	if (expr.is<IdentifierNode>())
 		return expr.as<IdentifierNode>().name() == pack_name;
-
-	if (expr.is<FunctionCallNode>()) {
-		const FunctionCallNode& call = expr.as<FunctionCallNode>();
-		if (argsContain(call.arguments()))
-			return true;
-		if (call.has_template_arguments()) {
-			for (const auto& ta : call.template_arguments())
-				if (exprContainsIdentifier(ta, pack_name))
-					return true;
-		}
-		return false;
-	}
 
 	if (expr.is<CallExprNode>()) {
 		const CallExprNode& call = expr.as<CallExprNode>();

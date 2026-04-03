@@ -328,11 +328,6 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 	} else if (node.is<UnaryOperatorNode>()) {
 		const auto& unop = node.as<UnaryOperatorNode>();
 		collectLambdaCaptureCandidates(unop.get_operand(), capture_candidates, uses_implicit_this_capture);
-	} else if (node.is<FunctionCallNode>()) {
-		const auto& call = node.as<FunctionCallNode>();
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			collectLambdaCaptureCandidates(call.arguments()[i], capture_candidates, uses_implicit_this_capture);
-		}
 	} else if (node.is<CallExprNode>()) {
 		const auto& call = node.as<CallExprNode>();
 		if (!call.has_receiver()) {
@@ -390,12 +385,6 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 	} else if (node.is<MemberAccessNode>()) {
 		const auto& member = node.as<MemberAccessNode>();
 		collectLambdaCaptureCandidates(member.object(), capture_candidates, uses_implicit_this_capture);
-	} else if (node.is<MemberFunctionCallNode>()) {
-		const auto& member_call = node.as<MemberFunctionCallNode>();
-		collectLambdaCaptureCandidates(member_call.object(), capture_candidates, uses_implicit_this_capture);
-		for (size_t i = 0; i < member_call.arguments().size(); ++i) {
-			collectLambdaCaptureCandidates(member_call.arguments()[i], capture_candidates, uses_implicit_this_capture);
-		}
 	} else if (node.is<ArraySubscriptNode>()) {
 		const auto& subscript = node.as<ArraySubscriptNode>();
 		collectLambdaCaptureCandidates(subscript.array_expr(), capture_candidates, uses_implicit_this_capture);

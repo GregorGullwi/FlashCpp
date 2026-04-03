@@ -33,8 +33,6 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	// Dispatch on concrete node types (reached directly or after ExpressionNode unwrap above).
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
-	} else if (expr.is<FunctionCallNode>()) {
-		return substituteFunctionCall(expr.as<FunctionCallNode>());
 	} else if (expr.is<CallExprNode>()) {
 		return substituteCallExpr(expr.as<CallExprNode>());
 	} else if (expr.is<BinaryOperatorNode>()) {
@@ -157,14 +155,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const FunctionCallNode
 		return ASTNode(&new_expr);
 	};
 	auto copyMetadataToExpr = [&](ExpressionNode& expr, const CallMetadataCopyOptions& options = {}) {
-		if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-			if (unified_source) {
-				copyCallMetadata(*function_call, *unified_source, options);
-			} else {
-				copyCallMetadata(*function_call, call, options);
-			}
-			return;
-		}
 		if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 			if (unified_source) {
 				copyCallMetadata(*call_expr, *unified_source, options);
@@ -691,10 +681,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		return ASTNode(&new_expr);
 	};
 	auto copyMetadataToExpr = [&](ExpressionNode& expr, const CallMetadataCopyOptions& options = {}) {
-		if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-			copyCallMetadata(*function_call, call, options);
-			return;
-		}
 		if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 			copyCallMetadata(*call_expr, call, options);
 		}
