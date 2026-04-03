@@ -841,6 +841,24 @@ TypeIndex Parser::substitute_template_parameter(
 					found_match = true;
 				});
 
+			if (!found_match) {
+				if (const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
+					placeholder_info && placeholder_info->isTemplateInstantiation()) {
+					std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+					std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
+					try_instantiate_class_template(base_template_name, concrete_args);
+					std::string_view instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
+					auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+					if (inst_it != getTypesByNameMap().end()) {
+						result_type = inst_it->second->typeEnum();
+						result_type_index = inst_it->second->registeredTypeIndex().withCategory(inst_it->second->typeEnum());
+						found_match = true;
+						FLASH_LOG_FORMAT(Templates, Debug, "Resolved template placeholder '{}' -> '{}'",
+										 type_name, instantiated_name);
+					}
+				}
+			}
+
 			// Try to resolve dependent qualified member types (e.g., Helper<T>::type)
 			if (!found_match && type_name.find("::") != std::string_view::npos) {
 				auto sep_pos = type_name.rfind("::");

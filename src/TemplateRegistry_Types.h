@@ -745,15 +745,45 @@ inline TemplateTypeArg materializeTemplateArg(
 	concrete_arg.function_signature = arg_info.function_signature;
 	concrete_arg.dependent_name = arg_info.dependent_name;
 
-	if (arg_info.dependent_name.isValid()) {
-		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+	auto applyStoredArgDecorators = [&](TemplateTypeArg& resolved_arg) {
+		if (arg_info.pointer_depth != 0 || !arg_info.pointer_cv_qualifiers.empty()) {
+			resolved_arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
+			resolved_arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+		}
+		if (arg_info.ref_qualifier != ReferenceQualifier::None) {
+			resolved_arg.ref_qualifier = arg_info.ref_qualifier;
+		}
+		if (arg_info.cv_qualifier != CVQualifier::None) {
+			resolved_arg.cv_qualifier = arg_info.cv_qualifier;
+		}
+		if (arg_info.is_array) {
+			resolved_arg.is_array = true;
+			resolved_arg.array_size = arg_info.array_size;
+		}
+		if (arg_info.function_signature.has_value() && !resolved_arg.function_signature.has_value()) {
+			resolved_arg.function_signature = arg_info.function_signature;
+		}
+	};
+	auto substituteByTemplateParamName = [&](std::string_view param_name) {
 		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 			if (!template_params[i].template is<TemplateParameterNode>())
 				continue;
-			if (template_params[i].template as<TemplateParameterNode>().name() == dep_name) {
+			if (template_params[i].template as<TemplateParameterNode>().name() == param_name) {
 				concrete_arg = template_args[i];
-				break;
+				applyStoredArgDecorators(concrete_arg);
+				return true;
 			}
+		}
+		return false;
+	};
+
+	if (arg_info.dependent_name.isValid()) {
+		std::string_view dep_name = StringTable::getStringView(arg_info.dependent_name);
+		substituteByTemplateParamName(dep_name);
+	} else if (!arg_info.is_value && arg_info.type_index.is_valid()) {
+		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg_info.type_index)) {
+			std::string_view arg_type_name = StringTable::getStringView(arg_type_info->name());
+			substituteByTemplateParamName(arg_type_name);
 		}
 	}
 
