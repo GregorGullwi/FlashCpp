@@ -177,24 +177,87 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 
 	if (std::holds_alternative<CallExprNode>(expr)) {
 		const auto& call = std::get<CallExprNode>(expr);
-		if (call.has_receiver()) {
-			const auto* function_decl = call.callee().function_declaration_or_null();
-			if (function_decl) {
-				ASTNode legacy_call = ASTNode::emplace_node<ExpressionNode>(
-					materializeLegacyMemberFunctionCall(call));
-				return rebindStaticMemberInitializerFunctionCalls(
-					legacy_call,
-					struct_info,
-					set_qualified_name);
-			}
+		ChunkedVector<ASTNode> rebound_args;
+		for (const auto& arg : call.arguments()) {
+			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
 		}
 
-		ASTNode legacy_call = ASTNode::emplace_node<ExpressionNode>(
-			materializeLegacyFunctionCall(call));
-		return rebindStaticMemberInitializerFunctionCalls(
-			legacy_call,
-			struct_info,
-			set_qualified_name);
+		std::vector<ASTNode> rebound_template_args =
+			transformCallTemplateArguments(
+				call,
+				recurse);
+
+		const FunctionDeclarationNode* rebound_function = nullptr;
+		const StructTypeInfo* rebound_owner = nullptr;
+		if (call.called_from().kind().is_identifier()) {
+			auto [found_function, found_owner] =
+				RebindStaticMemberAst::findStaticMemberFunction(struct_info, call.called_from().handle());
+			rebound_function = found_function;
+			rebound_owner = found_owner;
+		}
+
+		CallExprNode rebound_call = [&]() {
+			if (!call.has_receiver()) {
+				if (rebound_function && rebound_function->get_definition().has_value()) {
+					return makeResolvedCallExpr(*rebound_function, std::move(rebound_args), call.called_from());
+				}
+				return CallExprNode(call.callee(), std::move(rebound_args), call.called_from());
+			}
+
+			const auto* function_decl = call.callee().function_declaration_or_null();
+			bool is_implicit_this_call = false;
+			if (call.receiver().is<ExpressionNode>()) {
+				const auto& object_expr = call.receiver().as<ExpressionNode>();
+				is_implicit_this_call =
+					std::holds_alternative<IdentifierNode>(object_expr) &&
+					std::get<IdentifierNode>(object_expr).name() == "this";
+			}
+
+			const bool can_use_rebound_function =
+				rebound_function && rebound_function->get_definition().has_value();
+			if (is_implicit_this_call &&
+				(can_use_rebound_function || (function_decl && function_decl->is_static()))) {
+				if (can_use_rebound_function) {
+					return makeResolvedCallExpr(*rebound_function, std::move(rebound_args), call.called_from());
+				}
+				return makeResolvedCallExpr(*function_decl, std::move(rebound_args), call.called_from());
+			}
+
+			ASTNode rebound_receiver = recurse(call.receiver());
+			return CallExprNode(
+				call.callee(),
+				rebound_receiver,
+				std::move(rebound_args),
+				call.called_from());
+		}();
+
+		CallMetadataCopyOptions copy_options;
+		copy_options.copy_template_arguments = false;
+		copy_options.copy_qualified_name = false;
+		copyCallMetadata(rebound_call, call, copy_options);
+
+		if (!rebound_template_args.empty()) {
+			rebound_call.set_template_arguments(std::move(rebound_template_args));
+		}
+
+		if (rebound_function && rebound_function->get_definition().has_value() &&
+			rebound_function->has_mangled_name()) {
+			rebound_call.set_mangled_name(rebound_function->mangled_name());
+		} else if (call.has_mangled_name()) {
+			rebound_call.set_mangled_name(call.mangled_name());
+		}
+
+		if (!rebound_function || !rebound_function->get_definition().has_value()) {
+			if (call.has_qualified_name()) {
+				rebound_call.set_qualified_name(call.qualified_name());
+			}
+		} else if (set_qualified_name && rebound_owner) {
+			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
+				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
+			rebound_call.set_qualified_name(qualified_handle.view());
+		}
+
+		return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
 	}
 
 	if (std::holds_alternative<FunctionCallNode>(expr)) {
