@@ -8,7 +8,7 @@ static Pair g_pair{30, 40};
 struct Base {
 	int value;
 
-	Base(int v = 0) : value(v) {}
+	Base(int v) : value(v) {}
 
 	virtual int& getRef() {
 		return value;
