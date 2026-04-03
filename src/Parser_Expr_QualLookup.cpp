@@ -815,6 +815,33 @@ TypeIndex Parser::substitute_template_parameter(
 		auto materializeTemplateInstantiationArgs = [&](const TypeInfo& placeholder_info) {
 			return materializeTemplateArgs(placeholder_info, template_params, template_args);
 		};
+		auto tryResolveConcreteTemplatePlaceholder = [&](TypeCategory& type, TypeIndex& type_index) {
+			const TypeInfo* placeholder_info = tryGetTypeInfo(type_index);
+			if (!placeholder_info || !placeholder_info->isTemplateInstantiation()) {
+				return false;
+			}
+
+			std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+			std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
+			auto instantiated = try_instantiate_class_template(base_template_name, concrete_args);
+			std::string_view instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
+			if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
+				instantiated = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), concrete_args);
+			}
+			if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+				instantiated_name = StringTable::getStringView(instantiated->as<StructDeclarationNode>().name());
+			}
+			auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+			if (inst_it == getTypesByNameMap().end()) {
+				return false;
+			}
+
+			type = inst_it->second->typeEnum();
+			type_index = inst_it->second->registeredTypeIndex().withCategory(inst_it->second->typeEnum());
+			FLASH_LOG_FORMAT(Templates, Debug, "Resolved template placeholder '{}' -> '{}'",
+							 StringTable::getStringView(placeholder_info->name()), instantiated_name);
+			return true;
+		};
 		if (!type_name.empty()) {
 			forEachNonPackTemplateParamArgBinding(
 				template_params,
@@ -843,22 +870,10 @@ TypeIndex Parser::substitute_template_parameter(
 					found_match = true;
 				});
 
-			if (!found_match) {
-				if (const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
-					placeholder_info && placeholder_info->isTemplateInstantiation()) {
-					std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
-					std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
-					try_instantiate_class_template(base_template_name, concrete_args);
-					std::string_view instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
-					auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
-					if (inst_it != getTypesByNameMap().end()) {
-						result_type = inst_it->second->typeEnum();
-						result_type_index = inst_it->second->registeredTypeIndex().withCategory(inst_it->second->typeEnum());
-						found_match = true;
-						FLASH_LOG_FORMAT(Templates, Debug, "Resolved template placeholder '{}' -> '{}'",
-										 type_name, instantiated_name);
-					}
-				}
+			if (found_match) {
+				tryResolveConcreteTemplatePlaceholder(result_type, result_type_index);
+			} else {
+				found_match = tryResolveConcreteTemplatePlaceholder(result_type, result_type_index);
 			}
 
 			// Try to resolve dependent qualified member types (e.g., Helper<T>::type)
