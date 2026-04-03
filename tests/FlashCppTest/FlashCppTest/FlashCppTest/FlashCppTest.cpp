@@ -2475,6 +2475,60 @@ TEST_CASE("ConstExpr:InheritedStaticMember") {
 	run_test_from_file("test_constexpr_inherited_static_member_ret42.cpp", "Constexpr inherited static member lookup", false);
 }
 
+TEST_CASE("Templates:InheritedStaticStructMemberUsesInstantiatedOwner") {
+	CompileContext test_context;
+	test_context.setInputFile("test_template_inherited_static_struct_member_ret13.cpp");
+
+	FileTree test_file_tree;
+	FileReader file_reader(test_context, test_file_tree);
+	const std::string& code = file_reader.get_result();
+
+	gTypeInfo.clear();
+	gNativeTypes.clear();
+	gTypesByName.clear();
+	gTemplateRegistry.clear();
+	gConceptRegistry.clear();
+
+	Lexer lexer(code, file_reader.get_line_map(), file_reader.get_file_paths());
+	Parser parser(lexer, test_context);
+	auto parse_result = parser.parse();
+	REQUIRE(!parse_result.is_error());
+
+	FlashCpp::gLazyMemberResolver.clearCache();
+
+	AstToIr converter(gSymbolTable, test_context, parser);
+	for (auto& node_handle : parser.get_nodes()) {
+		converter.visit(node_handle);
+	}
+
+	int instantiated_owner_count = 0;
+	int derived_alias_count = 0;
+	int pattern_alias_count = 0;
+	for (const auto& instruction : converter.getIr().getInstructions()) {
+		if (instruction.getOpcode() != IrOpcode::GlobalVariableDecl) {
+			continue;
+		}
+
+		const auto& op = instruction.getTypedPayload<GlobalVariableDeclOp>();
+		std::string_view global_name = StringTable::getStringView(op.getVarName());
+		if (!global_name.ends_with("::payload")) {
+			continue;
+		}
+
+		if (global_name == "Derived::payload") {
+			++derived_alias_count;
+		} else if (global_name == "Base::payload") {
+			++pattern_alias_count;
+		} else if (global_name.starts_with("Base$")) {
+			++instantiated_owner_count;
+		}
+	}
+
+	CHECK(instantiated_owner_count == 1);
+	CHECK(derived_alias_count == 1);
+	CHECK(pattern_alias_count == 0);
+}
+
 TEST_CASE("RangedFor:Simple") {
 	run_test_from_file("test_range_for_simple.cpp", "Range-based for loop simple test", false);
 }

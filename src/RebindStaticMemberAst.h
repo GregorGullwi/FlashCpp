@@ -554,19 +554,76 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 		}
 
 		if (current.is<StaticCastNode>()) {
-			return visit_child(current.as<StaticCastNode>().expr());
+			const auto& cast = current.as<StaticCastNode>();
+			return visit_child(cast.target_type()) ||
+				   visit_child(cast.expr());
 		}
 
 		if (current.is<DynamicCastNode>()) {
-			return visit_child(current.as<DynamicCastNode>().expr());
+			const auto& cast = current.as<DynamicCastNode>();
+			return visit_child(cast.target_type()) ||
+				   visit_child(cast.expr());
 		}
 
 		if (current.is<ConstCastNode>()) {
-			return visit_child(current.as<ConstCastNode>().expr());
+			const auto& cast = current.as<ConstCastNode>();
+			return visit_child(cast.target_type()) ||
+				   visit_child(cast.expr());
 		}
 
 		if (current.is<ReinterpretCastNode>()) {
-			return visit_child(current.as<ReinterpretCastNode>().expr());
+			const auto& cast = current.as<ReinterpretCastNode>();
+			return visit_child(cast.target_type()) ||
+				   visit_child(cast.expr());
+		}
+
+		if (current.is<SizeofExprNode>()) {
+			return visit_child(current.as<SizeofExprNode>().type_or_expr());
+		}
+
+		if (current.is<AlignofExprNode>()) {
+			return visit_child(current.as<AlignofExprNode>().type_or_expr());
+		}
+
+		if (current.is<TypeTraitExprNode>()) {
+			const auto& trait = current.as<TypeTraitExprNode>();
+			if (trait.type_node().has_value() && visit_child(trait.type_node())) {
+				return true;
+			}
+			if (trait.has_second_type() && visit_child(trait.second_type_node())) {
+				return true;
+			}
+			for (const auto& type_node : trait.additional_type_nodes()) {
+				if (visit_child(type_node)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		if (current.is<NewExpressionNode>()) {
+			const auto& new_expr = current.as<NewExpressionNode>();
+			if (visit_child(new_expr.type_node())) {
+				return true;
+			}
+			if (new_expr.size_expr().has_value() && visit_child(new_expr.size_expr().value())) {
+				return true;
+			}
+			for (const auto& constructor_arg : new_expr.constructor_args()) {
+				if (visit_child(constructor_arg)) {
+					return true;
+				}
+			}
+			for (const auto& placement_arg : new_expr.placement_args()) {
+				if (visit_child(placement_arg)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		if (current.is<TypeidNode>()) {
+			return visit_child(current.as<TypeidNode>().operand());
 		}
 
 		if (current.is<FunctionCallNode>()) {
