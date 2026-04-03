@@ -49,11 +49,17 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Add compatibility helpers so parser, substitution, semantic analysis, constexpr evaluation, and IR generation can read call information through one common interface.
 - [x] Convert metadata copying utilities to operate on the shared call abstraction instead of only `FunctionCallNode`.
 - [x] Refactor postfix/member parsing so `.` and `->` share one call/member-access builder.
-- [ ] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
+- [x] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
 - [ ] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
 - [ ] Merge IR lowering so there is one common call lowering pipeline with small branches only for receiver passing, virtual dispatch, and indirect-call specifics.
 - [ ] Remove temporary call-form conversions such as member-to-function fallback nodes once all downstream code reads the unified representation directly.
 - [ ] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
+
+### Current status
+
+- Parser normalization is now complete for the ordinary free-call and member-call paths; those parser sites emit `CallExprNode` and the rebased Windows suite is green after the downstream compatibility fixes.
+- Template substitution/rebinding, constexpr evaluation, and the current IR compatibility layer can all carry the migrated parser output, but several paths still materialize `FunctionCallNode` or `MemberFunctionCallNode` as temporary bridges.
+- The remaining work is centered on collapsing semantic-analysis and IR lowering onto direct `CallExprNode` handling, then removing those temporary legacy conversions before deleting the duplicate legacy nodes.
 
 ## Important implementation notes
 
