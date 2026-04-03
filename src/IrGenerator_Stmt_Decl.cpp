@@ -1823,6 +1823,27 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					struct_info_ptr = type_info->struct_info_.get();
 				}
 			}
+			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
+				const size_t element_size_bytes = static_cast<size_t>(size_in_bits / 8);
+				if (element_size_bytes > 0 && array_count > std::numeric_limits<size_t>::max() / element_size_bytes)
+					throw InternalError("Local array initializer size overflow");
+				StructMember array_member(
+					decl.identifier_token().handle(),
+					type_node.type_index(),
+					0,
+					element_size_bytes * array_count,
+					decl.custom_alignment(),
+					AccessSpecifier::Public,
+					std::nullopt,
+					ReferenceQualifier::None,
+					0,
+					true,
+					type_node.array_dimensions(),
+					static_cast<int>(type_node.pointer_depth()),
+					std::nullopt);
+				if (tryEmitArrayMemberStores(array_member, init_list, decl.identifier_token().handle(), 0, node.declaration().identifier_token()))
+					return;
+			}
 			int element_size_bytes = struct_info_ptr ? static_cast<int>(toSizeT(struct_info_ptr->total_size)) : (size_in_bits / 8);
 
 				// Generate store for each element

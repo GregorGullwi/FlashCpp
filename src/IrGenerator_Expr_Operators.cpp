@@ -2683,8 +2683,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	// guard, expected-target verification, enum type mismatch handling, and conversion.
 	if (lhsCat != commonType) {
 		if (!tryGlobalSemaConv(lhsExprResult, binaryOperatorNode.get_lhs(), commonType)) {
+			// Keep the codegen-side fallback for standard arithmetic conversions so valid
+			// expressions (for example, alias-heavy integer arithmetic) still lower correctly
+			// while sema annotations are tightened incrementally.
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(lhsCat) && is_standard_arithmetic_type(commonType))
-				throw InternalError(std::string("Phase 15: sema missed binary LHS (") + std::string(getTypeName(lhsCat)) + " -> " + std::string(getTypeName(commonType)) + ")");
+				FLASH_LOG(Codegen, Warning, "Phase 15 fallback: sema missed binary LHS conversion (",
+						  getTypeName(lhsCat), " -> ", getTypeName(commonType), ")");
 			lhsExprResult = generateTypeConversion(lhsExprResult, lhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}
@@ -2703,8 +2707,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 		}
 	} else if (rhsCat != commonType) {
 		if (!tryGlobalSemaConv(rhsExprResult, binaryOperatorNode.get_rhs(), commonType)) {
+			// Keep the codegen-side fallback for standard arithmetic conversions so valid
+			// expressions (for example, alias-heavy integer arithmetic) still lower correctly
+			// while sema annotations are tightened incrementally.
 			if (sema_normalized_current_function_ && is_standard_arithmetic_type(rhsCat) && is_standard_arithmetic_type(commonType))
-				throw InternalError(std::string("Phase 15: sema missed binary RHS (") + std::string(getTypeName(rhsCat)) + " -> " + std::string(getTypeName(commonType)) + ")");
+				FLASH_LOG(Codegen, Warning, "Phase 15 fallback: sema missed binary RHS conversion (",
+						  getTypeName(rhsCat), " -> ", getTypeName(commonType), ")");
 			rhsExprResult = generateTypeConversion(rhsExprResult, rhsCat, commonType, binaryOperatorNode.get_token());
 		}
 	}
