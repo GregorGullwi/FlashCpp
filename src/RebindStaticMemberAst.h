@@ -8,37 +8,49 @@ namespace RebindStaticMemberAst {
 
 inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStaticMemberFunction(
 	const StructTypeInfo* struct_info,
-	StringHandle function_name) {
+	StringHandle function_name,
+	bool prefer_template_function) {
 	if (!struct_info) {
 		return {nullptr, nullptr};
 	}
 
-	auto find_in_struct = [function_name](const StructTypeInfo* candidate_struct)
+	auto find_in_struct = [function_name, prefer_template_function](const StructTypeInfo* candidate_struct)
 		-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
 		if (!candidate_struct) {
 			return {nullptr, nullptr};
 		}
 
-		const FunctionDeclarationNode* function_decl_without_definition = nullptr;
-		for (const auto& member_func : candidate_struct->member_functions) {
-			if (member_func.getName() != function_name || !member_func.function_decl.is<FunctionDeclarationNode>()) {
-				continue;
-			}
+		auto find_matching_kind = [candidate_struct, function_name](bool want_template_function)
+			-> std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> {
+			const FunctionDeclarationNode* function_decl_without_definition = nullptr;
+			for (const auto& member_func : candidate_struct->member_functions) {
+				if (member_func.getName() != function_name ||
+					member_func.function_decl.is<TemplateFunctionDeclarationNode>() != want_template_function) {
+					continue;
+				}
 
-			const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-			if (func_decl.is_static()) {
-				if (func_decl.get_definition().has_value()) {
-					return {&func_decl, candidate_struct};
+				const FunctionDeclarationNode* func_decl = get_function_decl_node(member_func.function_decl);
+				if (!func_decl || !func_decl->is_static()) {
+					continue;
+				}
+
+				if (func_decl->get_definition().has_value() || func_decl->has_template_body_position()) {
+					return {func_decl, candidate_struct};
 				}
 				if (!function_decl_without_definition) {
-					function_decl_without_definition = &func_decl;
+					function_decl_without_definition = func_decl;
 				}
 			}
-		}
 
-		return {
-			function_decl_without_definition,
-			function_decl_without_definition ? candidate_struct : nullptr};
+			return {
+				function_decl_without_definition,
+				function_decl_without_definition ? candidate_struct : nullptr};
+		};
+
+		if (auto found = find_matching_kind(prefer_template_function); found.first) {
+			return found;
+		}
+		return find_matching_kind(!prefer_template_function);
 	};
 
 	if (auto found = find_in_struct(struct_info); found.first) {

@@ -5421,6 +5421,47 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 								// If explicit template arguments were provided, use them directly
 								if (effective_template_args.has_value()) {
+									bool defer_same_class_member_template_call = false;
+									if (parsing_template_depth_ > 0 &&
+										identifierType.has_value() &&
+										identifierType->is<TemplateFunctionDeclarationNode>() &&
+										!member_function_context_stack_.empty()) {
+										if (const StructDeclarationNode* struct_node = member_function_context_stack_.back().struct_node) {
+											for (const auto& member_func : struct_node->member_functions()) {
+												if (!member_func.function_declaration.is<TemplateFunctionDeclarationNode>()) {
+													continue;
+												}
+
+												const auto& member_template =
+													member_func.function_declaration.as<TemplateFunctionDeclarationNode>();
+												if (member_template.function_decl_node().decl_node().identifier_token().value() ==
+													identifier_token.value()) {
+													defer_same_class_member_template_call = true;
+													break;
+												}
+											}
+										}
+									}
+
+									if (defer_same_class_member_template_call) {
+										const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
+										if (!decl_ptr) {
+											return ParseResult::error("Invalid member template declaration", identifier_token);
+										}
+
+										result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										if (explicit_template_arg_nodes.empty() && effective_template_args.has_value()) {
+											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
+										} else if (effective_template_args.has_value()) {
+											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
+										}
+										if (!explicit_template_arg_nodes.empty()) {
+											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+										}
+										return ParseResult::success(*result);
+									}
+
 									// Check if any template arguments are dependent (contain template parameters)
 									// In that case, we cannot instantiate the template now - it will be done at instantiation time
 									bool has_dependent_template_args = false;
