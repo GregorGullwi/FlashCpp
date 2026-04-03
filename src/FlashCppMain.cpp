@@ -491,7 +491,7 @@ int main_impl(int argc, char* argv[]) {
 	}
 
 	// IR conversion (visiting AST nodes)
-	bool ir_conversion_had_errors = false;
+	size_t ir_conversion_error_count = 0;
 	bool has_compile_errors = false;
 	{
 		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
@@ -524,25 +524,21 @@ int main_impl(int argc, char* argv[]) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
 				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-				ir_conversion_had_errors = true;
+				++ir_conversion_error_count;
 			} catch (const InternalError& e) {
-				// Codegen limitation errors (unsupported types, register allocation, etc.)
-				// These are non-fatal - skip the function and continue generating the .o file
 				std::string node_desc = node_handle.type_name();
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
 				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-				ir_conversion_had_errors = true;
+				++ir_conversion_error_count;
 			} catch (const std::runtime_error& e) {
-				// Codegen limitation errors (unsupported types, register allocation, etc.)
-				// These are non-fatal - skip the function and continue generating the .o file
 				std::string node_desc = node_handle.type_name();
 				if (node_handle.is<FunctionDeclarationNode>()) {
 					node_desc = std::string(node_handle.as<FunctionDeclarationNode>().decl_node().identifier_token().value());
 				}
 				FLASH_LOG(General, Error, "IR conversion failed for node '", node_desc, "': ", e.what());
-				ir_conversion_had_errors = true;
+				++ir_conversion_error_count;
 			}
 		}
 	}
@@ -588,13 +584,11 @@ int main_impl(int argc, char* argv[]) {
 		FLASH_LOG(Codegen, Debug, "=== End IR ===\n\n");
 	}
 
-	// Individual function IR conversion errors are non-fatal - the .o file is still
-	// generated with the successfully converted functions. This allows std library
-	// headers to compile even when some template instantiations fail.
-	if (ir_conversion_had_errors || deferred_gen_error_count > 0) {
-		FLASH_LOG(General, Warning, "Some functions had IR conversion errors (skipped ",
-				  (ir_conversion_had_errors ? "some" : "0"), " top-level, ",
-				  deferred_gen_error_count, " deferred)");
+	if (ir_conversion_error_count > 0 || deferred_gen_error_count > 0) {
+		FLASH_LOG(General, Error, "Compilation failed during IR generation (",
+				  ir_conversion_error_count, " top-level, ",
+				  deferred_gen_error_count, " deferred failures)");
+		return 1;
 	}
 
 	// Semantic compile errors (explicit constructor violations, etc.) are fatal

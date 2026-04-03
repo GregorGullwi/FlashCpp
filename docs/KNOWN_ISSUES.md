@@ -45,22 +45,6 @@ also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
 snapshot as array data. A dedicated `pointer_value_snapshot` field would be
 the long-term fix (tracked as tech debt).
 
-## Function-body IR conversion failures can still emit broken object files
-
-When `AstToIr` throws an `InternalError` while lowering a function body,
-`FlashCppMain.cpp` currently logs the failure but can continue emitting an object
-file for the translation unit instead of stopping compilation with a hard error.
-That can turn frontend lowering bugs into misleading runtime mismatches or other
-garbage behavior instead of a clean compile failure.
-
-This was observed while reproducing the now-fixed prvalue member-access bug:
-`main` logged an IR conversion failure for `Box(7).value`, but the compiler
-still produced an object file and the test linked and returned the wrong value.
-
-**Future task**: make function-body IR conversion failures fatal for the current
-translation unit, or otherwise suppress object emission when any required
-top-level node fails IR generation.
-
 ## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
 
 When a non-template derived class inherits a struct-typed static member from a
