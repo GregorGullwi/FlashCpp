@@ -2261,11 +2261,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Get the FunctionDeclarationNode
 			FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 
-			// Create MemberFunctionCallNode with implicit 'this'
+			// Create unified member call with implicit 'this'
 			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(this_node, func_decl, std::move(args), identifier_token));
+				makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
 
-			FLASH_LOG_FORMAT(Parser, Debug, "Created MemberFunctionCallNode for '{}'", identifier_token.value());
+			FLASH_LOG_FORMAT(Parser, Debug, "Created CallExprNode for implicit this-call '{}'", identifier_token.value());
 			return ParseResult::success(*result);
 		}
 
@@ -3499,11 +3499,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function declaration", identifier_token);
 					}
-					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args_ref), identifier_token));
+					result = emplace_node<ExpressionNode>(makeCallExprFromNode(*identifierType, std::move(args_ref), identifier_token));
 					if (identifierType->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 						if (func_decl.has_mangled_name()) {
-							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 						}
 					}
 					return ParseResult::success(*result);
@@ -3528,14 +3528,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function declaration", identifier_token);
 					}
-					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args_ref), identifier_token));
+					result = emplace_node<ExpressionNode>(makeCallExprFromNode(resolved_decl, std::move(args_ref), identifier_token));
 					if (resolved_decl.is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = resolved_decl.as<FunctionDeclarationNode>();
 						if (func_decl.has_mangled_name()) {
-							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 						}
 						if (!func_decl.parent_struct_name().empty()) {
-							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_qualified_name(StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
+							setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
 						}
 					}
 					return ParseResult::success(*result);
@@ -3759,10 +3759,10 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (template_func_inst.has_value() && template_func_inst->is<FunctionDeclarationNode>()) {
 						const auto& func = template_func_inst->as<FunctionDeclarationNode>();
 						auto function_call_node = emplace_node<ExpressionNode>(
-							FunctionCallNode(func.decl_node(), std::move(args), identifier_token));
+							makeResolvedCallExpr(func, std::move(args), identifier_token));
 						// Set the mangled name so the IR generator emits the correct symbol.
 						if (func.has_mangled_name()) {
-							std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func.mangled_name());
+							setCallMangledName(function_call_node.as<ExpressionNode>(), func.mangled_name());
 						}
 						result = function_call_node;
 						return ParseResult::success(*result);
@@ -3918,9 +3918,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					// Get the FunctionDeclarationNode
 					FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 
-					// Create MemberFunctionCallNode with implicit 'this'
+					// Create unified member call with implicit 'this'
 					result = emplace_node<ExpressionNode>(
-						MemberFunctionCallNode(this_node, func_decl, std::move(args), identifier_token));
+						makeResolvedMemberCallExpr(this_node, func_decl, std::move(args), identifier_token));
 				} else {
 					return unified_resolve_function_call(args);
 				}
@@ -5395,16 +5395,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (!decl_ptr) {
 						return ParseResult::error("Invalid function pointer declaration", identifier_token);
 					}
-					result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+					result = emplace_node<ExpressionNode>(makeCallExprFromNode(*identifierType, std::move(args), identifier_token));
 
 					// Mark this as an indirect call (function pointer/reference)
-					std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_indirect_call(true);
+					setCallIndirect(result->as<ExpressionNode>());
 
 					// Copy mangled name if available
 					if (identifierType->is<FunctionDeclarationNode>()) {
 						const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 						if (func_decl.has_mangled_name()) {
-							std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+							setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 						}
 					}
 				} else {
@@ -5414,17 +5414,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							if (auto default_args_error = appendMissingDefaultArguments(func_decl); default_args_error.has_value()) {
 								return *default_args_error;
 							}
-							result = emplace_node<ExpressionNode>(FunctionCallNode(func_decl.decl_node(), std::move(args), identifier_token));
-							auto& function_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+							result = emplace_node<ExpressionNode>(makeResolvedCallExpr(func_decl, std::move(args), identifier_token));
 							if (func_decl.has_mangled_name()) {
-								function_call.set_mangled_name(func_decl.mangled_name());
+								setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 							}
 							std::string_view qualified_owner = func_decl.parent_struct_name();
 							if (qualified_owner.empty() && !member_function_context_stack_.empty()) {
 								qualified_owner = StringTable::getStringView(member_function_context_stack_.back().struct_name);
 							}
 							if (!qualified_owner.empty()) {
-								function_call.set_qualified_name(
+								setCallQualifiedName(
+									result->as<ExpressionNode>(),
 									StringBuilder()
 										.append(qualified_owner)
 										.append("::")
@@ -5463,13 +5463,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									if (!decl_ptr) {
 										return ParseResult::error("Invalid function declaration", identifier_token);
 									}
-									result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+									result = emplace_node<ExpressionNode>(makeCallExprFromNode(*identifierType, std::move(args), identifier_token));
 
 									// Copy mangled name if available
 									if (identifierType->is<FunctionDeclarationNode>()) {
 										const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 										if (func_decl.has_mangled_name()) {
-											std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+											setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 										}
 									}
 									// Return early - we've created the FunctionCallNode with the args
@@ -5598,19 +5598,19 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (!decl_ptr) {
 											return ParseResult::error("Invalid template instantiation", identifier_token);
 										}
-										result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
-										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
+										result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 										if (explicit_template_arg_nodes.empty()) {
 											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*effective_template_args, identifier_token);
 										} else {
 											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *effective_template_args);
 										}
 										if (!explicit_template_arg_nodes.empty()) {
-											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
 										}
 										auto set_current_struct_qualified_name = [&](std::string_view struct_name) {
 											if (!struct_name.empty()) {
-												func_call.set_qualified_name(
+												setCallQualifiedName(
+													result->as<ExpressionNode>(),
 													StringBuilder()
 														.append(struct_name)
 														.append("::")
@@ -5634,7 +5634,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (instantiated_func->is<FunctionDeclarationNode>()) {
 											const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 											if (func_decl.has_mangled_name()) {
-												func_call.set_mangled_name(func_decl.mangled_name());
+												setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 											}
 										}
 									} else if (has_dependent_template_args) {
@@ -5651,17 +5651,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 
 										// Create FunctionCallNode with the placeholder
-										result = emplace_node<ExpressionNode>(FunctionCallNode(decl_ref, std::move(args), identifier_token));
+										result = emplace_node<ExpressionNode>(makeDirectCallExpr(decl_ref, std::move(args), identifier_token));
 
 										// Store the template arguments in the FunctionCallNode for later resolution
-										FunctionCallNode& func_call = std::get<FunctionCallNode>(result->as<ExpressionNode>());
 										if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
 											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
 										} else if (explicit_template_args.has_value()) {
 											syncTemplateArgumentNodeMetadata(explicit_template_arg_nodes, *explicit_template_args);
 										}
 										if (!explicit_template_arg_nodes.empty()) {
-											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+											setCallTemplateArguments(result->as<ExpressionNode>(), std::move(explicit_template_arg_nodes));
 										}
 									} else {
 										return ParseResult::error("No matching template for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
@@ -5714,13 +5713,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											if (!decl_ptr) {
 												return ParseResult::error("Invalid template instantiation", identifier_token);
 											}
-											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
 											// Copy mangled name if available
 											if (instantiated_func->is<FunctionDeclarationNode>()) {
 												const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 												if (func_decl.has_mangled_name()) {
-													std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 												}
 											}
 										} else {
@@ -5767,13 +5766,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												if (!decl_ptr) {
 													return ParseResult::error("Invalid template instantiation", identifier_token);
 												}
-												result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+												result = emplace_node<ExpressionNode>(makeCallExprFromNode(*instantiated_func, std::move(args), identifier_token));
 
 												// Copy mangled name if available
 												if (instantiated_func->is<FunctionDeclarationNode>()) {
 													const FunctionDeclarationNode& func_decl = instantiated_func->as<FunctionDeclarationNode>();
 													if (func_decl.has_mangled_name()) {
-														std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 													}
 												}
 											} else {
@@ -5801,17 +5800,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												}
 											}
 
-											result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*resolution_result.selected_overload, std::move(args), identifier_token));
 
 											// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 											// This is important for functions in namespaces accessed via using directives
 											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
 												const FunctionDeclarationNode& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();
 												if (func_decl.has_mangled_name()) {
-													std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 												}
 												if (!func_decl.parent_struct_name().empty()) {
-													std::get<FunctionCallNode>(result->as<ExpressionNode>()).set_qualified_name(StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
+													setCallQualifiedName(result->as<ExpressionNode>(), StringBuilder().append(func_decl.parent_struct_name()).append("::").append(func_decl.decl_node().identifier_token().value()).commit());
 												}
 											}
 										}

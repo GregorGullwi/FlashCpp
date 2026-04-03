@@ -1598,6 +1598,9 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 	}
 
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null()) {
+			return is_function_decl_noexcept(*function_decl, context);
+		}
 		if (call_expr->has_receiver()) {
 			const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
 			return function_decl && is_function_decl_noexcept(*function_decl, context);
