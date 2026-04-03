@@ -832,12 +832,16 @@ TypeIndex Parser::substitute_template_parameter(
 
 			std::vector<TemplateTypeArg> concrete_args = materializeTemplateInstantiationArgs(*placeholder_info);
 			auto instantiated = try_instantiate_class_template(base_template_name, concrete_args);
-			std::string_view instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
-			if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
+			if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+				ast_nodes_.push_back(*instantiated);
+			} else if (!base_template_name.empty()) {
 				instantiated = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), concrete_args);
 			}
+			std::string_view instantiated_name;
 			if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 				instantiated_name = StringTable::getStringView(instantiated->as<StructDeclarationNode>().name());
+			} else {
+				instantiated_name = get_instantiated_class_name(base_template_name, concrete_args);
 			}
 			auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
 			if (inst_it == getTypesByNameMap().end()) {
