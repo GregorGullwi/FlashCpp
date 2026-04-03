@@ -944,36 +944,39 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			eval_ctx.is_constinit = is_constinit;
 
 			// Helper lambda: recursively validate a single initializer node
-			// Returns empty string on success, error message on failure
+			// Returns std::nullopt on success, failing evaluation result on failure.
 			constexpr size_t kValidateSingleMaxDepth = 64;
-			std::function<std::string(const ASTNode&, size_t)> validate_single = [&](const ASTNode& node, size_t depth) -> std::string {
+			std::function<std::optional<ConstExpr::EvalResult>(const ASTNode&, size_t)> validate_single =
+				[&](const ASTNode& node, size_t depth) -> std::optional<ConstExpr::EvalResult> {
 				if (depth >= kValidateSingleMaxDepth)
-					return "initializer list nesting exceeds maximum depth";
+					return ConstExpr::EvalResult::error("initializer list nesting exceeds maximum depth");
 				if (node.is<InitializerListNode>()) {
 					const InitializerListNode& il = node.as<InitializerListNode>();
 					for (const auto& elem : il.initializers()) {
-						auto msg = validate_single(elem, depth + 1);
-						if (!msg.empty())
-							return msg;
+						auto failure = validate_single(elem, depth + 1);
+						if (failure.has_value())
+							return failure;
 					}
-					return {};
+					return std::nullopt;
 				}
 				auto elem_result = ConstExpr::Evaluator::evaluate(node, eval_ctx);
 				if (!elem_result.success())
-					return elem_result.error_message;
-				return {};
+					return elem_result;
+				return std::nullopt;
 			};
 
 			auto validation_error = validate_single(initializer.value(), 0);
 			// C++ semantics distinction between constexpr and constinit:
 			// - constexpr: variable CAN be used in constant expressions if initialized with a
-			//   constant expression, but it's not required at parse time. If evaluation fails,
-			//   the variable is treated as a regular const variable.
+			//   constant expression. Reject cases the evaluator has classified as genuine
+			//   non-constant expressions, but keep deferring evaluator-gap failures.
 			// - constinit: variable MUST be initialized with a constant expression (C++20).
 			//   Failure to evaluate at compile time is always an error.
-			if (!validation_error.empty() && is_constinit) {
+			if (validation_error.has_value() &&
+				(is_constinit || (is_constexpr &&
+								  validation_error->error_type == ConstExpr::EvalErrorType::NotConstantExpression))) {
 				return ParseResult::error(
-					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error,
+					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error->error_message,
 					identifier_token);
 			}
 

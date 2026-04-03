@@ -3470,7 +3470,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// For static storage duration, also try non-constexpr functions with simple bodies
 		// (static initializers can call any function whose body is available)
 		if (!func_decl.is_constexpr() && !func_decl.is_consteval() && context.storage_duration != ConstExpr::StorageDuration::Static) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name),
+									 EvalErrorType::NotConstantExpression);
 		}
 
 		// Get the function body

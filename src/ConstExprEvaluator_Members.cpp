@@ -612,7 +612,8 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 
 	const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval()) {
-		return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name));
+		return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name),
+								 EvalErrorType::NotConstantExpression);
 	}
 
 	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
@@ -925,7 +926,8 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 		return EvalResult::error("Member function not found: " + std::string(func_name));
 	}
 	if (!actual_func->is_constexpr() && !actual_func->is_consteval()) {
-		return EvalResult::error("Member function must be constexpr or consteval: " + std::string(func_name));
+		return EvalResult::error("Member function must be constexpr or consteval: " + std::string(func_name),
+								 EvalErrorType::NotConstantExpression);
 	}
 
 	const auto& definition = actual_func->get_definition();
