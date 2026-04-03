@@ -393,9 +393,8 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 				// Check for a sema-pre-resolved operator() first.
 			const FunctionDeclarationNode* operator_call =
 				!sema_ ? nullptr
-					   : (unified_call_key
-							  ? sema_->getResolvedOpCall(unified_call_key)
-							  : sema_->getResolvedOpCall(&functionCallNode));
+					   : sema_->getResolvedOpCall(unified_call_key ? static_cast<const void*>(unified_call_key)
+																   : static_cast<const void*>(&functionCallNode));
 
 				// Fallback: replicate the arity-based lookup for call sites that were
 				// not reached by the semantic pass (e.g. template instantiation paths
@@ -1244,9 +1243,10 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		}
 		const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 		if (param_type && sema_) {
-			sema_ref_binding = unified_call_key
-								   ? sema_->getCallExprRefBinding(unified_call_key, arg_index)
-								   : sema_->getFunctionCallRefBinding(&functionCallNode, arg_index);
+			sema_ref_binding = sema_->getCallRefBinding(
+				unified_call_key ? static_cast<const void*>(unified_call_key)
+								 : static_cast<const void*>(&functionCallNode),
+				arg_index);
 		}
 
 			// Special case: if argument is a reference identifier being passed to a reference parameter,
@@ -1374,9 +1374,8 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 					if (sema_normalized_current_function_ &&
 						is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
 						!(sema_ &&
-						  (unified_call_key
-							   ? sema_->hasUnresolvedCallArgs(unified_call_key)
-							   : sema_->hasUnresolvedCallArgs(&functionCallNode)))) {
+						  sema_->hasUnresolvedCallArgs(unified_call_key ? static_cast<const void*>(unified_call_key)
+																		: static_cast<const void*>(&functionCallNode)))) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());

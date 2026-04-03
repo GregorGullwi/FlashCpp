@@ -1587,9 +1587,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			}
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 			if (param_type && sema_) {
-				sema_ref_binding = unified_call_key
-									   ? sema_->getCallExprRefBinding(unified_call_key, arg_index)
-									   : sema_->getMemberFunctionCallRefBinding(&memberFunctionCallNode, arg_index);
+				sema_ref_binding = sema_->getCallRefBinding(
+					unified_call_key ? static_cast<const void*>(unified_call_key)
+									 : static_cast<const void*>(&memberFunctionCallNode),
+					arg_index);
 			}
 
 			// Evaluate the argument expression once when sema ref-binding is active so that

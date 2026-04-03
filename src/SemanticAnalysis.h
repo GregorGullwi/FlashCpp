@@ -26,6 +26,7 @@ class RangedForStatementNode;
 class VariableDeclarationNode;
 struct StructTypeInfo;
 struct LambdaInfo;
+struct CallInfo;
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization.  See docs/IMPLICIT_CAST_SEMA_PLAN.md for
@@ -75,13 +76,16 @@ public:
 	// Returns true if sema attempted to annotate this FunctionCallNode but could not
 	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
 	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
-	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
+	bool hasUnresolvedCallArgs(const void* call) const {
 		return unresolved_call_args_.count(call) > 0;
+	}
+	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
+		return hasUnresolvedCallArgs(static_cast<const void*>(call));
 	}
 	bool hasUnresolvedCallArgs(const CallExprNode* call) const {
-		return unresolved_call_args_.count(call) > 0;
+		return hasUnresolvedCallArgs(static_cast<const void*>(call));
 	}
-
+ 
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
 	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
 	std::optional<SemanticSlot> getCompoundAssignBackConv(const void* binop_key) const {
@@ -91,10 +95,12 @@ public:
 		return it->second;
 	}
 
-	// Look up the pre-resolved callable operator() for a FunctionCallNode.
+	// Look up the pre-resolved callable operator() for a call node.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
+	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
 	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
 	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
@@ -108,6 +114,7 @@ public:
 		const std::vector<ASTNode>& parameter_nodes,
 		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
+
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 									   const TypeSpecifierNode& deduced_type) const;
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
@@ -239,6 +246,15 @@ private:
 											const ChunkedVector<ASTNode>& arguments,
 											const FunctionDeclarationNode& func_decl,
 											const char* context_description);
+	void tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
+										   const void* call_key,
+										   const char* context_description);
+	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
+																 const void* call_key);
+	bool tryRecoverCallDeclFromStructMembers(const CallInfo& call_info,
+											 const DeclarationNode& decl,
+											 const ChunkedVector<ASTNode>& arguments,
+											 const FunctionDeclarationNode*& func_decl);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -256,6 +272,7 @@ private:
 	// consume it without performing its own member-function lookup.
 	void tryResolveCallableOperator(const FunctionCallNode& call_node);
 	void tryResolveCallableOperator(const CallExprNode& call_node);
+	void tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key);
 
 	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
