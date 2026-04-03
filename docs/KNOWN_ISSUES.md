@@ -74,44 +74,6 @@ This was observed while trying to add focused runtime coverage for virtual
 reference-return coverage passes; the virtual-reference-return caller path still
 needs dedicated investigation.
 
-## Static member initializers can lose nested helper calls under `.` / `[]`
-
-Template static member initializers still mishandle some nested forms where an
-unqualified same-class static helper call sits underneath member access or array
-subscript. The helper call should bind to the instantiated class member, but in
-practice the initializer can silently fold to zero instead of evaluating the
-helper result:
-
-```cpp
-template <typename T>
-struct Box {
-    struct Payload { int value; };
-    static constexpr Payload payload = { int(sizeof(T)) + 38 };
-    static constexpr const Payload& helper() { return payload; }
-
-    static constexpr int value = helper().value; // expected 42 for T=int
-};
-```
-
-Likewise:
-
-```cpp
-template <typename T>
-struct Box {
-    static constexpr int values[2] = { 40, int(sizeof(T)) + 38 };
-    static constexpr const int* helper() { return values; }
-
-    static constexpr int value = helper()[1]; // expected 42 for T=int
-};
-```
-
-When reproduced locally, the instantiated storage for `payload`/`values` was
-correct, but the synthesized `value` variable still emitted as zero. This
-suggests the remaining problem is deeper than AST child traversal alone: the
-constexpr/static-initializer path is still not preserving or resolving the
-nested helper call correctly once wrapped in `MemberAccessNode` or
-`ArraySubscriptNode`.
-
 ## Inherited struct-typed static members from template bases can keep pattern-qualified aliases
 
 When a non-template derived class inherits a struct-typed static member from a
