@@ -2494,11 +2494,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			if (!lhs_is_ptr && rhs_is_ptr) {
 				// n + ptr
@@ -2506,11 +2510,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(rhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !rhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = rhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			return EvalResult::error("Addition of two pointers is not allowed in constant expressions", EvalErrorType::NotConstantExpression);
 		}
@@ -2521,11 +2529,15 @@ EvalResult Evaluator::apply_binary_op(
 				if (!new_offset.has_value()) {
 					return EvalResult::error("Signed integer overflow in constant expression");
 				}
-				return make_checked_constexpr_pointer_result(
+				auto result = make_checked_constexpr_pointer_result(
 					StringTable::getStringView(lhs.pointer_to_var),
 					*new_offset,
 					context,
 					bindings);
+				if (result.success() && !lhs.pointer_value_snapshot.empty()) {
+					result.pointer_value_snapshot = lhs.pointer_value_snapshot;
+				}
+				return result;
 			}
 			if (lhs_is_ptr && rhs_is_ptr) {
 				// ptr - ptr: both must point into the same array
