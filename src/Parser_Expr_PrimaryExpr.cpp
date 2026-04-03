@@ -5463,7 +5463,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										};
 
 										instantiated_func = try_instantiate_current_struct_member_template();
-										if (!instantiated_func.has_value()) {
+										bool resolved_as_struct_member = instantiated_func.has_value();
+										if (!resolved_as_struct_member) {
 											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 										}
 									}
@@ -5503,12 +5504,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														.commit());
 											}
 										};
-										if (!member_function_context_stack_.empty()) {
-											set_current_struct_qualified_name(
-												StringTable::getStringView(member_function_context_stack_.back().struct_name));
-										} else if (!struct_parsing_context_stack_.empty()) {
-											set_current_struct_qualified_name(
-												struct_parsing_context_stack_.back().struct_name);
+										if (resolved_as_struct_member) {
+											if (!member_function_context_stack_.empty()) {
+												set_current_struct_qualified_name(
+													StringTable::getStringView(member_function_context_stack_.back().struct_name));
+											} else if (!struct_parsing_context_stack_.empty()) {
+												set_current_struct_qualified_name(
+													struct_parsing_context_stack_.back().struct_name);
+											}
 										}
 
 										// Copy mangled name if available
