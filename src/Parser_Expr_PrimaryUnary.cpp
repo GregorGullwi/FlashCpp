@@ -941,68 +941,61 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		return ParseResult::success(addressof_expr);
 	}
 
-	// Check for GCC complex number operators: __real__ and __imag__
-	// These extract the real or imaginary part of a complex number (used in libstdc++ <complex>)
-	// Since FlashCpp doesn't support complex arithmetic, treat them as identity operators
-	if (current_token_.type() == Token::Type::Identifier) {
-		std::string_view val = current_token_.value();
-		if (val == "__real__" || val == "__imag__") {
-			Token operator_token = current_token_;
-			advance();
+	auto isPrefixUnaryOperator = [](std::string_view op) {
+		return op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--" ||
+			   op == "*" || op == "&";
+	};
 
-			// Parse the operand
-			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
-			if (operand_result.is_error()) {
-				return operand_result;
+	std::vector<Token> pending_unary_ops;
+	pending_unary_ops.reserve(8);
+	std::optional<Token> identity_prefix_token;
+	while (true) {
+		if (current_token_.type() == Token::Type::Identifier) {
+			std::string_view val = current_token_.value();
+			if (val == "__real__" || val == "__imag__") {
+				if (!identity_prefix_token.has_value()) {
+					identity_prefix_token = current_token_;
+				}
+				advance();
+				continue;
 			}
-
-			if (auto operand_node = operand_result.node()) {
-				// For now, treat __real__ and __imag__ as identity operators
-				// since we don't support complex numbers yet
-				// In the future, these would extract the respective components
-				return ParseResult::success(*operand_node);
-			}
-
-			return ParseResult::error("Expected operand after " + std::string(val), operator_token);
 		}
+
+		if (current_token_.type() == Token::Type::Operator && isPrefixUnaryOperator(current_token_.value())) {
+			pending_unary_ops.push_back(current_token_);
+			advance();
+			continue;
+		}
+
+		break;
 	}
 
-	// Check if the current token is a unary operator
-	if (current_token_.type() == Token::Type::Operator) {
-		std::string_view op = current_token_.value();
-
-		// Check for unary operators: !, ~, +, -, ++, --, * (dereference), & (address-of)
-		if (op == "!" || op == "~" || op == "+" || op == "-" || op == "++" || op == "--" ||
-			op == "*" || op == "&") {
-			Token operator_token = current_token_;
-			advance();
-
-			// Parse the operand (recursively handle unary expressions)
-			ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
-			if (operand_result.is_error()) {
-				return operand_result;
-			}
-
-			if (auto operand_node = operand_result.node()) {
-				// Validation for unary + on lambda: only captureless lambdas can decay to function pointers
-				if (op == "+" && operand_node->is<LambdaExpressionNode>()) {
-					const auto& lambda = operand_node->as<LambdaExpressionNode>();
-
-					if (!lambda.captures().empty()) {
-						return ParseResult::error("Cannot convert lambda with captures to function pointer", operator_token);
-					}
-					// Fall through to create a UnaryOperatorNode so downstream stages can
-					// treat unary + on lambdas as a function-pointer conversion.
-				}
-
-				auto unary_op = emplace_node<ExpressionNode>(
-					UnaryOperatorNode(operator_token, *operand_node, true));
-				return ParseResult::success(unary_op);
-			}
-
-			// If operand_node is empty, return error
-			return ParseResult::error("Expected operand after unary operator", operator_token);
+	if (identity_prefix_token.has_value() || !pending_unary_ops.empty()) {
+		ParseResult operand_result = parse_unary_expression(ExpressionContext::Normal);
+		if (operand_result.is_error()) {
+			return operand_result;
 		}
+
+		if (!operand_result.node().has_value()) {
+			if (!pending_unary_ops.empty()) {
+				return ParseResult::error("Expected operand after unary operator", pending_unary_ops.back());
+			}
+			return ParseResult::error("Expected operand after " + std::string(identity_prefix_token->value()), *identity_prefix_token);
+		}
+
+		ASTNode operand_node = *operand_result.node();
+		for (auto it = pending_unary_ops.rbegin(); it != pending_unary_ops.rend(); ++it) {
+			if (it->value() == "+" && operand_node.is<LambdaExpressionNode>()) {
+				const auto& lambda = operand_node.as<LambdaExpressionNode>();
+				if (!lambda.captures().empty()) {
+					return ParseResult::error("Cannot convert lambda with captures to function pointer", *it);
+				}
+			}
+
+			operand_node = emplace_node<ExpressionNode>(
+				UnaryOperatorNode(*it, operand_node, true));
+		}
+		return ParseResult::success(operand_node);
 	}
 
 	// Not a unary operator, parse as postfix expression (which starts with primary expression)
