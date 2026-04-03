@@ -1,8 +1,25 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "CallNodeHelpers.h"
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
 	return generateMemberFunctionCallIr(memberFunctionCallNode, context, nullptr);
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
+	if (!callExprNode.has_receiver()) {
+		throw InternalError("CallExprNode without receiver routed to member-call IR generation");
+	}
+	const FunctionDeclarationNode* function_decl = callExprNode.callee().function_declaration_or_null();
+	if (!function_decl) {
+		throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
+	}
+	MemberFunctionCallNode member_call(
+		callExprNode.receiver(),
+		*function_decl,
+		copyCallArguments(callExprNode.arguments()),
+		callExprNode.called_from());
+	return generateMemberFunctionCallIr(member_call, context, &callExprNode);
 }
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key) {

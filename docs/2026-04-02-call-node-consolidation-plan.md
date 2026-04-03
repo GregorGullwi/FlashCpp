@@ -51,15 +51,17 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Refactor postfix/member parsing so `.` and `->` share one call/member-access builder.
 - [x] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
 - [ ] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
+- [x] Merge the remaining constexpr evaluation, substitution, and direct IR entry points onto direct `CallExprNode` handling so the old `materializeLegacy*` adapters are no longer needed there.
 - [ ] Merge IR lowering so there is one common call lowering pipeline with small branches only for receiver passing, virtual dispatch, and indirect-call specifics.
-- [ ] Remove temporary call-form conversions such as member-to-function fallback nodes once all downstream code reads the unified representation directly.
+- [x] Remove temporary call-form conversions such as member-to-function fallback nodes in constexpr evaluation, substitution, and the top-level direct/member IR entry points once those downstream sites read the unified representation directly.
 - [ ] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
 
 ### Current status
 
 - Parser normalization is now complete for the ordinary free-call and member-call paths; those parser sites emit `CallExprNode` and the rebased Windows suite is green after the downstream compatibility fixes.
-- Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path; the remaining temporary bridges are concentrated in constexpr evaluation and direct/member IR lowering.
-- The remaining work is centered on collapsing semantic-analysis and IR lowering onto direct `CallExprNode` handling, then removing those last legacy conversions before deleting the duplicate legacy nodes.
+- Template substitution/rebinding now keeps the migrated parser output in unified form through the static-member rebinder and the receiverless substitution path without re-materializing legacy free-call nodes.
+- Constexpr evaluation now consumes `CallExprNode` directly for free/member dispatch, bound-call handling, and noexcept lookup, and the direct IR entry points no longer materialize legacy call nodes before lowering.
+- The remaining work is centered on collapsing semantic-analysis and the deeper shared IR lowering paths onto direct `CallExprNode` handling before deleting the duplicate legacy nodes.
 
 ## Important implementation notes
 

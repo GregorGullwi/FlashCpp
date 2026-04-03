@@ -208,15 +208,22 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 		if (!callExprNode.callee().has_function_declaration()) {
 			throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
 		}
-		MemberFunctionCallNode legacy_member_call = materializeLegacyMemberFunctionCall(callExprNode);
-		return generateMemberFunctionCallIr(legacy_member_call, context, &callExprNode);
+		return generateMemberFunctionCallIr(callExprNode, context);
 	}
-	FunctionCallNode legacy_function_call = materializeLegacyFunctionCall(callExprNode);
-	return generateFunctionCallIr(legacy_function_call, context, &callExprNode);
+	return generateFunctionCallIr(callExprNode, context);
 }
 
 ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context) {
 	return generateFunctionCallIr(functionCallNode, context, nullptr);
+}
+
+ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
+	FunctionCallNode function_call(
+		callExprNode.callee().declaration(),
+		copyCallArguments(callExprNode.arguments()),
+		callExprNode.called_from());
+	copyCallMetadata(function_call, callExprNode);
+	return generateFunctionCallIr(function_call, context, &callExprNode);
 }
 
 ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context, const CallExprNode* unified_call_key) {

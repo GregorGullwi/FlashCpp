@@ -276,7 +276,9 @@ private:
 	ExprResult generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
+	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
 	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context, const CallExprNode* unified_call_key);
 	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
