@@ -755,7 +755,7 @@ ParseResult Parser::parse_variable_declaration() {
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
-		const_cast<DeclarationNode&>(first_var_decl.declaration()).set_type_node(
+		first_var_decl.declaration().set_type_node(
 			emplace_node<TypeSpecifierNode>(type_specifier));
 	}
 	first_var_decl.set_initializer(first_init_expr);
@@ -2147,7 +2147,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 	}
 
-	auto getGuideParameterType = [](const ASTNode& param_node) -> const TypeSpecifierNode* {
+	auto tryGetTypeSpecifierFromGuideParameter = [](const ASTNode& param_node) -> const TypeSpecifierNode* {
 		if (param_node.is<TypeSpecifierNode>()) {
 			return &param_node.as<TypeSpecifierNode>();
 		}
@@ -2168,7 +2168,7 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 
 	std::unordered_map<std::string_view, TypeSpecifierNode> bindings;
 	for (size_t i = 0; i < guide.guide_parameters().size(); ++i) {
-		const TypeSpecifierNode* param_type = getGuideParameterType(guide.guide_parameters()[i]);
+		const TypeSpecifierNode* param_type = tryGetTypeSpecifierFromGuideParameter(guide.guide_parameters()[i]);
 		if (!param_type) {
 			return false;
 		}
