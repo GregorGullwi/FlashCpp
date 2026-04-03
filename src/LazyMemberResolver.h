@@ -162,10 +162,9 @@ private:
 
 		for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
 			std::string_view qualified_name = StringTable::getStringView(name_handle);
-			if (qualified_name == fallback_name ||
-				(qualified_name.size() > fallback_name.size() + 2 &&
-				 qualified_name.ends_with(fallback_name) &&
-				 qualified_name.substr(qualified_name.size() - fallback_name.size() - 2, 2) == "::")) {
+			if (qualified_name.size() > fallback_name.size() + 2 &&
+				qualified_name.ends_with(fallback_name) &&
+				qualified_name.substr(qualified_name.size() - fallback_name.size() - 2, 2) == "::") {
 				if (const StructTypeInfo* struct_info = try_type_info(type_info)) {
 					return struct_info;
 				}

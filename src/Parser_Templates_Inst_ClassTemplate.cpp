@@ -5356,6 +5356,104 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		} else {
 			FLASH_LOG(Templates, Debug, "Parsed out-of-line nested class via parse_struct_declaration(): ",
 					  StringTable::getStringView(qualified_name));
+			auto resolved_nested_it = getTypesByNameMap().find(qualified_name);
+			if (resolved_nested_it != getTypesByNameMap().end() &&
+				resolved_nested_it->second &&
+				resolved_nested_it->second->getStructInfo() &&
+				nested_result.node().has_value() &&
+				nested_result.node()->is<StructDeclarationNode>()) {
+				auto& parsed_nested_struct = nested_result.node()->as<StructDeclarationNode>();
+				StructTypeInfo* parsed_nested_info = resolved_nested_it->second->getStructInfo();
+				const size_t member_count = std::min(parsed_nested_struct.members().size(), parsed_nested_info->members.size());
+				bool adjusted_member_types = false;
+
+				for (size_t member_idx = 0; member_idx < member_count; ++member_idx) {
+					const auto& member_decl = parsed_nested_struct.members()[member_idx];
+					if (!member_decl.declaration.is<DeclarationNode>()) {
+						continue;
+					}
+
+					const auto& decl = member_decl.declaration.as<DeclarationNode>();
+					if (!decl.type_node().is<TypeSpecifierNode>()) {
+						continue;
+					}
+
+					const auto& type_spec = decl.type_node().as<TypeSpecifierNode>();
+					TypeIndex substituted_type_index = substitute_template_parameter(
+						type_spec, template_params, template_args_to_use);
+					ResolvedAliasTypeInfo resolved_member_alias = resolveAliasTypeInfo(substituted_type_index);
+					TypeIndex member_size_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
+					TypeIndex stored_member_type_index = resolved_member_alias.isArray() ? resolved_member_alias.type_index : substituted_type_index;
+					std::vector<size_t> resolved_array_dimensions = resolve_array_dimensions(
+						decl, template_params, template_args_to_use);
+					if (resolved_array_dimensions.empty()) {
+						resolved_array_dimensions = resolved_member_alias.array_dimensions;
+					}
+					const bool is_array_member = !resolved_array_dimensions.empty();
+
+					TypeSpecifierNode substituted_type_spec(
+						substituted_type_index,
+						get_type_size_bits(substituted_type_index.category()),
+						type_spec.token(),
+						type_spec.cv_qualifier(),
+						type_spec.reference_qualifier());
+					for (const auto& ptr_level : type_spec.pointer_levels()) {
+						substituted_type_spec.add_pointer_level(ptr_level.cv_qualifier);
+					}
+					if (is_array_member) {
+						substituted_type_spec.set_array(true);
+						substituted_type_spec.set_array_dimensions(resolved_array_dimensions);
+					}
+
+					auto& stored_member = parsed_nested_info->members[member_idx];
+					stored_member.type_index = stored_member_type_index;
+					stored_member.reference_qualifier = substituted_type_spec.reference_qualifier();
+					stored_member.pointer_depth = static_cast<int>(substituted_type_spec.pointer_depth());
+					stored_member.is_array = is_array_member;
+					stored_member.array_dimensions = resolved_array_dimensions;
+					stored_member.referenced_size_bits = stored_member.reference_qualifier != ReferenceQualifier::None
+														 ? get_substituted_type_size_bits(substituted_type_index)
+														 : 0;
+
+					if (substituted_type_spec.is_pointer() || substituted_type_spec.is_reference() || substituted_type_spec.is_rvalue_reference()) {
+						stored_member.size = 8;
+						stored_member.alignment = 8;
+					} else {
+						stored_member.size = calculateResolvedMemberSizeAndAlignment(
+							substituted_type_spec, member_size_type_index).size;
+						if (is_array_member) {
+							for (size_t dim_size : resolved_array_dimensions) {
+								stored_member.size *= dim_size;
+							}
+						}
+						stored_member.alignment = get_type_alignment(member_size_type_index.category(), stored_member.size);
+						if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_size_type_index)) {
+							stored_member.alignment = member_struct_info->alignment;
+						}
+					}
+
+					adjusted_member_types = true;
+				}
+
+				if (adjusted_member_types) {
+					auto alignTo = [](size_t value, size_t alignment) {
+						return alignment == 0 ? value : ((value + alignment - 1) / alignment) * alignment;
+					};
+					size_t new_total = 0;
+					size_t new_alignment = 1;
+					for (auto& member : parsed_nested_info->members) {
+						size_t alignment = member.alignment ? member.alignment : 1;
+						new_total = alignTo(new_total, alignment);
+						member.offset = new_total;
+						new_total += member.size;
+						new_alignment = std::max(new_alignment, alignment);
+					}
+					new_total = alignTo(new_total, new_alignment);
+					parsed_nested_info->alignment = new_alignment;
+					parsed_nested_info->total_size = SizeInBytes{static_cast<int>(new_total)};
+					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(new_total * 8);
+				}
+			}
 		}
 
 		restore_lexer_position_only(saved_pos);

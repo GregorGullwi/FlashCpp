@@ -755,6 +755,9 @@ ParseResult Parser::parse_variable_declaration() {
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
+		first_decl.set_type_node(emplace_node<TypeSpecifierNode>(type_specifier));
+		const_cast<DeclarationNode&>(first_var_decl.declaration()).set_type_node(
+			emplace_node<TypeSpecifierNode>(type_specifier));
 	}
 	first_var_decl.set_initializer(first_init_expr);
 
@@ -1997,10 +2000,10 @@ bool Parser::try_apply_deduction_guides(TypeSpecifierNode& type_specifier, const
 		return false;
 	}
 
-	// If the type already has a non-zero size, it was explicitly instantiated with template
-	// arguments (e.g., Processor<char>). CTAD should only apply when no template args were
-	// specified (e.g., Box b(42)), in which case the template has size 0 pre-deduction.
-	if (type_specifier.size_in_bits() > 0) {
+	// Explicit template arguments already instantiate the class type (e.g. Processor<char>),
+	// so CTAD should only run for the unresolved primary template name (e.g. Box b{42}).
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_specifier.type_index());
+		type_info && type_info->isTemplateInstantiation()) {
 		return false;
 	}
 
@@ -2145,14 +2148,33 @@ bool Parser::deduce_template_arguments_from_guide(const DeductionGuideNode& guid
 		}
 	}
 
+	auto getGuideParameterType = [](const ASTNode& param_node) -> const TypeSpecifierNode* {
+		if (param_node.is<TypeSpecifierNode>()) {
+			return &param_node.as<TypeSpecifierNode>();
+		}
+		if (param_node.is<DeclarationNode>()) {
+			const auto& decl = param_node.as<DeclarationNode>();
+			if (decl.type_node().is<TypeSpecifierNode>()) {
+				return &decl.type_node().as<TypeSpecifierNode>();
+			}
+		}
+		if (param_node.is<VariableDeclarationNode>()) {
+			const auto& var_decl = param_node.as<VariableDeclarationNode>();
+			if (var_decl.declaration().type_node().is<TypeSpecifierNode>()) {
+				return &var_decl.declaration().type_node().as<TypeSpecifierNode>();
+			}
+		}
+		return nullptr;
+	};
+
 	std::unordered_map<std::string_view, TypeSpecifierNode> bindings;
 	for (size_t i = 0; i < guide.guide_parameters().size(); ++i) {
-		if (!guide.guide_parameters()[i].is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode* param_type = getGuideParameterType(guide.guide_parameters()[i]);
+		if (!param_type) {
 			return false;
 		}
-		const auto& param_type = guide.guide_parameters()[i].as<TypeSpecifierNode>();
 		const auto& arg_type = argument_types[i];
-		if (!match_template_parameter_type(param_type, arg_type, template_params, bindings)) {
+		if (!match_template_parameter_type(*param_type, arg_type, template_params, bindings)) {
 			return false;
 		}
 	}

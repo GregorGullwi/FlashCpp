@@ -408,7 +408,7 @@ private:
 
 		if (node.is<StructDeclarationNode>()) {
 			const auto& decl = node.as<StructDeclarationNode>();
-			if (decl.name().view().find(kTemplatePatternStructSuffix) != std::string_view::npos) {
+			if (decl.name().view().ends_with(kTemplatePatternStructSuffix)) {
 				return;
 			}
 			for (const auto& member : decl.members()) {
