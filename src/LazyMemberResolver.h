@@ -125,6 +125,54 @@ public:
 	}
 
 private:
+	const StructTypeInfo* resolveStructInfo(TypeIndex type_index, std::string_view fallback_name) const {
+		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index)) {
+			return struct_info;
+		}
+		if (fallback_name.empty()) {
+			return nullptr;
+		}
+
+		auto try_type_info = [](const TypeInfo* type_info) -> const StructTypeInfo* {
+			const TypeInfo* current = type_info;
+			for (size_t depth = 0; depth < 64 && current; ++depth) {
+				if (const StructTypeInfo* struct_info = current->getStructInfo()) {
+					return struct_info;
+				}
+				if (!current->type_index_.is_valid()) {
+					break;
+				}
+				const TypeInfo* next = tryGetTypeInfo(current->type_index_);
+				if (!next || next == current) {
+					break;
+				}
+				current = next;
+			}
+			return nullptr;
+		};
+
+		StringHandle fallback_handle = StringTable::getOrInternStringHandle(fallback_name);
+		if (auto it = getTypesByNameMap().find(fallback_handle); it != getTypesByNameMap().end()) {
+			if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
+				return struct_info;
+			}
+		}
+
+		for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
+			std::string_view qualified_name = StringTable::getStringView(name_handle);
+			if (qualified_name == fallback_name ||
+				(qualified_name.size() > fallback_name.size() + 2 &&
+				 qualified_name.ends_with(fallback_name) &&
+				 qualified_name.substr(qualified_name.size() - fallback_name.size() - 2, 2) == "::")) {
+				if (const StructTypeInfo* struct_info = try_type_info(type_info)) {
+					return struct_info;
+				}
+			}
+		}
+
+		return nullptr;
+	}
+
 	// Internal resolution logic
 	MemberResolutionResult resolveInternal(TypeIndex type_index, StringHandle member_name) {
 		// Validate type index
@@ -133,7 +181,7 @@ private:
 			return MemberResolutionResult();
 		}
 
-		const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
+		const StructTypeInfo* struct_info = resolveStructInfo(type_index, StringTable::getStringView(type_info->name()));
 
 		if (!struct_info) {
 			return MemberResolutionResult();
@@ -169,7 +217,7 @@ private:
 
 			// Add base classes to the queue
 			for (const auto& base : current_struct->base_classes) {
-				if (const StructTypeInfo* base_info = tryGetStructTypeInfo(base.type_index)) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name)) {
 					to_visit.push({base_info, current_offset + base.offset});
 				}
 			}

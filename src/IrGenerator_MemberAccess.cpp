@@ -952,11 +952,11 @@ ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, T
 	result.value = result_var;
 	result.pointer_depth = pointer_depth;
 	result.storage = storage;
-	// Include type_index for struct types and for UserDefined types that have actual struct info
-	// (i.e., are instantiated template structs, not placeholders or primitive type params)
+	// Preserve non-native user-defined/struct type indices so chained member access can
+	// still recover the concrete instantiated type after deferred template materialization.
 	TypeCategory cat = type_index.category();
-	if (cat == TypeCategory::Struct ||
-		(cat == TypeCategory::UserDefined && type_index.is_valid() && tryGetStructTypeInfo(type_index) != nullptr)) {
+	if (type_index.is_valid() &&
+		(cat == TypeCategory::Struct || cat == TypeCategory::UserDefined)) {
 		result.type_index = TypeIndex{type_index};
 	} else {
 		result.type_index = nativeTypeIndex(cat);
