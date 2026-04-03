@@ -5433,6 +5433,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
+									bool resolved_as_struct_member = false;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
 										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
 											if (!member_function_context_stack_.empty()) {
@@ -5463,7 +5464,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										};
 
 										instantiated_func = try_instantiate_current_struct_member_template();
-										bool resolved_as_struct_member = instantiated_func.has_value();
+										resolved_as_struct_member = instantiated_func.has_value();
 										if (!resolved_as_struct_member) {
 											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
 										}
