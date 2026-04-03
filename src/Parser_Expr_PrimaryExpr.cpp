@@ -5434,7 +5434,38 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									// Skip template instantiation in extern "C" contexts - C has no templates
 									std::optional<ASTNode> instantiated_func;
 									if (current_linkage_ != Linkage::C && !has_dependent_template_args) {
-										instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
+										auto try_instantiate_current_struct_member_template = [&]() -> std::optional<ASTNode> {
+											if (!member_function_context_stack_.empty()) {
+												std::string_view struct_name =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
+												if (!struct_name.empty()) {
+													if (auto member_inst = try_instantiate_member_function_template_explicit(
+															struct_name,
+															identifier_token.value(),
+															*effective_template_args);
+														member_inst.has_value()) {
+														return member_inst;
+													}
+												}
+											}
+
+											if (!struct_parsing_context_stack_.empty()) {
+												const auto& struct_ctx = struct_parsing_context_stack_.back();
+												if (!struct_ctx.struct_name.empty()) {
+													return try_instantiate_member_function_template_explicit(
+														struct_ctx.struct_name,
+														identifier_token.value(),
+														*effective_template_args);
+												}
+											}
+
+											return std::nullopt;
+										};
+
+										instantiated_func = try_instantiate_current_struct_member_template();
+										if (!instantiated_func.has_value()) {
+											instantiated_func = try_instantiate_template_explicit(identifier_token.value(), *effective_template_args, arg_types);
+										}
 									}
 									if (instantiated_func.has_value()) {
 										// Check if the function is deleted
@@ -5461,6 +5492,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 										if (!explicit_template_arg_nodes.empty()) {
 											func_call.set_template_arguments(std::move(explicit_template_arg_nodes));
+										}
+										auto set_current_struct_qualified_name = [&](std::string_view struct_name) {
+											if (!struct_name.empty()) {
+												func_call.set_qualified_name(
+													StringBuilder()
+														.append(struct_name)
+														.append("::")
+														.append(identifier_token.value())
+														.commit());
+											}
+										};
+										if (!member_function_context_stack_.empty()) {
+											set_current_struct_qualified_name(
+												StringTable::getStringView(member_function_context_stack_.back().struct_name));
+										} else if (!struct_parsing_context_stack_.empty()) {
+											set_current_struct_qualified_name(
+												struct_parsing_context_stack_.back().struct_name);
 										}
 
 										// Copy mangled name if available

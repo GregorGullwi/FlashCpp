@@ -137,6 +137,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	const std::string_view qualified_name = call.has_qualified_name()
 		? call.qualified_name()
 		: std::string_view{};
+	auto collectCurrentInstantiationArgs = [&]() {
+		std::vector<TemplateTypeArg> inst_args;
+		if (!template_param_order_.empty()) {
+			for (std::string_view param_name : template_param_order_) {
+				auto it = param_map_.find(param_name);
+				if (it != param_map_.end()) {
+					inst_args.push_back(it->second);
+				}
+			}
+		} else {
+			for (const auto& [param_name, param_arg] : param_map_) {
+				(void)param_name;
+				inst_args.push_back(param_arg);
+			}
+		}
+		for (const auto& [pack_name, pack_args] : pack_map_) {
+			(void)pack_name;
+			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
+		}
+		return inst_args;
+	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
@@ -322,7 +343,27 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
 			if (!qualified_name.empty()) {
-				instantiated_template = parser_.try_instantiate_template_explicit(qualified_name, substituted_template_args);
+				if (size_t scope_pos = qualified_name.rfind("::"); scope_pos != std::string_view::npos) {
+					std::string_view owner_name = qualified_name.substr(0, scope_pos);
+					std::string_view member_name = qualified_name.substr(scope_pos + 2);
+					std::vector<TemplateTypeArg> current_inst_args = collectCurrentInstantiationArgs();
+					if (!current_inst_args.empty() && extractBaseTemplateName(owner_name).empty()) {
+						parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
+						std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
+						if (!instantiated_owner.empty()) {
+							owner_name = instantiated_owner;
+						}
+					}
+					instantiated_template = parser_.try_instantiate_member_function_template_explicit(
+						owner_name,
+						member_name,
+						substituted_template_args);
+				}
+			}
+			if (!qualified_name.empty()) {
+				if (!instantiated_template.has_value()) {
+					instantiated_template = parser_.try_instantiate_template_explicit(qualified_name, substituted_template_args);
+				}
 			}
 			if (!instantiated_template.has_value()) {
 				instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args);
@@ -519,22 +560,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		std::string_view member_name = func_name.substr(scope_pos + 2);
 
 		// Collect concrete template arguments from param_map_
-		std::vector<TemplateTypeArg> inst_args;
-		if (!template_param_order_.empty()) {
-			for (std::string_view param_name : template_param_order_) {
-				auto it = param_map_.find(param_name);
-				if (it != param_map_.end()) {
-					inst_args.push_back(it->second);
-				}
-			}
-		} else {
-			for (const auto& [param_name, param_arg] : param_map_) {
-				inst_args.push_back(param_arg);
-			}
-		}
-		for (const auto& [pack_name, pack_args] : pack_map_) {
-			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
-		}
+		std::vector<TemplateTypeArg> inst_args = collectCurrentInstantiationArgs();
 
 		if (!inst_args.empty()) {
 			// Instantiate the template with concrete types
