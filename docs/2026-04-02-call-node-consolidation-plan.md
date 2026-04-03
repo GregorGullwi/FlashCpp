@@ -48,7 +48,7 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Add a new shared call node and callee descriptor without removing existing nodes yet.
 - [x] Add compatibility helpers so parser, substitution, semantic analysis, constexpr evaluation, and IR generation can read call information through one common interface.
 - [x] Convert metadata copying utilities to operate on the shared call abstraction instead of only `FunctionCallNode`.
-- [ ] Refactor postfix/member parsing so `.` and `->` share one call/member-access builder.
+- [x] Refactor postfix/member parsing so `.` and `->` share one call/member-access builder.
 - [ ] Change free-call and member-call parser paths to emit the shared node in parallel with existing handling or behind a narrow compatibility layer.
 - [ ] Merge semantic-analysis lookup, overload-recovery, argument-conversion, and reference-binding logic onto the shared call abstraction.
 - [ ] Merge IR lowering so there is one common call lowering pipeline with small branches only for receiver passing, virtual dispatch, and indirect-call specifics.
