@@ -952,10 +952,11 @@ ExprResult AstToIr::makeMemberResult(SizeInBits size_bits, TempVar result_var, T
 	result.value = result_var;
 	result.pointer_depth = pointer_depth;
 	result.storage = storage;
-	// Preserve non-native user-defined/struct type indices so chained member access can
-	// still recover the concrete instantiated type after deferred template materialization.
+	// Preserve registered non-native user-defined/struct type indices so chained member access can
+	// still recover the concrete instantiated type after deferred template materialization, without
+	// manufacturing indices for placeholder categories that were never registered in gTypeInfo.
 	TypeCategory cat = type_index.category();
-	if (type_index.is_valid() &&
+	if (type_index.is_valid() && tryGetTypeInfo(type_index) &&
 		(cat == TypeCategory::Struct || cat == TypeCategory::UserDefined)) {
 		result.type_index = TypeIndex{type_index};
 	} else {

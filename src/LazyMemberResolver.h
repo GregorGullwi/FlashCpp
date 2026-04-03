@@ -125,6 +125,8 @@ public:
 	}
 
 private:
+	static constexpr size_t kMaxTypeAliasDepth = 64;
+
 	const StructTypeInfo* resolveStructInfo(TypeIndex type_index, std::string_view fallback_name) const {
 		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index)) {
 			return struct_info;
@@ -135,7 +137,7 @@ private:
 
 		auto try_type_info = [](const TypeInfo* type_info) -> const StructTypeInfo* {
 			const TypeInfo* current = type_info;
-			for (size_t depth = 0; depth < 64 && current; ++depth) {
+			for (size_t depth = 0; depth < kMaxTypeAliasDepth && current; ++depth) {
 				if (const StructTypeInfo* struct_info = current->getStructInfo()) {
 					return struct_info;
 				}
