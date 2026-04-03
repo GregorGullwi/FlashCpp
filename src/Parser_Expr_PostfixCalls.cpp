@@ -393,7 +393,7 @@ ParseResult Parser::apply_postfix_operators(ASTNode& start_result) {
 			auto [func_node, func_ref] = emplace_node_ref<FunctionDeclarationNode>(temp_decl.as<DeclarationNode>());
 
 			result = emplace_node<ExpressionNode>(
-				MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+				makeResolvedMemberCallExpr(*result, func_ref, std::move(args), operator_token));
 			continue;
 		}
 
