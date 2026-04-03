@@ -234,7 +234,7 @@ inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVe
 	if (callee_node.is<TemplateFunctionDeclarationNode>()) {
 		const ASTNode& function_decl = callee_node.as<TemplateFunctionDeclarationNode>().function_declaration();
 		if (function_decl.is<FunctionDeclarationNode>()) {
-			return makeResolvedCallExpr(function_decl.as<FunctionDeclarationNode>(), std::move(arguments), called_from_token);
+			return makeDirectCallExpr(function_decl.as<FunctionDeclarationNode>().decl_node(), std::move(arguments), called_from_token);
 		}
 	}
 	return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);

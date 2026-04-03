@@ -35,6 +35,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
 	} else if (expr.is<FunctionCallNode>()) {
 		return substituteFunctionCall(expr.as<FunctionCallNode>());
+	} else if (expr.is<CallExprNode>()) {
+		return substituteCallExpr(expr.as<CallExprNode>());
 	} else if (expr.is<BinaryOperatorNode>()) {
 		return substituteBinaryOp(expr.as<BinaryOperatorNode>());
 	} else if (expr.is<UnaryOperatorNode>()) {
@@ -614,6 +616,30 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 	// Return as-is
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+	return ASTNode(&new_expr);
+}
+
+ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
+	if (!call.has_receiver()) {
+		FunctionCallNode legacy_call = materializeLegacyFunctionCall(call);
+		return substituteFunctionCall(legacy_call);
+	}
+
+	ASTNode substituted_receiver = substitute(call.receiver());
+	ChunkedVector<ASTNode> substituted_args;
+	for (size_t i = 0; i < call.arguments().size(); ++i) {
+		substituted_args.push_back(substitute(call.arguments()[i]));
+	}
+
+	CallExprNode substituted_call(call.callee(), substituted_receiver, std::move(substituted_args), call.called_from());
+	copyCallMetadataWithTransformedTemplateArguments(
+		substituted_call,
+		call,
+		[this](const ASTNode& template_arg) {
+			return substitute(template_arg);
+		});
+
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(substituted_call);
 	return ASTNode(&new_expr);
 }
 

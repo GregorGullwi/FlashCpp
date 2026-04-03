@@ -535,6 +535,25 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 			return EvalResult::error("Ambiguous static member function overload in constant expression");
 		}
 		if (current_struct_match.function) {
+			if (!current_struct_match.function->is_static()) {
+				Token this_token(
+					Token::Type::Identifier,
+					"this"sv,
+					func_call.called_from().line(),
+					func_call.called_from().column(),
+					func_call.called_from().file_index());
+				ExpressionNode this_expr = IdentifierNode(this_token);
+				MemberFunctionCallNode member_call(
+					ASTNode(&this_expr),
+					*current_struct_match.function,
+					copyCallArguments(func_call.arguments()),
+					func_call.called_from());
+				ExpressionNode member_expr = member_call;
+				if (auto bound_member_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, mutable_bindings)) {
+					return *bound_member_result;
+				}
+				return evaluate_member_function_call(member_call, context);
+			}
 			return evaluate_function_call_with_bindings(
 				*current_struct_match.function,
 				func_call.arguments(),
@@ -573,6 +592,26 @@ EvalResult Evaluator::evaluate_function_call_with_outer_bindings(
 	const FunctionDeclarationNode& func_decl = symbol_node.as<FunctionDeclarationNode>();
 	if (!func_decl.is_constexpr() && !func_decl.is_consteval()) {
 		return EvalResult::error("Function in constant expression must be constexpr or consteval: " + std::string(func_name));
+	}
+
+	if (!func_decl.is_static() && context.struct_info) {
+		Token this_token(
+			Token::Type::Identifier,
+			"this"sv,
+			func_call.called_from().line(),
+			func_call.called_from().column(),
+			func_call.called_from().file_index());
+		ExpressionNode this_expr = IdentifierNode(this_token);
+		MemberFunctionCallNode member_call(
+			ASTNode(&this_expr),
+			func_decl,
+			copyCallArguments(func_call.arguments()),
+			func_call.called_from());
+		ExpressionNode member_expr = member_call;
+		if (auto bound_member_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, mutable_bindings)) {
+			return *bound_member_result;
+		}
+		return evaluate_member_function_call(member_call, context);
 	}
 
 	return evaluate_function_call_with_bindings(func_decl, func_call.arguments(), bindings, context);
@@ -947,12 +986,15 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 			context.return_type_info = return_type_info;
 	}
 	context.current_depth++;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &member_bindings;
 	auto result = evaluate_block_with_bindings(
 		definition.value(),
 		member_bindings,
 		context,
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
+	context.local_bindings = saved_local_bindings;
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
@@ -1879,6 +1921,30 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 			return evaluate_member_function_call(legacy_call, context);
 		}
 
+		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
+			function_decl && !function_decl->is_static() && context.struct_info) {
+			Token this_token(
+				Token::Type::Identifier,
+				"this"sv,
+				call_expr->called_from().line(),
+				call_expr->called_from().column(),
+				call_expr->called_from().file_index());
+			ExpressionNode this_expr = IdentifierNode(this_token);
+			MemberFunctionCallNode member_call(
+				ASTNode(&this_expr),
+				*function_decl,
+				copyCallArguments(call_expr->arguments()),
+				call_expr->called_from());
+			ExpressionNode member_expr = member_call;
+			if (auto call_result = try_evaluate_bound_member_operator_call(member_expr, bindings, context, &bindings)) {
+				return *call_result;
+			}
+			if (auto member_call_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, &bindings)) {
+				return *member_call_result;
+			}
+			return evaluate_member_function_call(member_call, context);
+		}
+
 		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
 		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, &bindings);
 	}
@@ -2144,6 +2210,30 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 			return evaluate_member_function_call(legacy_call, context);
 		}
 
+		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
+			function_decl && !function_decl->is_static() && context.struct_info) {
+			Token this_token(
+				Token::Type::Identifier,
+				"this"sv,
+				call_expr->called_from().line(),
+				call_expr->called_from().column(),
+				call_expr->called_from().file_index());
+			ExpressionNode this_expr = IdentifierNode(this_token);
+			MemberFunctionCallNode member_call(
+				ASTNode(&this_expr),
+				*function_decl,
+				copyCallArguments(call_expr->arguments()),
+				call_expr->called_from());
+			ExpressionNode member_expr = member_call;
+			if (auto call_result = try_evaluate_bound_member_operator_call(member_expr, bindings, context, mutable_bindings)) {
+				return *call_result;
+			}
+			if (auto member_call_result = try_evaluate_bound_member_function_call(member_expr, bindings, context, mutable_bindings)) {
+				return *member_call_result;
+			}
+			return evaluate_member_function_call(member_call, context);
+		}
+
 		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
 		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, mutable_bindings);
 	}
@@ -2174,6 +2264,12 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					auto it = bindings.find(member_name);
 					if (it != bindings.end()) {
 						return it->second;  // Return the bound member value
+					}
+					if (const EvalResult* this_binding = findBindingValue("this", bindings, context)) {
+						auto this_member_it = this_binding->object_member_bindings.find(member_name);
+						if (this_member_it != this_binding->object_member_bindings.end()) {
+							return this_member_it->second;
+						}
 					}
 					return EvalResult::error("Member not found in constexpr object: " + std::string(member_name));
 				}
@@ -3427,6 +3523,12 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				}
 				return evaluate_function_call_member_access(func_call, member_name, context);
 			}
+			if (const auto* call_expr = std::get_if<CallExprNode>(&expr_node)) {
+				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
+					return *evaluated_member;
+				}
+				return evaluate_function_call_member_access(*call_expr, member_name, context);
+			}
 		}
 		return EvalResult::error("Complex member access expressions not yet supported in constant expressions");
 	}
@@ -3617,11 +3719,14 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
 		// The initializer may be an ASTNode holding a FunctionCallNode directly,
 		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
-		bool is_func_call = initializer.is<FunctionCallNode>() || initializer.is<MemberFunctionCallNode>();
+		bool is_func_call = initializer.is<FunctionCallNode>() ||
+						   initializer.is<MemberFunctionCallNode>() ||
+						   initializer.is<CallExprNode>();
 		if (!is_func_call && initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr = initializer.as<ExpressionNode>();
 			is_func_call = std::holds_alternative<FunctionCallNode>(expr) ||
-						   std::holds_alternative<MemberFunctionCallNode>(expr);
+						   std::holds_alternative<MemberFunctionCallNode>(expr) ||
+						   std::holds_alternative<CallExprNode>(expr);
 		}
 		if (is_func_call) {
 			auto func_result = evaluate(initializer, context);
@@ -4435,26 +4540,20 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 	const FunctionCallNode& func_call,
 	std::string_view member_name,
 	EvaluationContext& context) {
-	// Get the function declaration to determine return type
-	const DeclarationNode& func_decl_node = func_call.function_declaration();
-	// Convert member_name to StringHandle once for efficient comparison
+	const CallInfo call_info = CallInfo::from(func_call);
+	const DeclarationNode& func_decl_node = *call_info.declaration;
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 
-	// Prefer the declaration already attached to the FunctionCallNode.
-	// This preserves member-vs-global resolution decisions that were already made by the parser.
 	const ASTNode& type_node = func_decl_node.type_node();
 	if (!type_node.is<TypeSpecifierNode>()) {
 		return EvalResult::error("Function return type is not a TypeSpecifierNode");
 	}
 
 	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
-
-	// Get the type name - this should be a struct/class type
 	if (!is_struct_type(return_type.category())) {
 		return EvalResult::error("Function return type is not a struct - cannot access member");
 	}
 
-	// Get the struct type name
 	TypeIndex type_index = return_type.type_index();
 	const TypeInfo* type_info = tryGetTypeInfo(type_index);
 	if (!type_info) {
@@ -4466,7 +4565,38 @@ EvalResult Evaluator::evaluate_function_call_member_access(
 		return EvalResult::error("Return type is not a struct");
 	}
 
-	// Use the helper function to look up and evaluate the static member
+	return evaluate_static_member_from_struct(struct_info, *type_info, member_name_handle, member_name, context);
+}
+
+EvalResult Evaluator::evaluate_function_call_member_access(
+	const CallExprNode& call_expr,
+	std::string_view member_name,
+	EvaluationContext& context) {
+	const CallInfo call_info = CallInfo::from(call_expr);
+	const DeclarationNode& func_decl_node = *call_info.declaration;
+	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
+
+	const ASTNode& type_node = func_decl_node.type_node();
+	if (!type_node.is<TypeSpecifierNode>()) {
+		return EvalResult::error("Function return type is not a TypeSpecifierNode");
+	}
+
+	const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
+	if (!is_struct_type(return_type.category())) {
+		return EvalResult::error("Function return type is not a struct - cannot access member");
+	}
+
+	TypeIndex type_index = return_type.type_index();
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	if (!type_info) {
+		return EvalResult::error("Invalid type index for function return type");
+	}
+
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	if (!struct_info) {
+		return EvalResult::error("Return type is not a struct");
+	}
+
 	return evaluate_static_member_from_struct(struct_info, *type_info, member_name_handle, member_name, context);
 }
 
@@ -4771,6 +4901,8 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 
 	// Increase recursion depth
 	context.current_depth++;
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &member_bindings;
 
 	// Evaluate the function body
 	auto result = evaluate_block_with_bindings(
@@ -4779,6 +4911,7 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		context,
 		"Member function body is not a block",
 		"Constexpr member function did not return a value");
+	context.local_bindings = saved_local_bindings;
 	context.current_depth--;
 	context.return_type_info = saved_return_type_info;
 	context.struct_info = saved_struct_info;
@@ -5330,6 +5463,8 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
+	auto* saved_local_bindings = context.local_bindings;
+	context.local_bindings = &ctor_param_bindings;
 	auto member_bind_result = bind_members_from_constructor_initializers(
 		struct_info,
 		ctor_decl,
@@ -5337,6 +5472,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		member_bindings,
 		context,
 		ignore_default_initializer_errors);
+	context.local_bindings = saved_local_bindings;
 	if (!member_bind_result.success()) {
 		return member_bind_result;
 	}
@@ -5348,7 +5484,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 
 	std::unordered_map<std::string_view, EvalResult> ctor_body_bindings = member_bindings;
 	std::unordered_map<std::string_view, EvalResult> ctor_local_bindings = ctor_param_bindings;
-	auto* saved_local_bindings = context.local_bindings;
+	saved_local_bindings = context.local_bindings;
 	context.local_bindings = &ctor_local_bindings;
 
 	const BlockNode& ctor_body = ctor_definition->as<BlockNode>();

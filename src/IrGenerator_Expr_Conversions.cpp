@@ -2128,6 +2128,21 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return isFunctionDeclNoexcept(func_decl);
 	}
 
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (const FunctionDeclarationNode* func_decl = call_expr->callee().function_declaration_or_null()) {
+			return isFunctionDeclNoexcept(*func_decl);
+		}
+
+		const DeclarationNode& decl = call_expr->callee().declaration();
+		std::string_view func_name = decl.identifier_token().value();
+		extern SymbolTable gSymbolTable;
+		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
+		if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
+			return isFunctionDeclNoexcept(symbol->as<FunctionDeclarationNode>());
+		}
+		return false;
+	}
+
 	// Constructor calls: check if constructor is noexcept
 	if (std::holds_alternative<ConstructorCallNode>(expr)) {
 		// For now, conservatively assume constructors may throw

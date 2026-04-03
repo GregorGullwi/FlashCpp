@@ -468,6 +468,10 @@ public:
 		const FunctionCallNode& func_call,
 		std::string_view member_name,
 		EvaluationContext& context);
+	static EvalResult evaluate_function_call_member_access(
+		const CallExprNode& call_expr,
+		std::string_view member_name,
+		EvaluationContext& context);
 	static EvalResult extract_object_members(
 		const ASTNode& object_expr,
 		std::unordered_map<std::string_view, EvalResult>& member_bindings,

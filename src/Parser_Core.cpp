@@ -281,6 +281,21 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 				collectLambdaCaptureCandidates(inner_node.false_expr(), capture_candidates, uses_implicit_this_capture);
 			} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
 				collectLambdaCaptureCandidates(ASTNode(&inner_node), capture_candidates, uses_implicit_this_capture);
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				if (!inner_node.has_receiver()) {
+					if (const FunctionDeclarationNode* func_decl = inner_node.callee().function_declaration_or_null();
+						func_decl && !func_decl->is_static() && !func_decl->parent_struct_name().empty()) {
+						uses_implicit_this_capture = true;
+					}
+				} else {
+					collectLambdaCaptureCandidates(inner_node.receiver(), capture_candidates, uses_implicit_this_capture);
+				}
+				for (const auto& argument : inner_node.arguments()) {
+					collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
+				}
+				for (const auto& template_arg : inner_node.template_arguments()) {
+					collectLambdaCaptureCandidates(template_arg, capture_candidates, uses_implicit_this_capture);
+				}
 			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
 				for (const auto& argument : inner_node.arguments()) {
 					collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
@@ -317,6 +332,22 @@ void collectLambdaCaptureCandidates(const ASTNode& node,
 		const auto& call = node.as<FunctionCallNode>();
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			collectLambdaCaptureCandidates(call.arguments()[i], capture_candidates, uses_implicit_this_capture);
+		}
+	} else if (node.is<CallExprNode>()) {
+		const auto& call = node.as<CallExprNode>();
+		if (!call.has_receiver()) {
+			if (const FunctionDeclarationNode* func_decl = call.callee().function_declaration_or_null();
+				func_decl && !func_decl->is_static() && !func_decl->parent_struct_name().empty()) {
+				uses_implicit_this_capture = true;
+			}
+		} else {
+			collectLambdaCaptureCandidates(call.receiver(), capture_candidates, uses_implicit_this_capture);
+		}
+		for (const auto& argument : call.arguments()) {
+			collectLambdaCaptureCandidates(argument, capture_candidates, uses_implicit_this_capture);
+		}
+		for (const auto& template_arg : call.template_arguments()) {
+			collectLambdaCaptureCandidates(template_arg, capture_candidates, uses_implicit_this_capture);
 		}
 	} else if (node.is<ReturnStatementNode>()) {
 		const auto& ret = node.as<ReturnStatementNode>();
