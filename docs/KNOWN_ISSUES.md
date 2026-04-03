@@ -3,16 +3,6 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
-## Constexpr pointer: `array_elements` field reused for pointer value snapshot
-
-`EvalResult::array_elements` is semantically defined for array support, but
-is also used to carry the pointer value snapshot (at most one element) when
-`pointer_to_var.isValid()`. Code that reads `array_elements` while also
-checking `is_array` is safe; code that reads it based only on emptiness should
-also check `!pointer_to_var.isValid()` to avoid misinterpreting a pointer
-snapshot as array data. A dedicated `pointer_value_snapshot` field would be
-the long-term fix (tracked as tech debt).
-
 ## `constexpr`/`consteval` enforcement — partially implemented
 
 C++20 requires that a `constexpr` variable's initializer be a constant expression;

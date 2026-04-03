@@ -490,19 +490,19 @@ void refreshPointerSnapshotsForBindingInMap(
 		}
 
 		if (target_value.is_array) {
-			binding_value.array_elements.clear();
+			binding_value.pointer_value_snapshot.clear();
 			if (!target_value.array_elements.empty()) {
-				binding_value.array_elements = target_value.array_elements;
+				binding_value.pointer_value_snapshot = target_value.array_elements;
 			} else {
-				binding_value.array_elements.reserve(target_value.array_values.size());
+				binding_value.pointer_value_snapshot.reserve(target_value.array_values.size());
 				for (int64_t element_value : target_value.array_values) {
-					binding_value.array_elements.push_back(EvalResult::from_int(element_value));
+					binding_value.pointer_value_snapshot.push_back(EvalResult::from_int(element_value));
 				}
 			}
 			continue;
 		}
 
-		binding_value.array_elements = {target_value};
+		binding_value.pointer_value_snapshot = {target_value};
 	}
 }
 
@@ -1862,7 +1862,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
-						ptr_result.array_elements = {*snap};
+						ptr_result.pointer_value_snapshot = {*snap};
 					return ptr_result;
 				}
 				// &arr[i]: address of array element → pointer with offset.
@@ -1880,7 +1880,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
 							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.array_elements = {arr_eval->array_elements[idx]};
+								ptr_result.pointer_value_snapshot = {arr_eval->array_elements[idx]};
 						}
 						return ptr_result;
 					}
@@ -2078,7 +2078,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 					// different scope (e.g., when passed as an argument to another function).
 					const EvalResult* snap = findBindingValue(simple_name, bindings, context);
 					if (snap)
-						ptr_result.array_elements = {*snap};
+						ptr_result.pointer_value_snapshot = {*snap};
 					return ptr_result;
 				}
 				// &arr[i]: address of array element → pointer with offset.
@@ -2096,7 +2096,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 						if (arr_eval && arr_eval->is_array && elem_offset >= 0) {
 							size_t idx = static_cast<size_t>(elem_offset);
 							if (!arr_eval->array_elements.empty() && idx < arr_eval->array_elements.size())
-								ptr_result.array_elements = {arr_eval->array_elements[idx]};
+								ptr_result.pointer_value_snapshot = {arr_eval->array_elements[idx]};
 						}
 						return ptr_result;
 					}
@@ -2221,10 +2221,8 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 													 "' not found at offset " + std::to_string(ptr_eval.pointer_offset));
 						}
 						// Check snapshot first (covers pointers to local / outer-scope variables).
-						// Note: array_elements[0] holds the pointed-to value snapshot (see KNOWN_ISSUES.md,
-						// "array_elements field reused for pointer value snapshot").
-						if (!ptr_eval.array_elements.empty()) {
-							const EvalResult& snapshot = ptr_eval.array_elements[0];
+						if (!ptr_eval.pointer_value_snapshot.empty()) {
+							const EvalResult& snapshot = ptr_eval.pointer_value_snapshot[0];
 							auto member_it = snapshot.object_member_bindings.find(member_name);
 							if (member_it != snapshot.object_member_bindings.end()) {
 								return member_it->second;

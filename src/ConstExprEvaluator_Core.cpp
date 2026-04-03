@@ -747,26 +747,26 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		}
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
-	// For scalar pointers: array_elements = {pointed_value}, offset = 0.
-	// For array pointers/materialized member-array pointers, array_elements may
+	// For scalar pointers: pointer_value_snapshot = {pointed_value}, offset = 0.
+	// For array pointers/materialized member-array pointers, pointer_value_snapshot may
 	// contain the full array snapshot so the current offset can still be applied
 	// after the original binding has gone out of scope.
-	if (!ptr.array_elements.empty()) {
+	if (!ptr.pointer_value_snapshot.empty()) {
 		if (offset < 0) {
 			return EvalResult::error("Negative pointer offset in dereference");
 		}
 		size_t idx = static_cast<size_t>(offset);
-		if (ptr.array_elements.size() == 1) {
+		if (ptr.pointer_value_snapshot.size() == 1) {
 			// Single-element snapshot (e.g., &arr[i] stored only element i).
 			if (idx != 0) {
 				return EvalResult::error("Array index out of bounds in constant expression");
 			}
-			return ptr.array_elements[0];
+			return ptr.pointer_value_snapshot[0];
 		}
-		if (idx >= ptr.array_elements.size()) {
+		if (idx >= ptr.pointer_value_snapshot.size()) {
 			return EvalResult::error("Array index out of bounds in constant expression");
 		}
-		return ptr.array_elements[idx];
+		return ptr.pointer_value_snapshot[idx];
 	}
 	return dereference_constexpr_pointer(var_name, context, offset);
 }
