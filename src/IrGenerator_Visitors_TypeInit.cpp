@@ -357,22 +357,17 @@ void AstToIr::generateStaticMemberDeclarations() {
 		};
 
 		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
-			if (!current.is<ExpressionNode>()) {
-				return false;
-			}
-
-			const ExpressionNode& expr = current.as<ExpressionNode>();
-			if (std::holds_alternative<SizeofPackNode>(expr) ||
-				std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
+			if (current.is<SizeofPackNode>() || current.is<TemplateParameterReferenceNode>()) {
 				return true;
 			}
 
-			if (const auto* identifier = std::get_if<IdentifierNode>(&expr)) {
-				if (global_symbol_table_->lookup(identifier->name()).has_value()) {
+			if (current.is<IdentifierNode>()) {
+				const auto& identifier = current.as<IdentifierNode>();
+				if (global_symbol_table_->lookup(identifier.name()).has_value()) {
 					return false;
 				}
 
-				StringHandle member_name_handle = identifier->getOrInternNameHandle();
+				StringHandle member_name_handle = identifier.getOrInternNameHandle();
 				if (owner_struct != nullptr &&
 					owner_struct->findStaticMemberRecursive(member_name_handle).first != nullptr) {
 					return false;
@@ -381,12 +376,14 @@ void AstToIr::generateStaticMemberDeclarations() {
 				return true;
 			}
 
-			if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&expr)) {
-				return sizeof_expr->is_type() && isDependentTypeOperand(sizeof_expr->type_or_expr());
+			if (current.is<SizeofExprNode>()) {
+				const auto& sizeof_expr = current.as<SizeofExprNode>();
+				return sizeof_expr.is_type() && isDependentTypeOperand(sizeof_expr.type_or_expr());
 			}
 
-			if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&expr)) {
-				return alignof_expr->is_type() && isDependentTypeOperand(alignof_expr->type_or_expr());
+			if (current.is<AlignofExprNode>()) {
+				const auto& alignof_expr = current.as<AlignofExprNode>();
+				return alignof_expr.is_type() && isDependentTypeOperand(alignof_expr.type_or_expr());
 			}
 
 			return false;
@@ -631,10 +628,32 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Generate static members that this struct directly owns
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
+				if (gTemplateRegistry.isClassTemplate(type_name) && !type_info->isTemplateInstantiation()) {
+					bool has_instantiated_owner = false;
+					for (const auto& [candidate_name, candidate_type] : getTypesByNameMap()) {
+						if (candidate_name == type_name || !candidate_type->isTemplateInstantiation() ||
+							candidate_type->baseTemplateName() != type_name) {
+							continue;
+						}
+						if (const StructTypeInfo* candidate_struct = candidate_type->getStructInfo();
+							candidate_struct && candidate_struct->findStaticMember(static_member.getName()) != nullptr) {
+							has_instantiated_owner = true;
+							break;
+						}
+					}
+					if (has_instantiated_owner) {
+						FLASH_LOG(Codegen, Debug, "Skipping template-pattern static member '",
+								  static_member.getName(), "' in type '", type_name,
+								  "' because an instantiated owner already exists");
+						continue;
+					}
+				}
+
 				// Skip static members with unsubstituted template-dependent initializers.
 				// These belong to the template pattern and should only be emitted for
 				// fully instantiated owners.
-				if (static_member.initializer.has_value() &&
+				if (!type_info->isTemplateInstantiation() &&
+					static_member.initializer.has_value() &&
 					hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
 					FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
 							  "' with unsubstituted template-dependent initializer in type '", type_name, "'");
