@@ -359,8 +359,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						member_name,
 						substituted_template_args);
 				}
-			}
-			if (!qualified_name.empty()) {
 				if (!instantiated_template.has_value()) {
 					instantiated_template = parser_.try_instantiate_template_explicit(qualified_name, substituted_template_args);
 				}

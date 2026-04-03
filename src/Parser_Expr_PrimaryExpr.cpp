@@ -5443,8 +5443,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													if (auto member_inst = try_instantiate_member_function_template_explicit(
 															struct_name,
 															identifier_token.value(),
-															*effective_template_args);
-														member_inst.has_value()) {
+															*effective_template_args)) {
 														return member_inst;
 													}
 												}
@@ -5506,13 +5505,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											}
 										};
 										if (resolved_as_struct_member) {
+											std::string_view struct_name_for_qual;
 											if (!member_function_context_stack_.empty()) {
-												set_current_struct_qualified_name(
-													StringTable::getStringView(member_function_context_stack_.back().struct_name));
+												struct_name_for_qual =
+													StringTable::getStringView(member_function_context_stack_.back().struct_name);
 											} else if (!struct_parsing_context_stack_.empty()) {
-												set_current_struct_qualified_name(
-													struct_parsing_context_stack_.back().struct_name);
+												struct_name_for_qual =
+													struct_parsing_context_stack_.back().struct_name;
 											}
+											set_current_struct_qualified_name(struct_name_for_qual);
 										}
 
 										// Copy mangled name if available
