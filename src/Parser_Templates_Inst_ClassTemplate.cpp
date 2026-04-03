@@ -995,6 +995,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituted_type_spec;
 	};
 
+	auto instantiateAndResolveBaseName = [&](
+		std::string_view base_template_name,
+		const std::vector<TemplateTypeArg>& base_args,
+		bool force_eager_instantiation) -> std::string_view {
+		auto result = try_instantiate_class_template(base_template_name, base_args, force_eager_instantiation);
+		if (result.has_value() && result->is<StructDeclarationNode>()) {
+			ast_nodes_.push_back(*result);
+		}
+		std::string_view resolved_name = get_instantiated_class_name(base_template_name, base_args);
+		if ((!result.has_value() || !result->is<StructDeclarationNode>()) && !base_template_name.empty()) {
+			auto registry_hit = gTemplateRegistry.getInstantiation(
+				StringTable::getOrInternStringHandle(base_template_name), base_args);
+			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+				resolved_name = StringTable::getStringView(
+					registry_hit->as<StructDeclarationNode>().name());
+			}
+		}
+		return resolved_name;
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -1502,23 +1522,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					FLASH_LOG(Templates, Debug, "Base class instantiation: ", base_template_name, " with ", base_template_args.size(), " args");
-
-					// Instantiate the base template (may be empty specialization like Tuple<>)
-					auto base_instantiated = try_instantiate_class_template(base_template_name, base_template_args);
-					if (base_instantiated.has_value()) {
-						// Add the base class instantiation to the AST so its constructors get generated
-						ast_nodes_.push_back(*base_instantiated);
-					}
-
-					// Get the instantiated name
-					std::string_view resolved_base_name = get_instantiated_class_name(base_template_name, base_template_args);
-					if ((!base_instantiated.has_value() || !base_instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
-						base_instantiated = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), base_template_args);
-					}
-					if (base_instantiated.has_value() && base_instantiated->is<StructDeclarationNode>()) {
-						resolved_base_name = StringTable::getStringView(base_instantiated->as<StructDeclarationNode>().name());
-					}
-					base_name_str = std::string(resolved_base_name);
+					base_name_str = std::string(instantiateAndResolveBaseName(base_template_name, base_template_args, false));
 					FLASH_LOG(Templates, Debug, "Base class resolved to: ", base_name_str);
 				}
 
@@ -1686,18 +1690,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						continue;
 					}
 
-					// Instantiate the base template with resolved args
-					auto base_node = try_instantiate_class_template(base_tpl_name, resolved_args, true);
-					if (base_node.has_value() && base_node->is<StructDeclarationNode>()) {
-						ast_nodes_.push_back(*base_node);
-					}
-					std::string_view base_inst_name = get_instantiated_class_name(base_tpl_name, resolved_args);
-					if ((!base_node.has_value() || !base_node->is<StructDeclarationNode>()) && !base_tpl_name.empty()) {
-						base_node = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_tpl_name), resolved_args);
-					}
-					if (base_node.has_value() && base_node->is<StructDeclarationNode>()) {
-						base_inst_name = StringTable::getStringView(base_node->as<StructDeclarationNode>().name());
-					}
+					std::string_view base_inst_name = instantiateAndResolveBaseName(base_tpl_name, resolved_args, true);
 					StringHandle base_inst_handle = StringTable::getOrInternStringHandle(base_inst_name);
 					auto base_it = getTypesByNameMap().find(base_inst_handle);
 					if (base_it != getTypesByNameMap().end()) {
@@ -3623,19 +3616,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									(!resolved_struct_info || !resolved_struct_info->total_size.is_set())) {
 									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
-									auto instantiated = try_instantiate_class_template(base_template_name, instantiated_args);
-									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										ast_nodes_.push_back(*instantiated);
-									}
-									std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
-									// Registry fallback: only used for name resolution (the node was already
-									// pushed to ast_nodes_ during its original instantiation).
-									if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
-										auto registry_hit = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
-										if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
-											inst_name = StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
-										}
-									}
+									std::string_view inst_name = instantiateAndResolveBaseName(base_template_name, instantiated_args, false);
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 									if (inst_it != getTypesByNameMap().end()) {
 										TemplateTypeArg inst_arg;
