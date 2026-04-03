@@ -6,6 +6,9 @@
 
 ParseResult Parser::parse_expression(int precedence, ExpressionContext context) {
 	static thread_local int recursion_depth = 0;
+	// Flat binary chains and simple unary prefixes no longer recurse/iterate artificially,
+	// so this guard only needs to catch genuinely pathological nesting such as very deep
+	// parenthesized/sub-expression recursion while staying comfortably above real tests.
 	constexpr int MAX_RECURSION_DEPTH = 2048;
 
 	// RAII guard to ensure recursion_depth is decremented on all exit paths
@@ -236,7 +239,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		return result;
 	}
 
-	auto isSameTokenPosition = [](const Token& lhs, const Token& rhs) {
+	auto isIdenticalToken = [](const Token& lhs, const Token& rhs) {
 		return lhs.type() == rhs.type() &&
 			   lhs.value() == rhs.value() &&
 			   lhs.line() == rhs.line() &&
@@ -245,9 +248,10 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 	};
 
 	auto makeBinaryLoopStallError = [&]() {
-		FLASH_LOG(Parser, Error, "parse_expression binary operator loop stalled at token '", peek_info().value(),
-				  "' on line ", peek_info().line(), " column ", peek_info().column());
-		return ParseResult::error("Parser error: stalled while parsing binary expression", current_token_);
+		Token stalled_token = peek_info();
+		FLASH_LOG(Parser, Error, "parse_expression binary operator loop stalled at token '", stalled_token.value(),
+				  "' on line ", stalled_token.line(), " column ", stalled_token.column());
+		return ParseResult::error("Parser error: stalled while parsing binary expression", stalled_token);
 	};
 	while (true) {
 		// Safety check: ensure we have a token to examine
@@ -493,7 +497,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
 						}
 						result = ParseResult::success(call_node);
-						if (isSameTokenPosition(loop_start_token, peek_info())) {
+						if (isIdenticalToken(loop_start_token, peek_info())) {
 							return makeBinaryLoopStallError();
 						}
 						continue;
@@ -502,7 +506,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 					// Not a function call - just a qualified identifier access
 					auto ident_node = emplace_node<ExpressionNode>(IdentifierNode(member_token));
 					result = ParseResult::success(ident_node);
-					if (isSameTokenPosition(loop_start_token, peek_info())) {
+					if (isIdenticalToken(loop_start_token, peek_info())) {
 						return makeBinaryLoopStallError();
 					}
 					continue;
@@ -512,7 +516,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// will handle function calls with template arguments. We just needed to prevent
 				// the binary operator loop from consuming '<' as a comparison operator.
 				// Continue to the next iteration to let postfix operators handle this.
-				if (isSameTokenPosition(loop_start_token, peek_info())) {
+				if (isIdenticalToken(loop_start_token, peek_info())) {
 					return makeBinaryLoopStallError();
 				}
 				continue;
@@ -707,7 +711,7 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				// Create the binary operation and update the result
 				auto binary_op = emplace_node<ExpressionNode>(binary_operator_node);
 				result = ParseResult::success(binary_op);
-				if (isSameTokenPosition(loop_start_token, peek_info())) {
+				if (isIdenticalToken(loop_start_token, peek_info())) {
 					return makeBinaryLoopStallError();
 				}
 			}

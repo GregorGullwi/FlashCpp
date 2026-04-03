@@ -947,7 +947,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 	};
 
 	std::vector<Token> pending_unary_ops;
-	pending_unary_ops.reserve(8);
+	pending_unary_ops.reserve(256);
 	std::optional<Token> identity_prefix_token;
 	while (true) {
 		if (current_token_.type() == Token::Type::Identifier) {
