@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -49,18 +50,21 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 		return false;
 	}
 
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	if (CallInfo::tryFrom(expr).has_value()) {
+		return true;
+	}
+
 	return std::visit([](const auto& expr) -> bool {
 		using T = std::decay_t<decltype(expr)>;
 		return std::is_same_v<T, ConstructorCallNode> ||
 			   std::is_same_v<T, InitializerListConstructionNode> ||
-			   std::is_same_v<T, FunctionCallNode> ||
-			   std::is_same_v<T, MemberFunctionCallNode> ||
 			   std::is_same_v<T, StaticCastNode> ||
 			   std::is_same_v<T, ConstCastNode> ||
 			   std::is_same_v<T, ReinterpretCastNode> ||
 			   std::is_same_v<T, DynamicCastNode>;
 	},
-					  node.as<ExpressionNode>());
+					  expr);
 }
 
 } // namespace
@@ -1005,8 +1009,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		bool is_function_call = false;
 		if (init_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = init_node.as<ExpressionNode>();
-			is_function_call = std::holds_alternative<FunctionCallNode>(expr) ||
-							   std::holds_alternative<MemberFunctionCallNode>(expr);
+			is_function_call = CallInfo::tryFrom(expr).has_value();
 		}
 
 		if (is_function_call) {

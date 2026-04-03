@@ -1,4 +1,5 @@
 ﻿#include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -906,7 +907,7 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 				// IMPORTANT: If followed by '...', this is pack expansion, NOT a type - accept as dependent expression
 					bool is_simple_identifier = std::holds_alternative<IdentifierNode>(expr) ||
 												std::holds_alternative<TemplateParameterReferenceNode>(expr);
-					[[maybe_unused]] bool is_function_call_expr = std::holds_alternative<FunctionCallNode>(expr);
+					[[maybe_unused]] bool is_function_call_expr = CallInfo::tryFrom(expr).has_value();
 					bool followed_by_template_args = peek() == "<"_tok;
 					bool followed_by_array_declarator = peek() == "["_tok;
 					bool followed_by_pack_expansion = peek() == "..."_tok;
@@ -950,15 +951,15 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 									}
 								}
 							}
-						} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-						// FunctionCallNode represents a function call expression like test_func<T>()
+						} else if (CallInfo::tryFrom(expr).has_value()) {
+						// Call expressions represent a function call expression like test_func<T>()
 						// This is NOT a type - it's a non-type template argument (the result of calling a function)
-						// Previously this code incorrectly treated FunctionCallNode with template arguments as a type,
+						// Previously this code incorrectly treated call expressions with template arguments as a type,
 						// but that was wrong. A function call with template arguments (e.g., test_func<T>()) is still
 						// a function call, not a type. The function returns a value, and that value is used as
 						// the non-type template argument.
 						// DO NOT set is_concrete_type = true here - let it be accepted as a dependent expression.
-							FLASH_LOG(Templates, Debug, "FunctionCallNode - treating as function call expression, not a type");
+							FLASH_LOG(Templates, Debug, "Call expression - treating as function call expression, not a type");
 						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						// QualifiedIdentifierNode can represent a namespace-qualified type like ns::Inner
 						// or a template instantiation like ns::Inner<int> (when the template has already been

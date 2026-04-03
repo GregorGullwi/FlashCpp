@@ -921,12 +921,15 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 						collectLazyStaticDependencies(ternary->false_expr());
 						return;
 					}
-					if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-						for (const auto& arg : func_call->arguments()) {
+					if (const auto call_info = CallInfo::tryFrom(expr)) {
+						if (call_info->has_receiver) {
+							collectLazyStaticDependencies(call_info->receiver);
+						}
+						for (const auto& arg : *call_info->arguments) {
 							collectLazyStaticDependencies(arg);
 						}
-						if (func_call->has_template_arguments()) {
-							for (const auto& template_arg : func_call->template_arguments()) {
+						if (call_info->template_arguments) {
+							for (const auto& template_arg : *call_info->template_arguments) {
 								collectLazyStaticDependencies(template_arg);
 							}
 						}
@@ -940,13 +943,6 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 					}
 					if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
 						collectLazyStaticDependencies(member_access->object());
-						return;
-					}
-					if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-						collectLazyStaticDependencies(member_call->object());
-						for (const auto& arg : member_call->arguments()) {
-							collectLazyStaticDependencies(arg);
-						}
 						return;
 					}
 					if (const auto* array_sub = std::get_if<ArraySubscriptNode>(&expr)) {
