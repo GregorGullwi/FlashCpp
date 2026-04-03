@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -492,9 +493,11 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 						}
 
 						auto call_node = emplace_node<ExpressionNode>(
-							FunctionCallNode(*decl_ptr, std::move(args_result.args), member_token));
+							func_decl_ptr
+								? makeResolvedCallExpr(*func_decl_ptr, std::move(args_result.args), member_token)
+								: makeDirectCallExpr(*decl_ptr, std::move(args_result.args), member_token));
 						if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
-							std::get<FunctionCallNode>(call_node.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+							setCallMangledName(call_node.as<ExpressionNode>(), func_decl_ptr->mangled_name());
 						}
 						result = ParseResult::success(call_node);
 						if (isParserAtSameToken(loop_start_token, peek_info())) {

@@ -79,6 +79,9 @@ public:
 	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
 		return unresolved_call_args_.count(call) > 0;
 	}
+	bool hasUnresolvedCallArgs(const CallExprNode* call) const {
+		return unresolved_call_args_.count(call) > 0;
+	}
 
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
 	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
@@ -92,8 +95,10 @@ public:
 	// Look up the pre-resolved callable operator() for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
 	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
+	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
 	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
+	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
 
 	// Look up the pre-resolved ordinary direct-call target for a FunctionCallNode.
 	// Returns nullptr when no annotation was stored (e.g. operator() call or unresolvable).
@@ -222,6 +227,7 @@ private:
 
 	// Annotate function-call arguments with their parameter-type conversions.
 	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+	void tryAnnotateCallArgConversions(const CallExprNode& call_node);
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
 	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
@@ -236,6 +242,10 @@ private:
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
 																			const TypeSpecifierNode& param_type,
 																			const char* context_description);
+	void annotateResolvedCallArgConversions(const void* call_key,
+											const ChunkedVector<ASTNode>& arguments,
+											const FunctionDeclarationNode& func_decl,
+											const char* context_description);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -252,6 +262,7 @@ private:
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.
 	void tryResolveCallableOperator(const FunctionCallNode& call_node);
+	void tryResolveCallableOperator(const CallExprNode& call_node);
 
 	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
@@ -298,9 +309,8 @@ private:
 
 	// Side table: FunctionCallNode pointer → resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
-	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
-	std::unordered_map<const FunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> function_call_ref_bindings_;
-	std::unordered_map<const MemberFunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> member_call_ref_bindings_;
+	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
+	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 
 	// Side table: FunctionCallNode pointer → resolved ordinary direct-call target.
 	// Populated by tryAnnotateCallArgConversions for non-operator() direct calls.
@@ -320,7 +330,7 @@ private:
 	// Track FunctionCallNode pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members
 	// whose DeclarationNode addresses differ from the call's stored decl).
-	std::unordered_set<const FunctionCallNode*> unresolved_call_args_;
+	std::unordered_set<const void*> unresolved_call_args_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;

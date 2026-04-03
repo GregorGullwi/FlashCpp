@@ -275,6 +275,26 @@ ASTNode Parser::substituteTemplateParameters(
 			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
 		} else if (std::holds_alternative<FunctionCallNode>(expr)) {
 			return substituteFunctionCallWithExpressionSubstitutor(std::get<FunctionCallNode>(expr));
+		} else if (std::holds_alternative<CallExprNode>(expr)) {
+			const CallExprNode& call = std::get<CallExprNode>(expr);
+			ASTNode substituted_receiver;
+			if (call.has_receiver()) {
+				substituted_receiver = substituteTemplateParameters(call.receiver(), template_params, template_args);
+			}
+			ChunkedVector<ASTNode> substituted_args;
+			for (const auto& arg : call.arguments()) {
+				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
+			}
+			CallExprNode substituted_call = call.has_receiver()
+				? CallExprNode(call.callee(), substituted_receiver, std::move(substituted_args), call.called_from())
+				: CallExprNode(call.callee(), std::move(substituted_args), call.called_from());
+			copyCallMetadataWithTransformedTemplateArguments(
+				substituted_call,
+				call,
+				[&](const ASTNode& template_arg) {
+					return substituteTemplateParameters(template_arg, template_params, template_args);
+				});
+			return emplace_node<ExpressionNode>(substituted_call);
 		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
 			const MemberAccessNode& member_access = *member_access_ptr;
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
@@ -844,6 +864,28 @@ ASTNode Parser::substituteTemplateParameters(
 				MemberFunctionCallNode(substituted_object,
 									   const_cast<FunctionDeclarationNode&>(member_call.function_declaration()),
 									   std::move(substituted_args), member_call.called_from()));
+		}
+
+		if (std::holds_alternative<CallExprNode>(expr)) {
+			const CallExprNode& call = std::get<CallExprNode>(expr);
+			ASTNode substituted_receiver;
+			if (call.has_receiver()) {
+				substituted_receiver = substituteTemplateParameters(call.receiver(), template_params, template_args);
+			}
+			ChunkedVector<ASTNode> substituted_args;
+			for (const auto& arg : call.arguments()) {
+				substituteArgWithPackExpansion(arg, template_params, template_args, substituted_args);
+			}
+			CallExprNode substituted_call = call.has_receiver()
+				? CallExprNode(call.callee(), substituted_receiver, std::move(substituted_args), call.called_from())
+				: CallExprNode(call.callee(), std::move(substituted_args), call.called_from());
+			copyCallMetadataWithTransformedTemplateArguments(
+				substituted_call,
+				call,
+				[&](const ASTNode& template_arg) {
+					return substituteTemplateParameters(template_arg, template_params, template_args);
+				});
+			return emplace_node<ExpressionNode>(substituted_call);
 		}
 
 		// For other expression types that don't contain subexpressions, return as-is

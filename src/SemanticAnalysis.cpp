@@ -2113,6 +2113,18 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				for (const auto& arg : e.arguments()) {
 					normalizeExpression(arg, ctx);
 				}
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				tryAnnotateCallArgConversions(e);
+				tryResolveCallableOperator(e);
+				if (e.has_receiver()) {
+					normalizeExpression(e.receiver(), ctx);
+				}
+				for (const auto& template_arg : e.template_arguments()) {
+					normalizeExpression(template_arg, ctx);
+				}
+				for (const auto& arg : e.arguments()) {
+					normalizeExpression(arg, ctx);
+				}
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				tryResolveSubscriptOperator(e);
 				// If sema resolved this subscript to operator[], annotate the index
@@ -2231,20 +2243,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				if (e.expression().has_value()) {
 					normalizeExpression(*e.expression(), ctx);
 				}
-			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// TODO(call-node-consolidation): add tryAnnotateCallArgConversions /
-				// tryResolveCallableOperator equivalents once CallExprNode is emitted.
-				// Recurse into receiver, template arguments, and arguments
-				// like the other call nodes.
-				if (e.has_receiver()) {
-					normalizeExpression(e.receiver(), ctx);
-				}
-				for (const auto& template_arg : e.template_arguments()) {
-					normalizeExpression(template_arg, ctx);
-				}
-				for (const auto& arg : e.arguments()) {
-					normalizeExpression(arg, ctx);
-				}
 			}
 			// Leaf nodes (IdentifierNode, QualifiedIdentifierNode, StringLiteralNode,
 			// NumericLiteralNode, BoolLiteralNode, SizeofPackNode, OffsetofExprNode,
@@ -2303,6 +2301,30 @@ CanonicalTypeId SemanticAnalysis::canonicalizeType(const TypeSpecifierNode& type
 		desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
 	}
 
+	if (type.type_index().is_valid()) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(type.type_index());
+		if (alias_info.terminal_type_info && alias_info.terminal_type_info->isTypeAlias()) {
+			// Keep walking through aliases until we reach the concrete terminal type.
+			desc.type_index = alias_info.terminal_type_info->type_index_;
+		} else if (alias_info.terminal_type_info) {
+			desc.type_index = alias_info.terminal_type_info->type_index_;
+		}
+		for (size_t i = 0; i < alias_info.pointer_depth; ++i) {
+			desc.pointer_levels.push_back(PointerLevel{CVQualifier::None});
+		}
+		if (desc.ref_qualifier == ReferenceQualifier::None &&
+			alias_info.reference_qualifier != ReferenceQualifier::None) {
+			desc.ref_qualifier = alias_info.reference_qualifier;
+		}
+		if (desc.array_dimensions.empty() && !alias_info.array_dimensions.empty()) {
+			desc.array_dimensions = alias_info.array_dimensions;
+		}
+		if (!desc.function_signature.has_value() && alias_info.function_signature.has_value()) {
+			desc.function_signature = alias_info.function_signature;
+			desc.flags = desc.flags | CanonicalTypeFlags::IsFunctionType;
+		}
+	}
+
 	auto id = type_context_.intern(desc);
 	stats_.canonical_types_interned++;
 	return id;
@@ -2352,22 +2374,35 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const Fun
 	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExprNode* key) const {
+	auto it = op_call_table_.find(key);
+	return it != op_call_table_.end() ? it->second : nullptr;
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
 	auto it = op_subscript_table_.find(key);
 	return it != op_subscript_table_.end() ? it->second : nullptr;
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const {
-	auto it = function_call_ref_bindings_.find(key);
-	if (it == function_call_ref_bindings_.end() || arg_index >= it->second.size()) {
+	auto it = call_ref_bindings_.find(key);
+	if (it == call_ref_bindings_.end() || arg_index >= it->second.size()) {
 		return nullptr;
 	}
 	return &it->second[arg_index];
 }
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const {
-	auto it = member_call_ref_bindings_.find(key);
-	if (it == member_call_ref_bindings_.end() || arg_index >= it->second.size()) {
+	auto it = call_ref_bindings_.find(key);
+	if (it == call_ref_bindings_.end() || arg_index >= it->second.size()) {
+		return nullptr;
+	}
+	return &it->second[arg_index];
+}
+
+const CallArgReferenceBindingInfo* SemanticAnalysis::getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const {
+	auto it = call_ref_bindings_.find(key);
+	if (it == call_ref_bindings_.end() || arg_index >= it->second.size()) {
 		return nullptr;
 	}
 	return &it->second[arg_index];
@@ -2902,8 +2937,21 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				desc.type_index = nativeTypeIndex(TypeCategory::Void);
 				return type_context_.intern(desc);
 			} else if constexpr (std::is_same_v<T, CallExprNode>) {
-				// Infer return type from the callee's declaration,
-				// mirroring the FunctionCallNode handler above.
+				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
+					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
+					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+					}
+				}
+
+				tryResolveCallableOperator(e);
+				if (const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e)) {
+					const ASTNode resolved_return_type = resolved_callable->decl_node().type_node();
+					if (resolved_return_type.has_value() && resolved_return_type.is<TypeSpecifierNode>()) {
+						return canonicalizeType(resolved_return_type.as<TypeSpecifierNode>());
+					}
+				}
+
 				const DeclarationNode& decl = e.callee().declaration();
 				const ASTNode ret_type_node = decl.type_node();
 				if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
@@ -3872,6 +3920,101 @@ void SemanticAnalysis::tryResolveCallableOperator(const FunctionCallNode& call_n
 					 best_match->parameter_nodes().size());
 }
 
+void SemanticAnalysis::tryResolveCallableOperator(const CallExprNode& call_node) {
+	if (call_node.has_receiver())
+		return;
+
+	const DeclarationNode& callee_decl = call_node.callee().declaration();
+	const StringHandle callee_name = callee_decl.identifier_token().handle();
+	if (!callee_name.isValid())
+		return;
+
+	const CanonicalTypeId callee_type_id = lookupLocalType(callee_name);
+	if (!callee_type_id)
+		return;
+
+	const CanonicalTypeDesc& callee_desc = type_context_.get(callee_type_id);
+	if (callee_desc.category() != TypeCategory::Struct)
+		return;
+	const TypeInfo* callee_type_info = tryGetTypeInfo(callee_desc.type_index);
+	if (!callee_type_info)
+		return;
+
+	const StructTypeInfo* struct_info = callee_type_info->getStructInfo();
+	if (!struct_info)
+		return;
+
+	const size_t arg_count = call_node.arguments().size();
+	std::vector<ASTNode> candidates;
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.operator_kind != OverloadableOperator::Call)
+			continue;
+		if (!member_func.function_decl.is<FunctionDeclarationNode>())
+			continue;
+		candidates.push_back(member_func.function_decl);
+	}
+	if (candidates.empty())
+		return;
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(arg_count);
+	bool all_types_known = true;
+	for (const ASTNode& arg : call_node.arguments()) {
+		const CanonicalTypeId arg_type_id = inferExpressionType(arg);
+		if (arg_type_id) {
+			arg_types.push_back(materializeTypeSpecifier(type_context_.get(arg_type_id)));
+		} else {
+			all_types_known = false;
+			break;
+		}
+	}
+
+	const FunctionDeclarationNode* best_match = nullptr;
+	bool explicitly_ambiguous = false;
+	if (all_types_known) {
+		const OverloadResolutionResult result = resolve_overload(candidates, arg_types);
+		if (result.has_match && !result.is_ambiguous) {
+			best_match = &result.selected_overload->as<FunctionDeclarationNode>();
+		}
+		if (result.is_ambiguous) {
+			explicitly_ambiguous = true;
+		}
+	}
+
+	if (!best_match && !explicitly_ambiguous) {
+		const FunctionDeclarationNode* default_argument_match = nullptr;
+		bool default_argument_match_ambiguous = false;
+		for (const auto& candidate_node : candidates) {
+			const auto& candidate = candidate_node.as<FunctionDeclarationNode>();
+			if (!candidate.is_variadic() && candidate.parameter_nodes().size() == arg_count) {
+				best_match = &candidate;
+				break;
+			}
+			if (!callableOperatorAcceptsArgumentCount(candidate, arg_count))
+				continue;
+			if (!default_argument_match) {
+				default_argument_match = &candidate;
+			} else {
+				default_argument_match_ambiguous = true;
+			}
+		}
+		if (!best_match) {
+			best_match = default_argument_match_ambiguous ? nullptr : default_argument_match;
+		}
+	}
+
+	if (!best_match)
+		return;
+
+	op_call_table_[&call_node] = best_match;
+	stats_.op_calls_resolved++;
+
+	FLASH_LOG_FORMAT(General, Debug,
+					 "SemanticAnalysis: resolved operator() for '{}' -> {} params",
+					 callee_decl.identifier_token().value(),
+					 best_match->parameter_nodes().size());
+}
+
 void SemanticAnalysis::tryResolveSubscriptOperator(const ArraySubscriptNode& subscript_node) {
 	// Determine whether the array expression has struct type (no pointer, no array dims).
 	const CanonicalTypeId object_type_id = inferExpressionType(subscript_node.array_expr());
@@ -4062,6 +4205,45 @@ void SemanticAnalysis::tryAnnotateSingleArgConversion(const ASTNode& arg,
 
 // --- Function call argument conversion annotation ---
 
+void SemanticAnalysis::annotateResolvedCallArgConversions(const void* call_key,
+														  const ChunkedVector<ASTNode>& arguments,
+														  const FunctionDeclarationNode& func_decl,
+														  const char* context_description) {
+	if (func_decl.is_variadic())
+		return;
+
+	const auto& param_nodes = func_decl.parameter_nodes();
+	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size())
+		return;
+
+	auto& ref_bindings = call_ref_bindings_[call_key];
+	ref_bindings.clear();
+	ref_bindings.resize(arguments.size());
+
+	for (size_t i = 0; i < arguments.size(); ++i) {
+		const ASTNode& arg = arguments[i];
+		if (!arg.is<ExpressionNode>())
+			continue;
+
+		const ASTNode& param_node = param_nodes[i];
+		if (!param_node.is<DeclarationNode>())
+			continue;
+		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
+		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
+			continue;
+		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+
+		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
+			if (auto binding = buildCallArgReferenceBinding(arg, param_type, context_description)) {
+				ref_bindings[i] = *binding;
+			}
+			continue;
+		}
+
+		tryAnnotateSingleArgConversion(arg, param_type, context_description);
+	}
+}
+
 void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& call_node) {
 	const auto& arguments = call_node.arguments();
 	const FunctionDeclarationNode* func_decl = getResolvedOpCall(&call_node);
@@ -4251,80 +4433,80 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 		resolved_direct_call_table_[&call_node] = func_decl;
 	}
 
-	if (func_decl->is_variadic())
-		return; // can't annotate variadic calls
+	annotateResolvedCallArgConversions(&call_node, arguments, *func_decl, " in function argument");
+}
 
-	const auto& param_nodes = func_decl->parameter_nodes();
+void SemanticAnalysis::tryAnnotateCallArgConversions(const CallExprNode& call_node) {
+	const auto& arguments = call_node.arguments();
+	const FunctionDeclarationNode* func_decl = nullptr;
 
-	if (arguments.size() < countMinRequiredArgs(*func_decl) || arguments.size() > param_nodes.size())
-		return;
-	auto& ref_bindings = function_call_ref_bindings_[&call_node];
-	ref_bindings.clear();
-	ref_bindings.resize(arguments.size());
-
-	for (size_t i = 0; i < arguments.size(); ++i) {
-		const ASTNode& arg = arguments[i];
-		if (!arg.is<ExpressionNode>())
-			continue;
-
-		const ASTNode& param_node = param_nodes[i];
-		if (!param_node.is<DeclarationNode>())
-			continue;
-		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
-			continue;
-		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-		// Reference parameters: store binding info in the side table for codegen,
-		// then delegate to the shared helper for the value-conversion annotation.
-		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
-			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in function argument")) {
-				ref_bindings[i] = *binding;
-			}
-			continue;
+	if (call_node.has_receiver()) {
+		func_decl = call_node.callee().function_declaration_or_null();
+		if (!func_decl) {
+			return;
 		}
-
-		tryAnnotateSingleArgConversion(arg, param_type, " in function argument");
+		annotateResolvedCallArgConversions(&call_node, arguments, *func_decl, " in call argument");
+		return;
 	}
+
+	func_decl = getResolvedOpCall(&call_node);
+	if (!func_decl) {
+		tryResolveCallableOperator(call_node);
+		func_decl = getResolvedOpCall(&call_node);
+	}
+
+	if (!func_decl) {
+		if (call_node.callee().has_function_declaration()) {
+			func_decl = call_node.callee().function_declaration_or_null();
+		} else {
+			const auto& decl = call_node.callee().declaration();
+			const std::string_view name = call_node.has_qualified_name()
+											  ? call_node.qualified_name()
+											  : decl.identifier_token().value();
+
+			auto overloads = symbols_.lookup_all(name);
+			if (overloads.empty() && call_node.has_qualified_name()) {
+				overloads = symbols_.lookup_all(decl.identifier_token().value());
+			}
+			if (overloads.empty()) {
+				unresolved_call_args_.insert(&call_node);
+				return;
+			}
+
+			auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
+				for (const auto& overload : overloads) {
+					if (!overload.is<FunctionDeclarationNode>())
+						continue;
+					const auto& candidate = overload.as<FunctionDeclarationNode>();
+					if (&candidate.decl_node() == &decl)
+						return &candidate;
+				}
+				for (const auto& overload : overloads) {
+					if (!overload.is<FunctionDeclarationNode>())
+						continue;
+					const auto& candidate = overload.as<FunctionDeclarationNode>();
+					if (arguments.size() == candidate.parameter_nodes().size())
+						return &candidate;
+				}
+				return nullptr;
+			};
+
+			if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>()) {
+				func_decl = &overloads[0].as<FunctionDeclarationNode>();
+			} else {
+				func_decl = find_by_arg_count();
+			}
+			if (!func_decl)
+				return;
+		}
+	}
+
+	annotateResolvedCallArgConversions(&call_node, arguments, *func_decl, " in call argument");
 }
 
 void SemanticAnalysis::tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node) {
 	const FunctionDeclarationNode& func_decl = call_node.function_declaration();
-	if (func_decl.is_variadic())
-		return;
-
-	const auto& arguments = call_node.arguments();
-	const auto& param_nodes = func_decl.parameter_nodes();
-
-	if (arguments.size() < countMinRequiredArgs(func_decl) || arguments.size() > param_nodes.size())
-		return;
-	auto& ref_bindings = member_call_ref_bindings_[&call_node];
-	ref_bindings.clear();
-	ref_bindings.resize(arguments.size());
-
-	for (size_t i = 0; i < arguments.size(); ++i) {
-		const ASTNode& arg = arguments[i];
-		if (!arg.is<ExpressionNode>())
-			continue;
-
-		const ASTNode& param_node = param_nodes[i];
-		if (!param_node.is<DeclarationNode>())
-			continue;
-		const ASTNode param_type_node = param_node.as<DeclarationNode>().type_node();
-		if (!param_type_node.has_value() || !param_type_node.is<TypeSpecifierNode>())
-			continue;
-		const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-
-		// Reference parameters: store binding info in the side table for codegen,
-		// then delegate to the shared helper for the value-conversion annotation.
-		if (param_type.is_reference() || param_type.is_rvalue_reference()) {
-			if (auto binding = buildCallArgReferenceBinding(arg, param_type, " in member function argument")) {
-				ref_bindings[i] = *binding;
-			}
-			continue;
-		}
-
-		tryAnnotateSingleArgConversion(arg, param_type, " in member function argument");
-	}
+	annotateResolvedCallArgConversions(&call_node, call_node.arguments(), func_decl, " in member function argument");
 }
 
 void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node) {

@@ -180,3 +180,95 @@ inline void copyCallMetadataWithTransformedTemplateArguments(
 		target.set_template_arguments(std::move(transformed_template_args));
 	}
 }
+
+inline ChunkedVector<ASTNode> copyCallArguments(const ChunkedVector<ASTNode>& arguments) {
+	ChunkedVector<ASTNode> copied_arguments;
+	arguments.visit([&](ASTNode arg) {
+		copied_arguments.push_back(arg);
+	});
+	return copied_arguments;
+}
+
+inline FunctionCallNode materializeLegacyFunctionCall(const CallExprNode& source) {
+	FunctionCallNode legacy_call(
+		source.callee().declaration(),
+		copyCallArguments(source.arguments()),
+		source.called_from());
+	copyCallMetadata(legacy_call, source);
+	return legacy_call;
+}
+
+inline MemberFunctionCallNode materializeLegacyMemberFunctionCall(const CallExprNode& source) {
+	return MemberFunctionCallNode(
+		source.receiver(),
+		*source.callee().function_declaration_or_null(),
+		copyCallArguments(source.arguments()),
+		source.called_from());
+}
+
+inline CallExprNode makeDirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	return CallExprNode(CalleeDescriptor::freeFunction(decl), std::move(arguments), called_from_token);
+}
+
+inline CallExprNode makeResolvedCallExpr(const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	CalleeDescriptor callee = func_decl.is_static()
+		? CalleeDescriptor::staticMemberFunction(func_decl)
+		: CalleeDescriptor::freeFunctionResolved(func_decl);
+	return CallExprNode(callee, std::move(arguments), called_from_token);
+}
+
+inline CallExprNode makeIndirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	return CallExprNode(CalleeDescriptor::indirectCall(decl), std::move(arguments), called_from_token);
+}
+
+inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	CalleeDescriptor callee = func_decl.is_static()
+		? CalleeDescriptor::staticMemberFunction(func_decl)
+		: CalleeDescriptor::memberFunction(func_decl);
+	return CallExprNode(callee, receiver, std::move(arguments), called_from_token);
+}
+
+inline void setCallMangledName(ExpressionNode& expr, std::string_view name) {
+	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
+		function_call->set_mangled_name(name);
+		return;
+	}
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_mangled_name(name);
+	}
+}
+
+inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
+	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
+		function_call->set_qualified_name(name);
+		return;
+	}
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_qualified_name(name);
+	}
+}
+
+inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&& template_args) {
+	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
+		function_call->set_template_arguments(std::move(template_args));
+		return;
+	}
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_template_arguments(std::move(template_args));
+	}
+}
+
+inline void setCallIndirect(ExpressionNode& expr) {
+	if (auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
+		function_call->set_indirect_call(true);
+		return;
+	}
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		CallExprNode indirect_call = makeIndirectCallExpr(
+			call_expr->callee().declaration(),
+			copyCallArguments(call_expr->arguments()),
+			call_expr->called_from());
+		copyCallMetadata(indirect_call, *call_expr);
+		expr = std::move(indirect_call);
+	}
+}

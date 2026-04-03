@@ -2,6 +2,10 @@
 #include "IrGenerator.h"
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context) {
+	return generateMemberFunctionCallIr(memberFunctionCallNode, context, nullptr);
+}
+
+ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(5 + memberFunctionCallNode.arguments().size() * 4); // ret + name + this + ~4 per arg
 
@@ -595,7 +599,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	if (func_decl.is_consteval()) {
 		std::string_view func_name_sv = func_decl_node.identifier_token().value();
 		extern SymbolTable gSymbolTable;
-		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+		ConstExpr::EvaluationContext ctx(symbol_table);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
 		// Step 1: Try evaluation via the member-function path (handles constexpr objects
@@ -1537,7 +1541,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			}
 			const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 			if (param_type && sema_) {
-				sema_ref_binding = sema_->getMemberFunctionCallRefBinding(&memberFunctionCallNode, arg_index);
+				sema_ref_binding = unified_call_key
+									   ? sema_->getCallExprRefBinding(unified_call_key, arg_index)
+									   : sema_->getMemberFunctionCallRefBinding(&memberFunctionCallNode, arg_index);
 			}
 
 			// Evaluate the argument expression once when sema ref-binding is active so that

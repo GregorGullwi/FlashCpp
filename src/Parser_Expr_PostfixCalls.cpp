@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -160,7 +161,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 		auto& func_decl_node = emplace_node<FunctionDeclarationNode>(operator_decl).as<FunctionDeclarationNode>();
 
 		result = emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(*result, func_decl_node, std::move(args), member_operator_name_token));
+			makeResolvedMemberCallExpr(*result, func_decl_node, std::move(args), member_operator_name_token));
 		return ParseResult::success(*result);
 	}
 
@@ -315,7 +316,7 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 		}
 
 		result = emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(*result, *func_ref_ptr, std::move(args), member_name_token));
+			makeResolvedMemberCallExpr(*result, *func_ref_ptr, std::move(args), member_name_token));
 		return ParseResult::success(*result);
 	}
 
@@ -537,7 +538,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 				// Create member function call node - code generation will detect this is a function pointer
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_ref, std::move(args), member_token));
+					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), member_token));
 			} else {
 				// Create operator() call as a member function call
 				// The member function name is "operator()"
@@ -552,7 +553,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 				// Create member function call node for operator()
 				result = emplace_node<ExpressionNode>(
-					MemberFunctionCallNode(*result, func_ref, std::move(args), operator_token));
+					makeResolvedMemberCallExpr(*result, func_ref, std::move(args), operator_token));
 			}
 			continue;
 		}
@@ -641,7 +642,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, qualified_member_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
-								MemberFunctionCallNode(object, func_decl_node, std::move(args), qualified_member_token));
+								makeResolvedMemberCallExpr(object, func_decl_node, std::move(args), qualified_member_token));
 						} else {
 							// Simple qualified member access
 							result = emplace_node<ExpressionNode>(
@@ -680,7 +681,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 							auto& member_decl = emplace_node<DeclarationNode>(type_spec, op_token).as<DeclarationNode>();
 							auto& func_decl_node = emplace_node<FunctionDeclarationNode>(member_decl).as<FunctionDeclarationNode>();
 							result = emplace_node<ExpressionNode>(
-								MemberFunctionCallNode(object, func_decl_node, std::move(args_result.args), op_token));
+								makeResolvedMemberCallExpr(object, func_decl_node, std::move(args_result.args), op_token));
 							handled = true;
 						}
 					}
@@ -906,13 +907,15 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 				// Create function call node
 				auto function_call_node = emplace_node<ExpressionNode>(
-					FunctionCallNode(*decl_ptr, std::move(args), final_identifier));
+					qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()
+						? makeResolvedCallExpr(qualified_symbol->as<FunctionDeclarationNode>(), std::move(args), final_identifier)
+						: makeDirectCallExpr(*decl_ptr, std::move(args), final_identifier));
 
 				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
-						std::get<FunctionCallNode>(function_call_node.as<ExpressionNode>()).set_mangled_name(func_decl.mangled_name());
+						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
 						FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode (postfix path): {}", func_decl.mangled_name());
 					}
 				}

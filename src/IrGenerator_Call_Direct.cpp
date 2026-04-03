@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
 
 // ── Shared consteval-materialization helpers ────────────────────────────────
@@ -47,40 +48,69 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 												: call_op.result.size_in_bits;
 }
 
+static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {
+	if (return_type.type() != TypeCategory::TypeAlias || !return_type.type_index().is_valid()) {
+		return return_type;
+	}
+
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(return_type.type_index());
+	if (resolved_alias.terminal_type_info) {
+		return_type.set_type_index(resolved_alias.terminal_type_info->type_index_);
+		return_type.set_category(resolved_alias.terminal_type_info->category());
+	}
+	return_type.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+	if (return_type.reference_qualifier() == ReferenceQualifier::None &&
+		resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+		return_type.set_reference_qualifier(resolved_alias.reference_qualifier);
+	}
+	if (!return_type.has_function_signature() && resolved_alias.function_signature.has_value()) {
+		return_type.set_function_signature(*resolved_alias.function_signature);
+	}
+	if (!resolved_alias.array_dimensions.empty()) {
+		std::vector<size_t> array_dimensions = return_type.array_dimensions();
+		array_dimensions.insert(array_dimensions.end(),
+								resolved_alias.array_dimensions.begin(),
+								resolved_alias.array_dimensions.end());
+		return_type.set_array_dimensions(array_dimensions);
+	}
+	return return_type;
+}
+
 ExprResult AstToIr::buildCallReturnResult(
 	const TypeSpecifierNode& return_type,
 	TempVar ret_var,
 	ExpressionContext context,
 	const Token& source_token) {
+	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
 	// ── Reference-returning functions ──────────────────────────────────────
-	if (return_type.is_reference() || return_type.is_rvalue_reference()) {
+	if (normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference()) {
 		LValueInfo lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-		int referenced_size_bits = getTypeSpecSizeBits(return_type);
-		if (return_type.is_rvalue_reference()) {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, return_type.category(), referenced_size_bits));
+		int referenced_size_bits = getTypeSpecSizeBits(normalized_return_type);
+		if (normalized_return_type.is_rvalue_reference()) {
+			setTempVarMetadata(ret_var, TempVarMetadata::makeXValue(lvalue_info, normalized_return_type.category(), referenced_size_bits));
 		} else {
-			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, return_type.category(), referenced_size_bits));
+			setTempVarMetadata(ret_var, TempVarMetadata::makeLValue(lvalue_info, normalized_return_type.category(), referenced_size_bits));
 		}
 
 		if (context != ExpressionContext::LValueAddress) {
-			const PointerDepth return_pointer_depth{static_cast<int>(return_type.pointer_depth())};
-			if (isIrStructType(toIrType(return_type.type())) && return_type.type_index().is_valid()) {
+			const PointerDepth return_pointer_depth{static_cast<int>(normalized_return_type.pointer_depth())};
+			if (isIrStructType(toIrType(normalized_return_type.type())) && normalized_return_type.type_index().is_valid()) {
 				return makeExprResult(
-					return_type.type_index().withCategory(return_type.type()),
+					normalized_return_type.type_index().withCategory(normalized_return_type.type()),
 					SizeInBits{referenced_size_bits},
 					IrOperand{ret_var},
 					return_pointer_depth,
 					ValueStorage::ContainsAddress);
 			}
 
-			TypeCategory pointee_type = getRuntimeValueType(return_type.type_index().withCategory(return_type.type()), return_pointer_depth);
-			int pointee_size_bits = getRuntimeValueSizeBits(return_type.type_index(), referenced_size_bits, return_pointer_depth);
-			int dereference_pointer_depth = return_type.pointer_depth() > 0 ? static_cast<int>(return_type.pointer_depth()) : 1;
+			TypeCategory pointee_type = getRuntimeValueType(normalized_return_type.type_index().withCategory(normalized_return_type.type()), return_pointer_depth);
+			int pointee_size_bits = getRuntimeValueSizeBits(normalized_return_type.type_index(), referenced_size_bits, return_pointer_depth);
+			int dereference_pointer_depth = normalized_return_type.pointer_depth() > 0 ? static_cast<int>(normalized_return_type.pointer_depth()) : 1;
 			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), source_token);
 			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
 			return makeExprResult(
-				return_type.type_index().withCategory(pointee_type),
+				normalized_return_type.type_index().withCategory(pointee_type),
 				SizeInBits{pointee_size_bits},
 				IrOperand{loaded_value},
 				return_pointer_depth,
@@ -89,20 +119,20 @@ ExprResult AstToIr::buildCallReturnResult(
 	}
 
 	// ── Non-reference (or LValueAddress context for references) ───────────
-	int result_size = (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+	int result_size = (normalized_return_type.pointer_depth() > 0 || normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference())
 						  ? 64
-						  : static_cast<int>(return_type.size_in_bits());
-	TypeIndex type_index_result = isIrStructType(toIrType(return_type.type()))
-									  ? return_type.type_index()
+						  : static_cast<int>(normalized_return_type.size_in_bits());
+	TypeIndex type_index_result = isIrStructType(toIrType(normalized_return_type.type()))
+									  ? normalized_return_type.type_index()
 									  : TypeIndex{};
-	ValueStorage st = (return_type.is_reference() || return_type.is_rvalue_reference())
+	ValueStorage st = (normalized_return_type.is_reference() || normalized_return_type.is_rvalue_reference())
 						  ? ValueStorage::ContainsAddress
 						  : ValueStorage::ContainsData;
 	return makeExprResult(
-		type_index_result.withCategory(return_type.type()),
+		type_index_result.withCategory(normalized_return_type.type()),
 		SizeInBits{result_size},
 		IrOperand{ret_var},
-		PointerDepth{static_cast<int>(return_type.pointer_depth())},
+		PointerDepth{static_cast<int>(normalized_return_type.pointer_depth())},
 		st);
 }
 
@@ -173,7 +203,23 @@ ExprResult AstToIr::materializeConstevalAggregateResult(
 	return makeExprResult(ret_spec.type_index().withCategory(ret_type), ret_size, IrOperand{struct_tmp_handle}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
+ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context) {
+	if (callExprNode.has_receiver()) {
+		if (!callExprNode.callee().has_function_declaration()) {
+			throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
+		}
+		MemberFunctionCallNode legacy_member_call = materializeLegacyMemberFunctionCall(callExprNode);
+		return generateMemberFunctionCallIr(legacy_member_call, context, &callExprNode);
+	}
+	FunctionCallNode legacy_function_call = materializeLegacyFunctionCall(callExprNode);
+	return generateFunctionCallIr(legacy_function_call, context, &callExprNode);
+}
+
 ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context) {
+	return generateFunctionCallIr(functionCallNode, context, nullptr);
+}
+
+ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context, const CallExprNode* unified_call_key) {
 	std::vector<IrOperand> irOperands;
 	irOperands.reserve(2 + functionCallNode.arguments().size() * 4);	 // ret_var + name + ~4 operands per arg
 	auto appendArgumentIrResult = [&](const ExprResult& result) {
@@ -339,7 +385,10 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		if (func_type.category() == TypeCategory::Struct) {
 				// Check for a sema-pre-resolved operator() first.
 			const FunctionDeclarationNode* operator_call =
-				sema_ ? sema_->getResolvedOpCall(&functionCallNode) : nullptr;
+				!sema_ ? nullptr
+					   : (unified_call_key
+							  ? sema_->getResolvedOpCall(unified_call_key)
+							  : sema_->getResolvedOpCall(&functionCallNode));
 
 				// Fallback: replicate the arity-based lookup for call sites that were
 				// not reached by the semantic pass (e.g. template instantiation paths
@@ -385,7 +434,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 					*operator_call,
 					std::move(member_args),
 					functionCallNode.called_from());
-				return generateMemberFunctionCallIr(member_call, context);
+				return generateMemberFunctionCallIr(member_call, context, unified_call_key);
 			}
 		}
 
@@ -1115,7 +1164,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 	if (matched_func_decl && matched_func_decl->is_consteval()) {
 			// Use the global symbol table so free functions declared at namespace scope can be found.
 		extern SymbolTable gSymbolTable;
-		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
+		ConstExpr::EvaluationContext ctx(symbol_table);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(functionCallNode);
@@ -1233,7 +1282,9 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		}
 		const CallArgReferenceBindingInfo* sema_ref_binding = nullptr;
 		if (param_type && sema_) {
-			sema_ref_binding = sema_->getFunctionCallRefBinding(&functionCallNode, arg_index);
+			sema_ref_binding = unified_call_key
+								   ? sema_->getCallExprRefBinding(unified_call_key, arg_index)
+								   : sema_->getFunctionCallRefBinding(&functionCallNode, arg_index);
 		}
 
 			// Special case: if argument is a reference identifier being passed to a reference parameter,
@@ -1360,7 +1411,10 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 					standard_conversion.rank != ConversionRank::UserDefined) {
 					if (sema_normalized_current_function_ &&
 						is_standard_arithmetic_type(arg_type) && is_standard_arithmetic_type(param_base_type) &&
-						!(sema_ && sema_->hasUnresolvedCallArgs(&functionCallNode))) {
+						!(sema_ &&
+						  (unified_call_key
+							   ? sema_->hasUnresolvedCallArgs(unified_call_key)
+							   : sema_->hasUnresolvedCallArgs(&functionCallNode)))) {
 						throw InternalError(std::string("Phase 15: sema missed function call argument conversion (") + std::string(getTypeName(arg_type)) + " -> " + std::string(getTypeName(param_base_type)) + ")");
 					}
 					argumentIrOperands = generateTypeConversion(argumentIrOperands, arg_type, param_base_type, functionCallNode.called_from());

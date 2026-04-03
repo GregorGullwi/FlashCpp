@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
 #include <limits>
 
@@ -1964,6 +1965,23 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, &bindings);
 	}
 
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (call_expr->has_receiver()) {
+			MemberFunctionCallNode legacy_call = materializeLegacyMemberFunctionCall(*call_expr);
+			ExpressionNode legacy_expr = legacy_call;
+			if (auto call_result = try_evaluate_bound_member_operator_call(legacy_expr, bindings, context, &bindings)) {
+				return *call_result;
+			}
+			if (auto member_call_result = try_evaluate_bound_member_function_call(legacy_expr, bindings, context, &bindings)) {
+				return *member_call_result;
+			}
+			return evaluate_member_function_call(legacy_call, context);
+		}
+
+		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
+		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, &bindings);
+	}
+
 	// For direct lambda operator() calls inside a bound constexpr context
 	if (auto call_result = try_evaluate_bound_member_operator_call(expr, bindings, context, &bindings)) {
 		return *call_result;
@@ -2219,6 +2237,23 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	// For function calls (for recursion)
 	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
 		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, mutable_bindings);
+	}
+
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (call_expr->has_receiver()) {
+			MemberFunctionCallNode legacy_call = materializeLegacyMemberFunctionCall(*call_expr);
+			ExpressionNode legacy_expr = legacy_call;
+			if (auto call_result = try_evaluate_bound_member_operator_call(legacy_expr, bindings, context, mutable_bindings)) {
+				return *call_result;
+			}
+			if (auto member_call_result = try_evaluate_bound_member_function_call(legacy_expr, bindings, context, mutable_bindings)) {
+				return *member_call_result;
+			}
+			return evaluate_member_function_call(legacy_call, context);
+		}
+
+		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
+		return evaluate_function_call_with_outer_bindings(legacy_call, bindings, context, mutable_bindings);
 	}
 
 	// For direct lambda operator() calls inside a bound constexpr context
@@ -3908,6 +3943,27 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_object_source(
 	ResolvedConstexprObject& resolved_object) {
 	resolved_object = {};
 
+	if (object_name == "this" && context.struct_info && tryGetTypeInfo(context.struct_type_index)) {
+		EvalResult this_obj = EvalResult::from_int(0);
+		this_obj.object_type_index = context.struct_type_index;
+		for (const auto& member : context.struct_info->members) {
+			std::string_view member_name = StringTable::getStringView(member.getName());
+			if (const EvalResult* binding = findLocalBinding(member_name, context)) {
+				this_obj.object_member_bindings[member_name] = *binding;
+			}
+		}
+		resolved_object.declared_type_index = context.struct_type_index;
+		resolved_object.materialized_value = std::move(this_obj);
+		return std::nullopt;
+	}
+
+	if (const EvalResult* local_object = findLocalBinding(object_name, context);
+		local_object && local_object->object_type_index.is_valid()) {
+		resolved_object.declared_type_index = local_object->object_type_index;
+		resolved_object.materialized_value = *local_object;
+		return std::nullopt;
+	}
+
  // Try BoundOnly first (for statically-bound static members)
 	if (auto static_member_result = resolve_current_struct_static_member(
 			object_identifier,
@@ -4704,14 +4760,19 @@ EvalResult Evaluator::evaluate_member_function_call(const MemberFunctionCallNode
 		}
 
 		var_decl = resolved_object.var_decl;
-		if (var_decl && !var_decl->is_constexpr()) {
-			return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
-		}
-
-		initializer = resolved_object.initializer;
 		declared_type_index = resolved_object.declared_type_index;
-		if (!initializer->has_value()) {
-			return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+		if (resolved_object.materialized_value.has_value()) {
+			complex_object_result = *resolved_object.materialized_value;
+			has_complex_object_result = true;
+		} else {
+			if (var_decl && !var_decl->is_constexpr()) {
+				return EvalResult::error("Variable in member function call must be constexpr: " + std::string(var_name));
+			}
+
+			initializer = resolved_object.initializer;
+			if (!initializer || !initializer->has_value()) {
+				return EvalResult::error("Constexpr variable has no initializer: " + std::string(var_name));
+			}
 		}
 
 		if (!var_decl) {
