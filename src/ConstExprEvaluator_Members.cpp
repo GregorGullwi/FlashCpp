@@ -480,8 +480,8 @@ void refreshPointerSnapshotsForBindingInMap(
 	std::unordered_map<std::string_view, EvalResult>& binding_map,
 	std::string_view target_name,
 	const EvalResult& target_value) {
-	for (auto& [binding_name, binding_value] : binding_map) {
-		(void)binding_name;
+	for (auto& entry : binding_map) {
+		EvalResult& binding_value = entry.second;
 		if (!binding_value.pointer_to_var.isValid()) {
 			continue;
 		}

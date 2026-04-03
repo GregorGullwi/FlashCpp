@@ -10,6 +10,13 @@ constexpr int readMember(const Pair* p) {
 	return p->value;
 }
 
+constexpr int evaluateDirectLiveUpdate() {
+	int x = 1;
+	int* p = &x;
+	x = 2;
+	return *p;
+}
+
 constexpr int evaluateLiveUpdates() {
 	int x = 1;
 	const int* px = &x;
@@ -26,6 +33,7 @@ constexpr int evaluateLiveUpdates() {
 	return readScalar(px) + readMember(pp) + readScalar(py);
 }
 
+static_assert(evaluateDirectLiveUpdate() == 2);
 static_assert(evaluateLiveUpdates() == 16);
 
 int main() {
