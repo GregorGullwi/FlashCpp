@@ -3631,9 +3631,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									// Registry fallback: only used for name resolution (the node was already
 									// pushed to ast_nodes_ during its original instantiation).
 									if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
-										auto cached = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
-										if (cached.has_value() && cached->is<StructDeclarationNode>()) {
-											inst_name = StringTable::getStringView(cached->as<StructDeclarationNode>().name());
+										auto registry_hit = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
+										if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+											inst_name = StringTable::getStringView(registry_hit->as<StructDeclarationNode>().name());
 										}
 									}
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
