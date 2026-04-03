@@ -1823,6 +1823,24 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					struct_info_ptr = type_info->struct_info_.get();
 				}
 			}
+			if (!struct_info_ptr && type_node.array_dimension_count() > 1) {
+				StructMember array_member(
+					decl.identifier_token().handle(),
+					type_node.type_index(),
+					0,
+					static_cast<size_t>(size_in_bits / 8) * array_count,
+					decl.custom_alignment(),
+					AccessSpecifier::Public,
+					std::nullopt,
+					ReferenceQualifier::None,
+					0,
+					true,
+					type_node.array_dimensions(),
+					static_cast<int>(type_node.pointer_depth()),
+					std::nullopt);
+				if (tryEmitArrayMemberStores(array_member, init_list, decl.identifier_token().handle(), 0, node.declaration().identifier_token()))
+					return;
+			}
 			int element_size_bytes = struct_info_ptr ? static_cast<int>(toSizeT(struct_info_ptr->total_size)) : (size_in_bits / 8);
 
 				// Generate store for each element
