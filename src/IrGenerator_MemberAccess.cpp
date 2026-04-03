@@ -1018,13 +1018,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto get_identifier = [&]() -> const IdentifierNode* {
 		return tryGetIdentifier(object_node);
 	};
-	auto get_member_func_call = [&]() -> const MemberFunctionCallNode* {
-		if (expr && std::holds_alternative<MemberFunctionCallNode>(*expr))
-			return &std::get<MemberFunctionCallNode>(*expr);
-		if (object_node.is<MemberFunctionCallNode>())
-			return &object_node.as<MemberFunctionCallNode>();
-		return nullptr;
-	};
+
 	auto get_call_expr_with_receiver = [&]() -> const CallExprNode* {
 		if (expr && std::holds_alternative<CallExprNode>(*expr) && std::get<CallExprNode>(*expr).has_receiver())
 			return &std::get<CallExprNode>(*expr);
@@ -1117,14 +1111,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			auto qualified_result = generateQualifiedIdentifierIr(*qualified_ident);
 			if (!extractBaseFromOperands(qualified_result, base_object, base_type_index, "qualified identifier")) {
 				throw InternalError(std::string("Failed to extract base from qualified identifier result for '") + std::string(memberAccessNode.member_token().value()) + "'");
-			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
-			}
-		} else if (const MemberFunctionCallNode* call = get_member_func_call()) {
-			auto call_result = generateMemberFunctionCallIr(*call, ExpressionContext::Load);
-			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
-				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
 			if (is_arrow) {
 				is_pointer_dereference = true;

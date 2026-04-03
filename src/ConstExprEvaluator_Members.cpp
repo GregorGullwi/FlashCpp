@@ -1086,15 +1086,6 @@ std::optional<EvalResult> Evaluator::try_evaluate_bound_member_function_call(
 	}
 
 	const FunctionDeclarationNode* actual_func = [&]() -> const FunctionDeclarationNode* {
-		if (const auto* member_func_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-			return try_get_lowered_constexpr_member_call_target(
-				*member_func_call,
-				bound_struct_info,
-				call_info->arguments->size(),
-				context,
-				MemberFunctionLookupMode::LookupOnly,
-				false);
-		}
 		if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 			return try_get_lowered_constexpr_member_call_target(
 				*call_expr,
@@ -2113,11 +2104,6 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		}
 	}
 
-	// For function calls (for recursion)
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, &bindings);
-	}
-
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		if (call_expr->has_receiver()) {
 			if (auto call_result = try_evaluate_bound_member_operator_call(*call_expr, bindings, context, &bindings)) {
@@ -2138,7 +2124,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 				call_expr->called_from().column(),
 				call_expr->called_from().file_index());
 			ExpressionNode this_expr = IdentifierNode(this_token);
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				ASTNode(&this_expr),
 				*function_decl,
 				copyCallArguments(call_expr->arguments()),
@@ -2400,10 +2386,6 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 	}
 
 	// For function calls (for recursion)
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call_with_outer_bindings(*func_call, bindings, context, mutable_bindings);
-	}
-
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
 		if (call_expr->has_receiver()) {
 			if (auto call_result = try_evaluate_bound_member_operator_call(*call_expr, bindings, context, mutable_bindings)) {
@@ -2424,7 +2406,7 @@ EvalResult Evaluator::evaluate_expression_with_bindings_dispatch(
 				call_expr->called_from().column(),
 				call_expr->called_from().file_index());
 			ExpressionNode this_expr = IdentifierNode(this_token);
-			MemberFunctionCallNode member_call(
+			CallExprNode member_call = makeResolvedMemberCallExpr(
 				ASTNode(&this_expr),
 				*function_decl,
 				copyCallArguments(call_expr->arguments()),
@@ -3719,14 +3701,6 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 				// Array subscript on struct - evaluate array element then access member
 				return evaluate_array_subscript_member_access(*array_subscript, member_name, context);
 			}
-			// Check for FunctionCallNode - evaluate the return type and access static member
-			if (const auto* function_call = std::get_if<FunctionCallNode>(&expr_node)) {
-				const FunctionCallNode& func_call = *function_call;
-				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
-					return *evaluated_member;
-				}
-				return evaluate_function_call_member_access(func_call, member_name, context);
-			}
 			if (const auto* call_expr = std::get_if<CallExprNode>(&expr_node)) {
 				if (auto evaluated_member = try_resolve_evaluated_object_member(object_expr)) {
 					return *evaluated_member;
@@ -3923,14 +3897,10 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
 		// The initializer may be an ASTNode holding a FunctionCallNode directly,
 		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
-		bool is_func_call = initializer.is<FunctionCallNode>() ||
-						   initializer.is<MemberFunctionCallNode>() ||
-						   initializer.is<CallExprNode>();
+		bool is_func_call = initializer.is<CallExprNode>();
 		if (!is_func_call && initializer.is<ExpressionNode>()) {
 			const ExpressionNode& expr = initializer.as<ExpressionNode>();
-			is_func_call = std::holds_alternative<FunctionCallNode>(expr) ||
-						   std::holds_alternative<MemberFunctionCallNode>(expr) ||
-						   std::holds_alternative<CallExprNode>(expr);
+			is_func_call = std::holds_alternative<CallExprNode>(expr);
 		}
 		if (is_func_call) {
 			auto func_result = evaluate(initializer, context);
