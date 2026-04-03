@@ -972,9 +972,11 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			//   non-constant expressions, but keep deferring evaluator-gap failures.
 			// - constinit: variable MUST be initialized with a constant expression (C++20).
 			//   Failure to evaluate at compile time is always an error.
-			if (validation_error.has_value() &&
+			const bool should_reject_validation_error =
+				validation_error.has_value() &&
 				(is_constinit || (is_constexpr &&
-								  validation_error->error_type == ConstExpr::EvalErrorType::NotConstantExpression))) {
+								  validation_error->error_type == ConstExpr::EvalErrorType::NotConstantExpression));
+			if (should_reject_validation_error) {
 				return ParseResult::error(
 					std::string(keyword_name) + " variable initializer must be a constant expression: " + validation_error->error_message,
 					identifier_token);
