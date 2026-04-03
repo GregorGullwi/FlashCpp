@@ -1284,20 +1284,22 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}
 		});
 	}
-	if ((!type_info || !type_info->getStructInfo()) && tryGetTypeInfo(base_type_index)) {
-		if (const StructTypeInfo* fallback_struct_info = tryGetStructTypeInfo(base_type_index)) {
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info) {
+		struct_info = tryGetStructTypeInfo(base_type_index);
+		if (struct_info && !type_info) {
 			forEachTypeInfo([&](const TypeInfo& ti) {
 				if (type_info) {
 					return;
 				}
-				if (ti.getStructInfo() == fallback_struct_info) {
+				if (ti.getStructInfo() == struct_info) {
 					type_info = &ti;
 				}
 			});
 		}
 	}
 
-	if (!type_info || !type_info->getStructInfo()) {
+	if (!struct_info) {
 		std::cerr << "Error: Struct type info not found for type_index=" << base_type_index.index() << "\n";
 		if (const auto* string_ptr = std::get_if<StringHandle>(&base_object)) {
 			std::cerr << "  Object name: " << *string_ptr << "\n";
@@ -1317,8 +1319,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		std::cerr << "error: struct type info not found\n";
 		throw InternalError("struct type info not found for type_index=" + std::to_string(base_type_index.index()));
 	}
-
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	StringHandle struct_name_handle = type_info ? type_info->name() : struct_info->getName();
 
 	// FIRST check if this is a static member (can be accessed via instance in C++)
 	auto [static_member, owner_struct] = struct_info->findStaticMemberRecursive(StringTable::getOrInternStringHandle(member_name));
@@ -1332,7 +1333,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		qualified_name_sb.append(member_name);
 		std::string_view qualified_name = qualified_name_sb.commit();
 
-		FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", type_info->name(), " owned by ", owner_struct->getName(), " -> qualified_name: ", qualified_name);
+		FLASH_LOG(Codegen, Debug, "Static member access: ", member_name, " in struct ", struct_name_handle, " owned by ", owner_struct->getName(), " -> qualified_name: ", qualified_name);
 
 		// Create a temporary variable for the result
 		TempVar result_var = var_counter.next();
@@ -1362,7 +1363,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	auto member_result = FlashCpp::gLazyMemberResolver.resolve(base_type_index, StringTable::getOrInternStringHandle(member_name));
 
 	if (!member_result) {
-		std::cerr << "error: member '" << member_name << "' not found in struct '" << type_info->name() << "'\n";
+		std::cerr << "error: member '" << member_name << "' not found in struct '" << struct_name_handle << "'\n";
 		std::cerr << "  available members:\n";
 		for (const auto& m : struct_info->members) {
 			std::cerr << "    - " << StringTable::getStringView(m.getName()) << "\n";

@@ -730,6 +730,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 	TypeCategory target_type = target_type_node.type_index().category();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	size_t target_pointer_depth = target_type_node.pointer_depth();
+	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// For reference casts (both lvalue and rvalue), we need the address of the expression,
 		// not its loaded value. Use LValueAddress context to get the address without dereferencing.
@@ -778,7 +779,7 @@ ExprResult AstToIr::generateStaticCastIr(const StaticCastNode& staticCastNode) {
 			// All pointers are 64-bit on x64, so size should be 64
 		FLASH_LOG_FORMAT(Codegen, Debug, "[PTR_CAST_DEBUG] Pointer cast: source={}, target={}, target_ptr_depth={}",
 						 static_cast<int>(source_type), static_cast<int>(target_type), target_pointer_depth);
-		return makeExprResult(nativeTypeIndex(target_type), SizeInBits{64}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
+		return makeExprResult(target_type_index, SizeInBits{64}, expr_operands.value, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
 	}
 
 		// For now, static_cast just changes the type metadata
@@ -1066,6 +1067,8 @@ ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 	const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
 	TypeCategory target_type = target_type_node.type_index().category();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
+	size_t target_pointer_depth = target_type_node.pointer_depth();
+	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 	if (target_type_node.is_rvalue_reference()) {
@@ -1077,10 +1080,10 @@ ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		return handleLValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), constCastNode.cast_token(), "const_cast");
 	}
 
-		// const_cast doesn't modify the value, only the type's const/volatile qualifiers
-		// For code generation purposes, we just return the expression with the new type metadata
-		// The actual value/address remains the same
-	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{}, ValueStorage::ContainsData);
+	// const_cast doesn't modify the value, only the type's const/volatile qualifiers
+	// For code generation purposes, we just return the expression with the new type metadata
+	// The actual value/address remains the same
+	return makeExprResult(target_type_index, SizeInBits{static_cast<int>(target_size)}, expr_operands.value, PointerDepth{static_cast<int>(target_pointer_depth)}, ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinterpretCastNode) {
@@ -1095,6 +1098,7 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 	TypeCategory target_type = target_type_node.type_index().category();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	int target_pointer_depth = target_type_node.pointer_depth();
+	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
 
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 	if (target_type_node.is_rvalue_reference()) {
@@ -1106,9 +1110,9 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 		return handleLValueReferenceCast(expr_operands, target_size, target_type_node.type_index(), reinterpretCastNode.cast_token(), "reinterpret_cast");
 	}
 
-		// reinterpret_cast reinterprets the bits without conversion
-		// For code generation purposes, we just return the expression with the new type metadata
-		// The actual bit pattern remains unchanged
+	// reinterpret_cast reinterprets the bits without conversion
+	// For code generation purposes, we just return the expression with the new type metadata
+	// The actual bit pattern remains unchanged
 	int result_size = (target_pointer_depth > 0) ? 64 : target_size;
-	return makeExprResult(nativeTypeIndex(target_type), SizeInBits{static_cast<int>(result_size)}, expr_operands.value, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
+	return makeExprResult(target_type_index, SizeInBits{static_cast<int>(result_size)}, expr_operands.value, PointerDepth{target_pointer_depth}, ValueStorage::ContainsData);
 }

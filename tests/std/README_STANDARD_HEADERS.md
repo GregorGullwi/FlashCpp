@@ -14,7 +14,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<numbers>` | N/A | ✅ Compiled | ~194ms |
 | `<initializer_list>` | N/A | ✅ Compiled | ~16ms |
 | `<ratio>` | `test_std_ratio.cpp` | ✅ Compiled | ~281ms. ratio_equal works; ratio_less needs default parameter evaluation |
-| `<optional>` | `test_std_optional.cpp` | ❌ Parse Error | Unexpanded pack expansion |
+| `<optional>` | `test_std_optional.cpp` | ❌ Codegen Error | ~940ms (targeted retest 2026-04-03). The older unexpanded-pack parse note is stale. `static_cast<const Derived*>(this)`-style pointer casts now preserve the target semantic type/pointer depth, so `_M_is_engaged()` gets past the earlier `type_index=0` failure and now stops later on a deferred-base placeholder that still materializes as a non-struct `_Optional_base<_Tp>` type during codegen. |
 | `<any>` | `test_std_any.cpp` | ✅ Compiled | ~271ms |
 | `<utility>` | `test_std_utility.cpp` | ✅ Compiled | ~356ms |
 | `<concepts>` | `test_std_concepts.cpp` | ✅ Compiled | ~220ms |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-04-02):** `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, and `<iostream>` were re-checked individually after the fixes below. The wide-`wmemchr` ambiguity is gone and infix free operator templates now instantiate in simple cases, but the libstdc++ headers still run into later ranges/view, iterator arithmetic, and struct-type-info follow-on failures. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-03):** `<optional>` was re-checked individually after the 2026-04-03 cast/deferred-base fixes below, and `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, and `<iostream>` were previously re-checked on 2026-04-02. The wide-`wmemchr` ambiguity is gone, infix free operator templates now instantiate in simple cases, and CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type. The overall counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -120,19 +120,27 @@ The most impactful blockers preventing more headers from compiling, ordered by i
    - Core fix areas: `Parser_Templates_Lazy.cpp`, `Parser_Templates_Inst_Deduction.cpp`, and `TypeInfo::TemplateArgInfo` / outer-template binding serialization.
    - Regression test: `tests/test_funcptr_lazy_member_signature_ret0.cpp`.
 
-3. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
+3. **Deferred template-base placeholder materialization**: Some dependent base arguments still fall back to placeholder `TypeSpecifierNode` values instead of the fully instantiated base type, so later CRTP/deferred-body codegen sees non-struct placeholders where a concrete base type should exist. Affects: `<optional>` and likely other CRTP-style standard-library internals.
 
-4. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
+4. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-5. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
+5. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
-6. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
+6. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
 
-7. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
+7. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
 
-8. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
+8. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
 
-9. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+9. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
+
+10. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+
+### Recent Fixes (2026-04-03)
+
+1. **Pointer/reference cast IR now preserves the canonical target `TypeIndex` and pointer depth**: `static_cast`, `const_cast`, and `reinterpret_cast` no longer collapse pointer targets to category-only placeholder metadata during codegen. This fixes CRTP-style `static_cast<const Derived*>(this)->member` lowering and removes the earlier `<optional>` `_M_is_engaged()` abort caused by `type_index=0`. Regression tests: new `tests/test_crtp_static_cast_this_member_ret0.cpp` plus existing cast coverage `tests/test_static_cast_base_ref_conv_op_ret0.cpp` and `tests/test_xvalue_all_casts_ret0.cpp`.
+
+2. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
 
 ### Recent Fixes (2026-04-02)
 
