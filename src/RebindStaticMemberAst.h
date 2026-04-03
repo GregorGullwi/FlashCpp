@@ -561,28 +561,6 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 			return visit_child(current.as<ReinterpretCastNode>().expr());
 		}
 
-		if (current.is<FunctionCallNode>()) {
-			for (const auto& argument : current.as<FunctionCallNode>().arguments()) {
-				if (visit_child(argument)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<MemberFunctionCallNode>()) {
-			const auto& member_call = current.as<MemberFunctionCallNode>();
-			if (visit_child(member_call.object())) {
-				return true;
-			}
-			for (const auto& argument : member_call.arguments()) {
-				if (visit_child(argument)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
 		if (current.is<CallExprNode>()) {
 			const auto& call = current.as<CallExprNode>();
 			if (call.has_receiver() && visit_child(call.receiver())) {

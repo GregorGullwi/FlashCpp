@@ -218,11 +218,6 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_ternary_operator(*ternary_operator, context);
 	}
 
-	// For FunctionCallNode (constexpr function calls)
-	if (const auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call(*function_call, context);
-	}
-
 	// Unified call-expression node — reuse the legacy constexpr paths until
 	// the evaluator reads CallExprNode directly.
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
@@ -246,11 +241,6 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For MemberAccessNode (e.g., obj.member or ptr->member)
 	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
 		return evaluate_member_access(*member_access, context);
-	}
-
-	// For MemberFunctionCallNode (e.g., obj.method() in constexpr context)
-	if (const auto* member_function_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		return evaluate_member_function_call(*member_function_call, context);
 	}
 
 	// For StaticCastNode (static_cast<Type>(expr) and C-style casts)
@@ -1440,15 +1430,6 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		bool false_noexcept = !ternary.false_expr().is<ExpressionNode>() ||
 							  is_expression_noexcept(ternary.false_expr().as<ExpressionNode>(), context);
 		return cond_noexcept && true_noexcept && false_noexcept;
-	}
-
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(*func_call, context);
-		return func_decl && is_function_decl_noexcept(*func_decl, context);
-	}
-
-	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		return is_function_decl_noexcept(member_call->function_declaration(), context);
 	}
 
 	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {

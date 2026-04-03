@@ -260,115 +260,6 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 		return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
 	}
 
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& call = std::get<FunctionCallNode>(expr);
-		const CallInfo call_info = CallInfo::from(call);
-
-		ChunkedVector<ASTNode> rebound_args;
-		for (const auto& arg : call.arguments()) {
-			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
-		}
-
-		std::vector<ASTNode> rebound_template_args =
-			RebindStaticMemberAst::rebindFunctionCallTemplateArguments(call, recurse);
-
-		const FunctionDeclarationNode* rebound_function = nullptr;
-		const StructTypeInfo* rebound_owner = nullptr;
-		if (call.called_from().kind().is_identifier()) {
-			auto [found_function, found_owner] =
-				RebindStaticMemberAst::findStaticMemberFunction(struct_info, call.called_from().handle());
-			rebound_function = found_function;
-			rebound_owner = found_owner;
-		}
-
-		const bool can_use_rebound_function =
-			rebound_function && rebound_function->get_definition().has_value();
-
-		CallExprNode rebound_call = can_use_rebound_function
-			? makeResolvedCallExpr(*rebound_function, std::move(rebound_args), call.called_from())
-			: makeDirectCallExpr(call.function_declaration(), std::move(rebound_args), call.called_from());
-
-		CallMetadataCopyOptions copy_options;
-		copy_options.copy_template_arguments = false;
-		copy_options.copy_qualified_name = false;
-		copyCallMetadata(rebound_call, call, copy_options);
-
-		if (!rebound_template_args.empty()) {
-			rebound_call.set_template_arguments(std::move(rebound_template_args));
-		}
-
-		if (can_use_rebound_function && rebound_function->has_mangled_name()) {
-			rebound_call.set_mangled_name(rebound_function->mangled_name());
-		} else if (call.has_mangled_name()) {
-			rebound_call.set_mangled_name(call.mangled_name());
-		}
-		if (!can_use_rebound_function && call.has_qualified_name()) {
-			rebound_call.set_qualified_name(call.qualified_name());
-		} else if (set_qualified_name && rebound_function && rebound_owner) {
-			StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-				StringBuilder().append(rebound_owner->getName()).append("::"sv).append(call.called_from().handle()).commit());
-			rebound_call.set_qualified_name(qualified_handle.view());
-		}
-
-		return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
-	}
-
-	if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		ASTNode rebound_object = recurse(member_call.object());
-		ChunkedVector<ASTNode> rebound_args;
-		for (const auto& arg : member_call.arguments()) {
-			rebound_args.push_back(rebindStaticMemberInitializerFunctionCalls(arg, struct_info, set_qualified_name));
-		}
-
-		bool is_implicit_this_call = false;
-		if (member_call.object().is<ExpressionNode>()) {
-			const auto& object_expr = member_call.object().as<ExpressionNode>();
-			is_implicit_this_call =
-				std::holds_alternative<IdentifierNode>(object_expr) &&
-				std::get<IdentifierNode>(object_expr).name() == "this";
-		}
-
-		if (is_implicit_this_call) {
-			const FunctionDeclarationNode* rebound_function = nullptr;
-			const StructTypeInfo* rebound_owner = nullptr;
-			if (member_call.called_from().kind().is_identifier()) {
-				auto [found_function, found_owner] =
-					RebindStaticMemberAst::findStaticMemberFunction(struct_info, member_call.called_from().handle());
-				rebound_function = found_function;
-				rebound_owner = found_owner;
-			}
-
-			const bool can_use_rebound_function =
-				rebound_function && rebound_function->get_definition().has_value();
-			if (can_use_rebound_function || member_call.function_declaration().is_static()) {
-				CallExprNode rebound_call = can_use_rebound_function
-					? makeResolvedCallExpr(*rebound_function, std::move(rebound_args), member_call.called_from())
-					: makeResolvedCallExpr(member_call.function_declaration(), std::move(rebound_args), member_call.called_from());
-
-				if (can_use_rebound_function && rebound_function->has_mangled_name()) {
-					rebound_call.set_mangled_name(rebound_function->mangled_name());
-				} else if (member_call.function_declaration().has_mangled_name()) {
-					rebound_call.set_mangled_name(member_call.function_declaration().mangled_name());
-				}
-				if (set_qualified_name && rebound_function && rebound_owner) {
-					StringHandle qualified_handle = StringTable::getOrInternStringHandle(
-						StringBuilder().append(rebound_owner->getName()).append("::"sv).append(member_call.called_from().handle()).commit());
-					rebound_call.set_qualified_name(qualified_handle.view());
-				}
-
-				return ASTNode::emplace_node<ExpressionNode>(std::move(rebound_call));
-			}
-		}
-
-		// Non-static member call: keep receiver
-		return ASTNode::emplace_node<ExpressionNode>(
-			makeResolvedMemberCallExpr(rebound_object,
-				member_call.function_declaration(),
-				std::move(rebound_args),
-				member_call.called_from()));
-	}
-
 	return node;
 }
 
@@ -378,7 +269,7 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 	}
 
 	return RebindStaticMemberAst::visitASTUntil(node, [](const ASTNode& current) {
-		return current.is<FunctionCallNode>() || current.is<MemberFunctionCallNode>() || current.is<CallExprNode>();
+		return current.is<CallExprNode>();
 	});
 }
 
@@ -497,14 +388,8 @@ static void instantiateDeferredStaticInitializerCalls(
 		StringHandle member_name;
 		bool needs_instantiation = false;
 
-		if (current.is<FunctionCallNode>()) {
-			const auto& call = current.as<FunctionCallNode>();
-			if (call.called_from().kind().is_identifier()) {
-				member_name = call.called_from().handle();
-				needs_instantiation = true;
-			}
-		} else if (current.is<MemberFunctionCallNode>()) {
-			const auto& call = current.as<MemberFunctionCallNode>();
+		if (current.is<CallExprNode>()) {
+			const auto& call = current.as<CallExprNode>();
 			if (call.called_from().kind().is_identifier()) {
 				member_name = call.called_from().handle();
 				needs_instantiation = true;
@@ -3922,12 +3807,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								continue;
 							}
 						}
-					} else if (std::holds_alternative<FunctionCallNode>(expr)) {
+					} else if (std::holds_alternative<CallExprNode>(expr) && !std::get<CallExprNode>(expr).has_receiver()) {
 						// Handle constexpr function calls like: call_is_nt<Result>(typename Result::__invoke_type{})
 						// These need template parameter substitution before evaluation
-						const FunctionCallNode& func_call = std::get<FunctionCallNode>(expr);
+						const CallExprNode& func_call = std::get<CallExprNode>(expr);
 
-						FLASH_LOG(Templates, Debug, "Processing FunctionCallNode in deferred base argument");
+						FLASH_LOG(Templates, Debug, "Processing CallExprNode in deferred base argument");
 
 						// Check if the function has template arguments that need substitution
 						bool has_dependent_template_args = false;

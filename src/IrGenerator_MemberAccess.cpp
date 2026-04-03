@@ -1025,6 +1025,13 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			return &object_node.as<MemberFunctionCallNode>();
 		return nullptr;
 	};
+	auto get_call_expr_with_receiver = [&]() -> const CallExprNode* {
+		if (expr && std::holds_alternative<CallExprNode>(*expr) && std::get<CallExprNode>(*expr).has_receiver())
+			return &std::get<CallExprNode>(*expr);
+		if (object_node.is<CallExprNode>() && object_node.as<CallExprNode>().has_receiver())
+			return &object_node.as<CallExprNode>();
+		return nullptr;
+	};
 
 	// OPERATOR-> OVERLOAD RESOLUTION
 	// If this is arrow access (obj->member), check if the object has operator->() overload
@@ -1116,6 +1123,14 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}
 		} else if (const MemberFunctionCallNode* call = get_member_func_call()) {
 			auto call_result = generateMemberFunctionCallIr(*call, ExpressionContext::Load);
+			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
+				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
+			}
+			if (is_arrow) {
+				is_pointer_dereference = true;
+			}
+		} else if (const CallExprNode* call_expr = get_call_expr_with_receiver()) {
+			auto call_result = generateMemberFunctionCallIr(*call_expr, ExpressionContext::Load);
 			if (!extractBaseFromOperands(call_result, base_object, base_type_index, "member function call")) {
 				throw InternalError(std::string("Failed to extract base from member function call result for '") + std::string(memberAccessNode.member_token().value()) + "'");
 			}
