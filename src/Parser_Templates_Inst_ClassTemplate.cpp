@@ -3628,11 +3628,13 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										ast_nodes_.push_back(*instantiated);
 									}
 									std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
+									// Registry fallback: only used for name resolution (the node was already
+									// pushed to ast_nodes_ during its original instantiation).
 									if ((!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) && !base_template_name.empty()) {
-										instantiated = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
-									}
-									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										inst_name = StringTable::getStringView(instantiated->as<StructDeclarationNode>().name());
+										auto cached = gTemplateRegistry.getInstantiation(StringTable::getOrInternStringHandle(base_template_name), instantiated_args);
+										if (cached.has_value() && cached->is<StructDeclarationNode>()) {
+											inst_name = StringTable::getStringView(cached->as<StructDeclarationNode>().name());
+										}
 									}
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
 									if (inst_it != getTypesByNameMap().end()) {
