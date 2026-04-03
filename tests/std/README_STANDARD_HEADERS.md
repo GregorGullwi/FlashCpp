@@ -39,7 +39,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Parse Error | non-dependent name `__w` not declared before template definition |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Parse Error | ~660ms (targeted retest 2026-04-03). The earlier `__builtin_memcmp` phase-1 blocker is fixed and GCC/Clang atomic builtin names are now declared, but libstdc++ still fails later on pointer-atomic typed builtin calls (`__atomic_add_fetch` has no matching function). |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~4220ms (targeted retest 2026-03-31). Same post-fix state as `<string>`: no function-pointer mangling crash, but later `string`/`std::basic_string` and explicit-constructor copy-init failures remain |
@@ -58,7 +58,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~25ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Parse Error | non-dependent name `__w` not declared before template definition |
+| `<latch>` | `test_std_latch.cpp` | ❌ Parse Error | ~670ms (targeted retest 2026-04-03). Shares the same post-fix state as `<atomic>`: `__builtin_memcmp` no longer fails phase-1 lookup, but pointer-atomic builtin calls still stop on `__atomic_add_fetch` typing. |
 | `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression |
 | `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~43ms |
@@ -107,7 +107,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Parse errors:** 10
 **Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
 
-**Targeted retest note (2026-04-03):** `<optional>`, `<string_view>`, `<array>`, `<algorithm>`, and `<vector>` were re-checked individually after the 2026-04-03 placeholder-materialization work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, and CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-03):** `<optional>`, `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<atomic>`, and `<latch>` were re-checked individually after the 2026-04-03 placeholder-materialization / builtin-registration work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type, and the old `<atomic>` / `<latch>` phase-1 `__builtin_memcmp` stop is gone. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -122,27 +122,31 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, but later CRTP/deferred-body codegen still has remaining gaps where defaulted base specializations or inherited payload members are not fully reconstructed. `<optional>` no longer dies on the first `_Optional_base<_Tp>` placeholder, but later `_Optional_base<...>` / `_Optional_payload<...>` paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
-4. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
+4. **GCC/Clang `__atomic*` builtin typing is still incomplete**: Compiler-known declarations and `__has_builtin` coverage now exist for the libstdc++ atomic builtin names, but pointer/integral generic signatures are not modeled precisely enough yet. `<atomic>` / `<latch>` now get past the older `__builtin_memcmp` phase-1 error and stop later on `__atomic_add_fetch(&_M_p, _M_type_size(1), ...)` with "No matching function for call". Affects: `<atomic>`, `<latch>`.
 
-5. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
+5. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
-6. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
+6. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
-7. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
+7. **Variant struct/class definition parsing**: The `<variant>` header's `_Copy_assign_base` class has complex lambda with `if constexpr` inside `operator=` that prevents the parser from properly closing the struct body. Affects: `<variant>`.
 
-8. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
+8. **Ambiguous overload resolution**: `__to_unsigned_like` in ranges has multiple overloads that the overload resolver treats as ambiguous. Affects: `<ranges>`.
 
-9. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
+9. **Stack overflow during deep template instantiation**: Headers like `<barrier>`, and `<chrono>` trigger 6000-7500+ template instantiations that exhaust the stack. Affects: `<barrier>`, `<chrono>`, `<condition_variable>`.
 
-10. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
+10. **Base class member access in codegen**: Generated code fails to find members inherited from base classes (e.g., `_M_start` in `_Vector_impl`, `_M_impl` in `list`, `first` in `iterator`). Affects: `<vector>`, `<list>`, `<map>`.
+
+11. **Late iostream-family codegen / IR lowering crash**: After the InstantiationContext fix below, `<iostream>` gets through parsing and much deeper into codegen before crashing in `IROperandHelpers::toIrValue` after `_S_empty`/`_S_size`/`move` failures. `<sstream>` / `<fstream>` still need targeted retests to see whether they now fail in the same later phase. Affects: `<iostream>`, likely `<sstream>`, `<fstream>`.
 
 ### Recent Fixes (2026-04-03)
 
-1. **Pointer/reference cast IR now preserves the canonical target `TypeIndex` and pointer depth**: `static_cast`, `const_cast`, and `reinterpret_cast` no longer collapse pointer targets to category-only placeholder metadata during codegen. This fixes CRTP-style `static_cast<const Derived*>(this)->member` lowering and removes the earlier `<optional>` `_M_is_engaged()` abort caused by `type_index=0`. Regression tests: new `tests/test_crtp_static_cast_this_member_ret0.cpp` plus existing cast coverage `tests/test_static_cast_base_ref_conv_op_ret0.cpp` and `tests/test_xvalue_all_casts_ret0.cpp`.
+1. **Compiler builtin registration now covers `__builtin_memcmp` plus the libstdc++-visible `__atomic*` names**: `__builtin_memcmp` is now declared/reported like the other compiler-known builtins and direct-call lowering remaps it to libc `memcmp`. The builtin registry and `__has_builtin` handling also now expose the GCC/Clang atomic builtin family used by `<atomic>` / `<latch>`, which removes the earlier phase-1 name-lookup stop and exposes the remaining typed-signature gap at `__atomic_add_fetch`. Regression tests: `tests/test_builtin_memcmp_template_ret0.cpp` and `tests/test_has_builtin_atomic_ret2.cpp`.
 
-2. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
+2. **Pointer/reference cast IR now preserves the canonical target `TypeIndex` and pointer depth**: `static_cast`, `const_cast`, and `reinterpret_cast` no longer collapse pointer targets to category-only placeholder metadata during codegen. This fixes CRTP-style `static_cast<const Derived*>(this)->member` lowering and removes the earlier `<optional>` `_M_is_engaged()` abort caused by `type_index=0`. Regression tests: new `tests/test_crtp_static_cast_this_member_ret0.cpp` plus existing cast coverage `tests/test_static_cast_base_ref_conv_op_ret0.cpp` and `tests/test_xvalue_all_casts_ret0.cpp`.
 
-3. **Template-parameter substitution now materializes concrete class-template placeholders without regressing alias-member or template-template lookups**: when a substituted type argument is itself a concrete-but-lazy template-instantiation placeholder, qualified lookup now eagerly resolves it to the registered instantiated class name, but only for the cases that are safe to do before the dedicated `::type` and template-template parameter paths run. This fixes deferred codegen for direct CRTP-style base casts and defaulted placeholder bases while preserving earlier array-alias and template-template regressions. Regression tests: `tests/test_deferred_base_placeholder_codegen_ret0.cpp`, `tests/test_deferred_base_default_arg_placeholder_ret0.cpp`, plus existing `tests/test_template_type_alias_array_member_brace_init_ret0.cpp` and `tests/template_template_with_member_ret0.cpp`.
+3. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
+
+4. **Template-parameter substitution now materializes concrete class-template placeholders without regressing alias-member or template-template lookups**: when a substituted type argument is itself a concrete-but-lazy template-instantiation placeholder, qualified lookup now eagerly resolves it to the registered instantiated class name, but only for the cases that are safe to do before the dedicated `::type` and template-template parameter paths run. This fixes deferred codegen for direct CRTP-style base casts and defaulted placeholder bases while preserving earlier array-alias and template-template regressions. Regression tests: `tests/test_deferred_base_placeholder_codegen_ret0.cpp`, `tests/test_deferred_base_default_arg_placeholder_ret0.cpp`, plus existing `tests/test_template_type_alias_array_member_brace_init_ret0.cpp` and `tests/template_template_with_member_ret0.cpp`.
 
 ### Recent Fixes (2026-04-02)
 

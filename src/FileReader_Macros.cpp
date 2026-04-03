@@ -864,7 +864,17 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 						"__has_virtual_destructor",
 						// Builtin functions
 						"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
-						"__builtin_expect", "__builtin_launder",
+						"__builtin_expect", "__builtin_launder", "__builtin_memcmp",
+						"__atomic_store", "__atomic_store_n", "__atomic_load", "__atomic_load_n",
+						"__atomic_exchange", "__atomic_exchange_n",
+						"__atomic_compare_exchange", "__atomic_compare_exchange_n",
+						"__atomic_fetch_add", "__atomic_fetch_sub", "__atomic_fetch_and",
+						"__atomic_fetch_or", "__atomic_fetch_xor",
+						"__atomic_add_fetch", "__atomic_sub_fetch", "__atomic_and_fetch",
+						"__atomic_or_fetch", "__atomic_xor_fetch",
+						"__atomic_is_lock_free", "__atomic_always_lock_free",
+						"__atomic_test_and_set", "__atomic_clear",
+						"__atomic_thread_fence", "__atomic_signal_fence",
 						// Type modification - NOT YET IMPLEMENTED, using template fallbacks
 						// "__remove_cv", "__remove_cvref", "__remove_reference",
 						// "__add_lvalue_reference", "__add_rvalue_reference",
