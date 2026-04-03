@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "BuiltinListInitNarrowing.h"
+#include "CallNodeHelpers.h"
 
 namespace ConstExpr {
 
@@ -220,6 +221,22 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For FunctionCallNode (constexpr function calls)
 	if (const auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
 		return evaluate_function_call(*function_call, context);
+	}
+
+	// Unified call-expression node — reuse the legacy constexpr paths until
+	// the evaluator reads CallExprNode directly.
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (call_expr->has_receiver()) {
+			const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
+			if (!function_decl) {
+				return EvalResult::error("Member call in constant expression is missing a function declaration");
+			}
+			MemberFunctionCallNode legacy_call = materializeLegacyMemberFunctionCall(*call_expr);
+			return evaluate_member_function_call(legacy_call, context);
+		}
+
+		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
+		return evaluate_function_call(legacy_call, context);
 	}
 
 	// For LambdaExpressionNode (callable lambda values)
@@ -1379,6 +1396,17 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 
 	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
 		return is_function_decl_noexcept(member_call->function_declaration(), context);
+	}
+
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (call_expr->has_receiver()) {
+			const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null();
+			return function_decl && is_function_decl_noexcept(*function_decl, context);
+		}
+
+		FunctionCallNode legacy_call = materializeLegacyFunctionCall(*call_expr);
+		const FunctionDeclarationNode* function_decl = resolve_function_call_decl(legacy_call, context);
+		return function_decl && is_function_decl_noexcept(*function_decl, context);
 	}
 
 	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {

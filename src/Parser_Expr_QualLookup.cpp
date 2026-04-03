@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -376,12 +377,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 	}
 
-	auto result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), func_token));
-	std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_qualified_name(func_name);
+	auto result = emplace_node<ExpressionNode>(
+		func_decl_ptr
+			? makeResolvedCallExpr(*func_decl_ptr, std::move(args), func_token)
+			: makeDirectCallExpr(*decl_ptr, std::move(args), func_token));
+	setCallQualifiedName(result.as<ExpressionNode>(), func_name);
 
 	// Set the mangled name on the function call if we have the function declaration
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
-		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+		setCallMangledName(result.as<ExpressionNode>(), func_decl_ptr->mangled_name());
 	}
 
 	return ParseResult::success(result);
@@ -1433,6 +1437,72 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
 		return operand_type;
+	} else if (std::holds_alternative<CallExprNode>(expr)) {
+		const auto& call_expr = std::get<CallExprNode>(expr);
+		const CallInfo call_info = CallInfo::from(call_expr);
+		const DeclarationNode& callee_decl = *call_info.declaration;
+		TypeSpecifierNode return_type;
+		if (call_info.function_declaration) {
+			return_type = call_info.function_declaration->decl_node().type_node().as<TypeSpecifierNode>();
+		} else {
+			return_type = callee_decl.type_node().as<TypeSpecifierNode>();
+		}
+
+		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
+			const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(type.type_index());
+			if (return_alias_info.type_index.is_valid()) {
+				type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
+			}
+			type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
+			if (type.reference_qualifier() == ReferenceQualifier::None &&
+				return_alias_info.reference_qualifier != ReferenceQualifier::None) {
+				type.set_reference_qualifier(return_alias_info.reference_qualifier);
+			}
+			if (!type.has_function_signature() && return_alias_info.function_signature.has_value()) {
+				type.set_function_signature(*return_alias_info.function_signature);
+			}
+			if (!return_alias_info.array_dimensions.empty()) {
+				type.set_array_dimensions(return_alias_info.array_dimensions);
+			}
+			if (const int resolved_size_bits = getTypeSpecSizeBits(type); resolved_size_bits > 0) {
+				type.set_size_in_bits(resolved_size_bits);
+			}
+		};
+
+		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {
+			if (!struct_info || !call_info.function_declaration) {
+				return;
+			}
+			std::string_view func_name = call_info.function_declaration->decl_node().identifier_token().value();
+			for (const auto& member_func : struct_info->member_functions) {
+				if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) &&
+					member_func.function_decl.is<FunctionDeclarationNode>()) {
+					const FunctionDeclarationNode& real_func =
+						member_func.function_decl.as<FunctionDeclarationNode>();
+					return_type = real_func.decl_node().type_node().as<TypeSpecifierNode>();
+					return;
+				}
+			}
+		};
+
+		if (call_info.has_receiver && call_info.receiver.is<ExpressionNode>()) {
+			auto object_type_opt = get_expression_type(call_info.receiver);
+			if (object_type_opt.has_value()) {
+				update_return_type_from_struct(tryGetStructTypeInfo(object_type_opt->type_index()));
+			}
+		}
+		if (call_info.function_declaration) {
+			if (const std::string_view parent_struct_name = call_info.function_declaration->parent_struct_name();
+				!parent_struct_name.empty()) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(parent_struct_name));
+				if (type_it != getTypesByNameMap().end()) {
+					update_return_type_from_struct(type_it->second->getStructInfo());
+				}
+			}
+		}
+
+		normalize_alias_return_type(return_type);
+		return return_type;
 	} else if (std::holds_alternative<FunctionCallNode>(expr)) {
 		// For function calls, get the return type
 		const auto& func_call = std::get<FunctionCallNode>(expr);

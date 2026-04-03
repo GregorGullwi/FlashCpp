@@ -80,8 +80,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 			FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
 			return ExprResult{};
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			// TODO(call-node-consolidation): route through unified call lowering
-			throw InternalError("CallExprNode not yet supported in IR generation");
+			return generateCallExprIr(expr, context);
 		} else {
 			static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 		}

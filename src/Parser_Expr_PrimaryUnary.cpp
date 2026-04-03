@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -868,7 +869,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		args.push_back(*type_result.node());	 // Pass type node as second argument
 
 		auto builtin_call = emplace_node<ExpressionNode>(
-			FunctionCallNode(func_decl, std::move(args), builtin_token));
+			makeResolvedCallExpr(func_decl_node, std::move(args), builtin_token));
 
 		return ParseResult::success(builtin_call);
 	}

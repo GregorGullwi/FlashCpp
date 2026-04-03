@@ -208,6 +208,7 @@ private:
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
+	ExprResult generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
@@ -276,6 +277,8 @@ private:
 	ExprResult generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
 	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
 	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context, const CallExprNode* unified_call_key);
+	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context, const CallExprNode* unified_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,

@@ -583,6 +583,19 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 			return false;
 		}
 
+		if (current.is<CallExprNode>()) {
+			const auto& call = current.as<CallExprNode>();
+			if (call.has_receiver() && visit_child(call.receiver())) {
+				return true;
+			}
+			for (const auto& argument : call.arguments()) {
+				if (visit_child(argument)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		if (current.is<ConstructorCallNode>()) {
 			for (const auto& argument : current.as<ConstructorCallNode>().arguments()) {
 				if (visit_child(argument)) {
