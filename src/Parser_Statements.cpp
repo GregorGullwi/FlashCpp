@@ -755,7 +755,6 @@ ParseResult Parser::parse_variable_declaration() {
 
 	if (first_init_expr.has_value() && first_init_expr->is<InitializerListNode>()) {
 		try_apply_deduction_guides(type_specifier, first_init_expr->as<InitializerListNode>());
-		first_decl.set_type_node(emplace_node<TypeSpecifierNode>(type_specifier));
 		const_cast<DeclarationNode&>(first_var_decl.declaration()).set_type_node(
 			emplace_node<TypeSpecifierNode>(type_specifier));
 	}
