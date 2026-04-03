@@ -2,6 +2,7 @@
 #include <cassert>
 #include "AstNodeTypes_TypeSystem.h"
 #include "SizeTypes.h"
+#include "VariantUtils.h"
 
 class TypeSpecifierNode;
 
@@ -816,9 +817,9 @@ struct TypeInfo {
 		TypeCategory typeEnum() const noexcept { return type_index.category(); }
 
 		// Helper methods for value access
-		int64_t intValue() const { return std::holds_alternative<int64_t>(value) ? std::get<int64_t>(value) : 0; }
-		double doubleValue() const { return std::holds_alternative<double>(value) ? std::get<double>(value) : 0.0; }
-		StringHandle stringValue() const { return std::holds_alternative<StringHandle>(value) ? std::get<StringHandle>(value) : StringHandle{}; }
+		int64_t intValue() const { return FlashCpp::get_if<int64_t>(value); }
+		double doubleValue() const { return FlashCpp::get_if<double>(value); }
+		StringHandle stringValue() const { return FlashCpp::get_if<StringHandle>(value); }
 	};
 
  // Canonical template environment owned by instantiated types.

@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <iomanip>
 
+#include "VariantUtils.h"
 #include "StringTable.h"
 #include "FileTree.h"
 #include "FileReader.h"

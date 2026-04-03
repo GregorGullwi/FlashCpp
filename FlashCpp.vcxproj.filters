@@ -257,6 +257,9 @@
     <ClInclude Include="src\CompilerIncludes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="src\VariantUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="src\ConstExprEvaluator.h">
       <Filter>Header Files</Filter>
     </ClInclude>

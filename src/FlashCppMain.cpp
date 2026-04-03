@@ -128,9 +128,7 @@ int main_impl(int argc, char* argv[]) {
 
 	// Handle log level setting from command line
 	if (argsparser.hasOption("log-level"_opt)) {
-		auto level_str = argsparser.optionValue("log-level"_opt);
-		if (std::holds_alternative<std::string_view>(level_str)) {
-			std::string_view level_sv = std::get<std::string_view>(level_str);
+		if (std::string_view level_sv = FlashCpp::get_if<std::string_view>(argsparser.optionValue("log-level"_opt)); !level_sv.empty()) {
 			size_t colon_pos = level_sv.find(':');
 			if (colon_pos != std::string_view::npos) {
 				// Category-specific: category:level
@@ -160,9 +158,8 @@ int main_impl(int argc, char* argv[]) {
 	}
 
 	if (argsparser.hasOption("o"_opt)) {
-		auto output_file = argsparser.optionValue("o"_opt);
-		if (const auto* sv_val = std::get_if<std::string_view>(&output_file))
-			context.setOutputFile(*sv_val);
+		if (std::string_view output_file = FlashCpp::get_if<std::string_view>(argsparser.optionValue("o"_opt)); !output_file.empty())
+			context.setOutputFile(output_file);
 	}
 
 	context.setVerboseMode(argsparser.hasFlag("v"_opt) || argsparser.hasFlag("verbose"_opt));
@@ -196,9 +193,7 @@ int main_impl(int argc, char* argv[]) {
 	// Name mangling style - auto-detected by platform but can be overridden
 	// for cross-compilation support
 	if (argsparser.hasOption("fmangling"_opt)) {
-		auto mangling_opt = argsparser.optionValue("fmangling"_opt);
-		if (std::holds_alternative<std::string_view>(mangling_opt)) {
-			std::string_view mangling_str = std::get<std::string_view>(mangling_opt);
+		if (std::string_view mangling_str = FlashCpp::get_if<std::string_view>(argsparser.optionValue("fmangling"_opt)); !mangling_str.empty()) {
 			FLASH_LOG(General, Info, "Using name mangling style: "sv, mangling_str);
 			if (mangling_str == "msvc") {
 				setManglingStyle(context, CompileContext::ManglingStyle::MSVC);
