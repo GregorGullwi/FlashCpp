@@ -587,10 +587,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Proceed without in_progress tracking
 	}
 
-	// Determine if we should use lazy instantiation early in the function
-	// This flag controls whether static members and member functions are instantiated eagerly or on-demand
-	// Can be overridden by force_eager parameter (used for explicit instantiation)
-	bool use_lazy_instantiation = context_.isLazyTemplateInstantiationEnabled() && !force_eager;
+	// Track whether this is a normal implicit instantiation or an explicit-instantiation
+	// definition that must force member materialization (C++20 [temp.explicit]).
+	bool is_implicit_instantiation = !force_eager;
 
 	// Helper lambda delegates to extracted member function for non-type template parameter substitution
 	auto substitute_template_param_in_initializer = [this](
@@ -4574,7 +4573,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Check if this static member should be lazily instantiated
 			bool member_needs_complex_substitution = needs_complex_substitution(static_member.initializer);
 
-			if (use_lazy_instantiation && member_needs_complex_substitution) {
+			if (is_implicit_instantiation && member_needs_complex_substitution) {
 				// Register for lazy instantiation instead of processing now
 				FLASH_LOG(Templates, Debug, "Registering static member '", static_member.getName(),
 						  "' for lazy instantiation");
@@ -5664,7 +5663,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	}
 
 	// Log lazy instantiation status (already determined earlier in the function)
-	if (use_lazy_instantiation) {
+	if (is_implicit_instantiation) {
 		FLASH_LOG(Templates, Debug, "Using LAZY instantiation for ", instantiated_name, " - registering ",
 				  class_decl.member_functions().size(), " member functions for on-demand instantiation");
 	} else if (force_eager) {
@@ -5697,7 +5696,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			const DeclarationNode& decl = func_decl.decl_node();
 
 			// For lazy instantiation, register function for later instantiation instead of instantiating now
-			if (use_lazy_instantiation &&
+			if (is_implicit_instantiation &&
 				instantiated_name.view().find("::") == std::string_view::npos &&
 				StringTable::getStringView(class_decl.name()).find("::") == std::string_view::npos &&
 				(func_decl.get_definition().has_value() || func_decl.has_template_body_position())) {

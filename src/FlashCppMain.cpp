@@ -221,13 +221,6 @@ int main_impl(int argc, char* argv[]) {
 	// Set global debug flag (also enabled by verbose mode)
 	g_enable_debug_output = show_debug || context.isVerboseMode();
 
-	// Lazy template instantiation mode (enabled by default, can be disabled for testing)
-	bool lazy_instantiation = !argsparser.hasFlag("eager-template-instantiation"_opt);
-	context.setLazyTemplateInstantiation(lazy_instantiation);
-	if (!lazy_instantiation && context.isVerboseMode()) {
-		FLASH_LOG(General, Info, "Eager template instantiation mode enabled (all template members instantiated immediately)");
-	}
-
 	// Process input file arguments here...
 	const auto& inputFileArgs = argsparser.inputFileArgs();
 	if (inputFileArgs.empty()) {
@@ -278,12 +271,12 @@ int main_impl(int argc, char* argv[]) {
 		}
 	}
 #else
-		// On Windows, add MSVC STL and UCRT include directories
-		// Discover MSVC toolset version dynamically
+	// On Windows, add MSVC STL and UCRT include directories
+	// Discover MSVC toolset version dynamically
 	{
 		const std::filesystem::path msvc_base = "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC";
 		if (std::filesystem::exists(msvc_base)) {
-				// Find the latest toolset version directory
+			// Find the latest toolset version directory
 			std::string latest_version;
 			for (const auto& entry : std::filesystem::directory_iterator(msvc_base)) {
 				if (entry.is_directory()) {
@@ -301,7 +294,7 @@ int main_impl(int argc, char* argv[]) {
 			}
 		}
 
-			// Add UCRT include directory
+		// Add UCRT include directory
 		const std::filesystem::path winsdk_base = "C:/Program Files (x86)/Windows Kits/10/Include";
 		if (std::filesystem::exists(winsdk_base)) {
 			std::string latest_version;
