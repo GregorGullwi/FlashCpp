@@ -3605,10 +3605,35 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								resolved_args.push_back(subst);
 								resolved = true;
 							} else {
+								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
+								if (resolved_ti->isTemplateInstantiation() &&
+									(!resolved_struct_info || !resolved_struct_info->total_size.is_set())) {
+									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
+									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
+									auto instantiated = try_instantiate_class_template(base_template_name, instantiated_args);
+									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+										ast_nodes_.push_back(*instantiated);
+										std::string_view inst_name = get_instantiated_class_name(base_template_name, instantiated_args);
+										auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
+										if (inst_it != getTypesByNameMap().end()) {
+											TemplateTypeArg inst_arg;
+											inst_arg.type_index = inst_it->second->registeredTypeIndex();
+											inst_arg.type_index.setCategory(inst_it->second->typeEnum());
+											inst_arg.pointer_depth = type_spec.pointer_depth();
+											inst_arg.ref_qualifier = type_spec.reference_qualifier();
+											inst_arg.cv_qualifier = type_spec.cv_qualifier();
+											resolved_args.push_back(inst_arg);
+											resolved = true;
+											FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred base placeholder '{}' to '{}'",
+															 type_name, inst_name);
+										}
+									}
+								}
+
 								// Check if this is a template class that needs to be instantiated with substituted args
 								// For example: is_integral<T> where T needs to be substituted with int
 								auto template_entry = gTemplateRegistry.lookupTemplate(type_name);
-								if (template_entry.has_value()) {
+								if (!resolved && template_entry.has_value()) {
 									// This is a template class - try to instantiate it with our template args
 									// The template args for the nested template should be our current template args
 									// (e.g., is_integral<T> with T=int should become is_integral_int)
