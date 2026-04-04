@@ -14,39 +14,43 @@ not to `throw` / `try` / `catch` being supported during constant evaluation.
 
 ---
 
-### 4.1 Constructor Body Assignments Not Evaluated ❌ [Known]
+### 4.1 Constructor Body Assignments in `constexpr` Are Supported ✅
 
 **Standard (C++20 [expr.const]):** A `constexpr` constructor may initialise members via
 assignments in the constructor body.
 
-**FlashCpp:** Only member-initialiser-list entries are evaluated; body assignments are
-silently ignored, leaving members at their default-initialised (usually zero) values.
+**FlashCpp:** Straightforward constructor-body member assignments now evaluate in
+constant expressions, including current supported `if` / `else`, `for`, `while`,
+and `switch` bodies.
 
-**Location:** `src/ConstExprEvaluator_Members.cpp`, `docs/CONSTEXPR_LIMITATIONS.md:119–140`
+**Location:** `docs/CONSTEXPR_LIMITATIONS.md` ("Implemented ✅")
 
 ---
 
-### 4.2 Multi-Statement `constexpr` Functions Not Evaluated ❌ [Known]
+### 4.2 Multi-Statement `constexpr` Functions Are Evaluated ✅
 
 **Standard (C++20 [dcl.constexpr]):** A `constexpr` function may contain conditionals, loops,
 local variables, and multiple return paths.
 
-**FlashCpp:** Only single-`return`-expression functions are evaluated at compile time.
+**FlashCpp:** Multi-statement `constexpr` free functions, member functions, and
+current supported lambda/callable bodies now evaluate at compile time.
 
-**Location:** `docs/CONSTEXPR_LIMITATIONS.md:145–173`
+**Location:** `docs/CONSTEXPR_LIMITATIONS.md` ("Implemented ✅")
 
 ---
 
-### 4.3 `consteval` Not Enforced as Compile-Time-Only ❌ [Known]
+### 4.3 `consteval` Compile-Time-Only Enforcement Works ✅
 
 **Standard (C++20 [dcl.consteval]):** Calling a `consteval` function outside a
 constant-expression context is ill-formed and must produce a compile error.
 
-**FlashCpp:** `consteval` functions are parsed with an `is_consteval` flag but are treated
-identically to `constexpr` at codegen time; the "only callable in constant-expression
-context" rule is not enforced.
+**FlashCpp:** `consteval` calls are enforced as immediate invocations. Non-constant
+runtime-argument calls are rejected, and current regression coverage includes free
+functions, member functions, namespace-scope functions, templates, and aggregate-returning
+calls.
 
-**Location:** `docs/MISSING_FEATURES.md` (consteval 40% complete)
+**Location:** `tests/test_consteval_basic_ret0.cpp`, `tests/test_consteval_template_ret0.cpp`,
+`tests/test_consteval_member_runtime_arg_fail.cpp`, `tests/test_consteval_runtime_arg_fail.cpp`
 
 ---
 

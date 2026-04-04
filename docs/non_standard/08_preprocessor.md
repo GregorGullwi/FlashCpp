@@ -66,7 +66,7 @@ may expect from a mature C++17/C++20 compiler.
 
 | Macro | Value | Gap |
 |-------|-------|-----|
-| `__cpp_consteval` | *(now undefined)* | Compile-time-only enforcement not implemented (§4.3) |
+| `__cpp_consteval` | *(now undefined)* | Kept undefined conservatively to avoid over-advertising feature completeness to system headers |
 | `__cpp_constexpr` | `201603L` | Some constexpr evaluator gaps remain; see `docs/non_standard/05_constexpr.md` and `docs/CONSTEXPR_LIMITATIONS.md` |
 | `__cpp_constexpr_dynamic_alloc` | *(now undefined)* | `constexpr std::string` / `std::vector` and dynamic allocation in constexpr are not implemented |
 
