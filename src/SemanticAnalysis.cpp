@@ -2242,10 +2242,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 
 		const auto* expr_key = static_cast<const void*>(&expr);
 		SemanticSlot slot = getSlot(expr_key).value_or(SemanticSlot{});
-		if (!slot.has_type()) {
-			slot.type_id = inferExpressionType(node);
+		CanonicalTypeId inferred_type_id = slot.type_id;
+		if (!inferred_type_id) {
+			inferred_type_id = inferExpressionType(node);
 		}
-		if (slot.has_type()) {
+		if (inferred_type_id) {
+			slot.type_id = inferred_type_id;
 			slot.value_category = inferExpressionValueCategory(node);
 			setSlot(expr_key, slot);
 		}
@@ -2313,6 +2315,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 			break;
 		case ValueCategory::PRValue:
 			break;
+		default:
+			throw InternalError("Unexpected semantic value category");
 	}
 	return type;
 }
