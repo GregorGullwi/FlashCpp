@@ -437,7 +437,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (is_static_local && global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
-			if (node.is_constexpr()) {
+			if (node.is_constexpr() || node.is_constinit()) {
 				ctx.storage_duration = ConstExpr::StorageDuration::Global;
 			} else {
 					// C++20 dynamic initialization may evaluate non-constexpr initializers whose
