@@ -1,4 +1,5 @@
 namespace std {
+	// Minimal comparison-category stub for this constexpr regression.
 	class strong_ordering {
 		signed char _M_value;
 	public:
