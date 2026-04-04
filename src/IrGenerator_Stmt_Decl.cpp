@@ -437,9 +437,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			if (is_static_local && global_symbol_table_) {
 				ctx.global_symbols = global_symbol_table_;
 			}
-				// C++20: variables with static storage duration allow evaluating non-constexpr
-				// initializers whose bodies are available (dynamic initialization as-if-constexpr).
-			ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			if (node.is_constexpr() || node.is_constinit()) {
+				ctx.storage_duration = ConstExpr::StorageDuration::Global;
+			} else {
+					// C++20 dynamic initialization may evaluate non-constexpr initializers whose
+					// bodies are available for non-constexpr static-storage variables.
+				ctx.storage_duration = ConstExpr::StorageDuration::Static;
+			}
 			ctx.parser = parser_;
 			return ctx;
 		};
