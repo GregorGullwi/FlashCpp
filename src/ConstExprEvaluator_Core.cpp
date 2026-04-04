@@ -164,6 +164,7 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	}
 
 	const TypeInfo* type_info = type_it->second;
+	// Defensively cap alias chasing so malformed/self-referential type graphs do not loop forever.
 	constexpr size_t kMaxAliasChainDepth = 100;
 	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasChainDepth; ++alias_depth) {
 		if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
