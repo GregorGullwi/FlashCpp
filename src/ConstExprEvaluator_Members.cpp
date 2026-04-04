@@ -1,17 +1,42 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "OverloadResolution.h"
-#include <functional>
 #include <limits>
 
 namespace ConstExpr {
 namespace {
 constexpr int kDefaultShiftWidthBits = 64;
+constexpr size_t kSyntheticTokenLine = 0;
+constexpr size_t kSyntheticTokenColumn = 0;
+constexpr size_t kSyntheticTokenFileIndex = 0;
 
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
 };
+
+const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, StringHandle member_name_handle) {
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle) {
+			return &member;
+		}
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			base_type && base_type->getStructInfo()) {
+			if (const StructMember* base_member = findMemberInfoRecursive(base_type->getStructInfo(), member_name_handle)) {
+				return base_member;
+			}
+		}
+	}
+
+	return nullptr;
+}
 
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
 	if (value.exact_type.has_value()) {
@@ -2443,6 +2468,10 @@ EvalResult Evaluator::apply_binary_op(
 	if (lhs.is_member_pointer() || rhs.is_member_pointer()) {
 		const bool lhs_is_member_ptr = lhs.is_member_pointer();
 		const bool rhs_is_member_ptr = rhs.is_member_pointer();
+		auto extractNullComparableRaw = [](const EvalResult& value) -> unsigned long long {
+			return value.is_uint() ? value.as_uint_raw()
+								   : static_cast<unsigned long long>(value.as_int());
+		};
 
 		if (op == "==" || op == "!=") {
 			bool are_equal = false;
@@ -2452,15 +2481,13 @@ EvalResult Evaluator::apply_binary_op(
 					(lhs.member_pointer_member == rhs.member_pointer_member) &&
 					(lhs.as_int() == rhs.as_int());
 			} else if (lhs_is_member_ptr) {
-				const unsigned long long rhs_raw = rhs.is_uint() ? rhs.as_uint_raw()
-																 : static_cast<unsigned long long>(rhs.as_int());
+				const unsigned long long rhs_raw = extractNullComparableRaw(rhs);
 				if (rhs_raw != 0ULL) {
 					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
 				}
 				are_equal = lhs.is_null_member_pointer;
 			} else {
-				const unsigned long long lhs_raw = lhs.is_uint() ? lhs.as_uint_raw()
-																 : static_cast<unsigned long long>(lhs.as_int());
+				const unsigned long long lhs_raw = extractNullComparableRaw(lhs);
 				if (lhs_raw != 0ULL) {
 					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
 				}
@@ -3637,28 +3664,8 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
-	std::function<const StructMember*(const StructTypeInfo*)> find_member_info =
-		[member_name_handle, &find_member_info](const StructTypeInfo* struct_info) -> const StructMember* {
-		if (!struct_info) {
-			return nullptr;
-		}
-
-		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name_handle) {
-				return &member;
-			}
-		}
-
-		for (const auto& base : struct_info->base_classes) {
-			if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
-				base_type && base_type->getStructInfo()) {
-				if (const StructMember* base_member = find_member_info(base_type->getStructInfo())) {
-					return base_member;
-				}
-			}
-		}
-
-		return nullptr;
+	auto find_member_info = [member_name_handle](const StructTypeInfo* struct_info) -> const StructMember* {
+		return findMemberInfoRecursive(struct_info, member_name_handle);
 	};
 
 	auto resolve_explicit_member = [&](const StructTypeInfo* struct_info, const ASTNode* explicit_initializer) -> std::optional<EvalResult> {
@@ -3865,9 +3872,9 @@ EvalResult Evaluator::evaluate_pointer_to_member_access(const PointerToMemberAcc
 	Token member_token(
 		Token::Type::Identifier,
 		StringTable::getStringView(member_pointer_result.member_pointer_member),
-		0,
-		0,
-		0);
+		kSyntheticTokenLine,
+		kSyntheticTokenColumn,
+		kSyntheticTokenFileIndex);
 	return evaluate_member_access(
 		MemberAccessNode(member_access.object(), member_token, member_access.is_arrow()),
 		context);

@@ -62,6 +62,8 @@ enum class EvalErrorType {
 
 // Result of constant expression evaluation
 struct EvalResult {
+	static constexpr long long kNullMemberPointerSentinel = -1;
+
 	std::variant<
 		bool,					// Boolean constant
 		long long,			   // Signed integer constant
@@ -155,7 +157,7 @@ struct EvalResult {
 	}
 
 	static EvalResult from_member_pointer(StringHandle member_name, int64_t offset) {
-		EvalResult r = from_int(offset);
+		EvalResult r{offset, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 		r.member_pointer_member = member_name;
 		return r;
 	}
@@ -166,7 +168,7 @@ struct EvalResult {
 			 type.category() == TypeCategory::MemberFunctionPointer) &&
 			!member_pointer_member.isValid() &&
 			!is_null_member_pointer) {
-			value = static_cast<long long>(-1);
+			value = kNullMemberPointerSentinel;
 			is_null_member_pointer = true;
 		}
 		return *this;

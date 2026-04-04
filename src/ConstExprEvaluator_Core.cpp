@@ -181,12 +181,12 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	return nullptr;
 }
 
-struct ResolvedMemberPointerTarget {
+struct MemberPointerTarget {
 	StringHandle member_name;
 	int64_t offset = 0;
 };
 
-std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTargetRecursive(
+std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 	const StructTypeInfo* struct_info,
 	StringHandle member_name,
 	int64_t base_offset = 0) {
@@ -196,7 +196,7 @@ std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTargetRecursiv
 
 	for (const auto& member : struct_info->members) {
 		if (member.getName() == member_name) {
-			return ResolvedMemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
+			return MemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
 		}
 	}
 
@@ -215,7 +215,7 @@ std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTargetRecursiv
 	return std::nullopt;
 }
 
-std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
+std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
 	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
 	if (!struct_info) {
 		return std::nullopt;
