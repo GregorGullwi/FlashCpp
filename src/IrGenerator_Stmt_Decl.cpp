@@ -245,7 +245,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			// Use StringBuilder to create a persistent string_view
 			// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
 		StringBuilder sb;
-		if (is_static_local) {
+		if (decl.has_mangled_name()) {
+			sb.append(decl.mangled_name());
+		} else if (is_static_local) {
 				// Use the mangled function name (per instantiation) to ensure uniqueness
 				// across template instantiations (e.g. Box<int>::next vs Box<char>::next).
 			StringHandle fn_name = current_function_mangled_name_.isValid()
@@ -974,7 +976,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (node.is_constexpr() && op.is_initialized) {
 			op.is_rodata = true;
 		}
-		ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
+			// A declaration with an __asm__ rename and no initializer is purely an
+			// alias — it redirects references through the name mapping recorded above but
+			// must not emit a second GlobalVariableDeclOp that would clash with the real
+			// definition.  This covers both `extern int x __asm__("y");` (StorageClass::Extern)
+			// and `extern "C" int x __asm__("y");` (Linkage::C with StorageClass::None).
+		bool is_asm_alias_only = decl.has_mangled_name() &&
+								 !node.initializer();
+		if (!is_asm_alias_only) {
+			ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
+		}
 			// (The parser already added it to the symbol table)
 		if (is_static_local) {
 			StaticLocalInfo info;

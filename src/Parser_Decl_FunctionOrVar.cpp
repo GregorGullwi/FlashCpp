@@ -844,10 +844,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// This is always safe since decl_node is a DeclarationNode with a TypeSpecifierNode
 		TypeSpecifierNode& type_specifier = decl_node.type_node().as<TypeSpecifierNode>();
 
-		// Skip C++ [[...]] and GCC __attribute__((...)) between declarator and initializer/semicolon
-		// e.g.: int __ret __attribute__((__unused__)) = expr;
+		// Skip declaration suffixes between declarator and initializer/semicolon.
 		// Per [dcl.attr.grammar], attributes can appear after a declarator.
-		skip_cpp_attributes();
+		parse_variable_declarator_suffixes(decl_node);
 
 		// A variable's point of declaration is immediately after its declarator and
 		// before its initializer is parsed, so register the declaration first.

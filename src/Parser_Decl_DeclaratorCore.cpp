@@ -627,7 +627,8 @@ ParseResult Parser::parse_type_and_name() {
 		advance(); // consume ']'
 	}
 
-	skip_asm_suffix();
+	std::optional<std::string_view> asm_symbol_name;
+	skip_asm_suffix(&asm_symbol_name);
 
 	// Unwrap the optional ASTNode before passing it to emplace_node
 	if (auto node = type_specifier_result.node()) {
@@ -646,6 +647,9 @@ ParseResult Parser::parse_type_and_name() {
 		if (custom_alignment.has_value()) {
 			decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
 		}
+		if (asm_symbol_name.has_value()) {
+			decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
+		}
 
 		// Apply parameter pack flag if this is a parameter pack
 		if (is_parameter_pack) {
@@ -655,6 +659,27 @@ ParseResult Parser::parse_type_and_name() {
 		return ParseResult::success(decl_node);
 	}
 	return ParseResult::error("Invalid type specifier node", identifier_token);
+}
+
+void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
+	std::optional<std::string_view> asm_symbol_name;
+	skip_cpp_attributes();
+	while (true) {
+		std::optional<std::string_view> current_asm_symbol_name;
+		if (!skip_asm_suffix(&current_asm_symbol_name)) {
+			break;
+		}
+		if (asm_symbol_name.has_value()) {
+			throw CompileError("Multiple __asm suffixes on declarator '" +
+							   std::string(decl.identifier_token().value()) +
+							   "' are not supported");
+		}
+		asm_symbol_name = current_asm_symbol_name;
+		skip_cpp_attributes();
+	}
+	if (asm_symbol_name.has_value()) {
+		decl.set_mangled_name(*asm_symbol_name);
+	}
 }
 
 // Parse structured binding: auto [a, b, c] = expr;
@@ -974,6 +999,7 @@ ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
 ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 											 const Token& identifier,
 											 Linkage linkage) {
+	std::optional<std::string_view> asm_symbol_name;
 	// Check for function declarator: '(' params ')'
 	if (peek() == "("_tok) {
 		advance(); // consume '('
@@ -1038,7 +1064,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		// Check for noexcept specifier on function pointer type
 		// Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
 		skip_noexcept_specifier();
-		skip_asm_suffix();
+		skip_asm_suffix(&asm_symbol_name);
 
 		// This is a function pointer!
 		// The base_type is the return type
@@ -1089,20 +1115,27 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		base_type.set_array(true);
 	}
 
-	// Create and return declaration node
-	skip_asm_suffix();
-	if (!array_dimensions.empty()) {
-		return ParseResult::success(
-			emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(base_type),
-				identifier,
-				std::move(array_dimensions)));
-	}
+	// Consume any __asm__("...") suffix that appears after array dimensions
+	// on non-function declarators (the function-pointer branch already captured
+	// it at line 1067).
+	skip_asm_suffix(&asm_symbol_name);
 
-	return ParseResult::success(
-		emplace_node<DeclarationNode>(
+	// Create and return declaration node
+	ASTNode decl_node;
+	if (!array_dimensions.empty()) {
+		decl_node = emplace_node<DeclarationNode>(
 			emplace_node<TypeSpecifierNode>(base_type),
-			identifier));
+			identifier,
+			std::move(array_dimensions));
+	} else {
+		decl_node = emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(base_type),
+			identifier);
+	}
+	if (asm_symbol_name.has_value()) {
+		decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
+	}
+	return ParseResult::success(decl_node);
 }
 
 // Phase 1 Consolidation: Parse declaration specifiers shared between

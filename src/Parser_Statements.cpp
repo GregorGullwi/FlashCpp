@@ -689,6 +689,12 @@ ParseResult Parser::parse_variable_declaration() {
 						}
 					}
 				}
+				if (func_specs.asm_symbol_name.has_value()) {
+					if (auto func_node_ptr = function_result.node()) {
+						FunctionDeclarationNode& func_node = func_node_ptr->as<FunctionDeclarationNode>();
+						func_node.set_mangled_name(*func_specs.asm_symbol_name);
+					}
+				}
 
 				// Register function in symbol table
 				const Token& identifier_token = first_decl.identifier_token();
@@ -746,6 +752,8 @@ ParseResult Parser::parse_variable_declaration() {
 			// If function parsing fails, fall through to try direct initialization
 		}
 	}
+
+	parse_variable_declarator_suffixes(first_decl);
 
 	// Register the variable before parsing its initializer (C++20 point-of-declaration).
 	ParseResult first_result = create_var_decl(type_and_name_result.node().value());

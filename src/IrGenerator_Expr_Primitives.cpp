@@ -1598,10 +1598,13 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 			op.result.ir_type = toIrType(type_node.type());
 			op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 			op.result.value = result_temp;
-				// Use fully qualified name (ns::value) to match the global variable symbol
-			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
-				qualifiedIdNode.namespace_handle(),
-				StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
+			if (decl_node.has_mangled_name()) {
+				op.global_name = decl_node.mangled_name_handle();
+			} else {
+				op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
+					qualifiedIdNode.namespace_handle(),
+					StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
+			}
 			op.is_array = is_array_type;
 			StringHandle saved_global_name = op.global_name;
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
@@ -1637,10 +1640,13 @@ ExprResult AstToIr::generateQualifiedIdentifierIr(const QualifiedIdentifierNode&
 		op.result.ir_type = toIrType(type_node.type());
 		op.result.size_in_bits = SizeInBits{static_cast<int>(size_bits)};
 		op.result.value = result_temp;
-			// Use fully qualified name (ns::value) to match the global variable symbol
-		op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
-			qualifiedIdNode.namespace_handle(),
-			StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
+		if (decl_node.has_mangled_name()) {
+			op.global_name = decl_node.mangled_name_handle();
+		} else {
+			op.global_name = gNamespaceRegistry.buildQualifiedIdentifier(
+				qualifiedIdNode.namespace_handle(),
+				StringTable::getOrInternStringHandle(qualifiedIdNode.name()));
+		}
 		op.is_array = is_array_type;
 		StringHandle saved_global_name = op.global_name;
 		ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
