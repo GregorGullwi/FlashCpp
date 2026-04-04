@@ -663,12 +663,9 @@ ParseResult Parser::parse_type_and_name() {
 
 void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
 	std::optional<std::string_view> asm_symbol_name;
-	while (true) {
+	skip_cpp_attributes();
+	while (skip_asm_suffix(asm_symbol_name.has_value() ? nullptr : &asm_symbol_name)) {
 		skip_cpp_attributes();
-		if (skip_asm_suffix(&asm_symbol_name)) {
-			continue;
-		}
-		break;
 	}
 	if (asm_symbol_name.has_value()) {
 		decl.set_mangled_name(*asm_symbol_name);
