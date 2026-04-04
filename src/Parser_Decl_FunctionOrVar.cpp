@@ -949,7 +949,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			std::function<std::optional<ConstExpr::EvalResult>(const ASTNode&, size_t)> validate_single =
 				[&](const ASTNode& node, size_t depth) -> std::optional<ConstExpr::EvalResult> {
 				if (depth >= kValidateSingleMaxDepth)
-					return ConstExpr::EvalResult::error("initializer list nesting exceeds maximum depth");
+					return ConstExpr::EvalResult::error(
+						"initializer list nesting exceeds maximum depth",
+						ConstExpr::EvalErrorType::Other);
 				if (node.is<InitializerListNode>()) {
 					const InitializerListNode& il = node.as<InitializerListNode>();
 					for (const auto& elem : il.initializers()) {
