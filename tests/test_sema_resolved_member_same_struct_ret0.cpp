@@ -3,20 +3,20 @@
 // sema-resolved target without falling through to recovery chains.
 
 struct Calculator {
-int base;
+	int base;
 
-int doubleBase() {
-return base * 2;
-}
+	int doubleBase() {
+		return base * 2;
+	}
 
-int addToBase(int x) {
-return base + x;
-}
+	int addToBase(int x) {
+		return base + x;
+	}
 
-// Calls another member function of the same struct
-int compute() {
-return addToBase(doubleBase());
-}
+	// Calls another member function of the same struct
+	int compute() {
+		return addToBase(doubleBase());
+	}
 };
 
 int main() {
