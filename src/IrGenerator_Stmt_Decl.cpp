@@ -465,8 +465,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					throw CompileError(std::string(staticStorageKeyword()) + " variable '" + std::string(decl.identifier_token().value()) +
 									   "' initializer is not a constant expression: " + eval_result.error_message);
 				}
-					// For non-constexpr globals or evaluator limitations (Other), warn and zero-initialize.
-					// See docs/KNOWN_ISSUES.md: constexpr/consteval enforcement not yet implemented for all cases.
+					// For non-constexpr globals or remaining evaluator limitations (Other), warn and zero-initialize.
 				FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
 						  decl.identifier_token().value(), "' at line ", decl.identifier_token().line());
 				return 0;

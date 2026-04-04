@@ -6,11 +6,37 @@
 namespace ConstExpr {
 namespace {
 constexpr int kDefaultShiftWidthBits = 64;
+constexpr size_t kSyntheticTokenLine = 0;
+constexpr size_t kSyntheticTokenColumn = 0;
+constexpr size_t kSyntheticTokenFileIndex = 0;
 
 struct ShiftEvaluationInfo {
 	int width_bits = kDefaultShiftWidthBits;
 	std::optional<TypeSpecifierNode> promoted_type;
 };
+
+const StructMember* findMemberInfoRecursive(const StructTypeInfo* struct_info, StringHandle member_name_handle) {
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name_handle) {
+			return &member;
+		}
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			base_type && base_type->getStructInfo()) {
+			if (const StructMember* base_member = findMemberInfoRecursive(base_type->getStructInfo(), member_name_handle)) {
+				return base_member;
+			}
+		}
+	}
+
+	return nullptr;
+}
 
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
 	if (value.exact_type.has_value()) {
@@ -2439,6 +2465,40 @@ EvalResult Evaluator::apply_binary_op(
 	const EvalResult& lhs, const EvalResult& rhs, std::string_view op,
 	EvaluationContext* context,
 	const std::unordered_map<std::string_view, EvalResult>* bindings) {
+	if (lhs.is_member_pointer() || rhs.is_member_pointer()) {
+		const bool lhs_is_member_ptr = lhs.is_member_pointer();
+		const bool rhs_is_member_ptr = rhs.is_member_pointer();
+		auto extractIntegerValueAsUnsigned = [](const EvalResult& value) -> unsigned long long {
+			return value.is_uint() ? value.as_uint_raw()
+								   : static_cast<unsigned long long>(value.as_int());
+		};
+
+		if (op == "==" || op == "!=") {
+			bool are_equal = false;
+			if (lhs_is_member_ptr && rhs_is_member_ptr) {
+				are_equal =
+					(lhs.is_null_member_pointer == rhs.is_null_member_pointer) &&
+					(lhs.member_pointer_member == rhs.member_pointer_member) &&
+					(lhs.as_int() == rhs.as_int());
+			} else if (lhs_is_member_ptr) {
+				const unsigned long long rhs_raw = extractIntegerValueAsUnsigned(rhs);
+				if (rhs_raw != 0ULL) {
+					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
+				}
+				are_equal = lhs.is_null_member_pointer;
+			} else {
+				const unsigned long long lhs_raw = extractIntegerValueAsUnsigned(lhs);
+				if (lhs_raw != 0ULL) {
+					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
+				}
+				are_equal = rhs.is_null_member_pointer;
+			}
+			return EvalResult::from_bool(op == "==" ? are_equal : !are_equal);
+		}
+
+		return EvalResult::error("Operator '" + std::string(op) + "' on member pointer value is not supported in constant expressions");
+	}
+
 	// Handle operations involving constexpr pointers.
 	// Valid constexpr pointers (pointer_to_var.isValid()) are always non-null since they
 	// represent address-of named constexpr variables.  nullptr evaluates to integer 0.
@@ -2710,6 +2770,8 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::from_bool(lv == rv);
 		if (op == "!=")
 			return EvalResult::from_bool(lv != rv);
+		if (op == "<=>")
+			return EvalResult::from_int(lv < rv ? -1 : (lv == rv ? 0 : 1));
 		if (op == "<")
 			return EvalResult::from_bool(lv < rv);
 		if (op == "<=")
@@ -2805,6 +2867,8 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::from_bool(lhs_val == rhs_val);
 	} else if (op == "!=") {
 		return EvalResult::from_bool(lhs_val != rhs_val);
+	} else if (op == "<=>") {
+		return EvalResult::from_int(lhs_val < rhs_val ? -1 : (lhs_val == rhs_val ? 0 : 1));
 	} else if (op == "<") {
 		return EvalResult::from_bool(lhs_val < rhs_val);
 	} else if (op == "<=") {
@@ -2832,6 +2896,12 @@ EvalResult Evaluator::apply_unary_op(const EvalResult& operand, std::string_view
 			return EvalResult::from_bool(false); // !non_null_ptr is false
 		}
 		return EvalResult::error("Unary operator '" + std::string(op) + "' on pointer value is not supported in constant expressions");
+	}
+	if (operand.is_member_pointer()) {
+		if (op == "!") {
+			return EvalResult::from_bool(operand.is_null_member_pointer);
+		}
+		return EvalResult::error("Unary operator '" + std::string(op) + "' on member pointer value is not supported in constant expressions");
 	}
 
 	const bool operand_is_uint = operand.is_uint();
@@ -3599,17 +3669,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 
 	StringHandle member_name_handle = StringTable::getOrInternStringHandle(member_name);
 	auto find_member_info = [member_name_handle](const StructTypeInfo* struct_info) -> const StructMember* {
-		if (!struct_info) {
-			return nullptr;
-		}
-
-		for (const auto& member : struct_info->members) {
-			if (member.getName() == member_name_handle) {
-				return &member;
-			}
-		}
-
-		return nullptr;
+		return findMemberInfoRecursive(struct_info, member_name_handle);
 	};
 
 	auto resolve_explicit_member = [&](const StructTypeInfo* struct_info, const ASTNode* explicit_initializer) -> std::optional<EvalResult> {
@@ -3795,6 +3855,34 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	return std::nullopt;
+}
+
+EvalResult Evaluator::evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context) {
+	EvalResult member_pointer_result = evaluate(member_access.member_pointer(), context);
+	if (!member_pointer_result.success()) {
+		return member_pointer_result;
+	}
+
+	if (member_pointer_result.is_null_member_pointer) {
+		return EvalResult::error(
+			"Pointer-to-member access does not support null member pointers in constant expressions",
+			EvalErrorType::NotConstantExpression);
+	}
+
+	if (!member_pointer_result.member_pointer_member.isValid()) {
+		return EvalResult::error("Pointer-to-member access requires a constexpr member-object pointer");
+	}
+
+	Token member_token(
+		Token::Type::Identifier,
+		StringTable::getStringView(member_pointer_result.member_pointer_member),
+		kSyntheticTokenLine,
+		kSyntheticTokenColumn,
+		kSyntheticTokenFileIndex);
+	// Synthetic lookup token: only the interned identifier spelling matters here.
+	return evaluate_member_access(
+		MemberAccessNode(member_access.object(), member_token, member_access.is_arrow()),
+		context);
 }
 
 // Helper to get StructTypeInfo from a TypeSpecifierNode
@@ -5361,6 +5449,68 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
+	auto materializeBaseInitializers = [&]() -> EvalResult {
+		for (const auto& base_init : ctor_decl.base_initializers()) {
+			const BaseClassSpecifier* base_spec = nullptr;
+			for (const auto& candidate : struct_info->base_classes) {
+				if (StringTable::getOrInternStringHandle(candidate.name) == base_init.getBaseClassName()) {
+					base_spec = &candidate;
+					break;
+				}
+			}
+			if (!base_spec) {
+				return EvalResult::error("Base initializer not found in constexpr constructor");
+			}
+
+			const TypeInfo* base_type_info = tryGetTypeInfo(base_spec->type_index);
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (!base_struct_info) {
+				return EvalResult::error("Base initializer type is not a struct in constexpr constructor");
+			}
+
+			ChunkedVector<ASTNode> base_args;
+			for (const auto& arg : base_init.arguments) {
+				base_args.push_back(arg);
+			}
+
+			EvalResult base_result;
+			if (auto ctor_result = try_materialize_struct_from_ctor_args(
+					base_struct_info,
+					base_spec->type_index,
+					base_args,
+					context,
+					&ctor_param_bindings)) {
+				base_result = std::move(*ctor_result);
+			} else {
+				InitializerListNode init_list;
+				for (const auto& arg : base_init.arguments) {
+					init_list.add_initializer(arg);
+				}
+				base_result = materialize_aggregate_object_value(
+					base_struct_info,
+					base_spec->type_index,
+					init_list,
+					context,
+					&ctor_param_bindings);
+			}
+
+			if (!base_result.success()) {
+				return base_result;
+			}
+
+			for (const auto& [member_name, member_value] : base_result.object_member_bindings) {
+				member_bindings[member_name] = member_value;
+			}
+		}
+
+		return EvalResult::from_bool(true);
+	};
+
+	auto base_bind_result = materializeBaseInitializers();
+	if (!base_bind_result.success()) {
+		return base_bind_result;
+	}
+
 	auto member_bind_result = bind_members_from_constructor_initializers(
 		struct_info,
 		ctor_decl,
