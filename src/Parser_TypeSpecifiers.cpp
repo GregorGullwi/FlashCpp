@@ -2417,6 +2417,9 @@ ParseResult Parser::parse_type_specifier() {
 				}
 			}
 		}
+		if (!type_info_ctx) {
+			return ParseResult::error("Unknown type: '" + std::string(type_name) + "'", type_name_token);
+		}
 		return ParseResult::success(emplace_node<TypeSpecifierNode>(
 			user_type_index.withCategory(resolved_type), type_size, type_name_token, cv_qualifier, ReferenceQualifier::None));
 	}
