@@ -857,23 +857,29 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 
 	const FunctionDeclarationNode* member_begin_decl = node.resolved_member_begin_function();
 	const FunctionDeclarationNode* member_end_decl = node.resolved_member_end_function();
+	const bool has_member_begin = member_begin_decl != nullptr;
+	const bool has_member_end = member_end_decl != nullptr;
+	const bool has_adl_begin = node.resolved_adl_begin_function() != nullptr;
+	const bool has_adl_end = node.resolved_adl_end_function() != nullptr;
 	bool use_adl = false;
 	const FunctionDeclarationNode* adl_begin_decl = nullptr;
 	const FunctionDeclarationNode* adl_end_decl = nullptr;
-	if (member_begin_decl && member_end_decl) {
-		if (node.resolved_adl_begin_function() || node.resolved_adl_end_function()) {
-			throw InternalError("Range-for has both member and ADL begin/end resolutions");
-		}
-	} else if (!member_begin_decl && !member_end_decl) {
+	if (has_member_begin != has_member_end) {
+		throw InternalError("Range-for member begin/end resolution is incomplete: only one of begin() or end() was found");
+	}
+	if (has_adl_begin != has_adl_end) {
+		throw InternalError("Range-for ADL begin/end resolution is incomplete: only one of begin() or end() was found");
+	}
+	if ((has_member_begin || has_member_end) && (has_adl_begin || has_adl_end)) {
+		throw InternalError("Range-for has both member and ADL begin/end resolutions");
+	}
+	if (has_member_begin) {
+	} else if (has_adl_begin) {
 		adl_begin_decl = node.resolved_adl_begin_function();
 		adl_end_decl = node.resolved_adl_end_function();
-		if (adl_begin_decl && adl_end_decl) {
-			use_adl = true;
-		} else {
-			throw InternalError("Range-for begin/end not resolved by semantic analysis");
-		}
+		use_adl = true;
 	} else {
-		throw InternalError("Range-for member begin/end resolution is inconsistent");
+		throw InternalError("Range-for begin/end lookup failed or was not performed during semantic analysis");
 	}
 
 		// Unified begin/end function declarations for both member and ADL paths

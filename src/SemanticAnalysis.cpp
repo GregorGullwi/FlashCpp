@@ -1249,11 +1249,13 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 			}
 		}
-		throw CompileError("range-based for loop requires type to have begin() and end() methods or free functions found via ADL");
+		throw CompileError("range-based for loop requires type to either provide member begin()/end() methods or be used with free functions begin()/end() found via argument-dependent lookup");
 	}
 
 	if (!has_member_begin || !has_member_end) {
-		throw CompileError("range-based for loop requires type to have both begin() and end() methods");
+		throw CompileError(!has_member_begin
+			? "range-based for loop requires type to have a begin() method when member range access is selected"
+			: "range-based for loop requires type to have an end() method when member range access is selected");
 	}
 
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
