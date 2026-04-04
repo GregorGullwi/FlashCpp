@@ -70,12 +70,13 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Range-based for loops: `for (auto x : container)` with arrays, begin/end iterators, const refs
 - Range-based for with initializer: `for (int i = 0; auto x : container)`
 - Spaceship operator `<=>`: Complete (see above)
-- Designated initializers: Partial support (see Partially Implemented)
+- Designated initializers: Full support
 - Auto type deduction: Basic patterns working
 - Structured bindings: `auto [a, b] = expr;`
 - Using declarations and aliases: Full support
 - Enum classes: Full support
 - constinit variables: Full support (global and local static)
+- consteval functions and immediate-invocation enforcement: Full support
 
 **Type System (A)**
 - Type traits: 37+ compiler intrinsics (`__is_integral`, `__is_void`, etc.)
@@ -140,12 +141,6 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Complex template instantiations (90% complete)
   - Basic specializations: Work
   - Complex dependent types: May have issues
-- Designated initializers (92% complete)
-  - Basic designated init `{.x = 10, .y = 20}`: ✅ Works
-  - Partial init with defaults `{.y = 5}` (omitted fields use default member values): ✅ Implemented
-  - Nested designated init `{.inner = {.a = 1}}`: ✅ Works
-  - Explicit type designated init as function arg `func(Point{.x = 1, .y = 2})`: ✅ Works
-  - Remaining: implicit designated init as function arguments (`func({.x = 1})` without type name)
 - Advanced pack expansion patterns:
   - Simple pack expansion: Works
   - Nested pack expansion: May have issues
@@ -158,12 +153,6 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 - Coroutine frame management not implemented
 - Awaitable type checking not implemented
 - Required for: `<coroutine>` header support
-
-**consteval Functions (40% complete)**
-- Keyword recognized: `consteval`
-- Parsed and stored in AST (`is_consteval` flag)
-- Treated as `constexpr` during code generation
-- Compile-time-only enforcement not implemented (calls at non-constant context are not rejected)
 
 **Standard Library Support**
 - Linux/GCC mode (55/68 headers compile, 81%):
@@ -229,7 +218,6 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 3. **Constexpr Evaluation**
    - Improve constexpr evaluation engine
    - Support constexpr in more contexts
-   - Enforce consteval semantics (compile-time-only)
 
 ### Medium Priority (Important Features)
 
@@ -247,7 +235,6 @@ This document tracks missing C++20 features and implementation gaps in FlashCpp.
 6. **Code Generation Edge Cases**
    - Improve complex template instantiation reliability
    - Stabilize pack expansion in all contexts
-   - Add implicit designated init as function argument support
 
 ### Low Priority (Advanced Features)
 
