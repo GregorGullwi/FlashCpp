@@ -680,7 +680,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 	};
 
 		// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
-		// direct-call target stored by semantic analysis.  Only use it when the
+		// direct-call target stored by semantic analysis. Only use it when the
 		// codegen recovery chain below has no needed side effects, or when those
 		// side effects can be reproduced directly from the sema-owned target.
 	if (sema_) {

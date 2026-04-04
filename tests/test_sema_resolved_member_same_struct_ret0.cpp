@@ -20,19 +20,19 @@ struct Calculator {
 };
 
 int main() {
-Calculator c;
-c.base = 10;
+	Calculator c;
+	c.base = 10;
 
-// Direct member call
-if (c.doubleBase() != 20)
-return 1;
+	// Direct member call
+	if (c.doubleBase() != 20)
+		return 1;
 
-// Member calling another member of the same struct
-if (c.compute() != 30)
-return 2;
+	// Member calling another member of the same struct
+	if (c.compute() != 30)
+		return 2;
 
-if (c.addToBase(32) != 42)
-return 3;
+	if (c.addToBase(32) != 42)
+		return 3;
 
-return 0;
+	return 0;
 }
