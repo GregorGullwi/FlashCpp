@@ -38,7 +38,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
-| `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
+| `<chrono>` | `test_std_chrono.cpp` | ❌ Compile Error | ~4300ms (targeted retest 2026-04-04). Leading-identifier statement disambiguation now gets past the old `duration::operator+=` / `operator-=` parse stop in `bits/chrono.h`; the current blocker is a later non-dependent-name error for `__time_point` plus ratio/time_point static-assert follow-ons. |
 | `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | ~760ms (targeted retest 2026-04-04). Pointer-typed `__atomic_add_fetch` / `__atomic_fetch_sub` calls now synthesize exact builtin signatures and get past the old overload failure. The current blocker is later namespace-qualified template resolution around `std::__atomic_impl::__compare_exchange<_AtomicRef>` ending in `Itanium name mangling: unknown type`. |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
@@ -59,7 +59,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
 | `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | ~750ms (targeted retest 2026-04-04). Shares the new `<atomic>` state: pointer-typed atomic builtin calls now compile, and the next blocker is the later `std::__atomic_impl::__compare_exchange<_AtomicRef>` / unknown-type mangling path. |
-| `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression |
+| `<shared_mutex>` | `test_std_shared_mutex.cpp` | ❌ Codegen Error | ~1160ms (targeted retest 2026-04-04). The old chrono parse blocker is gone; it now parses through the header stack and fails later in codegen on missing symbol `denorm_absent`. |
 | `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~43ms |
 | `<cstring>` | N/A | ✅ Compiled | ~39ms |
@@ -105,9 +105,9 @@ This directory contains test files for C++ standard library headers to assess Fl
 **Compiling successfully (parse + codegen):** 55 (57%)
 **Codegen errors (parsing succeeds but codegen fails):** 18 (including many headers now failing with Itanium mangling issues after alloc_traits.h fix unblocked parsing)
 **Parse errors:** 10
-**Crashes:** 4 (barrier, chrono, condition_variable — all stack overflow during deep template instantiation)
+**Crashes:** 4 in the last full sweep (deep template-instantiation paths; see the targeted retest note below for newer per-header updates)
 
-**Targeted retest note (2026-04-03):** `<optional>`, `<variant>`, `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<atomic>`, and `<latch>` were re-checked individually after the 2026-04-03 placeholder-materialization / builtin-registration / template-pattern-boundary work below. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type, chained member-access IR now preserves concrete user-defined payload types in simple inherited cases, the old `<variant>` post-parse pack-expansion stop is gone, and the old `<atomic>` / `<latch>` phase-1 `__builtin_memcmp` stop is gone. The new deferred-base placeholder regressions are covered by dedicated non-std tests, but the overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
+**Targeted retest note (2026-04-04):** `<optional>`, `<variant>`, `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<atomic>`, and `<latch>` were re-checked individually after the 2026-04-03 placeholder-materialization / builtin-registration / template-pattern-boundary work below. `<chrono>` and the new `<shared_mutex>` repro were also re-checked after the 2026-04-04 leading-identifier statement-disambiguation fix below: the old `duration::operator+=` / `operator-=` parse stop is gone, `<chrono>` now fails later on non-dependent-name / ratio follow-ons around `__time_point`, and `<shared_mutex>` now reaches codegen before failing on `denorm_absent`. The wide-`wmemchr` ambiguity is still gone, infix free operator templates still instantiate in simple cases, CRTP-style `static_cast<const Derived*>(this)` codegen no longer erases the target type, chained member-access IR now preserves concrete user-defined payload types in simple inherited cases, the old `<variant>` post-parse pack-expansion stop is gone, and the old `<atomic>` / `<latch>` phase-1 `__builtin_memcmp` stop is gone. The overall header counts above still reflect the older full sweep and need a future comprehensive rerun before they are updated.
 
 ### Known Blockers
 
@@ -124,7 +124,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 4. **Namespace-qualified dependent template calls after the atomic builtin fix**: Pointer-style `__atomic_add_fetch` / `__atomic_fetch_sub` now resolve, but `<atomic>` / `<latch>` advance to a later failure in `std::__atomic_impl::__compare_exchange<_AtomicRef>`, where dependent qualified template resolution still leaves an unknown type that later aborts Itanium mangling. Affects: `<atomic>`, `<latch>`.
 
-5. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
+5. **Late chrono/time-point semantic follow-ons after the statement-disambiguation fix**: `<chrono>` no longer stops first on `duration::operator+=` / `operator-=` being misparsed as declarations when the namespace-scope alias `__r` shadows the member name. The next blocker is deeper template/sema handling around `chrono::time_point`, including a non-dependent-name `__time_point` error and repeated ratio/time-point static-assert fallout. Affects: `<chrono>`, `<shared_mutex>`.
 
 6. **Iterator / ranges downstream follow-on failures after the latest operator fixes**: The simple free-operator-template gap is fixed, but libstdc++ headers still hit later failures around iterator arithmetic / comparisons (`Operator-`, `Operator!=`, `_S_empty`, `_S_size`), `make_move_iterator`, and missing struct type info for some helper types. Affects: `<string_view>`, `<array>`, `<algorithm>`, `<vector>`, `<iostream>`.
 
@@ -153,6 +153,8 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 1. **Pointer-style GCC/Clang `__atomic*` builtins now synthesize exact signatures at call time**: when libstdc++ uses pointer-based atomics such as `__atomic_add_fetch(&_M_p, ...)`, FlashCpp now creates a concrete builtin declaration from the actual argument types and uses the pointee type as the return type instead of the old `unsigned long long` placeholder. This removes the immediate overload-resolution stop in `<atomic>` / `<latch>` and exposes the later qualified-template blocker instead. Regression test: `tests/test_atomic_builtin_pointer_intrinsics_ret0.cpp`.
 
 5. **Post-parse boundary checking now skips parser-owned template-pattern structs, and chained member-access results keep concrete user-defined payload `TypeIndex` values**: the sema boundary no longer walks `$pattern__` class templates that intentionally still contain pack-expansion helpers, which moves `<variant>` past its earlier post-parse `PackExpansionExprNode` stop. Separately, member-load IR now preserves valid non-native payload type indices across chained accesses, which keeps simple inherited payload accesses working instead of collapsing them back to category-only placeholders. Regression tests: new `tests/test_member_chain_payload_base_ret0.cpp`, plus targeted std-header retest `tests/std/test_std_variant.cpp`.
+
+6. **Statement parsing now treats leading identifiers followed by expression-only operators as expressions, even if an outer type alias shares the same name**: this prevents member/object statements such as `__r += __d.count();` from being misparsed as declarations just because a namespace-scope type alias named `__r` is visible elsewhere. This removes the old `bits/chrono.h` `duration::operator+=` / `operator-=` parse stop, letting `<chrono>` and `<shared_mutex>` progress to later semantic/codegen blockers instead. Regression test: `tests/test_member_shadows_outer_type_compound_assign_ret42.cpp`.
 
 ### Recent Fixes (2026-04-02)
 

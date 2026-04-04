@@ -36,6 +36,9 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
 // Excluded on purpose:
 //   '(' '[' '<' '*' '&' '&&' identifiers/keywords
 // because those can still begin declarations or remain genuinely ambiguous.
+// In particular, '*' is intentionally omitted even though `a * b` is a valid
+// expression, because `T *p;` is a common declaration form and [stmt.ambig]
+// prefers the declaration path unless the following token rules it out.
 static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIdentifier = {
 	";", ",",
 	".", "->",
