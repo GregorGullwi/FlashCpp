@@ -45,7 +45,7 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIde
 	"?", "++", "--",
 	"+", "-", "/", "%",
 	"|", "^",
-	"<<", ">>", "&&", "||",
+	"<<", ">>", "||",
 	"==", "!=",
 	"<=", ">=", "<=>",
 	"=", "+=", "-=", "*=", "/=",
