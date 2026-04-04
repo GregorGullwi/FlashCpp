@@ -454,8 +454,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			auto eval_result = ConstExpr::Evaluator::evaluate(expr, ctx);
 
 			if (!eval_result.success()) {
-				if (node.is_constexpr() && eval_result.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
-					throw CompileError("constexpr variable '" + std::string(decl.identifier_token().value()) +
+				if ((node.is_constexpr() || node.is_constinit()) &&
+					eval_result.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
+					const char* keyword = node.is_constexpr() ? "constexpr" : "constinit";
+					throw CompileError(std::string(keyword) + " variable '" + std::string(decl.identifier_token().value()) +
 									   "' initializer is not a constant expression: " + eval_result.error_message);
 				}
 					// For non-constexpr globals or evaluator limitations (Other), warn and zero-initialize.
@@ -857,8 +859,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 					} else {
 							// Evaluation failed: for constexpr variables this is an error;
 							// for non-constexpr globals, warn and zero-initialize.
-						if (node.is_constexpr() && eval_result.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
-							throw CompileError("constexpr variable '" + std::string(decl.identifier_token().value()) +
+						if ((node.is_constexpr() || node.is_constinit()) &&
+							eval_result.error_type == ConstExpr::EvalErrorType::NotConstantExpression) {
+							const char* keyword = node.is_constexpr() ? "constexpr" : "constinit";
+							throw CompileError(std::string(keyword) + " variable '" + std::string(decl.identifier_token().value()) +
 											   "' initializer is not a constant expression: " + eval_result.error_message);
 						}
 						FLASH_LOG(Codegen, Warning, "Non-constant initializer in global variable '",
