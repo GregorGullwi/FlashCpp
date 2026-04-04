@@ -2770,6 +2770,8 @@ EvalResult Evaluator::apply_binary_op(
 			return EvalResult::from_bool(lv == rv);
 		if (op == "!=")
 			return EvalResult::from_bool(lv != rv);
+		if (op == "<=>")
+			return EvalResult::from_int(lv < rv ? -1 : (lv > rv ? 1 : 0));
 		if (op == "<")
 			return EvalResult::from_bool(lv < rv);
 		if (op == "<=")
@@ -2865,6 +2867,8 @@ EvalResult Evaluator::apply_binary_op(
 		return EvalResult::from_bool(lhs_val == rhs_val);
 	} else if (op == "!=") {
 		return EvalResult::from_bool(lhs_val != rhs_val);
+	} else if (op == "<=>") {
+		return EvalResult::from_int(lhs_val < rhs_val ? -1 : (lhs_val > rhs_val ? 1 : 0));
 	} else if (op == "<") {
 		return EvalResult::from_bool(lhs_val < rhs_val);
 	} else if (op == "<=") {
