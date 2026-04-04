@@ -670,7 +670,9 @@ void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
 			break;
 		}
 		if (asm_symbol_name.has_value()) {
-			throw CompileError("Multiple __asm suffixes on one declarator are not supported");
+			throw CompileError("Multiple __asm suffixes on declarator '" +
+							   std::string(decl.identifier_token().value()) +
+							   "' are not supported");
 		}
 		asm_symbol_name = current_asm_symbol_name;
 		skip_cpp_attributes();
