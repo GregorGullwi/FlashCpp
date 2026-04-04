@@ -8,6 +8,7 @@ int main() {
 #elif defined(__asm__)
 	return 2;
 #else
+	// The alias should resolve to asm_variable_target_impl and therefore read back 42.
 	return asm_variable_target_alias;
 #endif
 }
