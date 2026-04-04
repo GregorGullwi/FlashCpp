@@ -204,6 +204,19 @@ public:
 		resolved_dereference_function_ = func;
 	}
 
+	const FunctionDeclarationNode* resolved_member_begin_function() const { return resolved_member_begin_function_; }
+	const FunctionDeclarationNode* resolved_member_end_function() const { return resolved_member_end_function_; }
+	void set_resolved_member_begin_function(const FunctionDeclarationNode* func) {
+		resolved_member_begin_function_ = func;
+	}
+	void set_resolved_member_end_function(const FunctionDeclarationNode* func) {
+		resolved_member_end_function_ = func;
+	}
+	bool resolved_begin_is_const() const { return resolved_begin_is_const_; }
+	void set_resolved_begin_is_const(bool value) {
+		resolved_begin_is_const_ = value;
+	}
+
 	// ADL-resolved free-function begin()/end() for range-based for loops
 	// C++20 [stmt.ranged]/1: when no member begin/end exists, ADL is used.
 	const FunctionDeclarationNode* resolved_adl_begin_function() const { return resolved_adl_begin_function_; }
@@ -221,6 +234,9 @@ private:
 	ASTNode body_statement_;
 	std::optional<ASTNode> init_statement_;	// C++20: for (init; decl : range)
 	const FunctionDeclarationNode* resolved_dereference_function_ = nullptr;
+	const FunctionDeclarationNode* resolved_member_begin_function_ = nullptr;
+	const FunctionDeclarationNode* resolved_member_end_function_ = nullptr;
+	bool resolved_begin_is_const_ = false;
 	const FunctionDeclarationNode* resolved_adl_begin_function_ = nullptr;
 	const FunctionDeclarationNode* resolved_adl_end_function_ = nullptr;
 };

@@ -855,36 +855,34 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		return;
 	}
 
-		// Check for begin() and end() methods
-	const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
-	const StructMemberFunction* end_func = struct_info->findMemberFunction("end"sv);
-
-		// C++20 [stmt.ranged]/1.3: ADL is only used when *neither* begin nor end
-		// is found via class member access lookup. The semantic analyzer resolves
-		// ADL functions and stores them in the AST node; codegen only reads them.
+	const FunctionDeclarationNode* member_begin_decl = node.resolved_member_begin_function();
+	const FunctionDeclarationNode* member_end_decl = node.resolved_member_end_function();
 	bool use_adl = false;
 	const FunctionDeclarationNode* adl_begin_decl = nullptr;
 	const FunctionDeclarationNode* adl_end_decl = nullptr;
-	if (!begin_func && !end_func) {
+	if (member_begin_decl && member_end_decl) {
+		if (node.resolved_adl_begin_function() || node.resolved_adl_end_function()) {
+			throw InternalError("Range-for has both member and ADL begin/end resolutions");
+		}
+	} else if (!member_begin_decl && !member_end_decl) {
 		adl_begin_decl = node.resolved_adl_begin_function();
 		adl_end_decl = node.resolved_adl_end_function();
 		if (adl_begin_decl && adl_end_decl) {
 			use_adl = true;
 		} else {
-			throw InternalError("Range-for ADL begin/end not resolved by semantic analysis");
+			throw InternalError("Range-for begin/end not resolved by semantic analysis");
 		}
-	} else if (!begin_func || !end_func) {
-		FLASH_LOG(Codegen, Error, "Range-based for loop requires type to have both begin() and end() methods");
-		return;
+	} else {
+		throw InternalError("Range-for member begin/end resolution is inconsistent");
 	}
 
 		// Unified begin/end function declarations for both member and ADL paths
 	const FunctionDeclarationNode& begin_func_decl = use_adl
 		? *adl_begin_decl
-		: begin_func->function_decl.as<FunctionDeclarationNode>();
+		: *member_begin_decl;
 	const FunctionDeclarationNode& end_func_decl = use_adl
 		? *adl_end_decl
-		: end_func->function_decl.as<FunctionDeclarationNode>();
+		: *member_end_decl;
 
 		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
 	StringBuilder sb_begin;
@@ -1027,7 +1025,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		init_expr = ASTNode::emplace_node<ExpressionNode>(
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true));
 	} else {
-		const bool prefer_const_deref = range_type.is_const() || (begin_func && begin_func->is_const());
+		const bool prefer_const_deref = range_type.is_const() || node.resolved_begin_is_const();
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
 		if (!dereference_func && sema_) {
 			dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
