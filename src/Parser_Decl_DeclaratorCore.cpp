@@ -1115,6 +1115,11 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		base_type.set_array(true);
 	}
 
+	// Consume any __asm__("...") suffix that appears after array dimensions
+	// on non-function declarators (the function-pointer branch already captured
+	// it at line 1067).
+	skip_asm_suffix(&asm_symbol_name);
+
 	// Create and return declaration node
 	ASTNode decl_node;
 	if (!array_dimensions.empty()) {
