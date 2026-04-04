@@ -84,13 +84,18 @@ type because `TypeSpecifierNode::type_index()` returns the base type index,
 and `lookup_adl` uses `tryGetTypeInfo()` on that index to find the struct's
 namespace.
 
-## Intentional Deviations
+## Conformance Notes
 
-### Hidden friends visible to ordinary lookup
+### Hidden friends are ADL-only
 
-FlashCpp also makes hidden friends findable through ordinary unqualified lookup.
-Per C++20, hidden friends should only be visible via ADL. This is a
-simplification that doesn't break valid code but may accept some invalid code.
+FlashCpp now treats hidden friends per C++20 [class.friend] and
+[basic.lookup.argdep]: they are registered only in `adl_only_symbols_`, are not
+visible to ordinary unqualified lookup, and are only found when argument-
+dependent lookup is actually triggered by an associated argument type.
+
+**Tests:** `test_adl_hidden_friend_ret0.cpp`,
+`test_hidden_friend_no_adl_fail.cpp`,
+`test_hidden_friend_unrelated_arg_fail.cpp`
 
 ### No ADL for qualified calls
 
@@ -101,14 +106,11 @@ qualified lookup paths in `Parser_Expr_QualLookup.cpp` do not invoke
 
 ### Innermost-first namespace walk is deterministic
 
-The new namespace walk in `resolveStructInfo` resolves ambiguity by always
-preferring the innermost match, which matches C++ scoping rules. The old
-suffix-scan approach could non-deterministically pick any matching type.
+The namespace walk in `resolveStructInfo` resolves ambiguity by preferring the
+innermost match, which matches C++ scoping rules and avoids the old
+non-deterministic suffix-scan behavior.
 
 ## Recommendations
 
-1. ~~**Range-for ADL** — Highest priority.~~ ✅ Done.
-2. ~~**Anonymous enum ADL test** — Add a test to verify enum ADL works in
-   anonymous namespaces.~~ ✅ Done.
-3. ~~**Pointer/reference ADL test** — Add test verifying ADL finds functions when
-   argument is a pointer or reference to a namespace-scoped type.~~ ✅ Done.
+1. **`std::swap` customization point test** — Add coverage once `<utility>` support
+   is in place.
