@@ -1221,9 +1221,15 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 }
 // Helper: resolve a type name within the current namespace context (including using directives)
 const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
+	const std::string_view type_name = StringTable::getStringView(type_handle);
+
 	auto isDirectlyVisibleUnqualified = [&](const TypeInfo* type_info) {
 		if (!type_info) {
 			return false;
+		}
+
+		if (type_name.find("::") != std::string_view::npos) {
+			return true;
 		}
 
 		NamespaceHandle decl_ns = type_info->namespaceHandle();
@@ -1234,6 +1240,8 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		// Namespace members may be registered under a short alias in gTypesByName for
 		// internal convenience, but ordinary unqualified lookup must not treat that as
 		// visible outside the proper namespace / using context.
+		// Accept only exact canonical-name matches for bare names so `X` does not
+		// become visible merely because `ns::X` was also inserted under a short alias.
 		return type_info->name() == type_handle;
 	};
 
@@ -1260,7 +1268,7 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 	// C++ unqualified lookup can find a type introduced by `using ns::Type;`,
 	// but it must not guess unrelated `other::Type` declarations by suffix.
 	auto using_declarations = gSymbolTable.get_current_using_declaration_handles();
-	auto using_decl_it = using_declarations.find(StringTable::getStringView(type_handle));
+	auto using_decl_it = using_declarations.find(type_name);
 	if (using_decl_it != using_declarations.end()) {
 		const auto& [using_namespace, original_name] = using_decl_it->second;
 		StringHandle original_handle = StringTable::getOrInternStringHandle(original_name);
