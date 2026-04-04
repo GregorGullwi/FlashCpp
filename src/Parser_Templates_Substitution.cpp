@@ -1221,29 +1221,65 @@ std::string_view Parser::extract_base_template_name_by_stripping(std::string_vie
 }
 // Helper: resolve a type name within the current namespace context (including using directives)
 const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
+	const std::string_view type_name = StringTable::getStringView(type_handle);
+
+	auto isDirectlyVisibleUnqualified = [&](const TypeInfo* type_info) {
+		if (!type_info) {
+			return false;
+		}
+
+		if (type_name.find("::") != std::string_view::npos) {
+			return true;
+		}
+
+		NamespaceHandle decl_ns = type_info->namespaceHandle();
+		if (!decl_ns.isValid() || decl_ns.isGlobal()) {
+			return true;
+		}
+
+		// Namespace members may be registered under a short alias in gTypesByName for
+		// internal convenience, but ordinary unqualified lookup must not treat that as
+		// visible outside the proper namespace / using context.
+		// Accept only exact canonical-name matches for bare names so `X` does not
+		// become visible merely because `ns::X` was also inserted under a short alias.
+		return type_info->name() == type_handle;
+	};
+
 	// Walk current namespace chain outward first (e.g., physics::Vector, ::Vector)
 	// This must come before the unqualified lookup so that namespace-local types
 	// are preferred over short aliases registered by other namespaces.
 	NamespaceHandle ns_handle = gSymbolTable.get_current_namespace_handle();
-	while (ns_handle.isValid()) {
+	while (ns_handle.isValid() && !ns_handle.isGlobal()) {
 		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns_handle, type_handle);
 		auto q_it = getTypesByNameMap().find(qualified);
 		if (q_it != getTypesByNameMap().end()) {
 			return q_it->second;
-		}
-		if (ns_handle.isGlobal()) {
-			break;
 		}
 		ns_handle = gNamespaceRegistry.getParent(ns_handle);
 	}
 
 	// Fallback: direct unqualified lookup
 	auto it = getTypesByNameMap().find(type_handle);
-	if (it != getTypesByNameMap().end()) {
+	if (it != getTypesByNameMap().end() && isDirectlyVisibleUnqualified(it->second)) {
 		return it->second;
 	}
 
-	// using directives
+	// Exact using declarations in block/enclosing scopes.
+	// C++ unqualified lookup can find a type introduced by `using ns::Type;`,
+	// but it must not guess unrelated `other::Type` declarations by suffix.
+	auto using_declarations = gSymbolTable.get_current_using_declaration_handles();
+	auto using_decl_it = using_declarations.find(type_name);
+	if (using_decl_it != using_declarations.end()) {
+		const auto& [using_namespace, original_name] = using_decl_it->second;
+		StringHandle original_handle = StringTable::getOrInternStringHandle(original_name);
+		StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(using_namespace, original_handle);
+		auto imported_it = getTypesByNameMap().find(qualified);
+		if (imported_it != getTypesByNameMap().end()) {
+			return imported_it->second;
+		}
+	}
+
+	// Exact using directives
 	for (NamespaceHandle using_ns : gSymbolTable.get_current_using_directive_handles()) {
 		if (!using_ns.isValid())
 			continue;
@@ -1252,29 +1288,6 @@ const TypeInfo* lookupTypeInCurrentContext(StringHandle type_handle) {
 		if (u_it != getTypesByNameMap().end()) {
 			return u_it->second;
 		}
-	}
-
-	// Fallback: unique suffix match (e.g., std::size_t when current namespace context is unavailable)
-	std::string_view type_name_sv = StringTable::getStringView(type_handle);
-	const TypeInfo* suffix_match = nullptr;
-	for (const auto& [handle, info] : getTypesByNameMap()) {
-		std::string_view full_name = StringTable::getStringView(handle);
-		if (full_name.size() <= type_name_sv.size() + 2)
-			continue;
-		if (!full_name.ends_with(type_name_sv))
-			continue;
-		size_t prefix_pos = full_name.size() - type_name_sv.size();
-		if (prefix_pos < 2 || full_name[prefix_pos - 2] != ':' || full_name[prefix_pos - 1] != ':')
-			continue;
-		if (suffix_match && suffix_match != info) {
-			// Ambiguous - multiple matches
-			suffix_match = nullptr;
-			break;
-		}
-		suffix_match = info;
-	}
-	if (suffix_match) {
-		return suffix_match;
 	}
 
 	return nullptr;

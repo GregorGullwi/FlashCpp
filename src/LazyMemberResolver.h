@@ -160,24 +160,24 @@ private:
 			}
 		}
 
-		const StructTypeInfo* suffix_match = nullptr;
-		for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
-			std::string_view qualified_name = StringTable::getStringView(name_handle);
-			if (qualified_name.size() > fallback_name.size() + 2 &&
-				qualified_name.ends_with(fallback_name) &&
-				qualified_name.substr(qualified_name.size() - fallback_name.size() - 2, 2) == "::") {
-				if (const StructTypeInfo* struct_info = try_type_info(type_info)) {
-					// Refuse ambiguous suffix matches rather than caching a non-deterministic choice
-					// from the unordered type map iteration order.
-					if (suffix_match && suffix_match != struct_info) {
-						return nullptr;
+		// Use the TypeInfo's namespace to build qualified names for O(1) lookups
+		// instead of scanning all types for suffix matches.
+		const TypeInfo* type_info_for_ns = tryGetTypeInfo(type_index);
+		if (type_info_for_ns && type_info_for_ns->namespaceHandle().isValid()) {
+			NamespaceHandle ns = type_info_for_ns->namespaceHandle();
+			while (ns.isValid() && !ns.isGlobal()) {
+				StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, fallback_handle);
+				if (auto it = getTypesByNameMap().find(qualified); it != getTypesByNameMap().end()) {
+					if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
+						return struct_info;
 					}
-					suffix_match = struct_info;
 				}
+				ns = gNamespaceRegistry.getParent(ns);
 			}
 		}
 
-		return suffix_match;
+		// If NamespaceHandle is INVALID, return nullptr rather than guessing.
+		return nullptr;
 	}
 
 	// Internal resolution logic
