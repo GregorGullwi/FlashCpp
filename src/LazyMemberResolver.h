@@ -127,7 +127,10 @@ public:
 private:
 	static constexpr size_t kMaxTypeAliasDepth = 64;
 
-	const StructTypeInfo* resolveStructInfo(TypeIndex type_index, std::string_view fallback_name) const {
+	// context_ns: the namespace from which to start the innermost-first walk.
+	// Callers pass the declaring class's namespace so that unresolved base
+	// classes are looked up from the right scope.
+	const StructTypeInfo* resolveStructInfo(TypeIndex type_index, std::string_view fallback_name, NamespaceHandle context_ns) const {
 		if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index)) {
 			return struct_info;
 		}
@@ -154,29 +157,33 @@ private:
 		};
 
 		StringHandle fallback_handle = StringTable::getOrInternStringHandle(fallback_name);
-		if (auto it = getTypesByNameMap().find(fallback_handle); it != getTypesByNameMap().end()) {
-			if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
-				return struct_info;
-			}
-		}
 
-		// Use the TypeInfo's namespace to build qualified names for O(1) lookups
-		// instead of scanning all types for suffix matches.
-		const TypeInfo* type_info_for_ns = tryGetTypeInfo(type_index);
-		if (type_info_for_ns && type_info_for_ns->namespaceHandle().isValid()) {
-			NamespaceHandle ns = type_info_for_ns->namespaceHandle();
+		// Namespace walk must come BEFORE unqualified lookup so that
+		// namespace-local types are preferred over global types.
+		// Only check for "::" before the first '<' to avoid false positives
+		// from template arguments (e.g. "Base<std::string>" is unqualified).
+		const auto template_start = fallback_name.find('<');
+		const auto prefix = fallback_name.substr(0, template_start);
+		if (prefix.find("::") == std::string_view::npos) {
+			NamespaceHandle ns = context_ns;
 			while (ns.isValid() && !ns.isGlobal()) {
 				StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, fallback_handle);
 				if (auto it = getTypesByNameMap().find(qualified); it != getTypesByNameMap().end()) {
-					if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
-						return struct_info;
-					}
+					// A found name hides all outer names per C++ scoping rules,
+					// even if it's not a struct (e.g. an enum).
+					return try_type_info(it->second);
 				}
 				ns = gNamespaceRegistry.getParent(ns);
 			}
 		}
 
-		// If NamespaceHandle is INVALID, return nullptr rather than guessing.
+		// Fallback: direct unqualified lookup.
+		// Return unconditionally on map hit — a found name hides everything,
+		// consistent with the namespace walk above.
+		if (auto it = getTypesByNameMap().find(fallback_handle); it != getTypesByNameMap().end()) {
+			return try_type_info(it->second);
+		}
+
 		return nullptr;
 	}
 
@@ -188,7 +195,7 @@ private:
 			return MemberResolutionResult();
 		}
 
-		const StructTypeInfo* struct_info = resolveStructInfo(type_index, StringTable::getStringView(type_info->name()));
+		const StructTypeInfo* struct_info = resolveStructInfo(type_index, StringTable::getStringView(type_info->name()), type_info->namespaceHandle());
 
 		if (!struct_info) {
 			return MemberResolutionResult();
@@ -224,7 +231,7 @@ private:
 
 			// Add base classes to the queue
 			for (const auto& base : current_struct->base_classes) {
-				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name)) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
 					to_visit.push({base_info, current_offset + base.offset});
 				}
 			}
