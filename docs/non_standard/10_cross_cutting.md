@@ -19,7 +19,6 @@ completeness only.
 | `consteval` enforcement missing | `docs/MISSING_FEATURES.md` |
 | 9–16 byte non-variadic structs passed by pointer (SysV) | `docs/KNOWN_ISSUES.md` |
 | Default arg codegen silently drops unknown AST node types | `docs/KNOWN_ISSUES.md` |
-| Assignment through reference-returning method treats return as rvalue | `docs/KNOWN_ISSUES.md` |
 | Array-of-structs nested brace init not parsed | `docs/KNOWN_ISSUES.md` |
 | Suboptimal IR for ref-param compound assignment | `docs/known_ir_issues.md` |
 | Implicit designated init as function arg (no type name) | `docs/MISSING_FEATURES.md` |
