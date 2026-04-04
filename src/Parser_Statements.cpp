@@ -29,6 +29,26 @@ static const std::unordered_set<std::string_view> kExpressionOnlyAfterParen = {
 	"%=", "&=", "|=", "^=",
 	"<<=", ">>="};
 
+// Tokens that can ONLY continue an expression after a leading identifier in a
+// statement. If one of these follows immediately, the statement cannot be a
+// declaration that starts with a type-name.
+//
+// Excluded on purpose:
+//   '(' '[' '<' '*' '&' '&&' identifiers/keywords
+// because those can still begin declarations or remain genuinely ambiguous.
+static const std::unordered_set<std::string_view> kExpressionOnlyAfterLeadingIdentifier = {
+	";", ",",
+	".", "->",
+	"?", "++", "--",
+	"+", "-", "/", "%",
+	"|", "^",
+	"<<", ">>", "&&", "||",
+	"==", "!=",
+	"<=", ">=", "<=>",
+	"=", "+=", "-=", "*=", "/=",
+	"%=", "&=", "|=", "^=",
+	"<<=", ">>="};
+
 ParseResult Parser::parse_block() {
 	if (!consume("{"_tok)) {
 		return ParseResult::error("Expected '{' for block", current_token_);
@@ -193,6 +213,18 @@ ParseResult Parser::parse_statement_or_declaration() {
 			return parse_label_statement();
 		}
 		// Not a label, restore position and continue
+		restore_token_position(saved_pos);
+
+		// Per [stmt.ambig], only keep the declaration path when the next token can
+		// actually continue a declaration. If the identifier is followed
+		// immediately by an expression-only token, parse it as an expression even
+		// if some outer-scope type with the same name also exists.
+		saved_pos = save_token_position();
+		advance(); // consume the identifier
+		if (!peek().is_eof() && kExpressionOnlyAfterLeadingIdentifier.count(peek_info().value())) {
+			restore_token_position(saved_pos);
+			return parse_expression_statement();
+		}
 		restore_token_position(saved_pos);
 
 		// Check if this identifier is a registered struct/class/enum/typedef type
