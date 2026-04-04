@@ -1,5 +1,182 @@
 # 2026-04-04 codegen lookup investigation
 
+## Concrete implementation plan
+
+This top section is the execution plan.
+
+The rest of this document is the investigation backing the plan. Each task below points to the detailed findings so an agent can:
+
+- start with a concrete change target,
+- know which files to inspect first,
+- and query the investigation sections for the reasoning and source locations behind the task.
+
+### Phase 1: ordinary call resolution becomes sema-owned
+
+**Goal**
+
+Stop `IrGenerator_Call_Direct.cpp` from rescanning symbol tables and member hierarchies to rediscover direct-call targets.
+
+**Primary files**
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+- `src/IrGenerator_Call_Direct.cpp`
+- `src/AstNodeTypes_DeclNodes.h`
+
+**Concrete work**
+
+1. Add a sema-owned side table for resolved ordinary calls, similar to the existing operator-call and subscript tables.
+2. Store the final `FunctionDeclarationNode*` for ordinary direct calls during semantic normalization.
+3. Change direct-call lowering to consume that resolved target first.
+4. For sema-normalized bodies, turn the current name-based recovery chain into `InternalError` instead of more lookup.
+5. Keep only the minimum fallback needed for bodies sema never normalized yet, and document that boundary in code.
+
+**Done when**
+
+- direct-call lowering no longer needs `lookup_all(...)`, `gSymbolTable` rescans, mangled-name retry lookup, or member/base-class search for sema-normalized bodies,
+- the selected callee comes from sema-owned resolved data,
+- missing resolved data in a normalized body fails loudly.
+
+**Read/query first**
+
+- [Evidence 1](#1-direct-call-lowering-still-re-resolves-callees-by-name)
+- [What already exists on the semantic-analysis side](#what-already-exists-on-the-semantic-analysis-side)
+- [Why this is fragile](#why-this-is-fragile)
+
+### Phase 2: move expression typing out of codegen
+
+**Goal**
+
+Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reconstruction path.
+
+**Primary files**
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+- `src/IrGenerator_Stmt_Decl.cpp`
+- `src/IrGenerator_MemberAccess.cpp`
+
+**Concrete work**
+
+1. Extend semantic normalization so it records the normalized type/category for the expression shapes currently reconstructed in codegen.
+2. Add a sema accessor for that expression-type data.
+3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with sema-owned type queries.
+4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
+
+**Done when**
+
+- constructor/copy/move-sensitive codegen decisions no longer depend on ad-hoc declaration lookups or recursive AST-shape type recovery,
+- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies.
+
+**Read/query first**
+
+- [Evidence 2](#2-codegen-still-performs-its-own-expression-type-reconstruction)
+- [Evidence 3](#3-member-access-lowering-still-recovers-member-information-by-name)
+- [What already exists on the semantic-analysis side](#what-already-exists-on-the-semantic-analysis-side)
+
+### Phase 3: constructor selection becomes sema-owned
+
+**Goal**
+
+Stop constructor choice from depending on codegen-side argument-type rebuilding.
+
+**Primary files**
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+- `src/IrGenerator_Stmt_Decl.cpp`
+- related constructor-resolution helpers shared with constexpr/codegen paths
+
+**Concrete work**
+
+1. Reuse the expression-type data from Phase 2 for constructor-call normalization.
+2. Record the selected constructor declaration in sema.
+3. Make constructor-lowering sites consume the resolved constructor directly.
+4. Remove arity/name-based constructor matching from lowering paths.
+
+**Done when**
+
+- constructor codegen does not re-run overload selection,
+- copy-vs-move-sensitive initialization reads sema-owned results instead of reconstructed argument types.
+
+**Read/query first**
+
+- [Evidence 2](#2-codegen-still-performs-its-own-expression-type-reconstruction)
+- [Recommended direction / Priority 3](#priority-3-pre-resolve-constructors-in-sema)
+- `docs/2026-03-12_IMPLICIT_CAST_SEMA_PLAN.md` Phase 18 notes about constructor matching cleanup
+
+### Phase 4: remove codegen-to-sema callbacks
+
+**Goal**
+
+Make lowering consume precomputed semantic results only; do not ask `SemanticAnalysis` to resolve new language facts during codegen.
+
+**Primary files**
+
+- `src/SemanticAnalysis.h`
+- `src/SemanticAnalysis.cpp`
+- `src/IrGenerator_Stmt_Control.cpp`
+
+**Concrete work**
+
+1. Ensure range-for normalization always records the dereference target when the body is sema-normalized.
+2. Replace the codegen callback to `resolveRangedForIteratorDereference(...)` with a strict read of precomputed data.
+3. For normalized bodies, missing dereference resolution becomes `InternalError`.
+
+**Done when**
+
+- range-for lowering no longer calls back into sema for normalized bodies,
+- the sema/codegen phase boundary is one-way: sema annotates, codegen consumes.
+
+**Read/query first**
+
+- [Evidence 5](#5-range-for-lowering-still-calls-back-into-semantic-analysis)
+- [Recommended direction / Priority 4](#priority-4-remove-codegen-to-sema-callbacks)
+
+### Phase 5: finish call-node consolidation in service of sema-owned lowering
+
+**Goal**
+
+Use the existing call-node consolidation effort to remove duplicate resolution paths permanently instead of patching them one at a time.
+
+**Primary files**
+
+- `docs/2026-04-02-call-node-consolidation-plan.md`
+- `src/AstNodeTypes_DeclNodes.h`
+- parser/template-substitution/call-lowering files touched by the consolidation plan
+
+**Concrete work**
+
+1. Continue moving call metadata onto the shared call abstraction.
+2. Collapse separate semantic-resolution paths for free/member/static-member calls onto one sema-owned pipeline.
+3. Collapse separate codegen lowering paths once the shared call abstraction is authoritative.
+4. Delete temporary member-to-free fallback conversions once all downstream users read the unified representation directly.
+
+**Done when**
+
+- one normalized call representation feeds semantic resolution and lowering,
+- ordinary-call caching from Phase 1 works through the shared call abstraction rather than one legacy node only.
+
+**Read/query first**
+
+- [Recommended direction / Priority 5](#priority-5-finish-call-node-consolidation-with-sema-owned-resolution)
+- `docs/2026-04-02-call-node-consolidation-plan.md`
+
+### Why this order
+
+- Phase 1 first, because direct-call fallback recovery is the largest single name-lookup hotspot and it establishes the ordinary-call caching pattern.
+- Phase 2 next, because constructor cleanup depends on sema-owned expression typing instead of codegen-side reconstruction.
+- Phase 3 after that, because constructor resolution becomes straightforward once Phase 2 provides sema-owned argument types.
+- Phase 4 can then remove the remaining sema callback in lowering with the same “normalized body must already be resolved” rule.
+- Phase 5 last, because call-node consolidation is the broad cleanup that should consume the sema-owned resolution model from the earlier phases rather than invent a parallel one.
+
+### Guardrails for every phase
+
+- For sema-normalized bodies, missing semantic resolution should become `InternalError`, not another codegen lookup pass.
+- Prefer adding or extending sema side tables over encoding more fallback logic in `IrGenerator_*`.
+- Keep layout/runtime queries in codegen, but move language lookup and overload/type decisions into sema.
+- Re-run targeted tests around the touched lowering path first, then run the normal repository validation commands before finishing larger slices.
+
 ## Question
 
 Does the codegen / IR generation layer still do too much lookup and semantic recovery by name instead of consuming semantic-analysis results?
