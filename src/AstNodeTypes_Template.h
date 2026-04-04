@@ -242,7 +242,9 @@ public:
 	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
 		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
 
+	DeclarationNode& declaration() { return declaration_node_.as<DeclarationNode>(); }
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
+	ASTNode& declaration_node() { return declaration_node_; }
 	const ASTNode& declaration_node() const { return declaration_node_; }
 	const std::optional<ASTNode>& initializer() const { return initializer_; }
 	StorageClass storage_class() const { return storage_class_; }
