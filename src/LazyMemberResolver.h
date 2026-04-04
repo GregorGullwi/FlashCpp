@@ -154,25 +154,31 @@ private:
 		};
 
 		StringHandle fallback_handle = StringTable::getOrInternStringHandle(fallback_name);
-		if (auto it = getTypesByNameMap().find(fallback_handle); it != getTypesByNameMap().end()) {
-			if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
-				return struct_info;
+
+		// Namespace walk must come BEFORE unqualified lookup so that
+		// namespace-local types are preferred over global types (Bug 1 fix).
+		// Skip namespace walk if fallback_name is already qualified to avoid
+		// double-qualified names like "ns::ns::Foo" (Bug 3 fix).
+		if (fallback_name.find("::") == std::string_view::npos) {
+			const TypeInfo* type_info_for_ns = tryGetTypeInfo(type_index);
+			if (type_info_for_ns && type_info_for_ns->namespaceHandle().isValid()) {
+				NamespaceHandle ns = type_info_for_ns->namespaceHandle();
+				while (ns.isValid() && !ns.isGlobal()) {
+					StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, fallback_handle);
+					if (auto it = getTypesByNameMap().find(qualified); it != getTypesByNameMap().end()) {
+						// A found name hides all outer names per C++ scoping rules,
+						// even if it's not a struct (e.g. an enum) (Bug 2 fix).
+						return try_type_info(it->second);
+					}
+					ns = gNamespaceRegistry.getParent(ns);
+				}
 			}
 		}
 
-		// Use the TypeInfo's namespace to build qualified names for O(1) lookups
-		// instead of scanning all types for suffix matches.
-		const TypeInfo* type_info_for_ns = tryGetTypeInfo(type_index);
-		if (type_info_for_ns && type_info_for_ns->namespaceHandle().isValid()) {
-			NamespaceHandle ns = type_info_for_ns->namespaceHandle();
-			while (ns.isValid() && !ns.isGlobal()) {
-				StringHandle qualified = gNamespaceRegistry.buildQualifiedIdentifier(ns, fallback_handle);
-				if (auto it = getTypesByNameMap().find(qualified); it != getTypesByNameMap().end()) {
-					if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
-						return struct_info;
-					}
-				}
-				ns = gNamespaceRegistry.getParent(ns);
+		// Fallback: direct unqualified lookup
+		if (auto it = getTypesByNameMap().find(fallback_handle); it != getTypesByNameMap().end()) {
+			if (const StructTypeInfo* struct_info = try_type_info(it->second)) {
+				return struct_info;
 			}
 		}
 
