@@ -536,6 +536,27 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// Set up parsing context for the function
 		gSymbolTable.enter_scope(ScopeType::Function);
 		current_function_ = &new_func_ref;
+		size_t saved_member_ctx_size = member_function_context_stack_.size();
+		StructDeclarationNode* member_struct_node = nullptr;
+		TypeIndex member_struct_type_index{};
+		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+			struct_it != getTypesByNameMap().end()) {
+			member_struct_type_index = struct_it->second->type_index_;
+			for (auto& node : ast_nodes_) {
+				if (!node.is<StructDeclarationNode>()) {
+					continue;
+				}
+				StructDeclarationNode& struct_node = node.as<StructDeclarationNode>();
+				if (struct_node.name() == lazy_info.identity.instantiated_owner_name) {
+					member_struct_node = &struct_node;
+					break;
+				}
+			}
+			setup_member_function_context(
+				member_struct_node,
+				lazy_info.identity.instantiated_owner_name,
+				member_struct_type_index);
+		}
 
 		// Add parameters to symbol table
 		for (const auto& param : new_func_ref.parameter_nodes()) {
@@ -568,6 +589,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		// Clean up context
 		current_function_ = saved_current_function;
+		while (member_function_context_stack_.size() > saved_member_ctx_size) {
+			member_function_context_stack_.pop_back();
+		}
 		gSymbolTable.exit_scope();
 
 		// Restore original position
