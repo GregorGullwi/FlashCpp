@@ -66,21 +66,39 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
-	if (sema_ && arg.is<ExpressionNode>()) {
-		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
-			return sema_type;
-		}
-		if (sema_normalized_current_function_) {
-			throw InternalError("Missing sema-owned expression type for normalized codegen overload resolution");
-		}
-	}
-
 	if (!arg.is<ExpressionNode>()) {
+		if (parser_) {
+			auto parser_type = parser_->get_expression_type(arg);
+			if (parser_type.has_value()) {
+				adjust_argument_type_for_overload_resolution(arg, *parser_type);
+				return parser_type;
+			}
+		}
 		return std::nullopt;
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
+	const bool legacy_supported_shape = std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		return std::is_same_v<T, IdentifierNode> ||
+			   std::is_same_v<T, MemberAccessNode> ||
+			   std::is_same_v<T, StaticCastNode> ||
+			   std::is_same_v<T, ConstCastNode> ||
+			   std::is_same_v<T, ReinterpretCastNode> ||
+			   std::is_same_v<T, DynamicCastNode> ||
+			   std::is_same_v<T, ConstructorCallNode> ||
+			   std::is_same_v<T, InitializerListConstructionNode> ||
+			   std::is_same_v<T, FunctionCallNode> ||
+			   std::is_same_v<T, MemberFunctionCallNode>;
+	},
+											 expr);
+	if (sema_ && legacy_supported_shape) {
+		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
+			return sema_type;
+		}
+	}
+
+	auto legacy_type = std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
 		using T = std::decay_t<decltype(inner)>;
 
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -158,7 +176,18 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			return std::nullopt;
 		}
 	},
-					  expr);
+							 expr);
+	if (legacy_type.has_value()) {
+		return legacy_type;
+	}
+	if (parser_) {
+		auto parser_type = parser_->get_expression_type(arg);
+		if (parser_type.has_value()) {
+			adjust_argument_type_for_overload_resolution(arg, *parser_type);
+			return parser_type;
+		}
+	}
+	return std::nullopt;
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
