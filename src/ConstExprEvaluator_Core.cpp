@@ -191,7 +191,7 @@ struct MemberPointerTarget {
 std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
 	const StructTypeInfo* struct_info,
 	StringHandle member_name,
-	int64_t base_offset = 0) {
+	int64_t base_offset) {
 	if (!struct_info) {
 		return std::nullopt;
 	}
@@ -223,7 +223,7 @@ std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const Qualified
 		return std::nullopt;
 	}
 
-	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle());
+	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle(), /*base_offset=*/0);
 }
 
 } // namespace
