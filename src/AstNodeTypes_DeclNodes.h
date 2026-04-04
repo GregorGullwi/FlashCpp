@@ -1616,6 +1616,12 @@ public:
 	const ASTNode& default_value() const { return default_value_.value(); }
 	void set_default_value(ASTNode value) { default_value_ = value; }
 
+	// Pre-computed external symbol name support (e.g. GNU __asm__("symbol") labels)
+	void set_mangled_name(std::string_view name) { mangled_name_ = StringTable::getOrInternStringHandle(name); }
+	std::string_view mangled_name() const { return mangled_name_.view(); }
+	StringHandle mangled_name_handle() const { return mangled_name_; }
+	bool has_mangled_name() const { return mangled_name_.isValid(); }
+
 private:
 	ASTNode type_node_;
 	Token identifier_;
@@ -1624,6 +1630,7 @@ private:
 	bool is_parameter_pack_;			 // True for parameter packs like Args... args
 	bool is_unsized_array_;				// True for unsized arrays like int arr[] = {1, 2, 3}
 	std::optional<ASTNode> default_value_;  // Default argument value for function parameters
+	StringHandle mangled_name_;
 };
 
 enum class IdentifierBinding : uint8_t {

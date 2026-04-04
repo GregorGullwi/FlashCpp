@@ -245,7 +245,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			// Use StringBuilder to create a persistent string_view
 			// (string_view in GlobalVariableDeclOp would dangle if we used local std::string)
 		StringBuilder sb;
-		if (is_static_local) {
+		if (decl.has_mangled_name()) {
+			sb.append(decl.mangled_name());
+		} else if (is_static_local) {
 				// Use the mangled function name (per instantiation) to ensure uniqueness
 				// across template instantiations (e.g. Box<int>::next vs Box<char>::next).
 			StringHandle fn_name = current_function_mangled_name_.isValid()

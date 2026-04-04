@@ -67,24 +67,21 @@ may expect from a mature C++17/C++20 compiler.
 
 ---
 
-### 7.4 `__asm` / `__asm__` Parsed as Suffixes; Function Symbol Rename Preserved ⚠️
+### 7.4 `__asm` / `__asm__` Parsed as Suffixes; Function and Variable Symbol Rename Preserved ✅
 
 **Context:** `asm` declarations (`extern T f() __asm("impl_name")`) appear in system headers
 for symbol renaming.
 
 - `__asm("...")` and `__asm__("...")` are no longer preprocessor macros.
 - The parser now accepts them as ignorable declaration suffixes on variables and functions.
-- Function declarations now preserve the requested external symbol name instead of always
+- Function and variable declarations now preserve the requested external symbol name instead of
   discarding it.
 
 This fixes the keyword-vs-macro mismatch and makes `#ifdef __asm` / `#ifdef __asm__` evaluate
 to false, matching GCC-style keyword behavior more closely.
 
-**Remaining gap:** Variable declarations still discard the requested assembler symbol rename.
-`extern int value __asm("value_impl");` still behaves as though the rename were absent, so
-references continue to use `value` rather than `value_impl`.
-
-**Regression coverage:** `tests/test_asm_function_rename_ret42.cpp`
+**Regression coverage:** `tests/test_asm_function_rename_ret42.cpp`,
+`tests/test_asm_variable_rename_ret42.cpp`
 
 **Location:** parser handling in `src/Parser_Expr_BinaryPrecedence.cpp` and
 `src/Parser_Decl_DeclaratorCore.cpp`
