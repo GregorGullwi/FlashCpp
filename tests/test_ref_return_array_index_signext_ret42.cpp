@@ -15,13 +15,19 @@ int main() {
 
 	buffer.index = 0;
 	buffer.slot() = 10;
+	if (buffer.values[0] != 10) {
+		return 1;
+	}
 
 	buffer.index = 127;
-	++buffer.slot();
+	buffer.slot() += 1;
+	if (buffer.values[127] != 21) {
+		return 2;
+	}
 
 	buffer.index = 255;
 	if (buffer.slot() != 11) {
-		return 1;
+		return 3;
 	}
 
 	return buffer.values[0] + buffer.values[127] + buffer.values[255];
