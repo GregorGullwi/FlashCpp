@@ -21,7 +21,7 @@ int main() {
 
 	buffer.values[255] = 8;
 	buffer.index = 255;
-	buffer.slot() += 2;
+	buffer.slot() += 1;
 
 	return buffer.values[0] + buffer.values[127] + buffer.values[255];
 }
