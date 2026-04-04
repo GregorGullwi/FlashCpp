@@ -9,19 +9,20 @@ struct Buffer {
 
 int main() {
 	Buffer buffer{};
-	buffer.values[0] = 10;
+	buffer.values[0] = 1;
 	buffer.values[127] = 20;
-	buffer.values[255] = 40;
+	buffer.values[255] = 11;
 
 	buffer.index = 0;
-	buffer.slot() += 1;
+	buffer.slot() = 10;
 
 	buffer.index = 127;
-	buffer.slot() += 2;
+	++buffer.slot();
 
-	buffer.values[255] = 8;
 	buffer.index = 255;
-	buffer.slot() += 1;
+	if (buffer.slot() != 11) {
+		return 1;
+	}
 
 	return buffer.values[0] + buffer.values[127] + buffer.values[255];
 }
