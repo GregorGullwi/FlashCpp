@@ -101,6 +101,15 @@ if (-not (Test-Path $linkerPath)) {
 Write-Host "Using linker: $linkerPath"
 Write-Host ""
 
+$cCompilerPath = Join-Path (Split-Path $linkerPath -Parent) "cl.exe"
+if (-not (Test-Path $cCompilerPath)) {
+	Write-Host "ERROR: Could not find MSVC C compiler (cl.exe) next to link.exe" -ForegroundColor Red
+	exit 1
+}
+
+Write-Host "Using C compiler: $cCompilerPath"
+Write-Host ""
+
 # Get library paths
 $vcToolsPath = Split-Path (Split-Path (Split-Path (Split-Path $linkerPath)))
 $libPath1 = "$vcToolsPath\lib\x64"
@@ -198,10 +207,14 @@ $expectedCompileFailures = @(
 # Expected link failures - files that compile but have known link issues
 # These are typically due to features not yet implemented in FlashCpp
 $expectedLinkFailures = @(
-	# ABI tests that require external C helper files to be compiled and linked
-	"test_external_abi.cpp"
-	"test_external_abi_simple.cpp"
 )
+
+# Tests that require additional C helper objects for linking.
+$extraCHelpers = @{
+	"test_external_abi.cpp" = @("test_external_abi_helper.c")
+	"test_external_abi_simple.cpp" = @("test_external_abi_simple_helper.c")
+	"test_atomic_builtin_pointer_intrinsics_ret0.cpp" = @("test_atomic_builtin_pointer_intrinsics_helper.c")
+}
 
 # Pre-cache main() detection to avoid reading files twice
 $mainFileCache = @{}
@@ -309,7 +322,7 @@ function Wait-ParallelResultJob {
 # Worker function for testing a single regular file
 # ──────────────────────────────────────────────────────
 function Invoke-TestOneFile {
-	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $resultDir)
+	param($filePath, $fileName, $baseName, $flashCppPath, $linkerPath, $cCompilerPath, $libPath1, $libPath2, $libPath3, $hasMain, $expectedLinkFailures, $expectedCompileFailures, $expectedRuntimeCrashes, $extraCHelpers, $repoRoot, $resultDir)
 
 	$ErrorActionPreference = "SilentlyContinue"
 
@@ -319,6 +332,7 @@ function Invoke-TestOneFile {
 	$exeFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.exe"
 	$ilkFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.ilk"
 	$pdbFile = Join-Path $resultDir "${baseName}_$uniqueSuffix.pdb"
+	$helperObjFiles = @()
 
 	# Parse expected return value from filename
 	$expectedReturnValue = $null
@@ -342,13 +356,45 @@ function Invoke-TestOneFile {
 			if (-not $hasMain) {
 				$resultLine = "COMPILE_LINK_OK|$fileName|0|no main"
 			} else {
+				if ($extraCHelpers.ContainsKey($fileName)) {
+					foreach ($helperFileName in $extraCHelpers[$fileName]) {
+						$helperBaseName = [System.IO.Path]::GetFileNameWithoutExtension($helperFileName)
+						$helperSourcePath = Join-Path $repoRoot "tests\$helperFileName"
+						$helperObjFile = Join-Path $resultDir "${helperBaseName}_$uniqueSuffix.obj"
+						$helperCompileArgs = @(
+							"/nologo",
+							"/c",
+							"/TC",
+							"/Fo$helperObjFile",
+							$helperSourcePath
+						)
+						$helperCompileOutput = & $cCompilerPath $helperCompileArgs 2>&1 | Out-String
+						if ($LASTEXITCODE -ne 0 -or -not (Test-Path $helperObjFile)) {
+							$helperErrors = ($helperCompileOutput -split "`n" | Where-Object { $_ -match "error" } | Select-Object -Last 5) -join "`n"
+							if ([string]::IsNullOrWhiteSpace($helperErrors)) {
+								$helperErrors = ($helperCompileOutput -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 5) -join "`n"
+							}
+							$resultLine = "LINK_FAIL|$fileName|Failed to compile helper $helperFileName`n$helperErrors"
+							break
+						}
+						$helperObjFiles += $helperObjFile
+					}
+				}
+
+				if ($resultLine.StartsWith("LINK_FAIL|")) {
+					return
+				}
+
 				# Link
 				$linkArgs = @(
 					"/LIBPATH:$libPath1",
 					"/SUBSYSTEM:CONSOLE",
 					"/OUT:$exeFile",
 					"/PDB:$pdbFile",
-					$objFile,
+					$objFile
+				)
+				if ($helperObjFiles.Count -gt 0) { $linkArgs += $helperObjFiles }
+				$linkArgs += @(
 					"kernel32.lib",
 					"libucrt.lib",
 					"legacy_stdio_definitions.lib"
@@ -422,7 +468,7 @@ function Invoke-TestOneFile {
 		$resultLine = "COMPILE_FAIL|$fileName|WORKER ERROR: $_"
 		} finally {
 		# Always clean up temp artifacts
-			foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile)) {
+			foreach ($f in @($objFile, $exeFile, $ilkFile, $pdbFile) + $helperObjFiles) {
 			if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
 		}
 	}
@@ -482,7 +528,7 @@ if ($useParallel) {
 		${function:Invoke-TestOneFile} = $using:invokeTestOneFileDefinition
 		$file = $_
 		$hasMain = ($using:mainFileCache)[$file.Name]
-		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:resultDir
+		Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $using:flashCppPath $using:linkerPath $using:cCompilerPath $using:libPath1 $using:libPath2 $using:libPath3 $hasMain $using:expectedLinkFailures $using:expectedCompileFailures $using:expectedRuntimeCrashes $using:extraCHelpers $using:RepoRoot $using:resultDir
 	} -AsJob
 	Wait-ParallelResultJob -Job $regularParallelJob -Label "Regular tests" -TotalCount $totalFiles -ResultDir $resultDir
 } else {
@@ -495,7 +541,7 @@ if ($useParallel) {
 		$currentFile++
 		Write-Host "[$currentFile/$totalFiles] Testing $($file.Name)... " -NoNewline
 		$hasMain = $mainFileCache[$file.Name]
-			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $resultDir
+			Invoke-TestOneFile $file.FullName $file.Name $file.BaseName $flashCppPath $linkerPath $cCompilerPath $libPath1 $libPath2 $libPath3 $hasMain $expectedLinkFailures $expectedCompileFailures $expectedRuntimeCrashes $extraCHelpers $RepoRoot $resultDir
 
 		# Read and display result inline for sequential mode
 		$resultFile = Join-Path $resultDir "$($file.Name).result"

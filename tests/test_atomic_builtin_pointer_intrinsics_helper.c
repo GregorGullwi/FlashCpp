@@ -1,3 +1,17 @@
+#if defined(_MSC_VER)
+int* __atomic_add_fetch(int** ptr, unsigned long long value, int memory_order) {
+	(void)memory_order;
+	*ptr = (int*)((char*)(*ptr) + value);
+	return *ptr;
+}
+
+int* __atomic_fetch_sub(int** ptr, unsigned long long value, int memory_order) {
+	(void)memory_order;
+	int* old = *ptr;
+	*ptr = (int*)((char*)(*ptr) - value);
+	return old;
+}
+#else
 int* flashcpp_atomic_add_fetch(int** ptr, unsigned long long value, int memory_order) __asm__("__atomic_add_fetch");
 int* flashcpp_atomic_add_fetch(int** ptr, unsigned long long value, int memory_order) {
 	(void)memory_order;
@@ -12,3 +26,4 @@ int* flashcpp_atomic_fetch_sub(int** ptr, unsigned long long value, int memory_o
 	*ptr = (int*)((char*)(*ptr) - value);
 	return old;
 }
+#endif
