@@ -160,18 +160,24 @@ private:
 			}
 		}
 
+		const StructTypeInfo* suffix_match = nullptr;
 		for (const auto& [name_handle, type_info] : getTypesByNameMap()) {
 			std::string_view qualified_name = StringTable::getStringView(name_handle);
 			if (qualified_name.size() > fallback_name.size() + 2 &&
 				qualified_name.ends_with(fallback_name) &&
 				qualified_name.substr(qualified_name.size() - fallback_name.size() - 2, 2) == "::") {
 				if (const StructTypeInfo* struct_info = try_type_info(type_info)) {
-					return struct_info;
+					// Refuse ambiguous suffix matches rather than caching a non-deterministic choice
+					// from the unordered type map iteration order.
+					if (suffix_match && suffix_match != struct_info) {
+						return nullptr;
+					}
+					suffix_match = struct_info;
 				}
 			}
 		}
 
-		return nullptr;
+		return suffix_match;
 	}
 
 	// Internal resolution logic

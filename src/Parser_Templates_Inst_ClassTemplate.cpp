@@ -5336,6 +5336,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Push the instantiated template onto struct_parsing_context_stack_ so that
 		// parse_struct_declaration() builds the correct qualified name (e.g., "Wrapper$hash::Nested")
 		restore_lexer_position_only(ool_nested.body_start);
+		const size_t saved_pack_alignment = context_.getCurrentPackAlignment();
+		auto restore_pack_alignment = ScopeGuard([this, saved_pack_alignment]() {
+			context_.setPackAlignment(saved_pack_alignment);
+		});
+		context_.setPackAlignment(ool_nested.pack_alignment);
 
 		struct_parsing_context_stack_.push_back({StringTable::getStringView(instantiated_name),
 												 nullptr, // struct_node — not needed; parse_struct_declaration() creates its own
@@ -5447,11 +5452,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					size_t new_total = 0;
 					size_t new_alignment = 1;
 					for (auto& member : parsed_nested_info->members) {
-						size_t alignment = member.alignment ? member.alignment : 1;
-						new_total = alignValueToAlignment(new_total, alignment);
-						member.offset = new_total;
-						new_total += member.size;
-						new_alignment = std::max(new_alignment, alignment);
+						size_t effective_alignment = member.alignment ? member.alignment : 1;
+						// pack_alignment==0 means "use the member's natural alignment".
+						if (parsed_nested_info->pack_alignment > 0 && parsed_nested_info->pack_alignment < effective_alignment) {
+							effective_alignment = parsed_nested_info->pack_alignment;
+						}
+						member.offset = parsed_nested_info->is_union ? 0 : alignValueToAlignment(new_total, effective_alignment);
+						new_total = parsed_nested_info->is_union ? std::max(new_total, member.size) : (member.offset + member.size);
+						new_alignment = std::max(new_alignment, effective_alignment);
 					}
 					new_total = alignValueToAlignment(new_total, new_alignment);
 					parsed_nested_info->alignment = new_alignment;

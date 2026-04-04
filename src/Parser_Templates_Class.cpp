@@ -1249,6 +1249,7 @@ ParseResult Parser::parse_template_declaration() {
 																					  template_params,
 																					  StringTable::getOrInternStringHandle(member_class_name),
 																					  struct_keyword_pos, template_param_names, is_class,
+																					  context_.getCurrentPackAlignment(),
 																					  template_args	// concrete specialization args (e.g., <int>)
 																				  });
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class (full spec): {}::{}",
@@ -2653,6 +2654,7 @@ ParseResult Parser::parse_template_declaration() {
 																					  struct_keyword_pos,
 																					  template_param_names,
 																					  is_class,
+																					  context_.getCurrentPackAlignment(),
 																					  {}	 // no specialization args — applies to all instantiations
 																				  });
 					FLASH_LOG_FORMAT(Templates, Debug, "Registered out-of-line nested class: {}::{}",

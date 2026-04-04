@@ -72,6 +72,7 @@ struct OutOfLineNestedClass {
 	SaveHandle body_start; // Saved position at the struct/class keyword for re-parsing via parse_struct_declaration()
 	InlineVector<StringHandle, 4> template_param_names; // Names of template parameters
 	bool is_class = false; // true if 'class', false if 'struct'
+	size_t pack_alignment = 0; // Active #pragma pack value at the definition site
 	InlineVector<TemplateTypeArg, 4> specialization_args; // For full specializations: concrete args (e.g., <int>). Empty for partial specs.
 };
 
