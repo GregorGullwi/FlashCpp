@@ -66,15 +66,20 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
-	if (!arg.is<ExpressionNode>()) {
-		if (parser_) {
-			auto parser_type = parser_->get_expression_type(arg);
-			if (parser_type.has_value()) {
-				adjust_argument_type_for_overload_resolution(arg, *parser_type);
-				return parser_type;
-			}
+	auto tryParserFallback = [&]() -> std::optional<TypeSpecifierNode> {
+		if (!parser_) {
+			return std::nullopt;
 		}
-		return std::nullopt;
+
+		auto parser_type = parser_->get_expression_type(arg);
+		if (parser_type.has_value()) {
+			adjust_argument_type_for_overload_resolution(arg, *parser_type);
+		}
+		return parser_type;
+	};
+
+	if (!arg.is<ExpressionNode>()) {
+		return tryParserFallback();
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
@@ -180,14 +185,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	if (legacy_type.has_value()) {
 		return legacy_type;
 	}
-	if (parser_) {
-		auto parser_type = parser_->get_expression_type(arg);
-		if (parser_type.has_value()) {
-			adjust_argument_type_for_overload_resolution(arg, *parser_type);
-			return parser_type;
-		}
-	}
-	return std::nullopt;
+	return tryParserFallback();
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
