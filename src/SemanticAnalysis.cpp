@@ -1204,8 +1204,15 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	}
 
 	const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
-	if (!begin_func || !begin_func->function_decl.is<FunctionDeclarationNode>()) {
-		// C++20 [stmt.ranged]/1: When no member begin/end exists, fall back to
+	const StructMemberFunction* end_func = struct_info->findMemberFunction("end"sv);
+	bool has_member_begin = begin_func && begin_func->function_decl.is<FunctionDeclarationNode>();
+	bool has_member_end = end_func && end_func->function_decl.is<FunctionDeclarationNode>();
+
+	// C++20 [stmt.ranged]/1.3: ADL is only used when *neither* begin nor end
+	// is found via class member access lookup. If one is a member but not the
+	// other, the standard requires member access for both (producing an error
+	// for the missing one), not a silent fallback to ADL.
+	if (!has_member_begin && !has_member_end) {
 		// ADL lookup for free-function begin()/end() with the range as argument.
 		// The range expression is an lvalue, so mark the arg type accordingly
 		// for overload resolution to match non-const lvalue reference parameters.
@@ -1235,6 +1242,10 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 			}
 		}
+		return original_var_decl.declaration_node();
+	}
+
+	if (!has_member_begin || !has_member_end) {
 		return original_var_decl.declaration_node();
 	}
 
