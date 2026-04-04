@@ -17,11 +17,10 @@ Lookup proceeds through normal member name lookup.
 
 **FlashCpp:** For conversion operators whose return type was stored as `UserDefined` (often
 via a template type alias), the compiler falls back to searching for the string literal
-`"operator user_defined"` and uses type-size matching as a tiebreaker
-(IrGenerator_MemberAccess.cpp:3469–3525). This can produce "undefined reference to
-`operator user_defined`" linker errors for pattern templates.
+`"operator user_defined"` and uses type-size matching as a tiebreaker. This can produce
+"undefined reference to `operator user_defined`" linker errors for pattern templates.
 
-**Location:** `src/IrGenerator_MemberAccess.cpp:3469–3525`
+**Location:** `src/IrGenerator_MemberAccess.cpp:3678`
 
 ---
 
@@ -37,7 +36,7 @@ IR level for correct ABI lowering, pointer-arithmetic semantics, and type-based 
 // TODO: Add proper pointer type support to the Type enum
 ```
 
-**Location:** `src/IrGenerator_Call_Direct.cpp:978`
+**Location:** `src/IrGenerator_Call_Direct.cpp:1462`
 
 ---
 
@@ -46,15 +45,12 @@ IR level for correct ABI lowering, pointer-arithmetic semantics, and type-based 
 **Standard:** The pointer depth (indirection nesting level) must be tracked accurately for
 correct codegen of multi-level pointer operations.
 
-**FlashCpp:** `addr_op.operand.pointer_depth = 0;` with the comment `// TODO: Verify pointer
-depth` appears at ≥ 7 call sites. Multi-level pointer operations (`int**`, `char***`, etc.)
+**FlashCpp:** `addr_op.operand.pointer_depth = PointerDepth{};` with the comment `// TODO: Verify pointer
+depth` appears at multiple call sites. Multi-level pointer operations (`int**`, `char***`, etc.)
 may produce incorrect IR.
 
-**Location:** `src/IrGenerator_Expr_Operators.cpp:863, 940`,
-`src/IrGenerator_NewDeleteCast.cpp:672`,
-`src/IrGenerator_Visitors_Decl.cpp:2460`,
-`src/IrGenerator_Visitors_Namespace.cpp:338`,
-`src/IrGenerator_Stmt_Decl.cpp:886, 1239, 1651`
+**Location:** `src/IrGenerator_Expr_Operators.cpp:412, 1437, 1901`,
+`src/IrGenerator_NewDeleteCast.cpp:654`
 
 ---
 
@@ -64,18 +60,18 @@ may produce incorrect IR.
 generated when `operator<=>` is defaulted. If the spaceship operator is absent the synthesis
 must not silently produce an incorrect result.
 
-**FlashCpp:** `IrGenerator_Visitors_Decl.cpp:705–706` has:
+**FlashCpp:** `IrGenerator_Visitors_Decl.cpp:933` has:
 
 ```cpp
-// Fallback: operator<=> not found, return false for all synthesized operators
-emitReturn(IrValue{0ULL}, Type::Bool, 8, …);
+// Fallback: operator<=> not found, return false for synthesized comparison operators
+emitReturn(IrValue{0ULL}, TypeCategory::Bool, 8, …);
 ```
 
 If `operator<=>` is not found for any reason, all synthesised comparison operators silently
 return `false`. A program using `<` on such a type compiles without error but produces
 universally wrong results.
 
-**Location:** `src/IrGenerator_Visitors_Decl.cpp:705–706`
+**Location:** `src/IrGenerator_Visitors_Decl.cpp:933`
 
 ---
 
@@ -83,7 +79,7 @@ universally wrong results.
 
 **Standard:** All initialiser forms for heap-allocated arrays must be evaluated.
 
-**FlashCpp:** `IrGenerator_NewDeleteCast.cpp:94–97` and `224–230`:
+**FlashCpp:** `IrGenerator_NewDeleteCast.cpp:86–90` and `208–212`:
 
 ```cpp
 // Skip if the initializer is not supported
@@ -96,7 +92,7 @@ if (!init.is<InitializerListNode>() && !init.is<ExpressionNode>()) {
 An unsupported initialiser type (e.g., certain nested designated initialisers) causes the
 array element to be left uninitialised with only a warning log.
 
-**Location:** `src/IrGenerator_NewDeleteCast.cpp:94–97, 224–230`
+**Location:** `src/IrGenerator_NewDeleteCast.cpp:86–90, 208–212`
 
 ---
 
@@ -105,11 +101,11 @@ array element to be left uninitialised with only a warning log.
 **Standard:** All unary operators on supported types must compile; unsupported combinations
 must produce a compile error with a meaningful message.
 
-**FlashCpp:** `IrGenerator_Expr_Conversions.cpp:1514` throws `InternalError("Unary operator not
+**FlashCpp:** `IrGenerator_Expr_Conversions.cpp:1592` throws `InternalError("Unary operator not
 implemented yet")` in the catch-all else branch, producing a compiler crash rather than a
 user-visible error.
 
-**Location:** `src/IrGenerator_Expr_Conversions.cpp:1514`
+**Location:** `src/IrGenerator_Expr_Conversions.cpp:1592`
 
 ---
 
@@ -117,7 +113,7 @@ user-visible error.
 
 **Standard:** All declared variables must have a known, non-zero type size.
 
-**FlashCpp:** `IrGenerator_Expr_Primitives.cpp:228–232` contains an explicit workaround:
+**FlashCpp:** `IrGenerator_Expr_Primitives.cpp:256–262` contains an explicit workaround:
 
 ```cpp
 // Fallback: if size_bits is 0, calculate from type (parser bug workaround)
@@ -129,4 +125,4 @@ size_bits = get_type_size_bits(type_node.type());
 The fallback uses only the scalar type kind and ignores struct sizes entirely; struct
 variables that hit this path may be given the wrong size.
 
-**Location:** `src/IrGenerator_Expr_Primitives.cpp:228–232`
+**Location:** `src/IrGenerator_Expr_Primitives.cpp:256–262`
