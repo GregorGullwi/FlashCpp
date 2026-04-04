@@ -1,4 +1,6 @@
 #include "Parser.h"
+
+#include <climits>
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -877,7 +879,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 			std::optional<ASTNode> array_size_expr;
 
 			// Check for function-pointer return type suffix: '(' params ')' after the
-			// parenthesized declarator. Pattern: type (*func(params))(ret_params)
+			// parenthesized declarator. Pattern: type (*func(params))(ptr_params)
 			if (peek() == "("_tok) {
 				advance(); // consume '('
 
@@ -898,6 +900,10 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 						if (peek() == "..."_tok) {
 							advance(); // consume '...'
 							return_param_type.set_pack_expansion(true);
+							// Match the existing function-pointer declarator parsing: Args...... means
+							// a pack expansion followed by C-style variadic arguments.
+							// TODO: Tighten this to standard syntax once the shared function-pointer
+							// parameter parser stops accepting the non-standard double-ellipsis form.
 							if (peek() == "..."_tok) {
 								advance(); // consume second '...'
 							}
@@ -921,7 +927,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
 				skip_noexcept_specifier();
 
-				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+				constexpr int function_pointer_size_bits = static_cast<int>(sizeof(void*) * CHAR_BIT);
+				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, function_pointer_size_bits, Token{}, CVQualifier::None);
 				FunctionSignature signature;
 				signature.return_type_index = base_type.type_index();
 				signature.parameter_type_indices = return_param_types;
