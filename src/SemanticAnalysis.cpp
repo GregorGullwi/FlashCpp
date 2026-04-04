@@ -2239,6 +2239,16 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			// do not recurse into child expressions here.
 		},
 				   expr);
+
+		const auto* expr_key = static_cast<const void*>(&expr);
+		SemanticSlot slot = getSlot(expr_key).value_or(SemanticSlot{});
+		if (!slot.has_type()) {
+			slot.type_id = inferExpressionType(node);
+		}
+		if (slot.has_type()) {
+			slot.value_category = inferExpressionValueCategory(node);
+			setSlot(expr_key, slot);
+		}
 	}
 
 	return {};
@@ -2280,6 +2290,31 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	if (it != semantic_slots_.end())
 		return it->second;
 	return std::nullopt;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
+	if (!node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const auto* key = static_cast<const void*>(&node.as<ExpressionNode>());
+	auto slot = getSlot(key);
+	if (!slot.has_value() || !slot->has_type()) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode type = materializeTypeSpecifier(type_context_.get(slot->type_id));
+	switch (slot->value_category) {
+		case ValueCategory::LValue:
+			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			break;
+		case ValueCategory::XValue:
+			type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+			break;
+		case ValueCategory::PRValue:
+			break;
+	}
+	return type;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
@@ -2872,6 +2907,74 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	}
 
 	return {};
+}
+
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
+	if (!node.is<ExpressionNode>()) {
+		return ValueCategory::PRValue;
+	}
+
+	const auto& expr = node.as<ExpressionNode>();
+	return std::visit([this](const auto& e) -> ValueCategory {
+		using T = std::decay_t<decltype(e)>;
+		if constexpr (std::is_same_v<T, IdentifierNode> ||
+					  std::is_same_v<T, MemberAccessNode> ||
+					  std::is_same_v<T, ArraySubscriptNode>) {
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			if (e.op() == "*" || ((e.op() == "++" || e.op() == "--") && e.is_prefix())) {
+				return ValueCategory::LValue;
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e);
+			ASTNode return_type_node;
+			if (resolved_callable) {
+				return_type_node = resolved_callable->decl_node().type_node();
+			} else {
+				return_type_node = e.function_declaration().type_node();
+			}
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				const auto& return_type = return_type_node.as<TypeSpecifierNode>();
+				if (return_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (return_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			const ASTNode& return_type_node = e.function_declaration().decl_node().type_node();
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				const auto& return_type = return_type_node.as<TypeSpecifierNode>();
+				if (return_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (return_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode> ||
+							 std::is_same_v<T, DynamicCastNode>) {
+			if (e.target_type().is<TypeSpecifierNode>()) {
+				const auto& target_type = e.target_type().as<TypeSpecifierNode>();
+				if (target_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (target_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else {
+			return ValueCategory::PRValue;
+		}
+	},
+					  expr);
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(

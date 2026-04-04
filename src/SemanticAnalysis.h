@@ -65,6 +65,7 @@ public:
 	// Look up the semantic slot for an expression node.
 	// Key is the raw pointer to the ExpressionNode (stable, from gChunkedAnyStorage).
 	std::optional<SemanticSlot> getSlot(const void* key) const;
+	std::optional<TypeSpecifierNode> getExpressionType(const ASTNode& node) const;
 
 	// Returns true if sema normalized the function body identified by its ASTNode pointer.
 	// Codegen uses this to skip Phase 15 warnings for bodies sema never visited.
@@ -149,6 +150,7 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
+	ValueCategory inferExpressionValueCategory(const ASTNode& node) const;
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);
 	void registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info);
 	void registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl);
