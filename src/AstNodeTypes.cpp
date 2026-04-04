@@ -1014,6 +1014,103 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool incl
 	return nullptr;
 }
 
+void StructTypeInfo::recalculateLayout() {
+	auto alignTo = [](size_t value, size_t alignment_value) {
+		return alignment_value == 0 ? value : ((value + alignment_value - 1) & ~(alignment_value - 1));
+	};
+
+	total_size = SizeInBytes{};
+	alignment = 1;
+	active_bitfield_unit_offset = 0;
+	active_bitfield_unit_size = 0;
+	active_bitfield_unit_alignment = 0;
+	active_bitfield_bits_used = 0;
+	active_bitfield_type = TypeCategory::Invalid;
+
+	for (auto& member : members) {
+		size_t effective_alignment = member.alignment ? member.alignment : 1;
+		if (pack_alignment > 0 && pack_alignment < effective_alignment) {
+			effective_alignment = pack_alignment;
+		}
+
+		size_t offset = is_union ? 0 : alignTo(toSizeT(total_size), effective_alignment);
+		bool placed_in_active_bitfield_unit = false;
+		size_t bitfield_bit_offset = 0;
+
+		if (!is_union && member.bitfield_width.has_value()) {
+			size_t width = *member.bitfield_width;
+			size_t storage_bits = member.size * 8;
+			if (width > storage_bits) {
+				width = storage_bits;
+			}
+
+			if (width == 0) {
+				total_size = toSizeInBytes(alignTo(toSizeT(total_size), effective_alignment));
+				active_bitfield_unit_size = 0;
+				active_bitfield_bits_used = 0;
+				active_bitfield_unit_alignment = 0;
+				active_bitfield_type = TypeCategory::Invalid;
+				offset = toSizeT(total_size);
+			} else {
+				bool can_pack_into_active_unit =
+					active_bitfield_unit_size == member.size &&
+					active_bitfield_unit_alignment == effective_alignment &&
+					active_bitfield_type == member.type_index.category() &&
+					(active_bitfield_bits_used + width) <= storage_bits;
+
+				if (!can_pack_into_active_unit) {
+					total_size = toSizeInBytes(alignTo(toSizeT(total_size), effective_alignment));
+					active_bitfield_unit_offset = toSizeT(total_size);
+					active_bitfield_unit_size = member.size;
+					active_bitfield_unit_alignment = effective_alignment;
+					active_bitfield_bits_used = 0;
+					active_bitfield_type = member.type_index.category();
+					total_size = toSizeInBytes(toSizeT(total_size) + member.size);
+				}
+
+				offset = active_bitfield_unit_offset;
+				bitfield_bit_offset = active_bitfield_bits_used;
+				active_bitfield_bits_used += width;
+			}
+		} else if (!is_union) {
+			if (active_bitfield_unit_size > 0) {
+				size_t unit_end = active_bitfield_unit_offset + active_bitfield_unit_size;
+				size_t raw_candidate_offset = active_bitfield_unit_offset + ((active_bitfield_bits_used + 7) / 8);
+				size_t candidate_offset = alignTo(raw_candidate_offset, effective_alignment);
+				if ((candidate_offset + member.size) <= unit_end) {
+					offset = candidate_offset;
+					placed_in_active_bitfield_unit = true;
+				}
+			}
+
+			active_bitfield_unit_size = 0;
+			active_bitfield_bits_used = 0;
+			active_bitfield_unit_alignment = 0;
+			active_bitfield_type = TypeCategory::Invalid;
+			if (!placed_in_active_bitfield_unit) {
+				offset = alignTo(toSizeT(total_size), effective_alignment);
+			}
+		}
+
+		member.offset = offset;
+		member.alignment = effective_alignment;
+		member.bitfield_bit_offset = bitfield_bit_offset;
+
+		if (is_union) {
+			total_size = toSizeInBytes(std::max(toSizeT(total_size), member.size));
+		} else if (!member.bitfield_width.has_value()) {
+			if (placed_in_active_bitfield_unit) {
+				total_size = toSizeInBytes(std::max(toSizeT(total_size), offset + member.size));
+			} else {
+				total_size = toSizeInBytes(offset + member.size);
+			}
+		}
+		alignment = std::max(alignment, effective_alignment);
+	}
+
+	total_size = toSizeInBytes(alignTo(toSizeT(total_size), alignment));
+}
+
 // Finalize struct layout with base classes
 // Returns false if semantic errors were detected
 bool StructTypeInfo::finalizeWithBases() {

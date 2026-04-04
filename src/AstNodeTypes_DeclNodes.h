@@ -306,6 +306,9 @@ struct StructTypeInfo {
 	// Returns false if semantic errors were detected
 	bool finalizeWithBases();
 
+	// Recalculate member offsets, size, and alignment from the current members.
+	void recalculateLayout();
+
 	// Build vtable for virtual functions (called during finalization)
 	// Returns false if semantic errors were detected (e.g., overriding final function)
 	bool buildVTable();
