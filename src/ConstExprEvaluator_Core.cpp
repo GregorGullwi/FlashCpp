@@ -131,6 +131,70 @@ EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const E
 	return result;
 }
 
+const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle scope_handle) {
+	if (scope_handle.isGlobal()) {
+		return nullptr;
+	}
+
+	StringHandle struct_handle = gNamespaceRegistry.getQualifiedNameHandle(scope_handle);
+	if (!struct_handle.isValid()) {
+		std::string_view scope_name = gNamespaceRegistry.getQualifiedName(scope_handle);
+		if (scope_name.empty()) {
+			scope_name = gNamespaceRegistry.getName(scope_handle);
+		}
+		if (!scope_name.empty()) {
+			struct_handle = StringTable::getOrInternStringHandle(scope_name);
+		}
+	}
+	if (!struct_handle.isValid()) {
+		return nullptr;
+	}
+
+	auto type_it = getTypesByNameMap().find(struct_handle);
+	if (type_it == getTypesByNameMap().end()) {
+		std::string_view full_name = StringTable::getStringView(struct_handle);
+		size_t last_colon = full_name.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			StringHandle short_handle = StringTable::getOrInternStringHandle(full_name.substr(last_colon + 2));
+			type_it = getTypesByNameMap().find(short_handle);
+		}
+	}
+	if (type_it == getTypesByNameMap().end()) {
+		return nullptr;
+	}
+
+	const TypeInfo* type_info = type_it->second;
+	constexpr size_t kMaxAliasChainDepth = 100;
+	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasChainDepth; ++alias_depth) {
+		if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
+			return type_info->getStructInfo();
+		}
+
+		const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+		if (!underlying || underlying == type_info) {
+			break;
+		}
+		type_info = underlying;
+	}
+
+	return nullptr;
+}
+
+const StructMember* tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
+	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& member : struct_info->members) {
+		if (StringTable::getStringView(member.getName()) == qualified_id.name()) {
+			return &member;
+		}
+	}
+
+	return nullptr;
+}
+
 } // namespace
 
 EvalResult Evaluator::convertEvalResultToTargetType(const TypeSpecifierNode& target_type, const EvalResult& expr_result, const char* invalidTypeErrorStr) {
@@ -287,6 +351,11 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For MemberAccessNode (e.g., obj.member or ptr->member)
 	if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
 		return evaluate_member_access(*member_access, context);
+	}
+
+	// For PointerToMemberAccessNode (e.g., obj.*pm or ptr->*pm)
+	if (const auto* member_pointer_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+		return evaluate_pointer_to_member_access(*member_pointer_access, context);
 	}
 
 	// For MemberFunctionCallNode (e.g., obj.method() in constexpr context)
@@ -474,6 +543,11 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 			const ExpressionNode& expr = operand_node.as<ExpressionNode>();
 			if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
 				return EvalResult::from_pointer(id->name());
+			}
+			if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
+				if (const StructMember* member = tryResolveMemberPointerTarget(*qualified_id)) {
+					return EvalResult::from_uint(static_cast<unsigned long long>(member->offset));
+				}
 			}
 			// &arr[i]: address of array element → pointer with offset
 			if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {

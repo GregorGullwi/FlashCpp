@@ -446,6 +446,7 @@ public:
 	// Qualified/member access evaluation
 	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
+	static EvalResult evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context);
 	static EvalResult evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);

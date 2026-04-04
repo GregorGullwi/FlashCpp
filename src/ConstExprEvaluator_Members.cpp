@@ -12,6 +12,33 @@ struct ShiftEvaluationInfo {
 	std::optional<TypeSpecifierNode> promoted_type;
 };
 
+const StructMember* findStructMemberByOffsetRecursive(const StructTypeInfo* struct_info, size_t target_offset) {
+	if (!struct_info) {
+		return nullptr;
+	}
+
+	for (const auto& member : struct_info->members) {
+		if (member.offset == target_offset) {
+			return &member;
+		}
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+		if (!base_type || !base_type->getStructInfo() || target_offset < base.offset) {
+			continue;
+		}
+
+		if (const StructMember* base_member = findStructMemberByOffsetRecursive(
+				base_type->getStructInfo(),
+				target_offset - base.offset)) {
+			return base_member;
+		}
+	}
+
+	return nullptr;
+}
+
 std::optional<TypeSpecifierNode> try_get_type_from_eval_result(const EvalResult& value) {
 	if (value.exact_type.has_value()) {
 		return value.exact_type;
@@ -3795,6 +3822,67 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	return std::nullopt;
+}
+
+EvalResult Evaluator::evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context) {
+	EvalResult object_result = evaluate(member_access.object(), context);
+	if (!object_result.success()) {
+		return object_result;
+	}
+
+	if (member_access.is_arrow()) {
+		if (!object_result.pointer_to_var.isValid()) {
+			return EvalResult::error(
+				"Pointer-to-member access (->*) requires a constexpr pointer object",
+				EvalErrorType::NotConstantExpression);
+		}
+
+		object_result = dereference_constexpr_pointer(
+			StringTable::getStringView(object_result.pointer_to_var),
+			context,
+			object_result.pointer_offset);
+		if (!object_result.success()) {
+			return object_result;
+		}
+	}
+
+	if (!object_result.object_type_index.is_valid()) {
+		return EvalResult::error("Pointer-to-member access requires a constexpr object value");
+	}
+
+	EvalResult member_pointer_result = evaluate(member_access.member_pointer(), context);
+	if (!member_pointer_result.success()) {
+		return member_pointer_result;
+	}
+
+	int64_t member_offset = member_pointer_result.as_int();
+	if (member_offset < 0) {
+		return EvalResult::error(
+			"Pointer-to-member access does not support null member pointers in constant expressions",
+			EvalErrorType::NotConstantExpression);
+	}
+
+	const TypeInfo* object_type = tryGetTypeInfo(object_result.object_type_index);
+	if (!object_type || !object_type->getStructInfo()) {
+		return EvalResult::error("Pointer-to-member access requires a class-type object");
+	}
+
+	const StructMember* member = findStructMemberByOffsetRecursive(
+		object_type->getStructInfo(),
+		static_cast<size_t>(member_offset));
+	if (!member) {
+		return EvalResult::error(
+			"Pointer-to-member access could not resolve member at offset " + std::to_string(member_offset));
+	}
+
+	std::string_view member_name = StringTable::getStringView(member->getName());
+	auto member_it = object_result.object_member_bindings.find(member_name);
+	if (member_it == object_result.object_member_bindings.end()) {
+		return EvalResult::error(
+			"Pointer-to-member access could not materialize member '" + std::string(member_name) + "'");
+	}
+
+	return member_it->second;
 }
 
 // Helper to get StructTypeInfo from a TypeSpecifierNode
