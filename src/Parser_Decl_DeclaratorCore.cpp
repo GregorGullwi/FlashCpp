@@ -131,7 +131,6 @@ ParseResult Parser::parse_type_and_name() {
 	// Function pointers have the pattern: type (*identifier)(params)
 	// We need to check for '(' followed by '*' to detect this
 	// Also handle calling convention: type (__cdecl *identifier)(params)
-	std::optional<std::string_view> asm_symbol_name;
 	if (peek() == "("_tok) {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}",
 						 std::string(current_token_.value()));
@@ -628,6 +627,7 @@ ParseResult Parser::parse_type_and_name() {
 		advance(); // consume ']'
 	}
 
+	std::optional<std::string_view> asm_symbol_name;
 	skip_asm_suffix(&asm_symbol_name);
 
 	// Unwrap the optional ASTNode before passing it to emplace_node
@@ -1106,10 +1106,6 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 			emplace_node<TypeSpecifierNode>(base_type),
 			identifier);
 	}
-	if (asm_symbol_name.has_value()) {
-		decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
-	}
-
 	return ParseResult::success(decl_node);
 }
 
