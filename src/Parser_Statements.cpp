@@ -753,17 +753,7 @@ ParseResult Parser::parse_variable_declaration() {
 		}
 	}
 
-	std::optional<std::string_view> asm_symbol_name;
-	while (true) {
-		skip_cpp_attributes();
-		if (skip_asm_suffix(&asm_symbol_name)) {
-			continue;
-		}
-		break;
-	}
-	if (asm_symbol_name.has_value()) {
-		first_decl.set_mangled_name(*asm_symbol_name);
-	}
+	parse_variable_declarator_suffixes(first_decl);
 
 	// Register the variable before parsing its initializer (C++20 point-of-declaration).
 	ParseResult first_result = create_var_decl(type_and_name_result.node().value());

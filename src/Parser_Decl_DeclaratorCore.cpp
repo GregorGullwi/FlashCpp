@@ -661,6 +661,20 @@ ParseResult Parser::parse_type_and_name() {
 	return ParseResult::error("Invalid type specifier node", identifier_token);
 }
 
+void Parser::parse_variable_declarator_suffixes(DeclarationNode& decl) {
+	std::optional<std::string_view> asm_symbol_name;
+	while (true) {
+		skip_cpp_attributes();
+		if (skip_asm_suffix(&asm_symbol_name)) {
+			continue;
+		}
+		break;
+	}
+	if (asm_symbol_name.has_value()) {
+		decl.set_mangled_name(*asm_symbol_name);
+	}
+}
+
 // Parse structured binding: auto [a, b, c] = expr;
 // Also supports: auto& [a, b] = pair; and auto&& [x, y] = temp;
 ParseResult Parser::parse_structured_binding(CVQualifier cv_qualifiers, ReferenceQualifier ref_qualifier) {
@@ -1105,6 +1119,9 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		decl_node = emplace_node<DeclarationNode>(
 			emplace_node<TypeSpecifierNode>(base_type),
 			identifier);
+	}
+	if (asm_symbol_name.has_value()) {
+		decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
 	}
 	return ParseResult::success(decl_node);
 }
