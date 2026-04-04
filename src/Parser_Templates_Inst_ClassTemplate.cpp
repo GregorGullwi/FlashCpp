@@ -5446,25 +5446,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				if (adjusted_member_types) {
-					auto alignValueToAlignment = [](size_t value, size_t alignment) {
-						return alignment == 0 ? value : ((value + alignment - 1) / alignment) * alignment;
-					};
-					size_t new_total = 0;
-					size_t new_alignment = 1;
-					for (auto& member : parsed_nested_info->members) {
-						size_t effective_alignment = member.alignment ? member.alignment : 1;
-						// pack_alignment==0 means "use the member's natural alignment".
-						if (parsed_nested_info->pack_alignment > 0 && parsed_nested_info->pack_alignment < effective_alignment) {
-							effective_alignment = parsed_nested_info->pack_alignment;
-						}
-						member.offset = parsed_nested_info->is_union ? 0 : alignValueToAlignment(new_total, effective_alignment);
-						new_total = parsed_nested_info->is_union ? std::max(new_total, member.size) : (member.offset + member.size);
-						new_alignment = std::max(new_alignment, effective_alignment);
-					}
-					new_total = alignValueToAlignment(new_total, new_alignment);
-					parsed_nested_info->alignment = new_alignment;
-					parsed_nested_info->total_size = SizeInBytes{static_cast<int>(new_total)};
-					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(new_total * 8);
+					parsed_nested_info->recalculateLayout();
+					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(toSizeT(parsed_nested_info->total_size) * 8);
 				}
 			}
 		}
@@ -5511,19 +5494,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// Recalculate struct layout from scratch after nested class member fixup
 			if (had_fixup) {
-				size_t new_total = 0;
-				size_t new_alignment = 1;
-				for (auto& member : si->members) {
-					size_t eff_align = member.alignment;
-					if (si->pack_alignment > 0 && si->pack_alignment < eff_align) {
-						eff_align = si->pack_alignment;
-					}
-					member.offset = si->is_union ? 0 : ((new_total + eff_align - 1) & ~(eff_align - 1));
-					new_total = member.offset + member.size;
-					new_alignment = std::max(new_alignment, eff_align);
-				}
-				si->total_size = toSizeInBytes((new_total + new_alignment - 1) & ~(new_alignment - 1));
-				si->alignment = new_alignment;
+				si->recalculateLayout();
 				struct_type_info.fallback_size_bits_ = si->sizeInBits().value;
 				FLASH_LOG(Templates, Debug, "Re-laid out struct ", instantiated_name,
 						  " after nested class fixup, total_size=", si->total_size);

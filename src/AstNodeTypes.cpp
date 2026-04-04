@@ -1014,6 +1014,153 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool incl
 	return nullptr;
 }
 
+void StructTypeInfo::recalculateLayout() {
+	auto alignTo = [](size_t value, size_t alignment_value) {
+		return alignment_value == 0 ? value : ((value + alignment_value - 1) & ~(alignment_value - 1));
+	};
+
+	std::vector<StructMember> old_members = std::move(members);
+	members.reserve(old_members.size());
+
+	total_size = SizeInBytes{};
+	alignment = 1;
+	active_bitfield_unit_offset = 0;
+	active_bitfield_unit_size = 0;
+	active_bitfield_unit_alignment = 0;
+	active_bitfield_bits_used = 0;
+	active_bitfield_type = TypeCategory::Invalid;
+
+	size_t current_offset = 0;
+	size_t max_alignment = 1;
+
+	bool base_has_vtable = false;
+	bool has_virtual_members = has_vtable;
+	if (!has_virtual_members) {
+		for (const auto& member_function : member_functions) {
+			if (member_function.is_virtual || member_function.is_override) {
+				has_virtual_members = true;
+				break;
+			}
+		}
+	}
+
+	for (const auto& base : base_classes) {
+		if (base.is_virtual) {
+			continue;
+		}
+		if (base.type_index.index() >= gTypeInfo.size()) {
+			continue;
+		}
+
+		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
+		const StructTypeInfo* base_info = base_type.getStructInfo();
+		if (base_info && base_info->has_vtable) {
+			base_has_vtable = true;
+			break;
+		}
+	}
+
+	if (has_virtual_members && !base_has_vtable) {
+		current_offset = sizeof(void*);
+		max_alignment = sizeof(void*);
+	}
+
+	for (auto& base : base_classes) {
+		if (base.is_virtual) {
+			continue;
+		}
+		if (base.type_index.index() >= gTypeInfo.size()) {
+			continue;
+		}
+
+		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
+		const StructTypeInfo* base_info = base_type.getStructInfo();
+		if (!base_info) {
+			continue;
+		}
+
+		size_t base_alignment = base_info->alignment;
+		current_offset = alignTo(current_offset, base_alignment);
+		base.offset = current_offset;
+		current_offset += toSizeT(base_info->total_size);
+		max_alignment = std::max(max_alignment, base_alignment);
+	}
+
+	total_size = toSizeInBytes(current_offset);
+	alignment = max_alignment;
+
+	auto addExistingMember = [this](StructMember& member) {
+		addMember(member.name, member.type_index, member.size, member.alignment, member.access,
+				  std::move(member.default_initializer), member.reference_qualifier,
+				  member.referenced_size_bits, member.is_array, std::move(member.array_dimensions),
+				  member.pointer_depth, member.bitfield_width, std::move(member.function_signature));
+	};
+
+	for (auto& member : old_members) {
+		addExistingMember(member);
+	}
+
+	current_offset = toSizeT(total_size);
+	max_alignment = alignment;
+
+	std::vector<BaseClassSpecifier*> all_virtual_bases;
+	std::unordered_map<TypeIndex, BaseClassSpecifier*> direct_virtual_bases;
+	for (auto& base : base_classes) {
+		if (base.is_virtual) {
+			direct_virtual_bases.emplace(base.type_index, &base);
+		}
+	}
+	std::set<TypeIndex> seen_virtual_bases;
+	auto collectVirtualBases = [&](auto&& self, const StructTypeInfo* struct_info) -> void {
+		if (!struct_info) {
+			return;
+		}
+
+		for (auto& base : struct_info->base_classes) {
+			if (base.is_virtual && seen_virtual_bases.find(base.type_index) == seen_virtual_bases.end()) {
+				seen_virtual_bases.insert(base.type_index);
+				auto our_base_it = direct_virtual_bases.find(base.type_index);
+				if (our_base_it != direct_virtual_bases.end()) {
+					all_virtual_bases.push_back(our_base_it->second);
+				}
+			}
+
+			if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
+				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
+				const StructTypeInfo* base_info = base_type.getStructInfo();
+				self(self, base_info);
+			}
+		}
+	};
+
+	collectVirtualBases(collectVirtualBases, this);
+
+	for (auto* vbase : all_virtual_bases) {
+		if (vbase->type_index.index() >= gTypeInfo.size()) {
+			continue;
+		}
+
+		const TypeInfo& base_type = gTypeInfo[vbase->type_index.index()];
+		const StructTypeInfo* base_info = base_type.getStructInfo();
+		if (!base_info) {
+			continue;
+		}
+
+		size_t base_alignment = base_info->alignment;
+		current_offset = alignTo(current_offset, base_alignment);
+		vbase->offset = current_offset;
+		current_offset += toSizeT(base_info->total_size);
+		max_alignment = std::max(max_alignment, base_alignment);
+	}
+
+	if (custom_alignment > 0) {
+		max_alignment = std::max(max_alignment, custom_alignment);
+	}
+
+	alignment = max_alignment;
+	total_size = toSizeInBytes(alignTo(current_offset, alignment));
+}
+
 // Finalize struct layout with base classes
 // Returns false if semantic errors were detected
 bool StructTypeInfo::finalizeWithBases() {
