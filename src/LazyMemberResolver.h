@@ -176,7 +176,26 @@ private:
 			}
 		}
 
-		// If NamespaceHandle is INVALID, return nullptr rather than guessing.
+		for (const auto& [type_name, candidate_type_info] : getTypesByNameMap()) {
+			std::string_view registered_name = StringTable::getStringView(type_name);
+			if (registered_name == fallback_name) {
+				continue;
+			}
+			if (registered_name.size() <= fallback_name.size()) {
+				continue;
+			}
+			if (!registered_name.ends_with(fallback_name)) {
+				continue;
+			}
+			char separator = registered_name[registered_name.size() - fallback_name.size() - 1];
+			if (separator != ':' && separator != '<') {
+				continue;
+			}
+			if (const StructTypeInfo* struct_info = try_type_info(candidate_type_info)) {
+				return struct_info;
+			}
+		}
+
 		return nullptr;
 	}
 
