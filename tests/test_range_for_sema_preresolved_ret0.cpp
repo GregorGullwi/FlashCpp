@@ -3,15 +3,15 @@
 // where codegen no longer calls back into sema for iterator dereference.
 
 struct IntIter {
-int* ptr;
+	int* ptr;
 
-int& operator*();
-IntIter& operator++();
-bool operator!=(IntIter other);
+	int& operator*();
+	IntIter& operator++();
+	bool operator!=(IntIter other);
 };
 
 int& IntIter::operator*() {
-return *ptr;
+	return *ptr;
 }
 
 IntIter& IntIter::operator++() {
