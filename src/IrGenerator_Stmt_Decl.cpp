@@ -976,12 +976,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		if (node.is_constexpr() && op.is_initialized) {
 			op.is_rodata = true;
 		}
-			// An extern declaration with an __asm__ rename and no initializer is purely an
+			// A declaration with an __asm__ rename and no initializer is purely an
 			// alias — it redirects references through the name mapping recorded above but
 			// must not emit a second GlobalVariableDeclOp that would clash with the real
-			// definition.
+			// definition.  This covers both `extern int x __asm__("y");` (StorageClass::Extern)
+			// and `extern "C" int x __asm__("y");` (Linkage::C with StorageClass::None).
 		bool is_asm_alias_only = decl.has_mangled_name() &&
-								 node.storage_class() == StorageClass::Extern &&
 								 !node.initializer();
 		if (!is_asm_alias_only) {
 			ir_.addInstruction(IrInstruction(IrOpcode::GlobalVariableDecl, std::move(op), decl.identifier_token()));
