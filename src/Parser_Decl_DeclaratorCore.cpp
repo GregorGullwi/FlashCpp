@@ -874,10 +874,64 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				return ParseResult::error("Expected ')' after function declarator", current_token_);
 			}
 
+			std::optional<ASTNode> array_size_expr;
+
+			// Check for function-pointer return type suffix: '(' params ')' after the
+			// parenthesized declarator. Pattern: type (*func(params))(ret_params)
+			if (peek() == "("_tok) {
+				advance(); // consume '('
+
+				std::vector<TypeIndex> return_param_types;
+				if (peek() != ")"_tok) {
+					while (true) {
+						auto return_param_type_result = parse_type_specifier();
+						if (return_param_type_result.is_error()) {
+							return return_param_type_result;
+						}
+
+						TypeSpecifierNode& return_param_type =
+							return_param_type_result.node()->as<TypeSpecifierNode>();
+						skip_noop_gnu_qualifiers();
+						consume_pointer_ref_modifiers(return_param_type);
+						return_param_types.push_back(return_param_type.type_index());
+
+						if (peek() == "..."_tok) {
+							advance(); // consume '...'
+							return_param_type.set_pack_expansion(true);
+							if (peek() == "..."_tok) {
+								advance(); // consume second '...'
+							}
+						}
+
+						if (peek().is_identifier()) {
+							advance();
+						}
+
+						if (peek() == ","_tok) {
+							advance();
+						} else {
+							break;
+						}
+					}
+				}
+
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function pointer return type parameters", current_token_);
+				}
+
+				skip_noexcept_specifier();
+
+				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+				FunctionSignature signature;
+				signature.return_type_index = base_type.type_index();
+				signature.parameter_type_indices = return_param_types;
+				signature.linkage = linkage;
+				function_ptr_type.set_function_signature(signature);
+				base_type = function_ptr_type;
+
 			// Check for array declarator: '[' size ']' after the function declarator
 			// Pattern: type (*func(params))[array_size]
-			std::optional<ASTNode> array_size_expr;
-			if (peek() == "["_tok) {
+			} else if (peek() == "["_tok) {
 				advance(); // consume '['
 
 				// Parse array size expression
