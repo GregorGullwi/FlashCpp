@@ -1033,8 +1033,17 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	} else {
 		const bool prefer_const_deref = range_type.is_const() || node.resolved_begin_is_const();
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
-		if (!dereference_func && sema_) {
-			dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
+		if (!dereference_func) {
+			if (sema_normalized_current_function_) {
+				// Sema-normalized bodies must have the dereference function pre-resolved
+				// on the RangedForStatementNode.  Missing resolution is an internal bug.
+				throw InternalError("Range-for struct iterator missing pre-resolved operator*() in sema-normalized body");
+			}
+			// Non-normalized bodies (e.g. template instantiation member functions
+			// generated after sema ran): fall back to sema resolution.
+			if (sema_) {
+				dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
+			}
 		}
 		if (!dereference_func) {
 			throw InternalError("Range-for struct iterator missing operator*() during lowering");
