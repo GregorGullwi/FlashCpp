@@ -306,6 +306,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 			global_variable_names_[simple_name_handle] = var_name;
 		}
 
+		if (node.storage_class() == StorageClass::Extern && !node.initializer().has_value()) {
+			return;
+		}
+
 			// Create GlobalVariableDeclOp
 		GlobalVariableDeclOp op;
 		op.type_index = type_node.type_index();
