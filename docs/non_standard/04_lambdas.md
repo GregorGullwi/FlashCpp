@@ -15,7 +15,7 @@ For constexpr-specific lambda limitations see [05_constexpr.md](05_constexpr.md)
 `[&]` is exactly the set of *odr-used* local variables and parameters within the lambda body.
 This set is a semantic property and cannot be determined before the body is fully analysed.
 
-**FlashCpp:** `parse_lambda_expression` (Parser_Expr_ControlFlowStmt.cpp:1036–1114) eagerly
+**FlashCpp:** `parse_lambda_expression` (Parser_Expr_ControlFlowStmt.cpp:1000–1114) eagerly
 enumerates every symbol currently visible in the symbol table at the point of the `[` token
 and converts all of them into explicit per-variable captures. Consequences:
 
@@ -23,6 +23,6 @@ and converts all of them into explicit per-variable captures. Consequences:
 - Variables declared after the lambda but in the same enclosing scope are never captured.
 - Variables that are only odr-used inside a discarded branch may be incorrectly captured.
 
-**Location:** `src/Parser_Expr_ControlFlowStmt.cpp:1036–1114`
+**Location:** `src/Parser_Expr_ControlFlowStmt.cpp:1000–1114`
 
 ---
