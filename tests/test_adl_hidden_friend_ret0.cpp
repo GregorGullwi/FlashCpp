@@ -3,9 +3,6 @@
 // it is not declared in namespace scope but should be findable via ADL
 // when called with an argument of the enclosing struct type.
 //
-// NOTE: FlashCpp also makes hidden friends visible via ordinary unqualified lookup
-// (non-standard simplification, documented in docs/NON_STANDARD_BEHAVIOR.md).
-
 namespace Lib {
 struct X {
 	int val;

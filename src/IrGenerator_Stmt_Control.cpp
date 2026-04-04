@@ -855,14 +855,40 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		return;
 	}
 
-		// Check for begin() and end() methods
-	const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
-	const StructMemberFunction* end_func = struct_info->findMemberFunction("end"sv);
-
-	if (!begin_func || !end_func) {
-		FLASH_LOG(Codegen, Error, "Range-based for loop requires type to have both begin() and end() methods");
-		return;
+	const FunctionDeclarationNode* member_begin_decl = node.resolved_member_begin_function();
+	const FunctionDeclarationNode* member_end_decl = node.resolved_member_end_function();
+	const bool has_member_begin = member_begin_decl != nullptr;
+	const bool has_member_end = member_end_decl != nullptr;
+	const bool has_adl_begin = node.resolved_adl_begin_function() != nullptr;
+	const bool has_adl_end = node.resolved_adl_end_function() != nullptr;
+	bool use_adl = false;
+	const FunctionDeclarationNode* adl_begin_decl = nullptr;
+	const FunctionDeclarationNode* adl_end_decl = nullptr;
+	if (has_member_begin != has_member_end) {
+		throw InternalError("Range-for member begin/end resolution is incomplete: only one of begin() or end() was found");
 	}
+	if (has_adl_begin != has_adl_end) {
+		throw InternalError("Range-for ADL begin/end resolution is incomplete: only one of begin() or end() was found");
+	}
+	if ((has_member_begin || has_member_end) && (has_adl_begin || has_adl_end)) {
+		throw InternalError("Range-for has both member and ADL begin/end resolutions");
+	}
+	if (has_member_begin) {
+	} else if (has_adl_begin) {
+		adl_begin_decl = node.resolved_adl_begin_function();
+		adl_end_decl = node.resolved_adl_end_function();
+		use_adl = true;
+	} else {
+		throw InternalError("Range-for begin/end lookup failed or was not performed during semantic analysis");
+	}
+
+		// Unified begin/end function declarations for both member and ADL paths
+	const FunctionDeclarationNode& begin_func_decl = use_adl
+		? *adl_begin_decl
+		: *member_begin_decl;
+	const FunctionDeclarationNode& end_func_decl = use_adl
+		? *adl_end_decl
+		: *member_end_decl;
 
 		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
 	StringBuilder sb_begin;
@@ -876,7 +902,6 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	std::string_view end_var_name = sb_end.commit();
 
 		// Get return type from begin() - should be a pointer type
-	const FunctionDeclarationNode& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
 		// Standard C++20 range-for with begin()/end() desugars to:
@@ -898,23 +923,40 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 	auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
-		// Create member function calls: range.begin() and range.end()
-	ChunkedVector<ASTNode> empty_args;
-	auto begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-		MemberFunctionCallNode(range_object_expr,
-							   begin_func_decl,
-							   std::move(empty_args), Token()));
+		// Create call expressions: member calls or ADL free-function calls
+	auto make_adl_call = [&](const FunctionDeclarationNode& func_decl) -> ASTNode {
+		ChunkedVector<ASTNode> args;
+		args.push_back(range_object_expr);
+		auto call = FunctionCallNode(func_decl.decl_node(), std::move(args), Token());
+		if (func_decl.has_mangled_name()) {
+			call.set_mangled_name(func_decl.mangled_name());
+		}
+		return ASTNode::emplace_node<ExpressionNode>(std::move(call));
+	};
+
+	ASTNode begin_call_expr;
+	ASTNode end_call_expr;
+	if (use_adl) {
+		// Free-function calls: begin(range) and end(range)
+		begin_call_expr = make_adl_call(begin_func_decl);
+		end_call_expr = make_adl_call(end_func_decl);
+	} else {
+		// Member function calls: range.begin() and range.end()
+		ChunkedVector<ASTNode> empty_args;
+		begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(range_object_expr,
+								   begin_func_decl,
+								   std::move(empty_args), Token()));
+
+		ChunkedVector<ASTNode> empty_args2;
+		end_call_expr = ASTNode::emplace_node<ExpressionNode>(
+			MemberFunctionCallNode(range_object_expr,
+								   end_func_decl,
+								   std::move(empty_args2), Token()));
+	}
 
 	auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
 	visit(begin_var_decl_node);
-
-		// Similarly for end()
-	const FunctionDeclarationNode& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
-	ChunkedVector<ASTNode> empty_args2;
-	auto end_call_expr = ASTNode::emplace_node<ExpressionNode>(
-		MemberFunctionCallNode(range_object_expr,
-							   end_func_decl,
-							   std::move(empty_args2), Token()));
 
 	auto end_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(end_decl_node, end_call_expr);
 	visit(end_var_decl_node);
@@ -989,7 +1031,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		init_expr = ASTNode::emplace_node<ExpressionNode>(
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true));
 	} else {
-		const bool prefer_const_deref = range_type.is_const() || begin_func->is_const();
+		const bool prefer_const_deref = range_type.is_const() || node.resolved_begin_is_const();
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
 		if (!dereference_func && sema_) {
 			dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);

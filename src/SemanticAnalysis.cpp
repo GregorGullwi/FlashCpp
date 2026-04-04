@@ -1162,6 +1162,14 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 }
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) {
+	auto& mutable_stmt = const_cast<RangedForStatementNode&>(stmt);
+	mutable_stmt.set_resolved_dereference_function(nullptr);
+	mutable_stmt.set_resolved_member_begin_function(nullptr);
+	mutable_stmt.set_resolved_member_end_function(nullptr);
+	mutable_stmt.set_resolved_begin_is_const(false);
+	mutable_stmt.set_resolved_adl_begin_function(nullptr);
+	mutable_stmt.set_resolved_adl_end_function(nullptr);
+
 	const ASTNode loop_var_decl = stmt.get_loop_variable_decl();
 	if (!loop_var_decl.is<VariableDeclarationNode>()) {
 		return loop_var_decl;
@@ -1189,7 +1197,6 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	}
 
 	if (range_type->is_array()) {
-		const_cast<RangedForStatementNode&>(stmt).set_resolved_dereference_function(nullptr);
 		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
 	}
 
@@ -1204,18 +1211,65 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	}
 
 	const StructMemberFunction* begin_func = struct_info->findMemberFunction("begin"sv);
-	if (!begin_func || !begin_func->function_decl.is<FunctionDeclarationNode>()) {
-		return original_var_decl.declaration_node();
+	const StructMemberFunction* end_func = struct_info->findMemberFunction("end"sv);
+	bool has_member_begin = begin_func && begin_func->function_decl.is<FunctionDeclarationNode>();
+	bool has_member_end = end_func && end_func->function_decl.is<FunctionDeclarationNode>();
+
+	// C++20 [stmt.ranged]/1.3: ADL is only used when *neither* begin nor end
+	// is found via class member access lookup. If one is a member but not the
+	// other, the standard requires member access for both (producing an error
+	// for the missing one), not a silent fallback to ADL.
+	if (!has_member_begin && !has_member_end) {
+		// ADL lookup for free-function begin()/end() with the range as argument.
+		// The range expression is an lvalue, so mark the arg type accordingly
+		// for overload resolution to match non-const lvalue reference parameters.
+		std::vector<TypeSpecifierNode> adl_arg_types;
+		TypeSpecifierNode range_arg = *range_type;
+		range_arg.set_reference_qualifier(ReferenceQualifier::LValueReference);
+		adl_arg_types.push_back(range_arg);
+		auto adl_begin = symbols_.lookup_adl("begin", adl_arg_types);
+		auto adl_end = symbols_.lookup_adl("end", adl_arg_types);
+		if (!adl_begin.empty() && !adl_end.empty()) {
+			auto begin_res = resolve_overload(adl_begin, adl_arg_types);
+			auto end_res = resolve_overload(adl_end, adl_arg_types);
+			if (begin_res.has_match && !begin_res.is_ambiguous &&
+				end_res.has_match && !end_res.is_ambiguous &&
+				begin_res.selected_overload->is<FunctionDeclarationNode>() &&
+				end_res.selected_overload->is<FunctionDeclarationNode>()) {
+				const auto& adl_begin_decl = begin_res.selected_overload->as<FunctionDeclarationNode>();
+				const auto& adl_end_decl = end_res.selected_overload->as<FunctionDeclarationNode>();
+				mutable_stmt.set_resolved_adl_begin_function(&adl_begin_decl);
+				mutable_stmt.set_resolved_adl_end_function(&adl_end_decl);
+				const TypeSpecifierNode& begin_return_type = adl_begin_decl.decl_node().type_node().as<TypeSpecifierNode>();
+				const FunctionDeclarationNode* dereference_func = nullptr;
+				if (begin_return_type.pointer_depth() == 0) {
+					dereference_func = resolveRangedForIteratorDereference(begin_return_type, range_type->is_const());
+				}
+				mutable_stmt.set_resolved_dereference_function(dereference_func);
+				return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
+			}
+		}
+		throw CompileError("range-based for loop requires type to either provide member begin()/end() methods or be used with free functions begin()/end() found via argument-dependent lookup");
+	}
+
+	if (!has_member_begin || !has_member_end) {
+		throw CompileError(!has_member_begin
+			? "range-based for loop requires type to have a begin() method when member range access is selected"
+			: "range-based for loop requires type to have an end() method when member range access is selected");
 	}
 
 	const auto& begin_func_decl = begin_func->function_decl.as<FunctionDeclarationNode>();
+	const auto& end_func_decl = end_func->function_decl.as<FunctionDeclarationNode>();
+	mutable_stmt.set_resolved_member_begin_function(&begin_func_decl);
+	mutable_stmt.set_resolved_member_end_function(&end_func_decl);
+	mutable_stmt.set_resolved_begin_is_const(begin_func->is_const());
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 	const bool prefer_const_deref = range_type->is_const() || begin_func->is_const();
 	const FunctionDeclarationNode* dereference_func = nullptr;
 	if (begin_return_type.pointer_depth() == 0) {
 		dereference_func = resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
 	}
-	const_cast<RangedForStatementNode&>(stmt).set_resolved_dereference_function(dereference_func);
+	mutable_stmt.set_resolved_dereference_function(dereference_func);
 	return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 }
 
