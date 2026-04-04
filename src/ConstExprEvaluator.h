@@ -62,6 +62,8 @@ enum class EvalErrorType {
 
 // Result of constant expression evaluation
 struct EvalResult {
+	// Itanium encodes null data-member pointers as -1; using the ABI sentinel keeps
+	// constexpr materialization aligned with the object representation on Linux.
 	static constexpr long long kNullMemberPointerSentinel = -1;
 
 	std::variant<

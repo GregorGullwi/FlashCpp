@@ -181,6 +181,8 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	return nullptr;
 }
 
+// Resolved member-object pointer target. Carries both the source member name and
+// the byte offset within the complete object, including any inherited base offset.
 struct MemberPointerTarget {
 	StringHandle member_name;
 	int64_t offset = 0;

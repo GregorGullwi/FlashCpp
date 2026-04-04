@@ -2468,7 +2468,7 @@ EvalResult Evaluator::apply_binary_op(
 	if (lhs.is_member_pointer() || rhs.is_member_pointer()) {
 		const bool lhs_is_member_ptr = lhs.is_member_pointer();
 		const bool rhs_is_member_ptr = rhs.is_member_pointer();
-		auto extractNullComparableRaw = [](const EvalResult& value) -> unsigned long long {
+		auto extractIntegerValueAsUnsigned = [](const EvalResult& value) -> unsigned long long {
 			return value.is_uint() ? value.as_uint_raw()
 								   : static_cast<unsigned long long>(value.as_int());
 		};
@@ -2481,13 +2481,13 @@ EvalResult Evaluator::apply_binary_op(
 					(lhs.member_pointer_member == rhs.member_pointer_member) &&
 					(lhs.as_int() == rhs.as_int());
 			} else if (lhs_is_member_ptr) {
-				const unsigned long long rhs_raw = extractNullComparableRaw(rhs);
+				const unsigned long long rhs_raw = extractIntegerValueAsUnsigned(rhs);
 				if (rhs_raw != 0ULL) {
 					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
 				}
 				are_equal = lhs.is_null_member_pointer;
 			} else {
-				const unsigned long long lhs_raw = extractNullComparableRaw(lhs);
+				const unsigned long long lhs_raw = extractIntegerValueAsUnsigned(lhs);
 				if (lhs_raw != 0ULL) {
 					return EvalResult::error("Member pointer comparison with non-zero integer is not supported in constant expressions");
 				}
@@ -3875,6 +3875,7 @@ EvalResult Evaluator::evaluate_pointer_to_member_access(const PointerToMemberAcc
 		kSyntheticTokenLine,
 		kSyntheticTokenColumn,
 		kSyntheticTokenFileIndex);
+	// Synthetic lookup token: only the interned identifier spelling matters here.
 	return evaluate_member_access(
 		MemberAccessNode(member_access.object(), member_token, member_access.is_arrow()),
 		context);
@@ -5444,7 +5445,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 	std::unordered_map<std::string_view, EvalResult>& member_bindings,
 	EvaluationContext& context,
 	bool ignore_default_initializer_errors) {
-	auto materialize_base_initializers = [&]() -> EvalResult {
+	auto materializeBaseInitializers = [&]() -> EvalResult {
 		for (const auto& base_init : ctor_decl.base_initializers()) {
 			const BaseClassSpecifier* base_spec = nullptr;
 			for (const auto& candidate : struct_info->base_classes) {
@@ -5501,7 +5502,7 @@ EvalResult Evaluator::materialize_members_from_constructor(
 		return EvalResult::from_bool(true);
 	};
 
-	auto base_bind_result = materialize_base_initializers();
+	auto base_bind_result = materializeBaseInitializers();
 	if (!base_bind_result.success()) {
 		return base_bind_result;
 	}
