@@ -39,7 +39,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<chrono>` | `test_std_chrono.cpp` | 💥 Crash | Stack overflow during template instantiation (7500+ templates) |
-| `<atomic>` | `test_std_atomic.cpp` | ❌ Parse Error | ~660ms (targeted retest 2026-04-03). The earlier `__builtin_memcmp` phase-1 blocker is fixed and GCC/Clang atomic builtin names are now declared, but libstdc++ still fails later on pointer-atomic typed builtin calls (`__atomic_add_fetch` has no matching function). |
+| `<atomic>` | `test_std_atomic.cpp` | ❌ Compile Error | ~760ms (targeted retest 2026-04-04). Pointer-typed `__atomic_add_fetch` / `__atomic_fetch_sub` calls now synthesize exact builtin signatures and get past the old overload failure. The current blocker is later namespace-qualified template resolution around `std::__atomic_impl::__compare_exchange<_AtomicRef>` ending in `Itanium name mangling: unknown type`. |
 | `<new>` | `test_std_new.cpp` | ✅ Compiled | ~24ms |
 | `<exception>` | `test_std_exception.cpp` | ✅ Compiled | ~238ms |
 | `<stdexcept>` | `test_std_stdexcept.cpp` | ❌ Compile Error | ~4220ms (targeted retest 2026-03-31). Same post-fix state as `<string>`: no function-pointer mangling crash, but later `string`/`std::basic_string` and explicit-constructor copy-init failures remain |
@@ -58,7 +58,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<stacktrace>` | N/A | ✅ Compiled | ~25ms (C++23) |
 | `<barrier>` | N/A | 💥 Crash | Stack overflow during template instantiation |
 | `<coroutine>` | N/A | ❌ Parse Error | Requires `-fcoroutines` flag |
-| `<latch>` | `test_std_latch.cpp` | ❌ Parse Error | ~670ms (targeted retest 2026-04-03). Shares the same post-fix state as `<atomic>`: `__builtin_memcmp` no longer fails phase-1 lookup, but pointer-atomic builtin calls still stop on `__atomic_add_fetch` typing. |
+| `<latch>` | `test_std_latch.cpp` | ❌ Compile Error | ~750ms (targeted retest 2026-04-04). Shares the new `<atomic>` state: pointer-typed atomic builtin calls now compile, and the next blocker is the later `std::__atomic_impl::__compare_exchange<_AtomicRef>` / unknown-type mangling path. |
 | `<shared_mutex>` | N/A | ❌ Parse Error | Fails on `chrono::duration<long double>{__secs}` brace-init expression |
 | `<cstdlib>` | N/A | ✅ Compiled | ~76ms |
 | `<cstdio>` | N/A | ✅ Compiled | ~43ms |
@@ -122,7 +122,7 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 3. **Deferred template-base placeholder materialization / inherited-member follow-ons**: Some dependent base arguments now materialize correctly, and chained member access no longer immediately erases concrete payload types back to `type_index=0`, but later CRTP/deferred-body codegen still has remaining gaps where instantiated payload structs are not always recovered as full structs and inherited members are not fully reconstructed. `<optional>` now reaches the later `_Optional_payload<...>` / `_M_engaged` failures with concrete type index `2758`, but those deferred paths still lose struct info or inherited `_M_engaged` lookup during codegen.
 
-4. **GCC/Clang `__atomic*` builtin typing is still incomplete**: Compiler-known declarations and `__has_builtin` coverage now exist for the libstdc++ atomic builtin names, but pointer/integral generic signatures are not modeled precisely enough yet. `<atomic>` / `<latch>` now get past the older `__builtin_memcmp` phase-1 error and stop later on `__atomic_add_fetch(&_M_p, _M_type_size(1), ...)` with "No matching function for call". Affects: `<atomic>`, `<latch>`.
+4. **Namespace-qualified dependent template calls after the atomic builtin fix**: Pointer-style `__atomic_add_fetch` / `__atomic_fetch_sub` now resolve, but `<atomic>` / `<latch>` advance to a later failure in `std::__atomic_impl::__compare_exchange<_AtomicRef>`, where dependent qualified template resolution still leaves an unknown type that later aborts Itanium mangling. Affects: `<atomic>`, `<latch>`.
 
 5. **Brace-init expression parsing for template types**: Expressions like `chrono::duration<long double>{__secs}` and `std::optional<_Tp>{std::in_place}` fail to parse because `Type<Args>{init}` is not recognized as a construction expression. Affects: `<shared_mutex>`, `<ranges>`.
 
@@ -147,6 +147,10 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 3. **Deferred template-base resolution now materializes placeholder base arguments before fallback**: when a deferred base argument still points at a template-instantiation placeholder with no `StructTypeInfo`, the class-template instantiator now tries to materialize the concrete base specialization instead of blindly carrying the placeholder forward. This moves `<optional>` past the earlier placeholder-loss point, though it still fails later on another deferred-base placeholder (`type_index=2736`) and therefore remains in the codegen-error bucket for now.
 
 4. **Template-parameter substitution now materializes concrete class-template placeholders without regressing alias-member or template-template lookups**: when a substituted type argument is itself a concrete-but-lazy template-instantiation placeholder, qualified lookup now eagerly resolves it to the registered instantiated class name, but only for the cases that are safe to do before the dedicated `::type` and template-template parameter paths run. This fixes deferred codegen for direct CRTP-style base casts and defaulted placeholder bases while preserving earlier array-alias and template-template regressions. Regression tests: `tests/test_deferred_base_placeholder_codegen_ret0.cpp`, `tests/test_deferred_base_default_arg_placeholder_ret0.cpp`, plus existing `tests/test_template_type_alias_array_member_brace_init_ret0.cpp` and `tests/template_template_with_member_ret0.cpp`.
+
+### Recent Fixes (2026-04-04)
+
+1. **Pointer-style GCC/Clang `__atomic*` builtins now synthesize exact signatures at call time**: when libstdc++ uses pointer-based atomics such as `__atomic_add_fetch(&_M_p, ...)`, FlashCpp now creates a concrete builtin declaration from the actual argument types and uses the pointee type as the return type instead of the old `unsigned long long` placeholder. This removes the immediate overload-resolution stop in `<atomic>` / `<latch>` and exposes the later qualified-template blocker instead. Regression test: `tests/test_atomic_builtin_pointer_intrinsics_ret0.cpp`.
 
 5. **Post-parse boundary checking now skips parser-owned template-pattern structs, and chained member-access results keep concrete user-defined payload `TypeIndex` values**: the sema boundary no longer walks `$pattern__` class templates that intentionally still contain pack-expansion helpers, which moves `<variant>` past its earlier post-parse `PackExpansionExprNode` stop. Separately, member-load IR now preserves valid non-native payload type indices across chained accesses, which keeps simple inherited payload accesses working instead of collapsing them back to category-only placeholders. Regression tests: new `tests/test_member_chain_payload_base_ret0.cpp`, plus targeted std-header retest `tests/std/test_std_variant.cpp`.
 

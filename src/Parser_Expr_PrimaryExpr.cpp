@@ -135,6 +135,119 @@ void syncTemplateArgumentNodeMetadata(
 		}
 	}
 }
+
+TypeSpecifierNode normalizeAtomicBuiltinParameterType(const TypeSpecifierNode& arg_type) {
+	TypeSpecifierNode normalized = arg_type;
+	normalized.set_reference_qualifier(ReferenceQualifier::None);
+	return normalized;
+}
+
+TypeSpecifierNode buildAtomicBuiltinValueReturnType(const TypeSpecifierNode& pointer_argument) {
+	TypeSpecifierNode value_type(
+		pointer_argument.type_index(),
+		pointer_argument.qualifier(),
+		pointer_argument.sizeBits(),
+		pointer_argument.token(),
+		pointer_argument.cv_qualifier());
+	value_type.set_reference_qualifier(ReferenceQualifier::None);
+
+	const size_t depth = pointer_argument.pointer_depth();
+	for (size_t i = 0; i + 1 < depth; ++i) {
+		CVQualifier level_cv = pointer_argument.pointer_levels()[i].cv_qualifier;
+		if (i + 2 == depth) {
+			level_cv = CVQualifier::None;
+		}
+		value_type.add_pointer_level(level_cv);
+	}
+
+	if (depth <= 1) {
+		value_type.set_cv_qualifier(CVQualifier::None);
+	}
+
+	value_type.set_size_in_bits(getTypeSpecSizeBits(value_type));
+	return value_type;
+}
+
+bool isSupportedAtomicBuiltin(std::string_view name) {
+	return name == "__atomic_store" ||
+		name == "__atomic_store_n" ||
+		name == "__atomic_load" ||
+		name == "__atomic_load_n" ||
+		name == "__atomic_exchange" ||
+		name == "__atomic_exchange_n" ||
+		name == "__atomic_compare_exchange" ||
+		name == "__atomic_compare_exchange_n" ||
+		name == "__atomic_fetch_add" ||
+		name == "__atomic_fetch_sub" ||
+		name == "__atomic_fetch_and" ||
+		name == "__atomic_fetch_or" ||
+		name == "__atomic_fetch_xor" ||
+		name == "__atomic_add_fetch" ||
+		name == "__atomic_sub_fetch" ||
+		name == "__atomic_and_fetch" ||
+		name == "__atomic_or_fetch" ||
+		name == "__atomic_xor_fetch" ||
+		name == "__atomic_is_lock_free" ||
+		name == "__atomic_always_lock_free" ||
+		name == "__atomic_test_and_set" ||
+		name == "__atomic_clear" ||
+		name == "__atomic_thread_fence" ||
+		name == "__atomic_signal_fence";
+}
+}
+
+std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(
+	std::string_view builtin_name,
+	const std::vector<TypeSpecifierNode>& arg_types,
+	const Token& call_token) {
+	if (!isSupportedAtomicBuiltin(builtin_name)) {
+		return std::nullopt;
+	}
+
+	auto build_builtin_type = [&](TypeCategory base_type) {
+		return emplace_node<TypeSpecifierNode>(
+			base_type,
+			TypeQualifier::None,
+			get_type_size_bits(base_type),
+			call_token,
+			CVQualifier::None);
+	};
+
+	ASTNode return_type;
+	if (builtin_name == "__atomic_store" ||
+		builtin_name == "__atomic_store_n" ||
+		builtin_name == "__atomic_load" ||
+		builtin_name == "__atomic_exchange" ||
+		builtin_name == "__atomic_clear" ||
+		builtin_name == "__atomic_thread_fence" ||
+		builtin_name == "__atomic_signal_fence") {
+		return_type = build_builtin_type(TypeCategory::Void);
+	} else if (builtin_name == "__atomic_compare_exchange" ||
+		builtin_name == "__atomic_compare_exchange_n" ||
+		builtin_name == "__atomic_is_lock_free" ||
+		builtin_name == "__atomic_always_lock_free" ||
+		builtin_name == "__atomic_test_and_set") {
+		return_type = build_builtin_type(TypeCategory::Bool);
+	} else {
+		if (arg_types.empty() || !arg_types.front().is_pointer()) {
+			return std::nullopt;
+		}
+		return_type = emplace_node<TypeSpecifierNode>(buildAtomicBuiltinValueReturnType(arg_types.front()));
+	}
+
+	auto decl = emplace_node<DeclarationNode>(
+		return_type,
+		Token(Token::Type::Identifier, builtin_name, call_token.line(), call_token.column(), call_token.file_index()));
+	auto [func, func_ref] = emplace_node_ref<FunctionDeclarationNode>(decl.as<DeclarationNode>());
+	func_ref.set_linkage(Linkage::C);
+
+	for (const auto& arg_type : arg_types) {
+		func_ref.add_parameter_node(emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(normalizeAtomicBuiltinParameterType(arg_type)),
+			Token()));
+	}
+
+	return func;
 }
 
 // Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.
@@ -3489,6 +3602,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error("Ambiguous call to overloaded function '" + std::string(identifier_token.value()) + "\'", identifier_token);
 				}
 				if (!resolution.has_match) {
+					if (auto synthetic_builtin = try_synthesize_atomic_builtin_overload(identifier_token.value(), arg_types, identifier_token); synthetic_builtin.has_value()) {
+						return make_call_result(*synthetic_builtin);
+					}
 					std::optional<ASTNode> instantiated_func;
 					if (current_linkage_ != Linkage::C) {
 						instantiated_func = try_instantiate_template(identifier_token.value(), arg_types);
@@ -5629,6 +5745,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										if (resolution_result.is_ambiguous) {
 											return ParseResult::error("Ambiguous call to overloaded function '" + std::string(identifier_token.value()) + "'", identifier_token);
 										} else if (!resolution_result.has_match) {
+											if (auto synthetic_builtin = try_synthesize_atomic_builtin_overload(identifier_token.value(), arg_types, identifier_token); synthetic_builtin.has_value()) {
+												const DeclarationNode* decl_ptr = getDeclarationNode(*synthetic_builtin);
+												if (!decl_ptr) {
+													return ParseResult::error("Invalid atomic builtin declaration", identifier_token);
+												}
+												result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+												return ParseResult::success(*result);
+											}
 											// No matching regular function found - try template instantiation with deduction (skip in extern "C" - C has no templates)
 											std::optional<ASTNode> instantiated_func;
 											if (current_linkage_ != Linkage::C) {
