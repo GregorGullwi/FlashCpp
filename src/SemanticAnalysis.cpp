@@ -2960,8 +2960,8 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 							 std::is_same_v<T, ConstCastNode> ||
 							 std::is_same_v<T, ReinterpretCastNode> ||
 							 std::is_same_v<T, DynamicCastNode>) {
-			if (e.target_type().is<TypeSpecifierNode>()) {
-				const auto& target_type = e.target_type().as<TypeSpecifierNode>();
+			if (e.target_type().template is<TypeSpecifierNode>()) {
+				const auto& target_type = e.target_type().template as<TypeSpecifierNode>();
 				if (target_type.is_lvalue_reference()) {
 					return ValueCategory::LValue;
 				}
