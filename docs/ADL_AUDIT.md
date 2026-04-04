@@ -30,7 +30,7 @@ the remaining gaps.
 - **Operator overloads** — free-function operators found via ADL
 - **ADL blocking** — variables/structs/enums suppress ADL per [basic.lookup.argdep]/1
 
-### Test Coverage (12 tests)
+### Test Coverage (16 tests)
 
 | Test | Exercises |
 |------|-----------|
@@ -46,39 +46,27 @@ the remaining gaps.
 | `test_nested_struct_enum_adl_ret0.cpp` | Nested struct/enum ADL |
 | `test_operator_adl_free_function_ret0.cpp` | Free-function operators |
 | `test_typedef_alias_adl_ret0.cpp` | ADL through typedefs/aliases |
+| `test_range_for_adl_begin_end_ret0.cpp` | Range-for with free-function begin/end via ADL |
+| `test_range_for_adl_auto_ret0.cpp` | Range-for ADL with auto type deduction |
+| `test_adl_pointer_arg_ret0.cpp` | ADL with pointer and reference arguments |
+| `test_adl_anonymous_enum_ret0.cpp` | Enum ADL in anonymous namespaces |
 
 ## Missing ADL Functionality
 
-### 1. Range-based for loops: free-function `begin()`/`end()`
+### ~~1. Range-based for loops: free-function `begin()`/`end()`~~ ✅ DONE
 
-**Severity:** Medium — affects custom iterator types without member functions.
+**Implemented.** After member lookup fails, ADL is used to find free-function
+`begin()`/`end()` in the associated namespaces of the range expression type.
+Both the semantic analysis (`normalizeRangedForLoopDecl`) and IR generation
+(`visitRangedForBeginEnd`) paths support the fallback. The resolved ADL
+functions are stored in `RangedForStatementNode` for cross-phase communication.
 
-C++20 [stmt.ranged]/1 specifies that range-based for looks up `begin`/`end`
-as both member functions and via ADL on the range expression. FlashCpp currently
-only calls member functions.
+**Tests:** `test_range_for_adl_begin_end_ret0.cpp`, `test_range_for_adl_auto_ret0.cpp`
 
-**Location:** `src/IrGenerator_Stmt_Control.cpp:901-920`
+### ~~2. Enum ADL in anonymous namespaces~~ ✅ VERIFIED
 
-```cpp
-// Current: only member function calls
-auto begin_call_expr = ... MemberFunctionCallNode(range_object_expr, begin_func_decl, ...);
-```
-
-**Impact:** Types that provide free-function `begin()`/`end()` (e.g. C arrays
-wrapped in custom namespaces, or types with customization points) won't work
-in range-based for loops.
-
-**Fix:** After member lookup fails, attempt ADL lookup for `begin`/`end` with
-the range expression as argument.
-
-### 2. Enum ADL in anonymous namespaces (unverified)
-
-**Severity:** Low — edge case.
-
-Already documented in `docs/MISSING_FEATURES.md:437-465`. Enum ADL relies on
-`TypeInfo::namespaceHandle()` returning the correct enclosing namespace. For
-anonymous namespaces, this handle's propagation through `add_enum_type()` has
-not been verified with a test.
+**Verified** with `test_adl_anonymous_enum_ret0.cpp`. The `TypeInfo::namespaceHandle()`
+correctly propagates through `add_enum_type()` for anonymous namespaces.
 
 ### 3. `std::swap` customization point
 
@@ -88,15 +76,13 @@ Generic code that calls `swap(a, b)` after `using std::swap;` relies on ADL
 to find user-defined `swap` overloads. The ADL infrastructure supports this,
 but no standard library integration or test exists.
 
-### 4. Unqualified call with pointer/reference arguments
+### ~~4. Unqualified call with pointer/reference arguments~~ ✅ VERIFIED
 
-**Severity:** Low.
-
-C++20 [basic.lookup.argdep]/2 specifies that for pointer types, the associated
-namespaces include those of the pointed-to type. For reference types, the
-associated namespaces are those of the referred-to type. This has not been
-tested, though the current implementation collects associated namespaces from
-`TypeInfo` which may already handle this when the dereferenced type is resolved.
+**Verified** with `test_adl_pointer_arg_ret0.cpp`. The current implementation
+correctly collects associated namespaces from the pointed-to or referred-to
+type because `TypeSpecifierNode::type_index()` returns the base type index,
+and `lookup_adl` uses `tryGetTypeInfo()` on that index to find the struct's
+namespace.
 
 ## Intentional Deviations
 
@@ -121,10 +107,8 @@ suffix-scan approach could non-deterministically pick any matching type.
 
 ## Recommendations
 
-1. **Range-for ADL** — Highest priority. Implement free-function `begin()`/`end()`
-   fallback with ADL in `IrGenerator_Stmt_Control.cpp` to support iterator
-   customization points.
-2. **Anonymous enum ADL test** — Add a test to verify enum ADL works in
-   anonymous namespaces.
-3. **Pointer/reference ADL test** — Add test verifying ADL finds functions when
-   argument is a pointer or reference to a namespace-scoped type.
+1. ~~**Range-for ADL** — Highest priority.~~ ✅ Done.
+2. ~~**Anonymous enum ADL test** — Add a test to verify enum ADL works in
+   anonymous namespaces.~~ ✅ Done.
+3. ~~**Pointer/reference ADL test** — Add test verifying ADL finds functions when
+   argument is a pointer or reference to a namespace-scoped type.~~ ✅ Done.

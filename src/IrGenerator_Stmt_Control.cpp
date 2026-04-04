@@ -938,25 +938,22 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
 		// Create call expressions: member calls or ADL free-function calls
+	auto make_adl_call = [&](const FunctionDeclarationNode& func_decl) -> ASTNode {
+		ChunkedVector<ASTNode> args;
+		args.push_back(range_object_expr);
+		auto call = FunctionCallNode(func_decl.decl_node(), std::move(args), Token());
+		if (func_decl.has_mangled_name()) {
+			call.set_mangled_name(func_decl.mangled_name());
+		}
+		return ASTNode::emplace_node<ExpressionNode>(std::move(call));
+	};
+
 	ASTNode begin_call_expr;
 	ASTNode end_call_expr;
 	if (use_adl) {
 		// Free-function calls: begin(range) and end(range)
-		ChunkedVector<ASTNode> begin_args;
-		begin_args.push_back(range_object_expr);
-		auto begin_call = FunctionCallNode(begin_func_decl.decl_node(), std::move(begin_args), Token());
-		if (begin_func_decl.has_mangled_name()) {
-			begin_call.set_mangled_name(begin_func_decl.mangled_name());
-		}
-		begin_call_expr = ASTNode::emplace_node<ExpressionNode>(std::move(begin_call));
-
-		ChunkedVector<ASTNode> end_args;
-		end_args.push_back(range_object_expr);
-		auto end_call = FunctionCallNode(end_func_decl.decl_node(), std::move(end_args), Token());
-		if (end_func_decl.has_mangled_name()) {
-			end_call.set_mangled_name(end_func_decl.mangled_name());
-		}
-		end_call_expr = ASTNode::emplace_node<ExpressionNode>(std::move(end_call));
+		begin_call_expr = make_adl_call(begin_func_decl);
+		end_call_expr = make_adl_call(end_func_decl);
 	} else {
 		// Member function calls: range.begin() and range.end()
 		ChunkedVector<ASTNode> empty_args;
@@ -1048,7 +1045,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		init_expr = ASTNode::emplace_node<ExpressionNode>(
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true));
 	} else {
-		const bool prefer_const_deref = range_type.is_const() || (!use_adl && begin_func->is_const());
+		const bool prefer_const_deref = range_type.is_const() || (begin_func && begin_func->is_const());
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
 		if (!dereference_func && sema_) {
 			dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
