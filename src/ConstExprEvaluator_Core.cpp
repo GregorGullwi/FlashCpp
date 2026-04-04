@@ -181,19 +181,47 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	return nullptr;
 }
 
-const StructMember* tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
-	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
+struct ResolvedMemberPointerTarget {
+	StringHandle member_name;
+	int64_t offset = 0;
+};
+
+std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTargetRecursive(
+	const StructTypeInfo* struct_info,
+	StringHandle member_name,
+	int64_t base_offset = 0) {
 	if (!struct_info) {
-		return nullptr;
+		return std::nullopt;
 	}
 
 	for (const auto& member : struct_info->members) {
-		if (StringTable::getStringView(member.getName()) == qualified_id.name()) {
-			return &member;
+		if (member.getName() == member_name) {
+			return ResolvedMemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
 		}
 	}
 
-	return nullptr;
+	for (const auto& base : struct_info->base_classes) {
+		if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			base_type && base_type->getStructInfo()) {
+			if (auto resolved = tryResolveMemberPointerTargetRecursive(
+					base_type->getStructInfo(),
+					member_name,
+					base_offset + static_cast<int64_t>(base.offset))) {
+				return resolved;
+			}
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<ResolvedMemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
+	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
+	if (!struct_info) {
+		return std::nullopt;
+	}
+
+	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle());
 }
 
 } // namespace
@@ -546,8 +574,8 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				return EvalResult::from_pointer(id->name());
 			}
 			if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
-				if (const StructMember* member = tryResolveMemberPointerTarget(*qualified_id)) {
-					return EvalResult::from_uint(static_cast<unsigned long long>(member->offset));
+				if (auto member = tryResolveMemberPointerTarget(*qualified_id)) {
+					return EvalResult::from_member_pointer(member->member_name, member->offset);
 				}
 			}
 			// &arr[i]: address of array element → pointer with offset

@@ -100,6 +100,12 @@ struct EvalResult {
 	// the original binding has gone out of scope. Scalar pointers store one element;
 	// array pointers may store multiple elements so pointer arithmetic still works.
 	std::vector<EvalResult> pointer_value_snapshot;
+	// Constexpr member-object pointer support.
+	// When member_pointer_member is valid, this result represents a member pointer
+	// created from an expression like `&S::member`. `is_null_member_pointer` tracks
+	// null member pointers, which use the target ABI's sentinel representation.
+	StringHandle member_pointer_member;
+	bool is_null_member_pointer = false;
 
 	// Check if evaluation was successful
 	bool success() const {
@@ -108,49 +114,66 @@ struct EvalResult {
 
 	// Convenience constructors
 	static EvalResult from_bool(bool val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult from_int(long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult from_uint(unsigned long long val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult from_double(double val) {
-		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{val, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult from_callable(const VariableDeclarationNode& var_decl) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, &var_decl, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult from_lambda(const LambdaExpressionNode& lambda) {
-		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, &lambda, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	static EvalResult error(const std::string& msg, EvalErrorType type = EvalErrorType::Other) {
-		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}};
+		return EvalResult{false, msg, type, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, {}, 0, {}, {}, {}, false};
 	}
 
 	// Create a pointer-to-variable result (for address-of operator on constexpr variables).
 	// offset is the element offset for pointer arithmetic (e.g. &arr[2] → offset=2).
 	static EvalResult from_pointer(std::string_view var_name, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, StringTable::getOrInternStringHandle(var_name), offset, {}, {}, {}, false};
 		return r;
 	}
 
 	// Overload that accepts an already-interned StringHandle directly (avoids double interning).
 	static EvalResult from_pointer(StringHandle sh, int64_t offset = 0) {
-		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}};
+		EvalResult r{0LL, "", EvalErrorType::None, false, {}, {}, nullptr, nullptr, {}, {}, TypeIndex{}, {}, sh, offset, {}, {}, {}, false};
+		return r;
+	}
+
+	static EvalResult from_member_pointer(StringHandle member_name, int64_t offset) {
+		EvalResult r = from_int(offset);
+		r.member_pointer_member = member_name;
 		return r;
 	}
 
 	EvalResult& set_exact_type(const TypeSpecifierNode& type) {
 		exact_type = type;
+		if ((type.category() == TypeCategory::MemberObjectPointer ||
+			 type.category() == TypeCategory::MemberFunctionPointer) &&
+			!member_pointer_member.isValid() &&
+			!is_null_member_pointer) {
+			value = static_cast<long long>(-1);
+			is_null_member_pointer = true;
+		}
 		return *this;
+	}
+
+	bool is_member_pointer() const {
+		return member_pointer_member.isValid() || is_null_member_pointer;
 	}
 
 	// Convenience helpers for common operations
@@ -163,6 +186,10 @@ struct EvalResult {
 		// name (i.e., the pointer was produced by &identifier and points to a known variable).
 		if (pointer_to_var.isValid())
 			return true;
+
+		if (is_member_pointer()) {
+			return !is_null_member_pointer;
+		}
 
 		// Any non-zero value is true
 		if (const auto* b_val = std::get_if<bool>(&value)) {
