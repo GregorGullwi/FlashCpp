@@ -607,6 +607,28 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		return nullptr;
 	};
 
+		// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
+		// direct-call target stored by semantic analysis.  Only use it when the
+		// codegen recovery chain below has no needed side effects (e.g. deferred
+		// member function generation for template instantiation structs).
+		// Safe cases: free functions and calls to member functions of the struct
+		// currently being generated.  Cross-struct member calls still go through
+		// the recovery chain so that deferred generation can queue the target
+		// struct's members.
+	if (sema_) {
+		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&functionCallNode);
+		if (sema_resolved) {
+			std::string_view parent = sema_resolved->parent_struct_name();
+			bool is_local_or_free = parent.empty() ||
+				(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
+			if (is_local_or_free) {
+				matched_func_decl = sema_resolved;
+				resolveMangledName(matched_func_decl, parent);
+				FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved direct call target for: {}", func_name_view);
+			}
+		}
+	}
+
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 	if (has_precomputed_mangled) {
