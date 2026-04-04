@@ -131,6 +131,7 @@ ParseResult Parser::parse_type_and_name() {
 	// Function pointers have the pattern: type (*identifier)(params)
 	// We need to check for '(' followed by '*' to detect this
 	// Also handle calling convention: type (__cdecl *identifier)(params)
+	std::optional<std::string_view> asm_symbol_name;
 	if (peek() == "("_tok) {
 		FLASH_LOG_FORMAT(Parser, Debug, "parse_type_and_name: Found '(' - checking for function pointer. current_token={}",
 						 std::string(current_token_.value()));
@@ -627,7 +628,7 @@ ParseResult Parser::parse_type_and_name() {
 		advance(); // consume ']'
 	}
 
-	skip_asm_suffix();
+	skip_asm_suffix(&asm_symbol_name);
 
 	// Unwrap the optional ASTNode before passing it to emplace_node
 	if (auto node = type_specifier_result.node()) {
@@ -645,6 +646,9 @@ ParseResult Parser::parse_type_and_name() {
 		// Apply custom alignment if specified
 		if (custom_alignment.has_value()) {
 			decl_node.as<DeclarationNode>().set_custom_alignment(custom_alignment.value());
+		}
+		if (asm_symbol_name.has_value()) {
+			decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
 		}
 
 		// Apply parameter pack flag if this is a parameter pack
@@ -974,6 +978,7 @@ ParseResult Parser::parse_direct_declarator(TypeSpecifierNode& base_type,
 ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 											 const Token& identifier,
 											 Linkage linkage) {
+	std::optional<std::string_view> asm_symbol_name;
 	// Check for function declarator: '(' params ')'
 	if (peek() == "("_tok) {
 		advance(); // consume '('
@@ -1038,7 +1043,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		// Check for noexcept specifier on function pointer type
 		// Pattern: void (*)(Args...) noexcept or void (*)(Args...) noexcept(expr)
 		skip_noexcept_specifier();
-		skip_asm_suffix();
+		skip_asm_suffix(&asm_symbol_name);
 
 		// This is a function pointer!
 		// The base_type is the return type
@@ -1090,19 +1095,22 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 	}
 
 	// Create and return declaration node
-	skip_asm_suffix();
+	ASTNode decl_node;
 	if (!array_dimensions.empty()) {
-		return ParseResult::success(
-			emplace_node<DeclarationNode>(
-				emplace_node<TypeSpecifierNode>(base_type),
-				identifier,
-				std::move(array_dimensions)));
+		decl_node = emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(base_type),
+			identifier,
+			std::move(array_dimensions));
+	} else {
+		decl_node = emplace_node<DeclarationNode>(
+			emplace_node<TypeSpecifierNode>(base_type),
+			identifier);
+	}
+	if (asm_symbol_name.has_value()) {
+		decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
 	}
 
-	return ParseResult::success(
-		emplace_node<DeclarationNode>(
-			emplace_node<TypeSpecifierNode>(base_type),
-			identifier));
+	return ParseResult::success(decl_node);
 }
 
 // Phase 1 Consolidation: Parse declaration specifiers shared between
