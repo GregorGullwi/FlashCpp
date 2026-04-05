@@ -749,7 +749,7 @@ inline bool is_lvalue_expression_for_overload_resolution(const ASTNode& arg_node
 	return std::visit([](const auto& inner) -> bool {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			return true;
+			return inner.binding() != IdentifierBinding::EnumConstant;
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return true;
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {

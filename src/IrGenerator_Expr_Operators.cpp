@@ -387,7 +387,8 @@ TypedValue AstToIr::buildConstructorArgumentValue(
 
 	if (param_is_ref &&
 		argument.is<ExpressionNode>() &&
-		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>())) {
+		std::holds_alternative<IdentifierNode>(argument.as<ExpressionNode>()) &&
+		std::get<IdentifierNode>(argument.as<ExpressionNode>()).binding() != IdentifierBinding::EnumConstant) {
 		const auto& identifier = std::get<IdentifierNode>(argument.as<ExpressionNode>());
 		std::optional<ASTNode> symbol = lookupSymbol(identifier.name());
 
