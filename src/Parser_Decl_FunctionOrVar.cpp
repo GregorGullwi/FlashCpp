@@ -605,6 +605,13 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	ParseResult function_definition_result = preparsed_function_decl
 		? type_and_name_result
 		: parse_function_declaration(decl_node, attr_info.calling_convention);
+	// When parse_declarator already produced a FunctionDeclarationNode (e.g. for
+	// function-pointer return types like "int (*get())(int)"), we bypassed
+	// parse_function_declaration which normally sets the calling convention.
+	// Apply it here so __cdecl / __stdcall / etc. are not silently lost.
+	if (preparsed_function_decl) {
+		preparsed_function_decl->set_calling_convention(attr_info.calling_convention);
+	}
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}",
 					 function_definition_result.is_error(),
 					 std::string(current_token_.value()),
