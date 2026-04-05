@@ -2261,7 +2261,15 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 		}
 		if (inferred_type_id) {
 			slot.type_id = inferred_type_id;
-			slot.value_category = inferExpressionValueCategory(node);
+			// Don't overwrite value_category when a conversion annotation already
+			// set it — the conversion result's category (typically PRValue) was
+			// established by tryAnnotateConversion and must not be replaced with
+			// the source expression's natural category (e.g. LValue for a named
+			// variable), because the slot's type_id already holds the *target*
+			// type after conversion.
+			if (!slot.has_cast()) {
+				slot.value_category = inferExpressionValueCategory(node);
+			}
 			setSlot(expr_key, slot);
 		}
 	}
