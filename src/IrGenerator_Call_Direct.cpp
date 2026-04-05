@@ -833,6 +833,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// The mangled name is sufficient for generating the call instruction
 	}
 
+	// Keep lookup recovery only for call shapes that the direct-call sema cache does not
+	// fully own yet:
+	// - no sema or no tracked normalized body,
+	// - precomputed mangled / qualified calls that bypass the ordinary-call cache,
+	// - static-member lowering that still rewrites through the direct-call path,
+	// - and explicit sema unresolved-call escape hatches.
 	const bool allow_lookup_recovery =
 		!sema_ ||
 		!sema_normalized_current_function_ ||
