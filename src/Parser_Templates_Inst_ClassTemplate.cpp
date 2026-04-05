@@ -2753,7 +2753,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						{
 							FlashCpp::FunctionParsingScopeGuard func_guard(
 								*this,
-								!orig_func.is_static(), // is_member
+								true,
+								!orig_func.is_static(),
 								&instantiated_struct_ref,
 								instantiated_name,
 								struct_type_info.type_index_,
@@ -6191,7 +6192,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					{
 						FlashCpp::FunctionParsingScopeGuard func_guard(
 							*this,
-							!func_decl.is_static(), // is_member
+							true,
+							!func_decl.is_static(),
 							&instantiated_struct_ref,
 							instantiated_name,
 							struct_type_info.type_index_,
@@ -6884,7 +6886,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					{
 						FlashCpp::FunctionParsingScopeGuard func_guard(
 							*this,
-							true, // is_member (out-of-line member function)
+							true,
+							!inst_func.is_static(),
 							&instantiated_struct_ref,
 							instantiated_name,
 							struct_type_info.type_index_,
@@ -6952,7 +6955,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					setup_member_function_context(
 						&instantiated_struct_ref,
 						instantiated_name,
-						struct_type_info.type_index_);
+						struct_type_info.type_index_,
+						true);
 
 					// Parse the function body (handles function-try-blocks too)
 					// Pass true for is_ctor_or_dtor so constructor function-try-blocks

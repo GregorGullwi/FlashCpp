@@ -522,7 +522,6 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 		// Save current position and parsing context
 		SaveHandle current_pos = save_token_position();
-		const FunctionDeclarationNode* saved_current_function = current_function_;
 
 		// When re-parsing a lazy member function body with concrete types,
 		// we're no longer in a dependent template context. Set parsing_template_depth_
@@ -533,53 +532,44 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// Restore to the function body start
 		restore_lexer_position_only(func_decl.template_body_position());
 
-		// Set up parsing context for the function
-		gSymbolTable.enter_scope(ScopeType::Function);
-		current_function_ = &new_func_ref;
-		size_t saved_member_ctx_size = member_function_context_stack_.size();
-		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
-			struct_it != getTypesByNameMap().end()) {
-			setup_member_function_context(
-				nullptr,
-				lazy_info.identity.instantiated_owner_name,
-				struct_it->second->type_index_);
-		}
-
-		// Add parameters to symbol table
-		for (const auto& param : new_func_ref.parameter_nodes()) {
-			if (param.is<DeclarationNode>()) {
-				const auto& param_decl = param.as<DeclarationNode>();
-				gSymbolTable.insert(param_decl.identifier_token().value(), param);
-			}
-		}
-
-		// Set up template parameter substitutions so non-type params (e.g., int N)
-		// are resolved during parse_block() just as in try_instantiate_single_template.
-		{
+		auto parse_body_with_current_context = [&]() {
+			// Set up template parameter substitutions so non-type params (e.g., int N)
+			// are resolved during parse_block() just as in try_instantiate_single_template.
 			FlashCpp::ScopedState guard_subs(template_param_substitutions_);
 			populateTemplateParamSubstitutions(template_param_substitutions_, param_names, lazy_info.template_args);
 
 			// Parse the function body
-			{
-				FlashCpp::ScopedState guard_param_names(current_template_param_names_);
-				for (const auto& pn : param_names) {
-					current_template_param_names_.push_back(pn);
-				}
+			FlashCpp::ScopedState guard_param_names(current_template_param_names_);
+			for (const auto& pn : param_names) {
+				current_template_param_names_.push_back(pn);
+			}
 
-				auto block_result = parse_function_body();  // handles function-try-blocks
+			auto block_result = parse_function_body();	// handles function-try-blocks
 
-				if (!block_result.is_error() && block_result.node().has_value()) {
-					body_to_substitute = block_result.node();
-				}
-			} // current_template_param_names_ restored here
-		} // template_param_substitutions_ restored here
+			if (!block_result.is_error() && block_result.node().has_value()) {
+				body_to_substitute = block_result.node();
+			}
+		};
 
-		// Clean up context
-		current_function_ = saved_current_function;
-		while (member_function_context_stack_.size() > saved_member_ctx_size) {
-			member_function_context_stack_.pop_back();
+		if (auto struct_it = getTypesByNameMap().find(lazy_info.identity.instantiated_owner_name);
+			struct_it != getTypesByNameMap().end()) {
+			FlashCpp::FunctionParsingScopeGuard func_guard(
+				*this,
+				true,
+				!func_decl.is_static(),
+				nullptr,
+				lazy_info.identity.instantiated_owner_name,
+				struct_it->second->type_index_,
+				new_func_ref.parameter_nodes(),
+				&new_func_ref);
+			parse_body_with_current_context();
+		} else {
+			FlashCpp::SymbolTableScope func_scope(ScopeType::Function);
+			FlashCpp::ScopedState guard_current_function(current_function_);
+			current_function_ = &new_func_ref;
+			register_parameters_in_scope(new_func_ref.parameter_nodes());
+			parse_body_with_current_context();
 		}
-		gSymbolTable.exit_scope();
 
 		// Restore original position
 		restore_lexer_position_only(current_pos);

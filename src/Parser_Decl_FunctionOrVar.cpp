@@ -559,7 +559,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// scope enter/exit, member-context push/pop, 'this' injection (with correct
 		// pointer-size 64 bits), and parameter registration from the DEFINITION
 		// (C++ allows declaration and definition to use different parameter names).
-		FlashCpp::FunctionParsingScopeGuard func_guard(*this, true,
+		FlashCpp::FunctionParsingScopeGuard func_guard(*this, true, true,
 													   nullptr, class_name, type_info->type_index_,
 													   func_ref.parameter_nodes(), nullptr);
 
@@ -796,7 +796,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		// FunctionParsingScopeGuard owns scope, current_function_ save/restore, and parameter registration.
 		if (auto funcNode = function_definition_result.node()) {
 			const auto& func_decl = funcNode->as<FunctionDeclarationNode>();
-			FlashCpp::FunctionParsingScopeGuard func_guard(*this, false,
+			FlashCpp::FunctionParsingScopeGuard func_guard(*this, false, false,
 														   nullptr, StringHandle{}, TypeIndex{0},
 														   func_decl.parameter_nodes(), &func_decl);
 
@@ -1160,7 +1160,7 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 	// (C++ allows declaration and definition to use different parameter names).
 	// Constructed before the initializer list so that parameter names are in scope
 	// for expressions inside the initializer list.
-	FlashCpp::FunctionParsingScopeGuard func_guard(*this, true,
+	FlashCpp::FunctionParsingScopeGuard func_guard(*this, true, true,
 												   nullptr, class_name_handle, type_info->type_index_,
 												   params.parameters, nullptr);
 
