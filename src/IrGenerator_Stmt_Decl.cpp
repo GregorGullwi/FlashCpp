@@ -102,7 +102,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return std::nullopt;
 			}
 			TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
-			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			if (inner.binding() != IdentifierBinding::EnumConstant) {
+				type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			}
 			return type;
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 			const StructTypeInfo* struct_info = nullptr;
