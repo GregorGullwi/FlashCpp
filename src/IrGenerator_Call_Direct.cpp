@@ -1198,8 +1198,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 
 	if (!matched_func_decl && !allow_lookup_recovery) {
-		throw InternalError(std::string("Phase 1: sema-normalized direct call missing resolved target for '") +
-							std::string(func_name_view) + "'");
+		throw InternalError(std::string(
+			StringBuilder()
+				.append("Phase 1: sema-normalized direct call missing resolved target for '")
+				.append(func_name_view)
+				.append("'")
+				.commit()));
 	}
 
 		// consteval enforcement: every call to a consteval function is an immediate invocation and
