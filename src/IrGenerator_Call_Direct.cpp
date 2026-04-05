@@ -522,6 +522,8 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		function_name = "strlen";
 	} else if (func_name_view == "__builtin_memcmp") {
 		function_name = "memcmp";
+	} else if (func_name_view == "__builtin_memcpy") {
+		function_name = "memcpy";
 	}
 
 	bool has_precomputed_mangled = functionCallNode.has_mangled_name();

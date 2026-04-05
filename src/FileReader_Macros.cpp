@@ -864,7 +864,7 @@ long FileReader::evaluate_expression(std::istringstream& iss) {
 						"__has_virtual_destructor",
 						// Builtin functions
 						"__builtin_addressof", "__builtin_unreachable", "__builtin_assume",
-						"__builtin_expect", "__builtin_launder", "__builtin_memcmp",
+						"__builtin_expect", "__builtin_launder", "__builtin_memcmp", "__builtin_memcpy",
 						"__atomic_store", "__atomic_store_n", "__atomic_load", "__atomic_load_n",
 						"__atomic_exchange", "__atomic_exchange_n",
 						"__atomic_compare_exchange", "__atomic_compare_exchange_n",

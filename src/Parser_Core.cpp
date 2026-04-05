@@ -1140,6 +1140,14 @@ void Parser::register_builtin_functions() {
 			const_void_ptr,
 			size_t_type
 		});
+	register_extern_c_builtin(
+		"__builtin_memcpy",
+		void_ptr,
+		{
+			void_ptr,
+			const_void_ptr,
+			size_t_type
+		});
 	register_extern_c_builtin("__atomic_store", void_type, {volatile_void_ptr, const_void_ptr, int_type});
 	register_extern_c_builtin("__atomic_store_n", void_type, {volatile_void_ptr, generic_atomic_value_type, int_type});
 	register_extern_c_builtin("__atomic_load", void_type, {const_volatile_void_ptr, void_ptr, int_type});

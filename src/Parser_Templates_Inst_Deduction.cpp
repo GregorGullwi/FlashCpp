@@ -437,12 +437,13 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				++max_template_args;
 			}
 		}
+		const bool can_deduce_remaining_explicit_args = current_explicit_call_arg_types_ != nullptr;
 		if (!has_variadic_pack) {
-			if (explicit_types.size() < required_template_args ||
+			if ((!can_deduce_remaining_explicit_args && explicit_types.size() < required_template_args) ||
 				explicit_types.size() > max_template_args) {
 				continue;
 			}
-		} else if (explicit_types.size() < required_template_args) {
+		} else if (!can_deduce_remaining_explicit_args && explicit_types.size() < required_template_args) {
 			continue;
 		}
 
