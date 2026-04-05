@@ -549,6 +549,15 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
+	const bool saved_sema_normalized_current_function = sema_normalized_current_function_;
+	auto restore_sema_normalized_current_function = ScopeGuard([&]() {
+		sema_normalized_current_function_ = saved_sema_normalized_current_function;
+	});
+	// Lambda bodies are normalized through normalizeInstantiatedLambdaBody(), but they are
+	// not yet tracked in normalized_bodies_. Keep direct-call enforcement on the existing
+	// function/ctor/dtor boundary until lambda bodies participate in the same tracking.
+	sema_normalized_current_function_ = false;
+
 		// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
 	func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
@@ -708,6 +717,12 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
+	const bool saved_sema_normalized_current_function = sema_normalized_current_function_;
+	auto restore_sema_normalized_current_function = ScopeGuard([&]() {
+		sema_normalized_current_function_ = saved_sema_normalized_current_function;
+	});
+	sema_normalized_current_function_ = false;
+
 		// Generate function declaration for __invoke
 	FunctionDeclOp func_decl_op;
 	func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);	// Variant needs explicit type

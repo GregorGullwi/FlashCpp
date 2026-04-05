@@ -837,6 +837,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		!sema_ ||
 		!sema_normalized_current_function_ ||
 		has_precomputed_mangled ||
+		callExprNode.callee().is_static_member() ||
+		(callExprNode.callee().has_function_declaration() &&
+		 callExprNode.callee().function_declaration_or_null()->is_static()) ||
 		callExprNode.has_qualified_name() ||
 		sema_->hasUnresolvedCallArgs(sema_call_key);
 
