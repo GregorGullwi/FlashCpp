@@ -2344,6 +2344,27 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 							 std::is_same_v<T, StringLiteralNode>) {
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			// C++20 [expr.ref]/4: if the member is a reference, the result is
+			// always an lvalue regardless of the object's value category.
+			const CanonicalTypeId obj_type_id = inferExpressionType(inner.object());
+			if (obj_type_id) {
+				const CanonicalTypeDesc& obj_desc = type_context_.get(obj_type_id);
+				if (obj_desc.category() == TypeCategory::Struct || obj_desc.category() == TypeCategory::UserDefined) {
+					const TypeInfo* ti = tryGetTypeInfo(obj_desc.type_index);
+					const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
+					if (si) {
+						const StringHandle member_handle = StringTable::getOrInternStringHandle(inner.member_name());
+						for (const auto& m : si->members) {
+							if (m.getName() == member_handle) {
+								if (m.is_reference()) {
+									return ValueCategory::LValue;
+								}
+								break;
+							}
+						}
+					}
+				}
+			}
 			const ValueCategory object_category = inferExpressionValueCategory(inner.object());
 			switch (object_category) {
 				case ValueCategory::LValue:
