@@ -840,14 +840,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// - static-member lowering that still rewrites through the direct-call path,
 	// - and explicit sema unresolved-call escape hatches.
 	const bool allow_lookup_recovery =
-		!sema_ ||
-		!sema_normalized_current_function_ ||
-		has_precomputed_mangled ||
-		callExprNode.callee().is_static_member() ||
+		!sema_ || // no semantic data wired into codegen
+		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
+		has_precomputed_mangled || // namespace/qualified/static cache path
+		callExprNode.callee().is_static_member() || // member call rewritten through direct-call lowering
 		(callExprNode.callee().has_function_declaration() &&
-		 callExprNode.callee().function_declaration_or_null()->is_static()) ||
-		callExprNode.has_qualified_name() ||
-		sema_->hasUnresolvedCallArgs(sema_call_key);
+		 callExprNode.callee().function_declaration_or_null()->is_static()) || // static member metadata on full declaration
+		callExprNode.has_qualified_name() || // qualified lookup is not owned by resolved_direct_call_table_
+		sema_->hasUnresolvedCallArgs(sema_call_key); // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.

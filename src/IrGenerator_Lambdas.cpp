@@ -3,16 +3,16 @@
 
 namespace {
 
-struct TemporarilyDisableSemaNormalizedBody {
+struct SemaNormalizedScopeGuard {
 	bool& flag;
 	bool saved;
 
-	explicit TemporarilyDisableSemaNormalizedBody(bool& flag_ref)
+	explicit SemaNormalizedScopeGuard(bool& flag_ref)
 		: flag(flag_ref), saved(flag_ref) {
 		flag = false;
 	}
 
-	~TemporarilyDisableSemaNormalizedBody() {
+	~SemaNormalizedScopeGuard() {
 		flag = saved;
 	}
 };
@@ -570,7 +570,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	// Lambda bodies are normalized through normalizeInstantiatedLambdaBody(), but they are
 	// not yet tracked in normalized_bodies_. Keep direct-call enforcement on the existing
 	// function/ctor/dtor boundary until lambda bodies participate in the same tracking.
-	TemporarilyDisableSemaNormalizedBody sema_normalized_scope_guard(sema_normalized_current_function_);
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
 
 		// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
@@ -731,7 +731,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
-	TemporarilyDisableSemaNormalizedBody sema_normalized_scope_guard(sema_normalized_current_function_);
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
 
 		// Generate function declaration for __invoke
 	FunctionDeclOp func_decl_op;
