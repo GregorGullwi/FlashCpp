@@ -856,10 +856,10 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		return;
 	}
 
-	const StructMemberFunction* member_begin_decl = struct_info->findMemberFunction("begin"sv);
-	const StructMemberFunction* member_end_decl = struct_info->findMemberFunction("end"sv);
-	const bool has_member_begin = member_begin_decl != nullptr;
-	const bool has_member_end = member_end_decl != nullptr;
+	const FunctionDeclarationNode* resolved_member_begin_decl = node.resolved_member_begin_function();
+	const FunctionDeclarationNode* resolved_member_end_decl = node.resolved_member_end_function();
+	const bool has_member_begin = resolved_member_begin_decl != nullptr;
+	const bool has_member_end = resolved_member_end_decl != nullptr;
 	const bool has_adl_begin = node.resolved_adl_begin_function() != nullptr;
 	const bool has_adl_end = node.resolved_adl_end_function() != nullptr;
 	bool use_adl = false;
@@ -886,10 +886,10 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 
 	const FunctionDeclarationNode& begin_func_decl = use_adl
 		? *adl_begin_decl
-		: member_begin_decl->function_decl.as<FunctionDeclarationNode>();
+		: *resolved_member_begin_decl;
 	const FunctionDeclarationNode& end_func_decl = use_adl
 		? *adl_end_decl
-		: member_end_decl->function_decl.as<FunctionDeclarationNode>();
+		: *resolved_member_end_decl;
 
 		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
 	StringBuilder sb_begin;

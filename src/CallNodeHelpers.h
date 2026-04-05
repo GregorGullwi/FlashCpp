@@ -184,6 +184,7 @@ inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVe
 		if (function_decl.is<FunctionDeclarationNode>()) {
 			return makeDirectCallExpr(function_decl.as<FunctionDeclarationNode>().decl_node(), std::move(arguments), called_from_token);
 		}
+		throw InternalError("TemplateFunctionDeclarationNode call target is missing FunctionDeclarationNode");
 	}
 	return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);
 }

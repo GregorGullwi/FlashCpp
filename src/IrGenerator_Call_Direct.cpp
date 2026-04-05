@@ -108,7 +108,10 @@ ExprResult AstToIr::buildCallReturnResult(
 			int dereference_pointer_depth = normalized_return_type.pointer_depth() > 0 ? static_cast<int>(normalized_return_type.pointer_depth()) : 1;
 			TempVar loaded_value = emitDereference(pointee_type, pointee_size_bits, dereference_pointer_depth, IrValue(ret_var), source_token);
 			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
-			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
+			auto metadata = normalized_return_type.is_rvalue_reference()
+				? TempVarMetadata::makeXValue(deref_lvalue_info, pointee_type, pointee_size_bits)
+				: TempVarMetadata::makeLValue(deref_lvalue_info, pointee_type, pointee_size_bits);
+			setTempVarMetadata(loaded_value, std::move(metadata));
 			return makeExprResult(
 				normalized_return_type.type_index().withCategory(pointee_type),
 				SizeInBits{pointee_size_bits},

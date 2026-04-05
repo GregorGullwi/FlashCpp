@@ -1060,15 +1060,21 @@ ExprResult AstToIr::generateConstCastIr(const ConstCastNode& constCastNode) {
 		// const_cast<Type>(expr) adds or removes const/volatile qualifiers
 		// It doesn't change the actual value, just the type metadata
 
-		// Evaluate the expression to cast
-	ExprResult expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>());
-
 		// Get the target type from the type specifier
 	const auto& target_type_node = constCastNode.target_type().as<TypeSpecifierNode>();
 	TypeCategory target_type = target_type_node.type_index().category();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	size_t target_pointer_depth = target_type_node.pointer_depth();
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
+
+		// Reference casts operate on the referred-to object, not a loaded copy.
+	ExpressionContext eval_context = ExpressionContext::Load;
+	if (target_type_node.is_reference() || target_type_node.is_rvalue_reference()) {
+		eval_context = ExpressionContext::LValueAddress;
+	}
+
+		// Evaluate the expression to cast
+	ExprResult expr_operands = visitExpressionNode(constCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Special handling for rvalue reference casts: const_cast<T&&>(expr)
 	if (target_type_node.is_rvalue_reference()) {
@@ -1090,15 +1096,21 @@ ExprResult AstToIr::generateReinterpretCastIr(const ReinterpretCastNode& reinter
 		// reinterpret_cast<Type>(expr) reinterprets the bit pattern as a different type
 		// It doesn't change the actual bits, just the type interpretation
 
-		// Evaluate the expression to cast
-	ExprResult expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>());
-
 		// Get the target type from the type specifier
 	const auto& target_type_node = reinterpretCastNode.target_type().as<TypeSpecifierNode>();
 	TypeCategory target_type = target_type_node.type_index().category();
 	int target_size = static_cast<int>(target_type_node.size_in_bits());
 	int target_pointer_depth = target_type_node.pointer_depth();
 	TypeIndex target_type_index = canonicalize_conversion_target_type(target_type_node.type_index(), target_type);
+
+		// Reference casts need the operand address instead of an already-loaded value.
+	ExpressionContext eval_context = ExpressionContext::Load;
+	if (target_type_node.is_reference() || target_type_node.is_rvalue_reference()) {
+		eval_context = ExpressionContext::LValueAddress;
+	}
+
+		// Evaluate the expression to cast
+	ExprResult expr_operands = visitExpressionNode(reinterpretCastNode.expr().as<ExpressionNode>(), eval_context);
 
 		// Special handling for rvalue reference casts: reinterpret_cast<T&&>(expr)
 	if (target_type_node.is_rvalue_reference()) {
