@@ -2088,7 +2088,12 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				size_t outgoing_bytes = 0;
 				if (is_coff_format) {
-					outgoing_bytes = 32;
+					size_t arg_count = call_op->arguments.size() + (call_op->usesReturnSlot() ? 1 : 0);
+					if (arg_count > 4) {
+						outgoing_bytes = 32 + (arg_count - 4) * 8;
+					} else {
+						outgoing_bytes = 32;
+					}
 				} else {
 					size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
 					outgoing_bytes = computeSysVOutgoingBytes(call_op->arguments, int_slots_start);
