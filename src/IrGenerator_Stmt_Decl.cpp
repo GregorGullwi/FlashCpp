@@ -88,7 +88,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
 	if (sema_) {
-		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
+		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
 	}

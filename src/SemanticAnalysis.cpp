@@ -2305,6 +2305,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return type;
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
+	return buildOverloadResolutionArgType(arg, nullptr);
+}
+
 ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
 		return ValueCategory::PRValue;
@@ -2929,7 +2933,18 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
-		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		if (arg.is<ExpressionNode>() && std::holds_alternative<MemberAccessNode>(arg.as<ExpressionNode>())) {
+			if (!arg_type.is_reference()) {
+				const auto& member_access = std::get<MemberAccessNode>(arg.as<ExpressionNode>());
+				const ValueCategory object_category = inferExpressionValueCategory(member_access.object());
+				arg_type.set_reference_qualifier(
+					object_category == ValueCategory::LValue
+						? ReferenceQualifier::LValueReference
+						: ReferenceQualifier::RValueReference);
+			}
+		} else {
+			adjust_argument_type_for_overload_resolution(arg, arg_type);
+		}
 		return arg_type;
 	}
 
