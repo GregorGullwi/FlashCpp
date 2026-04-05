@@ -273,7 +273,7 @@ static bool staticMemberInitializerContainsFunctionCall(const ASTNode& node) {
 	});
 }
 
-static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
+static ConstExpr::EvaluationContext makeTemplateConstExprEvaluationContext(
 	const SymbolTable& symbol_table,
 	Parser* parser,
 	const StructTypeInfo* struct_info,
@@ -281,6 +281,7 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	const std::vector<TemplateTypeArg>& template_args) {
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
+	eval_ctx.global_symbols = &symbol_table;
 	eval_ctx.parser = parser;
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
@@ -295,6 +296,20 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 		}
 	}
 	return eval_ctx;
+}
+
+static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext(
+	const SymbolTable& symbol_table,
+	Parser* parser,
+	const StructTypeInfo* struct_info,
+	const InlineVector<ASTNode, 4>& template_params,
+	const std::vector<TemplateTypeArg>& template_args) {
+	return makeTemplateConstExprEvaluationContext(
+		symbol_table,
+		parser,
+		struct_info,
+		template_params,
+		template_args);
 }
 
 static std::optional<NormalizedInitializer> tryBuildConstantStaticMemberInitializer(
@@ -3361,7 +3376,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
 			if (filled_template_args.size() == size_before) {
 				if (substituted_default_node.is<ExpressionNode>()) {
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					ConstExpr::EvaluationContext eval_ctx = makeTemplateConstExprEvaluationContext(
+						gSymbolTable,
+						this,
+						nullptr,
+						template_params,
+						filled_template_args);
 					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
 					if (eval_result.success()) {
 						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
