@@ -67,6 +67,24 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 					  expr);
 }
 
+bool requiresSemaOwnedOverloadArgTypeInNormalizedBody(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return false;
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return inner.binding() == IdentifierBinding::EnumConstant;
+		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+			return true;
+		}
+		return false;
+	},
+					  expr);
+}
+
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
@@ -82,16 +100,20 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	if (!arg.is<ExpressionNode>()) {
-		return tryParserFallback();
-	}
-
-	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	const bool require_sema_owned_arg_type =
+		sema_ && sema_normalized_current_function_ &&
+		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 	if (sema_) {
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
 	}
+
+	if (!arg.is<ExpressionNode>()) {
+		return tryParserFallback();
+	}
+
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
 
 	auto legacy_type = std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
 		using T = std::decay_t<decltype(inner)>;
@@ -170,7 +192,13 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	},
 							 expr);
 	if (legacy_type.has_value()) {
+		if (require_sema_owned_arg_type) {
+			throw InternalError("Missing sema-owned overload-resolution argument type in sema-normalized body (legacy type available)");
+		}
 		return legacy_type;
+	}
+	if (require_sema_owned_arg_type) {
+		throw InternalError("Missing sema-owned overload-resolution argument type in sema-normalized body (no fallback type available)");
 	}
 	return tryParserFallback();
 }
