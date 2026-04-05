@@ -265,6 +265,49 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	const DeclarationNode* object_decl = nullptr;
 	TypeSpecifierNode object_type;
 	const ExpressionNode* object_expr = nullptr;
+	auto tryEmitFunctionPointerOperatorCall = [&](const TypeSpecifierNode& function_pointer_type) -> std::optional<ExprResult> {
+		const DeclarationNode& called_decl = memberFunctionCallNode.function_declaration().decl_node();
+		if (called_decl.identifier_token().value() != "operator()") {
+			return std::nullopt;
+		}
+		if (!function_pointer_type.is_function_pointer() && !function_pointer_type.has_function_signature()) {
+			return std::nullopt;
+		}
+		if (!function_pointer_type.has_function_signature()) {
+			throw InternalError("Function pointer call target missing function signature");
+		}
+		if (!object_expr) {
+			throw InternalError("Function pointer operator() call missing expression object");
+		}
+
+		ExprResult func_ptr_result = visitExpressionNode(*object_expr);
+		std::variant<StringHandle, TempVar> function_pointer;
+		if (std::holds_alternative<TempVar>(func_ptr_result.value)) {
+			function_pointer = std::get<TempVar>(func_ptr_result.value);
+		} else if (std::holds_alternative<StringHandle>(func_ptr_result.value)) {
+			function_pointer = std::get<StringHandle>(func_ptr_result.value);
+		} else {
+			throw InternalError("Function pointer call target did not produce a valid indirect call operand");
+		}
+
+		TempVar ret_var = var_counter.next();
+		std::vector<TypedValue> arguments;
+		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
+			ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+			arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+		});
+
+		IndirectCallOp op{
+			.result = ret_var,
+			.function_pointer = std::move(function_pointer),
+			.arguments = std::move(arguments)};
+		ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
+
+		const FunctionSignature& sig = function_pointer_type.function_signature();
+		TypeCategory ret_type = sig.returnType();
+		int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+		return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+	};
 
 	if (immediate_lambda_object_name.has_value() && immediate_lambda_object_type.has_value()) {
 		object_name = StringTable::getStringView(*immediate_lambda_object_name);
@@ -351,23 +394,27 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			}
 		}
 	} else if (object_expr && std::holds_alternative<FunctionCallNode>(*object_expr)) {
-		// Handle function call returning a struct (e.g., getContainer().callback(args))
+		// Handle function call returning a struct or function pointer.
 		const FunctionCallNode& func_call = std::get<FunctionCallNode>(*object_expr);
 		const DeclarationNode& decl = func_call.function_declaration();
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ret_type.type()))) {
+			if (isIrStructType(toIrType(ret_type.type())) ||
+				ret_type.is_function_pointer() ||
+				ret_type.has_function_signature()) {
 				object_type = ret_type;
 				// object_name remains empty; expression will be evaluated when needed
 			}
 		}
 	} else if (object_expr && std::holds_alternative<MemberFunctionCallNode>(*object_expr)) {
-		// Handle member function call returning a struct (e.g., obj.getInner().callback(args))
+		// Handle member function call returning a struct or function pointer.
 		const MemberFunctionCallNode& mem_call = std::get<MemberFunctionCallNode>(*object_expr);
 		const DeclarationNode& decl = mem_call.function_declaration().decl_node();
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ret_type.type()))) {
+			if (isIrStructType(toIrType(ret_type.type())) ||
+				ret_type.is_function_pointer() ||
+				ret_type.has_function_signature()) {
 				object_type = ret_type;
 				// object_name remains empty; expression will be evaluated when needed
 			}
@@ -566,6 +613,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 		// This is a namespace-qualified function call, not a member function call
 		// Treat it as a regular function call instead
 		return convertMemberCallToFunctionCall(memberFunctionCallNode, context);
+	}
+
+	if (auto function_pointer_call = tryEmitFunctionPointerOperatorCall(object_type)) {
+		return *function_pointer_call;
 	}
 
 	// Verify this is a struct type BEFORE checking other cases
