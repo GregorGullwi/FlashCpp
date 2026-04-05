@@ -785,19 +785,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				std::string_view resolved_owner_name = parent;
 				const StructTypeInfo* owner_struct_info = nullptr;
 
-				if (callExprNode.has_qualified_name()) {
-					size_t scope_pos = lookup_name_view.find("::");
-					if (scope_pos != std::string_view::npos) {
-						if (const TypeInfo* owner_type_info = resolveQualifiedCallStruct(lookup_name_view.substr(0, scope_pos));
-							owner_type_info && owner_type_info->isStruct()) {
-							owner_handle = owner_type_info->name();
-							resolved_owner_name = StringTable::getStringView(owner_handle);
-							owner_struct_info = owner_type_info->getStructInfo();
-						}
-					}
-				}
-
-				if (!owner_handle.isValid()) {
+				{
 					StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
 					auto owner_it = getTypesByNameMap().find(parent_handle);
 					if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
