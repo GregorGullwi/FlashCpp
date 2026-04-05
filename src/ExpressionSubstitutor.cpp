@@ -336,37 +336,41 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 		}
 
-		ChunkedVector<ASTNode> substituted_args_nodes;
-		std::vector<TypeSpecifierNode> substituted_arg_types;
-		bool have_complete_substituted_arg_types = true;
-		substituted_arg_types.reserve(call.arguments().size());
-		for (size_t i = 0; i < call.arguments().size(); ++i) {
-			ASTNode substituted_arg = substitute(call.arguments()[i]);
-			substituted_args_nodes.push_back(substituted_arg);
-			auto substituted_arg_type = parser_.get_expression_type(substituted_arg);
-			if (substituted_arg_type.has_value()) {
-				substituted_arg_types.push_back(*substituted_arg_type);
-			} else {
-				have_complete_substituted_arg_types = false;
-			}
-		}
-
-		auto tryInstantiateExplicitFunctionTemplate = [&](std::string_view template_name) -> std::optional<ASTNode> {
-			if (template_name.empty()) {
-				return std::nullopt;
-			}
-			if (have_complete_substituted_arg_types) {
-				return parser_.try_instantiate_template_explicit(
-					template_name,
-					substituted_template_args,
-					substituted_arg_types);
-			}
-			return parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
-		};
-
 		// Now we have substituted template arguments - instantiate the template
 		if (!substituted_template_args.empty()) {
 			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template: ", func_name, " with ", substituted_template_args.size(), " arguments");
+
+			ChunkedVector<ASTNode> substituted_args_nodes;
+			std::vector<TypeSpecifierNode> substituted_arg_types;
+			bool have_complete_substituted_arg_types = true;
+			substituted_arg_types.reserve(call.arguments().size());
+			for (size_t i = 0; i < call.arguments().size(); ++i) {
+				ASTNode substituted_arg = substitute(call.arguments()[i]);
+				substituted_args_nodes.push_back(substituted_arg);
+				auto substituted_arg_type = parser_.get_expression_type(substituted_arg);
+				if (substituted_arg_type.has_value()) {
+					substituted_arg_types.push_back(*substituted_arg_type);
+				} else {
+					have_complete_substituted_arg_types = false;
+				}
+			}
+
+			auto tryInstantiateExplicitFunctionTemplate = [&](std::string_view template_name) -> std::optional<ASTNode> {
+				if (template_name.empty()) {
+					return std::nullopt;
+				}
+				if (have_complete_substituted_arg_types) {
+					return parser_.try_instantiate_template_explicit(
+						template_name,
+						substituted_template_args,
+						substituted_arg_types);
+				}
+				return parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
+			};
+			auto hasResolvedTypeOwner = [&](StringHandle owner_name_handle) {
+				const auto& types_by_name = getTypesByNameMap();
+				return types_by_name.find(owner_name_handle) != types_by_name.end();
+			};
 
 			// First try function template instantiation to obtain accurate return type
 			std::optional<ASTNode> instantiated_template = std::nullopt;
@@ -378,6 +382,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					if (!current_inst_args.empty() && extractBaseTemplateName(owner_name).empty()) {
 						auto owner_template = gTemplateRegistry.lookupTemplate(owner_name);
 						if (owner_template.has_value()) {
+							// Only class-template owners can be materialized here. Namespace-qualified
+							// calls like std::__atomic_impl::fn should skip this path entirely.
 							parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
 							std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
 							if (!instantiated_owner.empty()) {
@@ -386,7 +392,8 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						}
 					}
 					StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
-					if (getTypesByNameMap().find(owner_name_handle) != getTypesByNameMap().end()) {
+					if (hasResolvedTypeOwner(owner_name_handle)) {
+						// Only try member-template recovery when the owner resolved to an actual type.
 						instantiated_template = parser_.try_instantiate_member_function_template_explicit(
 							owner_name,
 							member_name,
@@ -455,8 +462,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				StringHandle instantiated_name = class_decl.name();
 
 				// Look up the type index for the instantiated template
-				auto type_it = getTypesByNameMap().find(instantiated_name);
-				if (type_it != getTypesByNameMap().end()) {
+				const auto& types_by_name = getTypesByNameMap();
+				auto type_it = types_by_name.find(instantiated_name);
+				if (type_it != types_by_name.end()) {
 					TypeIndex new_type_index = type_it->second->type_index_;
 
 					FLASH_LOG(Templates, Debug, "  Successfully instantiated template with type_index=", new_type_index);
@@ -466,14 +474,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
 
 					// Create a ConstructorCallNode instead of FunctionCallNode
-					ChunkedVector<ASTNode> substituted_ctor_args_nodes;
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_ctor_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
-
 					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
 						ASTNode(&new_type),
-						std::move(substituted_ctor_args_nodes),
+						std::move(substituted_args_nodes),
 						call.called_from());
 
 					// Wrap in ExpressionNode
