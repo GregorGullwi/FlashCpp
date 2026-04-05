@@ -149,10 +149,15 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		return saved_position.success(type_and_name_result.node().value());
 	}
 
+	FunctionDeclarationNode* preparsed_function_decl = nullptr;
+	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<FunctionDeclarationNode>()) {
+		preparsed_function_decl = &type_and_name_result.node()->as<FunctionDeclarationNode>();
+	}
+
 	// Check for out-of-line member function definition: ClassName::functionName(...)
 	// Pattern: ReturnType ClassName::functionName(...) { ... }
 	// Also handles template specializations: ReturnType ClassName<Args>::functionName(...) { ... }
-	DeclarationNode& decl_node = as<DeclarationNode>(type_and_name_result);
+	DeclarationNode& decl_node = preparsed_function_decl ? preparsed_function_decl->decl_node() : as<DeclarationNode>(type_and_name_result);
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: Got decl_node, identifier={}. About to check for '::', current_token={}, peek={}",
 					 std::string(decl_node.identifier_token().value()),
 					 std::string(current_token_.value()),
@@ -593,15 +598,29 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: About to try parse_function_declaration. current_token={}, peek={}",
 					 std::string(current_token_.value()),
 					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
-	SaveHandle before_function_parse = save_token_position();
-	ParseResult function_definition_result = parse_function_declaration(decl_node, attr_info.calling_convention);
+	std::optional<SaveHandle> before_function_parse;
+	if (!preparsed_function_decl) {
+		before_function_parse = save_token_position();
+	}
+	ParseResult function_definition_result = preparsed_function_decl
+		? type_and_name_result
+		: parse_function_declaration(decl_node, attr_info.calling_convention);
+	// When parse_declarator already produced a FunctionDeclarationNode (e.g. for
+	// function-pointer return types like "int (*get())(int)"), we bypassed
+	// parse_function_declaration which normally sets the calling convention.
+	// Apply it here so __cdecl / __stdcall / etc. are not silently lost.
+	if (preparsed_function_decl) {
+		preparsed_function_decl->set_calling_convention(attr_info.calling_convention);
+	}
 	FLASH_LOG_FORMAT(Parser, Debug, "parse_declaration_or_function_definition: parse_function_declaration returned. is_error={}, current_token={}, peek={}",
 					 function_definition_result.is_error(),
 					 std::string(current_token_.value()),
 					 !peek().is_eof() ? std::string(peek_info().value()) : "N/A");
 	if (!function_definition_result.is_error()) {
 		// Successfully parsed as function - discard saved position
-		discard_saved_token(before_function_parse);
+		if (before_function_parse.has_value()) {
+			discard_saved_token(*before_function_parse);
+		}
 		// It was successfully parsed as a function definition
 		// Apply attribute linkage if present (calling convention already set in parse_function_declaration)
 		if (auto func_node_ptr = function_definition_result.node()) {
@@ -825,7 +844,9 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 		}
 	} else {
 		// Function parsing failed - restore position to try variable declaration
-		restore_token_position(before_function_parse);
+		if (before_function_parse.has_value()) {
+			restore_token_position(*before_function_parse);
+		}
 
 		// If the error is a semantic error (not a syntax error about expecting '('),
 		// return it directly instead of trying variable declaration parsing

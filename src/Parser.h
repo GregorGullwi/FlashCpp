@@ -716,6 +716,11 @@ private:
 	ParseResult parse_declarator(TypeSpecifierNode& base_type, Linkage linkage = Linkage::None);	 // NEW: Parse declarators (function pointers, arrays, etc.)
 	ParseResult parse_direct_declarator(TypeSpecifierNode& base_type, Token& out_identifier, Linkage linkage);  // NEW: Helper for direct declarators
 	ParseResult parse_postfix_declarator(TypeSpecifierNode& base_type, const Token& identifier, Linkage linkage = Linkage::None);  // NEW: Helper for postfix declarators
+	// Parse the parameter-type-list inside a function pointer declarator.
+	// Used for both standalone function pointer declarators and function declarations
+	// whose return type is itself a function pointer.
+	ParseResult parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types);
+	ParseResult parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl);
 	ParseResult parse_namespace();
 	ParseResult parse_using_directive_or_declaration();	// Parse using directive/declaration/alias
 	ParseResult parse_type_specifier();

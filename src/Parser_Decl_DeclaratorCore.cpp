@@ -1,8 +1,15 @@
 #include "Parser.h"
+
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
+
+namespace {
+
+constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
+
+}
 
 ParseResult Parser::parse_type_and_name() {
 	// Add parsing depth check to prevent infinite loops
@@ -874,10 +881,36 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				return ParseResult::error("Expected ')' after function declarator", current_token_);
 			}
 
+			std::optional<ASTNode> array_size_expr;
+
+			// Check for function-pointer return type suffix: '(' params ')' after the
+			// parenthesized declarator. Pattern: type (*func(params))(ptr_params)
+			if (peek() == "("_tok) {
+				advance(); // consume '('
+
+				std::vector<TypeIndex> return_param_types;
+				auto return_params_result = parse_function_pointer_parameter_types(return_param_types);
+				if (return_params_result.is_error()) {
+					return return_params_result;
+				}
+
+				if (!consume(")"_tok)) {
+					return ParseResult::error("Expected ')' after function pointer return type parameters", current_token_);
+				}
+
+				skip_noexcept_specifier();
+
+				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
+				FunctionSignature signature;
+				signature.return_type_index = base_type.type_index();
+				signature.parameter_type_indices = return_param_types;
+				signature.linkage = linkage;
+				function_ptr_type.set_function_signature(signature);
+				base_type = function_ptr_type;
+
 			// Check for array declarator: '[' size ']' after the function declarator
 			// Pattern: type (*func(params))[array_size]
-			std::optional<ASTNode> array_size_expr;
-			if (peek() == "["_tok) {
+			} else if (peek() == "["_tok) {
 				advance(); // consume '['
 
 				// Parse array size expression
@@ -1006,54 +1039,9 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		// Parse parameter list
 		std::vector<TypeIndex> param_types;
-
-		if (peek() != ")"_tok) {
-			while (true) {
-				// Parse parameter type
-				auto param_type_result = parse_type_specifier();
-				if (param_type_result.is_error()) {
-					return param_type_result;
-				}
-
-				TypeSpecifierNode& param_type =
-					param_type_result.node()->as<TypeSpecifierNode>();
-				skip_noop_gnu_qualifiers();
-
-				// Parse pointer and reference declarators: * [const] [volatile] *... & &&
-				// Example: void* or const int* const* or int&
-				consume_pointer_ref_modifiers(param_type);
-
-				param_types.push_back(param_type.type_index());
-
-				// Check for pack expansion '...' after the type (e.g., Args...)
-				// This handles function pointer parameters like void (*)(Args...)
-				if (peek() == "..."_tok) {
-					advance(); // consume '...'
-					// The pack expansion will be resolved during template instantiation
-					// For now, we just consume the ... token to allow parsing to continue
-					// Mark the function signature as having a pack expansion
-					param_type.set_pack_expansion(true);
-
-					// Check for additional '...' for C-style variadic after pack expansion
-					// Pattern: Args...... (6 dots = pack expansion + C variadic)
-					if (peek() == "..."_tok) {
-						advance(); // consume second '...'
-						// This marks the function as C-style variadic as well
-					}
-				}
-
-				// Optional parameter name (we can ignore it for function pointers)
-				if (peek().is_identifier()) {
-					advance();
-				}
-
-				// Check for comma or closing paren
-				if (peek() == ","_tok) {
-					advance();
-				} else {
-					break;
-				}
-			}
+		auto param_result = parse_function_pointer_parameter_types(param_types);
+		if (param_result.is_error()) {
+			return param_result;
 		}
 
 		if (!consume(")"_tok)) {
@@ -1074,7 +1062,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		// Create a new TypeSpecifierNode for the function pointer
 		// Function pointers are 64 bits (8 bytes) on x64
-		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, 64, Token{}, CVQualifier::None);
+		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 
 		FunctionSignature sig;
 		sig.return_type_index = return_type_index;
@@ -1136,6 +1124,47 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 		decl_node.as<DeclarationNode>().set_mangled_name(*asm_symbol_name);
 	}
 	return ParseResult::success(decl_node);
+}
+
+// Parse the parameter-type-list that appears inside a function pointer declarator.
+// This shared helper covers both standalone function pointers and function
+// declarations whose return type is itself a function pointer.
+ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types) {
+	if (peek() == ")"_tok) {
+		return ParseResult::success();
+	}
+
+	while (true) {
+		auto param_type_result = parse_type_specifier();
+		if (param_type_result.is_error()) {
+			return param_type_result;
+		}
+
+		TypeSpecifierNode& param_type = param_type_result.node()->as<TypeSpecifierNode>();
+		skip_noop_gnu_qualifiers();
+		consume_pointer_ref_modifiers(param_type);
+		out_param_types.push_back(param_type.type_index());
+
+		if (peek() == "..."_tok) {
+			advance();
+			param_type.set_pack_expansion(true);
+			if (peek() == "..."_tok) {
+				advance();
+			}
+		}
+
+		if (peek().is_identifier()) {
+			advance();
+		}
+
+		if (peek() == ","_tok) {
+			advance();
+		} else {
+			break;
+		}
+	}
+
+	return ParseResult::success();
 }
 
 // Phase 1 Consolidation: Parse declaration specifiers shared between

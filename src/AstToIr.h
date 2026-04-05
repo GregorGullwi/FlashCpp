@@ -526,6 +526,14 @@ private:
 		int base_offset,
 		const Token& token);
 
+	// Emit an IndirectCallOp for a function pointer and return the ExprResult.
+	// Shared by all indirect-call sites (operator() on function pointer return values,
+	// function pointer data members, and nested member access chains).
+	ExprResult emitIndirectCall(
+		std::variant<StringHandle, TempVar> function_pointer,
+		const FunctionSignature& signature,
+		const MemberFunctionCallNode& call_node);
+
 	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
 	// Used when a member function call syntax is used but the object is not a struct
 	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);

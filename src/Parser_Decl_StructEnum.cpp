@@ -4,6 +4,37 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
+	out_func_decl = nullptr;
+	out_decl = nullptr;
+
+	if (!member_result.node().has_value()) {
+		return ParseResult::error("Expected member declaration", peek_info());
+	}
+
+	if (member_result.node()->is<FunctionDeclarationNode>()) {
+		out_func_decl = &member_result.node()->as<FunctionDeclarationNode>();
+		out_decl = &out_func_decl->decl_node();
+		return ParseResult::success();
+	}
+
+	if (!member_result.node()->is<DeclarationNode>()) {
+		return ParseResult::error("Expected declaration node for member function", peek_info());
+	}
+
+	out_decl = &member_result.node()->as<DeclarationNode>();
+	auto func_result = parse_function_declaration(*out_decl);
+	if (func_result.is_error()) {
+		return func_result;
+	}
+	if (!func_result.node().has_value()) {
+		return ParseResult::error("Failed to create function declaration node", peek_info());
+	}
+
+	out_func_decl = &func_result.node()->as<FunctionDeclarationNode>();
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_struct_declaration() {
 	return parse_struct_declaration_with_specs(false, false);
 }
@@ -2082,27 +2113,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			return ParseResult::error("Expected member declaration", peek_info());
 		}
 
-		// Check if this is a member function (has '(') or data member (has ';')
-		if (peek() == "("_tok) {
+		// Check if this is a member function (either still needing parameter parsing or
+		// already fully parsed by parse_declarator) or a data member.
+		if (member_result.node()->is<FunctionDeclarationNode>() || peek() == "("_tok) {
 			// This is a member function declaration
-			if (!member_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected declaration node for member function", peek_info());
+			FunctionDeclarationNode* parsed_func_decl = nullptr;
+			DeclarationNode* parsed_decl_node = nullptr;
+			auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+			if (parsed_member_result.is_error()) {
+				return parsed_member_result;
 			}
 
-			DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-			// Parse function declaration with parameters
-			auto func_result = parse_function_declaration(decl_node);
-			if (func_result.is_error()) {
-				return func_result;
-			}
-
-			// Mark this as a member function
-			if (!func_result.node().has_value()) {
-				return ParseResult::error("Failed to create function declaration node", peek_info());
-			}
-
-			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+			DeclarationNode& decl_node = *parsed_decl_node;
+			FunctionDeclarationNode& func_decl = *parsed_func_decl;
 
 			// Create a new FunctionDeclarationNode with member function info
 			// Pass string_view directly - FunctionDeclarationNode stores it as string_view

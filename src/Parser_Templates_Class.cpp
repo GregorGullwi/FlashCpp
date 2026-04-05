@@ -2142,26 +2142,19 @@ ParseResult Parser::parse_template_declaration() {
 					return ParseResult::error("Expected member declaration", peek_info());
 				}
 
-				// Check if this is a member function (has '(') or data member
-				if (peek() == "("_tok) {
+				// Check if this is a member function (either still needing parameter parsing or
+				// already fully parsed by parse_declarator) or a data member.
+				if (member_result.node()->is<FunctionDeclarationNode>() || peek() == "("_tok) {
 					// This is a member function
-					if (!member_result.node()->is<DeclarationNode>()) {
-						return ParseResult::error("Expected declaration node for member function", peek_info());
+					FunctionDeclarationNode* parsed_func_decl = nullptr;
+					DeclarationNode* parsed_decl_node = nullptr;
+					auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+					if (parsed_member_result.is_error()) {
+						return parsed_member_result;
 					}
 
-					DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-					// Parse function declaration with parameters
-					auto func_result = parse_function_declaration(decl_node);
-					if (func_result.is_error()) {
-						return func_result;
-					}
-
-					if (!func_result.node().has_value()) {
-						return ParseResult::error("Failed to create function declaration node", peek_info());
-					}
-
-					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+					DeclarationNode& decl_node = *parsed_decl_node;
+					FunctionDeclarationNode& func_decl = *parsed_func_decl;
 					DeclarationNode& func_decl_node = func_decl.decl_node();
 
 					// Create a new FunctionDeclarationNode with member function info
@@ -3569,26 +3562,18 @@ ParseResult Parser::parse_template_declaration() {
 					continue;
 				}
 
-				// Check if this is a member function (has '(') or data member
-				if (peek() == "("_tok) {
+				// Check if this is a member function (either still needing parameter parsing or
+				// already fully parsed by parse_declarator) or data member.
+				if (member_result.node()->is<FunctionDeclarationNode>() || peek() == "("_tok) {
 					// This is a member function
-					if (!member_result.node()->is<DeclarationNode>()) {
-						return ParseResult::error("Expected declaration node for member function", peek_info());
+					FunctionDeclarationNode* parsed_func_decl = nullptr;
+					DeclarationNode* parsed_decl_node = nullptr;
+					auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+					if (parsed_member_result.is_error()) {
+						return parsed_member_result;
 					}
 
-					DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-					// Parse function declaration with parameters
-					auto func_result = parse_function_declaration(decl_node);
-					if (func_result.is_error()) {
-						return func_result;
-					}
-
-					if (!func_result.node().has_value()) {
-						return ParseResult::error("Failed to create function declaration node", peek_info());
-					}
-
-					FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+					FunctionDeclarationNode& func_decl = *parsed_func_decl;
 					DeclarationNode& func_decl_node = func_decl.decl_node();
 
 					// Create a new FunctionDeclarationNode with member function info
@@ -5053,22 +5038,19 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 				return ParseResult::error("Expected member declaration", peek_info());
 			}
 
-			// Check if this is a member function (has '(') or data member (has ';', ':', or '=')
-			if (peek() == "("_tok) {
+			// Check if this is a member function (either still needing parameter parsing or
+			// already fully parsed by parse_declarator) or data member.
+			if (member_result.node()->is<FunctionDeclarationNode>() || peek() == "("_tok) {
 				// Member function
-				DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-				// Parse function declaration with parameters
-				auto func_result = parse_function_declaration(decl_node);
-				if (func_result.is_error()) {
-					return func_result;
+				FunctionDeclarationNode* parsed_func_decl = nullptr;
+				DeclarationNode* parsed_decl_node = nullptr;
+				auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+				if (parsed_member_result.is_error()) {
+					return parsed_member_result;
 				}
 
-				if (!func_result.node().has_value()) {
-					return ParseResult::error("Failed to create function declaration node", peek_info());
-				}
-
-				FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+				DeclarationNode& decl_node = *parsed_decl_node;
+				FunctionDeclarationNode& func_decl = *parsed_func_decl;
 
 				// Create member function node
 				auto [member_func_node, member_func_ref] =
@@ -5421,22 +5403,19 @@ ParseResult Parser::parse_member_struct_template(StructDeclarationNode& struct_n
 			return ParseResult::error("Expected member declaration", peek_info());
 		}
 
-		// Check if this is a member function (has '(') or data member (has ';')
-		if (peek() == "("_tok) {
+		// Check if this is a member function (either still needing parameter parsing or
+		// already fully parsed by parse_declarator) or data member.
+		if (member_result.node()->is<FunctionDeclarationNode>() || peek() == "("_tok) {
 			// Member function
-			DeclarationNode& decl_node = member_result.node()->as<DeclarationNode>();
-
-			// Parse function declaration with parameters
-			auto func_result = parse_function_declaration(decl_node);
-			if (func_result.is_error()) {
-				return func_result;
+			FunctionDeclarationNode* parsed_func_decl = nullptr;
+			DeclarationNode* parsed_decl_node = nullptr;
+			auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+			if (parsed_member_result.is_error()) {
+				return parsed_member_result;
 			}
 
-			if (!func_result.node().has_value()) {
-				return ParseResult::error("Failed to create function declaration node", peek_info());
-			}
-
-			FunctionDeclarationNode& func_decl = func_result.node()->as<FunctionDeclarationNode>();
+			DeclarationNode& decl_node = *parsed_decl_node;
+			FunctionDeclarationNode& func_decl = *parsed_func_decl;
 
 			// Create member function node
 			auto [member_func_node, member_func_ref] =
