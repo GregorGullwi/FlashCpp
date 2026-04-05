@@ -833,7 +833,16 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// The mangled name is sufficient for generating the call instruction
 	}
 
-	if (!matched_func_decl) {
+	const bool allow_lookup_recovery =
+		!sema_ ||
+		!sema_normalized_current_function_ ||
+		has_precomputed_mangled ||
+		callExprNode.has_qualified_name() ||
+		sema_->hasUnresolvedCallArgs(sema_call_key);
+
+	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
+	// callee selection instead of rescanning symbol tables and member hierarchies again.
+	if (!matched_func_decl && allow_lookup_recovery) {
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
 		auto scoped_overloads = global_symbol_table_
@@ -1182,7 +1191,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 		}
+		}
 	}
+
+	if (!matched_func_decl && !allow_lookup_recovery) {
+		throw InternalError(std::string("Phase 1: sema-normalized direct call missing resolved target for '") +
+							std::string(func_name_view) + "'");
 	}
 
 		// consteval enforcement: every call to a consteval function is an immediate invocation and
