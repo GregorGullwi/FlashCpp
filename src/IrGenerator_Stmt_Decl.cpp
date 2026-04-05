@@ -1053,7 +1053,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const ASTNode& init_node = *node.initializer();
 
 			// Check if initializer is a function call (including callable object invocation)
-			// Lambda calls come through as MemberFunctionCallNode (operator() calls)
+			// Lambda calls come through as member-style CallExprNode operator() calls
 		bool is_function_call = false;
 		if (init_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = init_node.as<ExpressionNode>();

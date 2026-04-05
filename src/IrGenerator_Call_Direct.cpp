@@ -389,7 +389,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 				// Fallback: replicate the arity-based lookup for call sites that were
 				// not reached by the semantic pass (e.g. template instantiation paths
-				// that create FunctionCallNodes after sema has run).
+				// that create CallExprNodes after sema has run).
 			if (!operator_call) {
 				const TypeInfo* func_type_info = tryGetTypeInfo(func_type.type_index());
 				const StructTypeInfo* struct_info = func_type_info ? func_type_info->getStructInfo() : nullptr;
@@ -791,11 +791,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	}
 
-		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
+	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 	if (has_precomputed_mangled) {
 		function_name = callExprNode.mangled_name();
-		FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from FunctionCallNode: {}", function_name);
+		FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from call expression: {}", function_name);
 			// We don't need to find matched_func_decl since we already have the mangled name
 			// The mangled name is sufficient for generating the call instruction
 	}
@@ -811,7 +811,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
 
 		// Find the matching overload by comparing the DeclarationNode address
-		// This works because the FunctionCallNode holds a reference to the specific
+		// This works because the call expression holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
 	FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}",
 					 lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
@@ -1234,7 +1234,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	if (matched_func_decl) {
 		param_nodes = matched_func_decl->parameter_nodes();
 	} else if (!has_precomputed_mangled) {
-			// Try to get from the function declaration stored in FunctionCallNode
+			// Try to get it from the function declaration stored in the call expression
 			// Look up the function in symbol table to get full declaration with parameters
 		auto local_func_symbol = lookupSymbol(func_decl_node.identifier_token().value());
 		if (local_func_symbol.has_value() && local_func_symbol->is<FunctionDeclarationNode>()) {

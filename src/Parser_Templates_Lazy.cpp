@@ -615,7 +615,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	if (new_func_ref.get_definition().has_value()) {
 		finalize_function_after_definition(new_func_ref);
 	} else {
-		// This is essential so that FunctionCallNode can carry the correct mangled name
+		// This is essential so the call expression can carry the correct mangled name
 		// and codegen can resolve the correct function for each template instantiation
 		compute_and_set_mangled_name(new_func_ref);
 	}

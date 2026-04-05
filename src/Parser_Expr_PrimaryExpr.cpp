@@ -410,7 +410,7 @@ std::optional<ParseResult> Parser::parse_operator_name(const Token& operator_key
 
 // Shared helper: parse a qualified operator call after the 'operator' keyword has been
 // consumed.  Builds the operator name (e.g. "operator=", "operator()"), parses arguments
-// if followed by '(', and returns a FunctionCallNode.  `context_token` is used for
+// if followed by '(', and returns a CallExprNode.  `context_token` is used for
 // location information in the generated AST nodes.
 ParseResult Parser::parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces) {
 	// Build operator name using the shared helper
@@ -1319,13 +1319,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 			setCallQualifiedName(function_call_node.as<ExpressionNode>(), buildQualifiedNameFromStrings(namespaces, qual_id.name()));
-			// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+			// If the function has a pre-computed mangled name, set it on the call expression
 			if (identifierType->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 				FLASH_LOG(Parser, Debug, "Qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
 				if (func_decl.has_mangled_name()) {
 					setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
-					FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode: {}", func_decl.mangled_name());
+					FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression: {}", func_decl.mangled_name());
 				}
 			}
 			result = function_call_node;
@@ -2070,7 +2070,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = emplace_node<ExpressionNode>(
 					makeCallExprFromNode(*identifierType, std::move(args), qual_id.identifier_token()));
 
-				// If explicit template arguments were provided, store them in the FunctionCallNode
+				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
 				if (template_args.has_value() && !template_args->empty() && template_arg_nodes.empty()) {
 					template_arg_nodes = materializeTemplateArgumentNodes(*template_args, qual_id.identifier_token());
@@ -2080,15 +2080,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				bool has_explicit_template_args = template_args.has_value() && !template_args->empty() && !template_arg_nodes.empty();
 				if (has_explicit_template_args) {
 					setCallTemplateArguments(result->as<ExpressionNode>(), std::move(template_arg_nodes));
-					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in FunctionCallNode (path 1)");
+					FLASH_LOG(Templates, Debug, "Stored ", template_arg_nodes.size(), " template argument nodes in call expression (path 1)");
 				}
 
 				// Store the qualified source name for template lookup during constexpr evaluation
 				std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 				setCallQualifiedName(result->as<ExpressionNode>(), qualified_name);
-				FLASH_LOG(Parser, Debug, "Set qualified name on FunctionCallNode: ", qualified_name);
+				FLASH_LOG(Parser, Debug, "Set qualified name on call expression: ", qualified_name);
 
-				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				// If the function has a pre-computed mangled name, set it on the call expression
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
@@ -2788,7 +2788,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				auto function_call_node = emplace_node<ExpressionNode>(
 					makeCallExprFromNode(*identifierType, std::move(args), final_identifier));
 
-				// If explicit template arguments were provided, store them in the FunctionCallNode
+				// If explicit template arguments were provided, store them in the call expression
 				// This is needed for deferred template-dependent expressions (e.g., decltype(base_trait<T>()))
 				if (template_args.has_value() && !template_args->empty()) {
 					if (template_arg_nodes.empty()) {
@@ -2801,13 +2801,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 				}
 
-				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				// If the function has a pre-computed mangled name, set it on the call expression
 				if (identifierType->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = identifierType->as<FunctionDeclarationNode>();
 					FLASH_LOG(Parser, Debug, "Namespace-qualified function has mangled name: {}, name: {}", func_decl.has_mangled_name(), func_decl.mangled_name());
 					if (func_decl.has_mangled_name()) {
 						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
-						FLASH_LOG(Parser, Debug, "Set mangled name on namespace-qualified FunctionCallNode: {}", func_decl.mangled_name());
+						FLASH_LOG(Parser, Debug, "Set mangled name on namespace-qualified call expression: {}", func_decl.mangled_name());
 					}
 				}
 
@@ -2930,7 +2930,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							identifierType = member_func.function_declaration;
 							// Register in symbol table so overload resolution can find it
 							gSymbolTable.insert(identifier_token.value(), member_func.function_declaration);
-							// Mark that we found a static member to prevent MemberFunctionCallNode path
+							// Mark that we found a static member to prevent the implicit-receiver call path
 							found_member_function_in_context = false;
 							FLASH_LOG_FORMAT(Parser, Debug, "Resolved '{}' as static member function of current class (overrides namespace template)", identifier_token.value());
 							return true;
@@ -3294,7 +3294,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 			// Check if this is a member function call (identifier not found but matches a member function)
 			// This handles the complete-class context where member functions declared later can be called
-			// We need to track if we found a member function so we can create MemberFunctionCallNode with implicit 'this'
+			// We need to track if we found a member function so we can create a CallExprNode with implicit 'this'
 			if (!member_function_context_stack_.empty() && peek() == "("_tok) {
 				FLASH_LOG_FORMAT(Parser, Debug, "Checking member function context for '{}', stack size: {}",
 								 identifier_token.value(), member_function_context_stack_.size());
@@ -4357,7 +4357,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											return ParseResult::success(*result);
 										} else {
 											// Variable template found but couldn't instantiate (likely dependent args).
-											// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
+											// Preserve template args in the call expression so the ExpressionSubstitutor
 											// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 											FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' (qualified as '{}') found but not instantiated (dependent args)", identifier_token.value(), qualified_name);
 											TypeSpecifierNode& stub_type_sv = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
@@ -4408,7 +4408,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 									return ParseResult::success(*result);
 								} else {
 									// Variable template found but couldn't instantiate (likely dependent args).
-									// Preserve template args in a FunctionCallNode so the ExpressionSubstitutor
+									// Preserve template args in the call expression so the ExpressionSubstitutor
 									// can instantiate it after substituting the template parameter (e.g. _Size→size_t).
 									FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args)", identifier_token.value());
 									TypeSpecifierNode& stub_type_vt = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
@@ -4963,7 +4963,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return ParseResult::success(*result);
 						} else {
 							// Variable template found but couldn't instantiate (likely dependent args).
-							// Preserve template args in a FunctionCallNode for later substitution.
+							// Preserve template args in the call expression for later substitution.
 							FLASH_LOG_FORMAT(Parser, Debug, "Variable template '{}' found but not instantiated (dependent args, path 3)", template_name_to_use);
 							TypeSpecifierNode& stub_type_vt3 = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(TypeCategory::Auto, TypeQualifier::None, 0, identifier_token, CVQualifier::None);
 							DeclarationNode& stub_decl_vt3 = gChunkedAnyStorage.emplace_back<DeclarationNode>(ASTNode(&stub_type_vt3), identifier_token);
@@ -5161,7 +5161,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-			// Initially set result to a simple identifier - will be upgraded to FunctionCallNode if it's a function call
+			// Initially set result to a simple identifier; upgrade it to a CallExprNode if it's a function call
 			if (!result.has_value()) {
 				result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 			}
@@ -5389,7 +5389,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(TypeCategory::UserDefined, TypeQualifier::None, 0, param_token, CVQualifier::None);
 					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 				}
-				// For function pointers, skip overload resolution and create FunctionCallNode directly
+				// For function pointers, skip overload resolution and create the CallExprNode directly
 				else if (is_function_pointer) {
 					const DeclarationNode* decl_ptr = getDeclarationNode(*identifierType);
 					if (!decl_ptr) {
@@ -5472,7 +5472,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 											setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 										}
 									}
-									// Return early - we've created the FunctionCallNode with the args
+									// Return early - we've created the call expression with the args
 									if (result.has_value())
 										return ParseResult::success(*result);
 									break;
@@ -5639,21 +5639,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										}
 									} else if (has_dependent_template_args) {
 										// Template arguments are dependent - this is a template-dependent expression
-										// Create a FunctionCallNode with a placeholder declaration that will be resolved during template instantiation
-										// IMPORTANT: We must create a FunctionCallNode (not just IdentifierNode) to preserve the information
+										// Create a CallExprNode with a placeholder declaration that will be resolved during template instantiation
+										// IMPORTANT: We must create a call expression (not just IdentifierNode) to preserve the information
 										// that this is a function call with template arguments. This is needed for non-type template arguments
 										// like: bool_constant<test_func<T>()> where the function call result is used as a constant expression.
-										FLASH_LOG(Templates, Debug, "Creating dependent FunctionCallNode for call to '", identifier_token.value(), "'");
+										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
 										auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
 										auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 
-										// Create FunctionCallNode with the placeholder
+										// Create the call expression with the placeholder
 										result = emplace_node<ExpressionNode>(makeDirectCallExpr(decl_ref, std::move(args), identifier_token));
 
-										// Store the template arguments in the FunctionCallNode for later resolution
+										// Store the template arguments in the call expression for later resolution
 										if (explicit_template_arg_nodes.empty() && explicit_template_args.has_value()) {
 											explicit_template_arg_nodes = materializeTemplateArgumentNodes(*explicit_template_args, identifier_token);
 										} else if (explicit_template_args.has_value()) {
@@ -5802,7 +5802,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 											result = emplace_node<ExpressionNode>(makeCallExprFromNode(*resolution_result.selected_overload, std::move(args), identifier_token));
 
-											// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+											// If the function has a pre-computed mangled name, set it on the call expression
 											// This is important for functions in namespaces accessed via using directives
 											if (resolution_result.selected_overload->is<FunctionDeclarationNode>()) {
 												const FunctionDeclarationNode& func_decl = resolution_result.selected_overload->as<FunctionDeclarationNode>();

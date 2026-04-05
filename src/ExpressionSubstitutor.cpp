@@ -473,7 +473,11 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
 
-					// Create a ConstructorCallNode instead of FunctionCallNode
+					// Create a ConstructorCallNode instead of an ordinary CallExprNode
+					ChunkedVector<ASTNode> substituted_args_nodes;
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
 					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
 						ASTNode(&new_type),
 						std::move(substituted_args_nodes),
@@ -515,7 +519,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (substituted_type.type_index() != type_spec.type_index()) {
 					FLASH_LOG(Templates, Debug, "  Type was substituted, creating ConstructorCallNode");
 
-					// Create a ConstructorCallNode instead of FunctionCallNode
+					// Create a ConstructorCallNode instead of an ordinary CallExprNode
 					ChunkedVector<ASTNode> substituted_args_nodes;
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
@@ -562,7 +566,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
 				FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
 
-				// Create a new FunctionCallNode with the instantiated function
+				// Create a new direct CallExprNode with the instantiated function
 				ExpressionNode& new_expr = emplaceDirectCallExpr(
 					instantiated_func.decl_node(),
 					&instantiated_func,

@@ -74,7 +74,7 @@ public:
 		return normalized_bodies_.count(body_ptr) > 0;
 	}
 
-	// Returns true if sema attempted to annotate this FunctionCallNode but could not
+	// Returns true if sema attempted to annotate this call expression but could not
 	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
 	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
 	bool hasUnresolvedCallArgs(const void* call) const {
@@ -271,7 +271,7 @@ private:
 	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).
 	void tryAnnotateTernaryBranchConversions(const TernaryOperatorNode& ternary_node);
 
-	// Resolve the callable operator() for a FunctionCallNode whose callee is a struct-typed
+	// Resolve the callable operator() for a call expression whose callee is a struct-typed
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.
 
@@ -321,7 +321,7 @@ private:
 	// arithmetic is performed in the promoted common type.
 	std::unordered_map<const void*, SemanticSlot> compound_assign_back_conv_;
 
-	// Side table: FunctionCallNode pointer → resolved operator() declaration.
+	// Side table: call-expression pointer -> resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
@@ -341,7 +341,7 @@ private:
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
 
-	// Track FunctionCallNode pointers where sema attempted call-arg annotation
+	// Track call-expression pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members
 	// whose DeclarationNode addresses differ from the call's stored decl).
 	std::unordered_set<const void*> unresolved_call_args_;

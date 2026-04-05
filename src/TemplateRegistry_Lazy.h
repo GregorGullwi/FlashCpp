@@ -1226,7 +1226,7 @@ inline ConstraintEvaluationResult evaluateConstraint(
 			}
 		}
 
-		FLASH_LOG(Templates, Debug, "FunctionCallNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_param_names.size()=", concept_param_names.size());
+		FLASH_LOG(Templates, Debug, "CallExprNode concept evaluation: concept='", concept_name, "', concept_args.size()=", concept_args.size(), ", concept_param_names.size()=", concept_param_names.size());
 		for (size_t i = 0; i < concept_param_names.size(); ++i) {
 			if (i < concept_args.size()) {
 				FLASH_LOG(Templates, Debug, "  param[", i, "] name='", concept_param_names[i], "', is_template_template_arg=", concept_args[i].is_template_template_arg, ", base_type=", static_cast<int>(concept_args[i].typeEnum()));

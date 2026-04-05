@@ -54,7 +54,7 @@ The callee descriptor should be rich enough to distinguish:
 - [x] Merge the remaining constexpr evaluation, substitution, and direct IR entry points onto direct `CallExprNode` handling so the old `materializeLegacy*` adapters are no longer needed there.
 - [x] Merge the deeper shared IR lowering pipeline so the remaining member-call lowering, virtual dispatch, and member-to-free fallback paths stop depending on `MemberFunctionCallNode` / `FunctionCallNode` internals.
 - [x] Remove temporary call-form conversions such as member-to-function fallback nodes in constexpr evaluation, substitution, and the top-level direct/member IR entry points once those downstream sites read the unified representation directly.
-- [ ] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
+- [x] Delete the legacy duplicate call nodes after all call sites and visitors stop depending on them.
 
 ### Current status
 
@@ -66,7 +66,7 @@ The callee descriptor should be rich enough to distinguish:
 - The three synthetic `MemberFunctionCallNode` constructions in range-for lowering (`IrGenerator_Stmt_Control.cpp`) have been replaced with `makeResolvedMemberCallExpr` calls.
 - **All construction sites** that previously emitted `FunctionCallNode` or `MemberFunctionCallNode` have been converted to produce `CallExprNode`: `ExpressionSubstitutor.cpp`, `Parser_Templates_Inst_ClassTemplate.cpp` (rebind-static), `Parser_Templates_Substitution.cpp` (template-param substitution + pack-identifier replacement), and `Parser_Expr_PrimaryExpr.cpp` (deferred concept evaluation).
 - Several IR-generator consumer sites now use `CallInfo::tryFrom` instead of per-type variant dispatch: `IrGenerator_Call_Indirect.cpp` (merged three object-type-extraction branches into one), `IrGenerator_MemberAccess.cpp` (removed dead `FunctionCallNode` branch), and `IrGenerator_Visitors_TypeInit.cpp` (static-member lazy instantiation).
-- The remaining work before legacy-node deletion: convert the constexpr evaluator branches (`ConstExprEvaluator_Core.cpp`, `ConstExprEvaluator_Members.cpp`), the lazy template dispatch in `TemplateRegistry_Lazy.h`, the remaining variant reads in `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Substitution.cpp`, the `get_member_func_call` lambda in `IrGenerator_MemberAccess.cpp`, the `copyMetadataToExpr` legacy branches in `ExpressionSubstitutor.cpp`, and the `CallInfo::from` overloads / `setCall*` helpers in `CallNodeHelpers.h`. Once those are done, `FunctionCallNode` and `MemberFunctionCallNode` can be removed from the `ExpressionNode` variant and their class definitions deleted.
+- Legacy-node deletion is complete: `ExpressionNode` now only carries `CallExprNode` for ordinary calls, the legacy node classes are gone, and the remaining source/test comments have been refreshed to describe the unified representation instead of the removed split nodes.
 
 ## Important implementation notes
 

@@ -524,8 +524,7 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 
 			if (is_function_pointer_call && member_access) {
 				// This is a call through a function pointer member (e.g., this->operation(value, x))
-				// Create a FunctionPointerCallNode or use MemberFunctionCallNode with special handling
-				// For now, we use MemberFunctionCallNode which will be handled in code generation
+				// Represent this as a CallExprNode with member-style/indirect handling in codegen.
 
 				// Create a placeholder function declaration with the member name
 				Token member_token(Token::Type::Identifier, member_access->member_name(),
@@ -909,12 +908,12 @@ ParseResult Parser::parse_postfix_expression(ExpressionContext context) {
 						? makeResolvedCallExpr(qualified_symbol->as<FunctionDeclarationNode>(), std::move(args), final_identifier)
 						: makeDirectCallExpr(*decl_ptr, std::move(args), final_identifier));
 
-				// If the function has a pre-computed mangled name, set it on the FunctionCallNode
+				// If the function has a pre-computed mangled name, set it on the call expression
 				if (qualified_symbol.has_value() && qualified_symbol->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = qualified_symbol->as<FunctionDeclarationNode>();
 					if (func_decl.has_mangled_name()) {
 						setCallMangledName(function_call_node.as<ExpressionNode>(), func_decl.mangled_name());
-						FLASH_LOG(Parser, Debug, "Set mangled name on qualified FunctionCallNode (postfix path): {}", func_decl.mangled_name());
+						FLASH_LOG(Parser, Debug, "Set mangled name on qualified call expression (postfix path): {}", func_decl.mangled_name());
 					}
 				}
 

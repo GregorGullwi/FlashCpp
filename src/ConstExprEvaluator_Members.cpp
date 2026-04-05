@@ -3857,7 +3857,7 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	const ConstructorCallNode* ctor_call_ptr = extract_constructor_call(object_initializer);
 	if (!ctor_call_ptr) {
 		// Handle function-call initializers: constexpr Vec2 p = make_point(1, 2)
-		// The initializer may be an ASTNode holding a FunctionCallNode directly,
+		// The initializer may be an ASTNode holding a CallExprNode directly,
 		// or wrapped in an ExpressionNode.  Evaluate and use object_member_bindings.
 		bool is_func_call = initializer.is<CallExprNode>();
 		if (!is_func_call && initializer.is<ExpressionNode>()) {

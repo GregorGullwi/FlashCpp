@@ -893,7 +893,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 	// 2. For UnaryOperatorNode with &:
 	//    a. Check if the operand type has an overloaded operator& (member or non-member)
 	//    b. If overloaded operator& exists and applies to regular &:
-	//       - Replace UnaryOperatorNode with FunctionCallNode to the overloaded operator
+	//       - Replace UnaryOperatorNode with a CallExprNode for the overloaded operator
 	//    c. If no overload or __builtin_addressof:
 	//       - Keep UnaryOperatorNode for direct address-of operation
 	// 3. Add a flag to UnaryOperatorNode: is_builtin_addressof

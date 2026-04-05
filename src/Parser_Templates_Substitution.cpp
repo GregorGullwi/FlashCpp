@@ -1386,7 +1386,7 @@ bool Parser::expandPackExpansionArgs(
 
 // Substitute a single argument, expanding PackExpansionExprNode when present.
 // Consolidates the repeated check-expand-or-substitute pattern used in
-// FunctionCallNode, ConstructorCallNode, and MemberFunctionCallNode handlers.
+// ordinary call-expression, constructor-call, and member-call handlers.
 void Parser::substituteArgWithPackExpansion(
 	const ASTNode& arg,
 	const InlineVector<ASTNode, 4>& template_params,
