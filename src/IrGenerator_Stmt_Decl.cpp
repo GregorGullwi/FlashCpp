@@ -82,16 +82,20 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
+	if (sema_) {
+		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
+			return sema_type;
+		}
+		if (sema_normalized_current_function_) {
+			throw InternalError("Missing sema-owned overload-resolution argument type in sema-normalized body");
+		}
+	}
+
 	if (!arg.is<ExpressionNode>()) {
 		return tryParserFallback();
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	if (sema_) {
-		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
-			return sema_type;
-		}
-	}
 
 	auto legacy_type = std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
 		using T = std::decay_t<decltype(inner)>;
