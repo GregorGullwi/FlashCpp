@@ -2951,7 +2951,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 							arg_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 							break;
 						case ValueCategory::XValue:
+							// [expr.ref]: xvalue base => xvalue member access.
+							arg_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							break;
 						case ValueCategory::PRValue:
+							// [expr.ref]: prvalue base also yields an xvalue member access.
 							arg_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
 							break;
 						default:
@@ -2960,8 +2964,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				}
 				// Member-access cases already have their final overload-resolution
 				// category here; the generic helper would incorrectly rewrite all of
-				// them to lvalues. TODO: fold this into the shared helper once it
-				// understands member-access categories.
+				// them to lvalues. TODO(Phase 2, docs/2026-04-04-codegen-name-lookup-investigation.md):
+				// fold this into the shared helper once it understands member-access categories.
 				return arg_type;
 			}
 		}
