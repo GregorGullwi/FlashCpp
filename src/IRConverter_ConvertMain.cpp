@@ -2083,6 +2083,23 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 			}
 		}
 
+		if (instruction.getOpcode() == IrOpcode::IndirectCall && instruction.hasTypedPayload()) {
+			if (const IndirectCallOp* call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
+				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+				size_t outgoing_bytes = 0;
+				if (is_coff_format) {
+					outgoing_bytes = 32;
+				} else {
+					size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
+					outgoing_bytes = computeSysVOutgoingBytes(call_op->arguments, int_slots_start);
+				}
+
+				if (outgoing_bytes > max_outgoing_arg_bytes) {
+					max_outgoing_arg_bytes = outgoing_bytes;
+				}
+			}
+		}
+
 			// Constructor calls: 'this' always occupies integer register 0, so explicit
 			// arguments start with int_slots_used = 1.
 		if (instruction.getOpcode() == IrOpcode::ConstructorCall && instruction.hasTypedPayload()) {
@@ -14092,9 +14109,23 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 
 	flushAllDirtyRegisters();
 
+	int return_size_bits = op.return_size_in_bits.value;
+	if (return_size_bits == 0) {
+		int computed_size = get_type_size_bits(op.returnType());
+		if (computed_size > 0) {
+			return_size_bits = computed_size;
+		} else {
+			return_size_bits = static_cast<int>(sizeof(void*) * 8);
+		}
+	}
+
 		// Get result offset
-	int result_offset = getStackOffsetFromTempVar(op.result);
+	int result_offset = allocateStackSlotForTempVar(op.result.var_number, return_size_bits);
 	variable_scopes.back().variables[StringTable::getOrInternStringHandle(op.result.name())].offset = result_offset;
+
+	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
+	const size_t max_int_regs = is_coff_format ? 4 : 6;
+	const size_t max_float_regs = is_coff_format ? 4 : 8;
 
 		// Load function pointer into RAX
 	X64Register func_ptr_reg;
@@ -14123,16 +14154,33 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 		}
 	}
+
+	if (op.usesReturnSlot()) {
+		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(return_slot_reg, result_offset);
+	}
+
 		// Process arguments (if any)
-	for (size_t i = 0; i < op.arguments.size() && i < 4; ++i) {
+	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
+	size_t float_reg_index = 0;
+	for (size_t i = 0; i < op.arguments.size(); ++i) {
 		const auto& arg = op.arguments[i];
 		TypeCategory argType = arg.typeEnum();
 
 			// Determine if this is a floating-point argument
 		bool is_float_arg = is_floating_point_type(argType);
+		if (is_float_arg) {
+			if (float_reg_index >= max_float_regs) {
+				continue;
+			}
+		} else if (int_reg_index >= max_int_regs) {
+			continue;
+		}
 
 			// Determine the target register for the argument
-		X64Register target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(i) : getIntParamReg<TWriterClass>(i);
+		X64Register target_reg = is_float_arg
+			? getFloatParamReg<TWriterClass>(float_reg_index++)
+			: getIntParamReg<TWriterClass>(int_reg_index++);
 
 			// Load argument into target register
 		if (std::holds_alternative<TempVar>(arg.value)) {
@@ -14175,10 +14223,25 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	textSectionData.push_back(0xFF); // CALL r/m64
 	textSectionData.push_back(0xD0); // ModR/M: RAX
 
-		// Store return value from RAX to result variable
-	auto store_opcodes = generatePtrMovToFrame(X64Register::RAX, result_offset);
-	textSectionData.insert(textSectionData.end(), store_opcodes.op_codes.begin(),
-						   store_opcodes.op_codes.begin() + store_opcodes.size_in_bytes);
+	if (op.returnType() != TypeCategory::Void && !op.usesReturnSlot()) {
+		if (isFloatingPointType(op.returnType())) {
+			bool is_float = (op.returnType() == TypeCategory::Float);
+			emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
+		} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
+			if (op.returnType() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
+				emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);
+				emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);
+			} else {
+				emitMovToFrameSized(
+					SizedRegister{X64Register::RAX, 64, false},
+					SizedStackSlot{result_offset, return_size_bits, isSignedType(op.returnType())});
+			}
+		} else {
+			emitMovToFrameSized(
+				SizedRegister{X64Register::RAX, 64, false},
+				SizedStackSlot{result_offset, return_size_bits, isSignedType(op.returnType())});
+		}
+	}
 
 	regAlloc.reset();
 }

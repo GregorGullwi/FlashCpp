@@ -48,6 +48,62 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 												: call_op.result.size_in_bits;
 }
 
+TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const {
+	if (signature.return_type_index.is_valid()) {
+		return signature.return_type_index.withCategory(signature.returnType());
+	}
+
+	TypeIndex fallback = nativeTypeIndex(signature.returnType());
+	return fallback.is_valid()
+		? fallback.withCategory(signature.returnType())
+		: TypeIndex{}.withCategory(signature.returnType());
+}
+
+int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
+	if (signature.returnType() == TypeCategory::Void) {
+		return 0;
+	}
+
+	if (signature.return_type_index.is_valid()) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(signature.return_type_index);
+		if (resolved_alias.terminal_type_info && resolved_alias.terminal_type_info->hasStoredSize()) {
+			return resolved_alias.terminal_type_info->sizeInBits().value;
+		}
+
+		const TypeIndex canonical_index = resolved_alias.type_index.is_valid()
+			? resolved_alias.type_index.withCategory(resolved_alias.type_index.category())
+			: signature.return_type_index.withCategory(signature.returnType());
+		if (!needs_type_index(canonical_index.category())) {
+			const int bits = get_type_size_bits(canonical_index.category());
+			if (bits > 0) {
+				return bits;
+			}
+		}
+	}
+
+	return get_type_size_bits(signature.returnType());
+}
+
+void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature) {
+	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
+	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
+	call_op.use_return_slot = needsHiddenReturnParam(
+		call_op.returnType(),
+		0,
+		false,
+		call_op.return_size_in_bits.value,
+		context_->isLLP64());
+}
+
+ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const {
+	return makeExprResult(
+		getFunctionSignatureReturnTypeIndex(signature),
+		SizeInBits{getFunctionSignatureReturnSizeBits(signature)},
+		IrOperand{ret_var},
+		PointerDepth{},
+		ValueStorage::ContainsData);
+}
+
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {
 	if (return_type.type() != TypeCategory::TypeAlias || !return_type.type_index().is_valid()) {
 		return return_type;
@@ -411,12 +467,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.result = ret_var,
 				.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
 				.arguments = std::move(arguments)};
+			if (func_type.has_function_signature()) {
+				populateIndirectCallReturnInfo(op, func_type.function_signature());
+			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
 
 				// Return the result variable with the return type from the function signature
 			if (func_type.has_function_signature()) {
 				const auto& sig = func_type.function_signature();
-				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
+				return buildIndirectCallReturnResult(sig, ret_var);
 			} else {
 					// For auto types or missing signature, default to int
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
