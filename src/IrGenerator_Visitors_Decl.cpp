@@ -111,7 +111,12 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 			// Previously this only cleared when current_struct_name_ was already invalid,
 			// which caused free functions (like distance_like) to retain a stale struct
 			// context from a previously-visited member function.
-		current_struct_name_ = StringHandle();
+		// Some instantiated static member functions still lose their parent_struct_name()
+		// flag by the time they reach codegen. Preserve the enclosing struct context only
+		// for those static-member cases; free functions must still clear stale struct state.
+		if (!node.is_static() || !current_struct_name_.isValid()) {
+			current_struct_name_ = StringHandle();
+		}
 	}
 
 	if (FLASH_LOG_ENABLED(Codegen, Debug)) {

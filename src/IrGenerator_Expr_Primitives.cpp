@@ -884,6 +884,101 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			}
 		}
 	}
+	if (!symbol.has_value() && global_symbol_table_ && !current_namespace_stack_.empty()) {
+		NamespaceHandle current_ns = NamespaceRegistry::GLOBAL_NAMESPACE;
+		bool namespace_path_valid = true;
+		for (const auto& ns_name : current_namespace_stack_) {
+			NamespaceHandle next_ns = gNamespaceRegistry.lookupNamespace(
+				current_ns, StringTable::getOrInternStringHandle(ns_name));
+			if (!next_ns.isValid()) {
+				namespace_path_valid = false;
+				break;
+			}
+			current_ns = next_ns;
+		}
+
+		if (namespace_path_valid) {
+			struct StaticMemberNamespaceMatch {
+				const TypeInfo* owner_type = nullptr;
+				const StructStaticMember* static_member = nullptr;
+			};
+			std::optional<StaticMemberNamespaceMatch> unique_match;
+			std::unordered_set<const TypeInfo*> visited_type_infos;
+
+			for (NamespaceHandle search_ns = current_ns; search_ns.isValid(); search_ns = search_ns.isGlobal() ? NamespaceHandle{} : gNamespaceRegistry.getParent(search_ns)) {
+				for (const auto& [_, type_info] : getTypesByNameMap()) {
+					if (!type_info || !visited_type_infos.insert(type_info).second) {
+						continue;
+					}
+					if (type_info->namespaceHandle() != search_ns) {
+						continue;
+					}
+					const StructTypeInfo* struct_info = type_info->getStructInfo();
+					if (!struct_info) {
+						continue;
+					}
+					const StructStaticMember* static_member = struct_info->findStaticMember(var_name_str);
+					if (!static_member) {
+						continue;
+					}
+					if (unique_match.has_value()) {
+						unique_match.reset();
+						search_ns = NamespaceHandle{};
+						break;
+					}
+					unique_match = StaticMemberNamespaceMatch{type_info, static_member};
+				}
+				if (unique_match.has_value() || !search_ns.isValid() || search_ns.isGlobal()) {
+					break;
+				}
+			}
+
+			if (unique_match.has_value()) {
+				StringHandle qualified_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(unique_match->owner_type->name()))
+						.append("::")
+						.append(identifierNode.name())
+						.commit());
+				int member_size_bits = static_cast<int>(unique_match->static_member->size * 8);
+				if (member_size_bits == 0) {
+					if (const TypeInfo* member_type_info = tryGetTypeInfo(unique_match->static_member->type_index)) {
+						if (member_type_info->hasStoredSize()) {
+							member_size_bits = static_cast<int>(member_type_info->sizeInBits().value);
+						}
+					}
+					if (member_size_bits == 0) {
+						member_size_bits = get_type_size_bits(resolve_type_alias(unique_match->static_member->type_index));
+					}
+				}
+
+				if (context == ExpressionContext::LValueAddress && !unique_match->static_member->is_reference()) {
+					TypeIndex type_index = (is_struct_type(unique_match->static_member->type_index.category())) ? unique_match->static_member->type_index : TypeIndex{};
+					return makeExprResult(
+						type_index.withCategory(unique_match->static_member->memberType()),
+						SizeInBits{member_size_bits},
+						IrOperand{qualified_name},
+						PointerDepth{},
+						ValueStorage::ContainsData);
+				}
+
+				TempVar result_temp = var_counter.next();
+				GlobalLoadOp op;
+				op.result.setType(unique_match->static_member->type_index.category());
+				op.result.ir_type = toIrType(unique_match->static_member->memberType());
+				op.result.size_in_bits = SizeInBits{member_size_bits};
+				op.result.value = result_temp;
+				op.global_name = qualified_name;
+				ir_.addInstruction(IrInstruction(IrOpcode::GlobalLoad, std::move(op), Token()));
+				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(
+												LValueInfo(LValueInfo::Kind::Global, qualified_name, 0),
+												unique_match->static_member->type_index.category(), member_size_bits));
+
+				TypeIndex type_index = (is_struct_type(unique_match->static_member->type_index.category())) ? unique_match->static_member->type_index : TypeIndex{};
+				return makeIdentifierResult(unique_match->static_member->memberType(), member_size_bits, result_temp, type_index);
+			}
+		}
+	}
 	if (!symbol.has_value()) {
 		FLASH_LOG(Codegen, Error, "Symbol '", identifierNode.name(), "' not found in symbol table during code generation");
 		FLASH_LOG(Codegen, Error, "  Current function: ", current_function_name_);
