@@ -144,6 +144,8 @@ The most impactful blockers preventing more headers from compiling, ordered by i
 
 2. **Compiler builtin registration now includes `__builtin_memcpy`, and direct-call lowering remaps it to libc `memcpy`**: libstdc++ atomic code can now use `__builtin_memcpy` in template bodies without tripping the earlier non-dependent-name error. This moves `<atomic>` / `<latch>` one phase deeper, to a later unknown-type mangling failure in `std::__atomic_impl::store`. Regression test: `tests/test_builtin_memcpy_ret0.cpp`.
 
+3. **Instantiated template member-function codegen now preserves the owning struct context while emitting the function body**: unqualified references to static members inside class-template member functions no longer lose `current_struct_name_` during IR generation, so codegen can still resolve the struct's static constexpr globals through the normal member lookup path. Regression test: `tests/test_template_static_constexpr_member_call_ret0.cpp`.
+
 ### Recent Fixes (2026-04-04)
 
 1. **Pointer-style GCC/Clang `__atomic*` builtins now synthesize exact signatures at call time**: when libstdc++ uses pointer-based atomics such as `__atomic_add_fetch(&_M_p, ...)`, FlashCpp now creates a concrete builtin declaration from the actual argument types and uses the pointee type as the return type instead of the old `unsigned long long` placeholder. This removes the immediate overload-resolution stop in `<atomic>` / `<latch>` and exposes the later qualified-template blocker instead. Regression test: `tests/test_atomic_builtin_pointer_intrinsics_ret0.cpp`.
