@@ -2205,6 +2205,8 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				   expr);
 	}
 
+	cacheOverloadResolutionArgType(node);
+
 	return {};
 }
 
@@ -2306,6 +2308,13 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
+	if (arg.is<ExpressionNode>()) {
+		const void* key = static_cast<const void*>(&arg.as<ExpressionNode>());
+		auto it = overload_resolution_arg_types_.find(key);
+		if (it != overload_resolution_arg_types_.end()) {
+			return it->second;
+		}
+	}
 	return buildOverloadResolutionArgType(arg, nullptr);
 }
 
@@ -2315,17 +2324,27 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 	}
 
 	const ExpressionNode& expr = node.as<ExpressionNode>();
-	return std::visit([](const auto& inner) -> ValueCategory {
+	return std::visit([this](const auto& inner) -> ValueCategory {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return inner.binding() != IdentifierBinding::EnumConstant ? ValueCategory::LValue : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode> ||
-							 std::is_same_v<T, MemberAccessNode> ||
 							 std::is_same_v<T, PointerToMemberAccessNode> ||
 							 std::is_same_v<T, StringLiteralNode>) {
 			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			const ValueCategory object_category = inferExpressionValueCategory(inner.object());
+			switch (object_category) {
+				case ValueCategory::LValue:
+					return ValueCategory::LValue;
+				case ValueCategory::XValue:
+				case ValueCategory::PRValue:
+					return ValueCategory::XValue;
+				default:
+					throw InternalError("Unexpected member-access object value category");
+			}
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			const std::string_view op = inner.op();
 			if (op == "*" || op == "++" || op == "--") {
@@ -2364,7 +2383,8 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 		} else {
 			return ValueCategory::PRValue;
 		}
-	}, expr);
+	},
+					  expr);
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* key) const {
@@ -2439,6 +2459,20 @@ void SemanticAnalysis::popScope() {
 void SemanticAnalysis::addLocalType(StringHandle name, CanonicalTypeId type_id) {
 	if (!scope_stack_.empty())
 		scope_stack_.back()[name] = type_id;
+}
+
+void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return;
+	}
+
+	auto overload_arg_type = buildOverloadResolutionArgType(arg, nullptr);
+	if (!overload_arg_type.has_value()) {
+		return;
+	}
+
+	const void* key = static_cast<const void*>(&arg.as<ExpressionNode>());
+	overload_resolution_arg_types_[key] = std::move(*overload_arg_type);
 }
 
 CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {

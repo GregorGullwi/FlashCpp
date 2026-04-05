@@ -168,6 +168,7 @@ private:
 	void registerOuterTemplateBindingsInScope(const FunctionDeclarationNode& func);
 	void registerOuterTemplateBindingsInScope(const ConstructorDeclarationNode& ctor);
 	void registerOuterTemplateBindingsInScope(const DestructorDeclarationNode& dtor);
+	void cacheOverloadResolutionArgType(const ASTNode& arg);
 	std::optional<TypeSpecifierNode> buildOverloadResolutionArgType(
 		const ASTNode& arg,
 		CanonicalTypeId* inferred_type_id = nullptr);
@@ -326,6 +327,7 @@ private:
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
