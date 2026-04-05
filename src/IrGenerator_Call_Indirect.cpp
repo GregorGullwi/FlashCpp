@@ -574,6 +574,21 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		(void)resolved_member_object_type;
 	}
 
+	if (object_expr && !object_type.type_index().is_valid() && parser_) {
+		if (auto deduced_object_type = parser_->get_expression_type(object_node); deduced_object_type.has_value()) {
+			TypeSpecifierNode normalized_object_type = *deduced_object_type;
+			if (normalized_object_type.type_index().is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(normalized_object_type.type_index())) {
+					if (type_info->isStruct()) {
+						normalized_object_type.set_type_index(type_info->type_index_.withCategory(TypeCategory::Struct));
+						normalized_object_type.set_size_in_bits(type_info->sizeInBits());
+						object_type = normalized_object_type;
+					}
+				}
+			}
+		}
+	}
+
 	// For immediate lambda invocation, object_decl can be nullptr
 	// In that case, we still need object_type to be set correctly
 

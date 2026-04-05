@@ -203,23 +203,13 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 		}
 
 		std::optional<std::string_view> object_struct_name;
-		if (result->is<ExpressionNode>()) {
-			const ExpressionNode& expr = result->as<ExpressionNode>();
-			if (std::holds_alternative<IdentifierNode>(expr)) {
-				const auto& ident = std::get<IdentifierNode>(expr);
-				auto symbol = lookup_symbol(ident.nameHandle());
-				if (symbol.has_value()) {
-					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-						const auto& type_spec = decl->type_node().as<TypeSpecifierNode>();
-						if (is_struct_type(type_spec.category())) {
-							TypeIndex type_idx = type_spec.type_index();
-							if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
-								object_struct_name = StringTable::getStringView(type_info->name());
-								StringHandle type_name = type_info->name();
-								instantiateLazyClassToPhase(type_name, ClassInstantiationPhase::Full);
-							}
-						}
-					}
+		if (auto type_opt = get_expression_type(*result); type_opt.has_value()) {
+			const auto& type_spec = *type_opt;
+			if (is_struct_type(type_spec.category())) {
+				TypeIndex type_idx = type_spec.type_index();
+				if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
+					object_struct_name = StringTable::getStringView(type_info->name());
+					instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
 				}
 			}
 		}
