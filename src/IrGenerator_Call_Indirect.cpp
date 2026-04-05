@@ -2,6 +2,12 @@
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
 
+static TypeSpecifierNode buildIndirectFunctionSignatureReturnType(const FunctionSignature& sig, const Token& source_token) {
+	TypeSpecifierNode return_type(sig.return_type_index, 0, source_token, CVQualifier::None, ReferenceQualifier::None);
+	return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+	return return_type;
+}
+
 
 ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context) {
 	return generateMemberFunctionCallIr(callExprNode, context, &callExprNode);
@@ -315,13 +321,34 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				.result = ret_var,
 				.function_pointer = std::move(function_pointer),
 				.arguments = std::move(arguments)};
+			if (callee_type->has_function_signature()) {
+				const auto& sig = callee_type->function_signature();
+				if (sig.returnType() == TypeCategory::Struct) {
+					const TypeSpecifierNode return_type = buildIndirectFunctionSignatureReturnType(
+						sig,
+						callExprNode.called_from());
+					op.return_size_in_bits = SizeInBits{getTypeSpecSizeBits(return_type)};
+					op.return_type_index = return_type.type_index().withCategory(return_type.type());
+				} else {
+					int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+					op.return_size_in_bits = SizeInBits{ret_size > 0 ? ret_size : 64};
+					op.return_type_index = nativeTypeIndex(sig.returnType());
+				}
+			}
 			ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
 
 			if (callee_type->has_function_signature()) {
 				const auto& sig = callee_type->function_signature();
+				if (sig.returnType() == TypeCategory::Struct) {
+					const TypeSpecifierNode return_type = buildIndirectFunctionSignatureReturnType(
+						sig,
+						callExprNode.called_from());
+					return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+				}
+				int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
 				return makeExprResult(
 					nativeTypeIndex(sig.returnType()),
-					SizeInBits{64},
+					SizeInBits{ret_size > 0 ? ret_size : 64},
 					IrOperand{ret_var},
 					PointerDepth{},
 					ValueStorage::ContainsData);
@@ -492,14 +519,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					.result = ret_var,
 					.function_pointer = std::move(function_pointer),
 					.arguments = std::move(arguments)};
-				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-
 				if (!resolved_member->function_signature) {
 					throw InternalError("Function pointer member missing function_signature for indirect call return type");
 				}
-				TypeCategory ret_type = resolved_member->function_signature->returnType();
-				int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-				return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+				const auto& sig = *resolved_member->function_signature;
+				TypeSpecifierNode return_type;
+				if (sig.returnType() == TypeCategory::Struct) {
+					return_type = buildIndirectFunctionSignatureReturnType(sig, callExprNode.called_from());
+					op.return_size_in_bits = SizeInBits{getTypeSpecSizeBits(return_type)};
+					op.return_type_index = return_type.type_index().withCategory(return_type.type());
+				} else {
+					int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+					op.return_size_in_bits = SizeInBits{ret_size};
+					op.return_type_index = nativeTypeIndex(sig.returnType());
+				}
+				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+				if (sig.returnType() == TypeCategory::Struct) {
+					return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+				}
+				int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// We resolved the member access - now check if it's a struct type
@@ -550,15 +589,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 									.result = ret_var,
 									.function_pointer = func_ptr_temp,
 									.arguments = std::move(arguments)};
-								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-
-								// Use the function pointer's stored return type
 								if (!member.function_signature) {
 									throw InternalError("Function pointer member missing function_signature for indirect call return type");
 								}
-								TypeCategory ret_type = member.function_signature->returnType();
-								int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-								return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+								const auto& sig = *member.function_signature;
+								TypeSpecifierNode return_type;
+								if (sig.returnType() == TypeCategory::Struct) {
+									return_type = buildIndirectFunctionSignatureReturnType(sig, callExprNode.called_from());
+									op.return_size_in_bits = SizeInBits{getTypeSpecSizeBits(return_type)};
+									op.return_type_index = return_type.type_index().withCategory(return_type.type());
+								} else {
+									int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+									op.return_size_in_bits = SizeInBits{ret_size};
+									op.return_type_index = nativeTypeIndex(sig.returnType());
+								}
+								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+								if (sig.returnType() == TypeCategory::Struct) {
+									return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+								}
+								int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+								return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
 
@@ -1041,15 +1091,26 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 						.result = ret_var,
 						.function_pointer = func_ptr_temp,
 						.arguments = std::move(arguments)};
-					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-
-					// Use the function pointer's stored return type
 					if (!member.function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					TypeCategory ret_type = member.function_signature->returnType();
-					int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-					return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+					const auto& sig = *member.function_signature;
+					TypeSpecifierNode return_type;
+					if (sig.returnType() == TypeCategory::Struct) {
+						return_type = buildIndirectFunctionSignatureReturnType(sig, callExprNode.called_from());
+						op.return_size_in_bits = SizeInBits{getTypeSpecSizeBits(return_type)};
+						op.return_type_index = return_type.type_index().withCategory(return_type.type());
+					} else {
+						int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+						op.return_size_in_bits = SizeInBits{ret_size};
+						op.return_type_index = nativeTypeIndex(sig.returnType());
+					}
+					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+					if (sig.returnType() == TypeCategory::Struct) {
+						return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+					}
+					int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+					return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}

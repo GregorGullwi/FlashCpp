@@ -76,6 +76,12 @@ static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) 
 	return return_type;
 }
 
+static TypeSpecifierNode buildFunctionSignatureReturnType(const FunctionSignature& sig, const Token& source_token) {
+	TypeSpecifierNode return_type(sig.return_type_index, 0, source_token, CVQualifier::None, ReferenceQualifier::None);
+	return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+	return return_type;
+}
+
 ExprResult AstToIr::buildCallReturnResult(
 	const TypeSpecifierNode& return_type,
 	TempVar ret_var,
@@ -411,12 +417,33 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.result = ret_var,
 				.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
 				.arguments = std::move(arguments)};
+			if (func_type.has_function_signature()) {
+				const auto& sig = func_type.function_signature();
+				if (sig.returnType() == TypeCategory::Struct) {
+					const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(
+						sig,
+						callExprNode.called_from());
+					op.return_size_in_bits = SizeInBits{getTypeSpecSizeBits(return_type)};
+					op.return_type_index = return_type.type_index().withCategory(return_type.type());
+				} else {
+					int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+					op.return_size_in_bits = SizeInBits{ret_size > 0 ? ret_size : 64};
+					op.return_type_index = nativeTypeIndex(sig.returnType());
+				}
+			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
 
 				// Return the result variable with the return type from the function signature
 			if (func_type.has_function_signature()) {
 				const auto& sig = func_type.function_signature();
-				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);  // 64 bits for return value
+				if (sig.returnType() == TypeCategory::Struct) {
+					const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(
+						sig,
+						callExprNode.called_from());
+					return buildCallReturnResult(return_type, ret_var, context, callExprNode.called_from());
+				}
+				int ret_size = (sig.returnType() == TypeCategory::Void) ? 0 : get_type_size_bits(sig.returnType());
+				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{ret_size > 0 ? ret_size : 64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 					// For auto types or missing signature, default to int
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);

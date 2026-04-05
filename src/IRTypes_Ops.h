@@ -983,6 +983,10 @@ struct IndirectCallOp {
 	TempVar result;					  // Result variable
 	std::variant<StringHandle, TempVar> function_pointer;  // Function pointer variable
 	std::vector<TypedValue> arguments;   // Arguments with type information
+	SizeInBits return_size_in_bits = SizeInBits{64};
+	TypeIndex return_type_index{};
+
+	TypeCategory returnType() const { return return_type_index.category(); }
 };
 
 // Catch block begin marker
