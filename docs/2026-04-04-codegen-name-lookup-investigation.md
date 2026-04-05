@@ -59,12 +59,12 @@ Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reco
 **Concrete work**
 
 1. Extend semantic normalization so it records the normalized type/category for the expression shapes currently reconstructed in codegen.
-2. Add a sema accessor for that expression-type data.
-3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with sema-owned type queries.
+2. Add a sema accessor for overload-resolution argument typing, not just general expression typing.
+3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with that sema-owned query before falling back to legacy codegen reconstruction.
 4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
-5. Once sema value-category coverage is correct for the broader expression surface, delete the temporary expression-shape whitelist in `buildCodegenOverloadResolutionArgType(...)` and let the sema query run first for any `ExpressionNode`.
+5. Once sema value-category coverage is correct for the remaining expression surface, turn missing normalized-body argument typing into `InternalError` and delete the legacy fallback.
 6. **Resolved risk — enum constant value category**: overload-resolution argument typing now preserves unqualified enum constants (enumerators) as `PRValue` by excluding `IdentifierBinding::EnumConstant` from the generic identifier-lvalue rule. Regression test: `tests/test_ctor_enum_prvalue_ret0.cpp`.
-7. **Known risk — string literal value category**: `inferExpressionValueCategory` currently falls through to the default `else` branch for `StringLiteralNode`, returning `PRValue`. Per C++20 [lex.string]/15, string literals are lvalues (they have static storage duration). The legacy path in `OverloadResolution.h` (`is_lvalue_expression_for_overload_resolution`) already handles this correctly. This is currently masked because `StringLiteralNode` is not in the `legacy_supported_shape` whitelist in `buildCodegenOverloadResolutionArgType` (`src/IrGenerator_Stmt_Decl.cpp`), so the sema slot is never consulted for string literal arguments. However, removing the whitelist (step 5 above) will expose incorrect `PRValue` data stored in the semantic slot, causing constructor overload resolution to treat string literal arguments as rvalues instead of lvalues.
+7. **Resolved risk — string literal value category**: sema-owned argument typing now preserves string literals as lvalues, matching C++20 [lex.string]/15 and the legacy overload-resolution helper. Regression test: `tests/test_ctor_string_literal_lvalue_ret0.cpp`.
 
 **Done when**
 

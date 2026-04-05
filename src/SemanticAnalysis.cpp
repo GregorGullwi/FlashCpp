@@ -2305,6 +2305,10 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	return type;
 }
 
+std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
+	return buildOverloadResolutionArgType(arg, nullptr);
+}
+
 ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
 		return ValueCategory::PRValue;
@@ -2929,6 +2933,42 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+		if (arg.is<ExpressionNode>()) {
+			const ExpressionNode& expr = arg.as<ExpressionNode>();
+			if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
+				// C++20 [expr.ref]: a non-reference member access remains an lvalue for
+				// lvalue bases but yields an xvalue for prvalue/xvalue bases. The generic
+				// overload-resolution helper treats all member accesses as lvalues, so keep
+				// this sema-owned refinement here instead of calling the generic helper
+				// until that shared helper learns the same rule.
+				if (!arg_type.is_reference()) {
+					// Reference-typed members keep their declared reference category;
+					// only object members without an explicit reference qualifier inherit
+					// lvalue/xvalue behavior from the base expression.
+					const ValueCategory object_category = inferExpressionValueCategory(member_access->object());
+					switch (object_category) {
+						case ValueCategory::LValue:
+							arg_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+							break;
+						case ValueCategory::XValue:
+							// [expr.ref]: xvalue base => xvalue member access.
+							arg_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							break;
+						case ValueCategory::PRValue:
+							// [expr.ref]: prvalue base also yields an xvalue member access.
+							arg_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							break;
+						default:
+							throw InternalError("Unexpected member-access object value category");
+					}
+				}
+				// Member-access cases already have their final overload-resolution
+				// category here; the generic helper would incorrectly rewrite all of
+				// them to lvalues. TODO(Phase 2, docs/2026-04-04-codegen-name-lookup-investigation.md):
+				// fold this into the shared helper once it understands member-access categories.
+				return arg_type;
+			}
+		}
 		adjust_argument_type_for_overload_resolution(arg, arg_type);
 		return arg_type;
 	}
