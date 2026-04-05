@@ -817,16 +817,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
 	};
 
-	tryUseResolvedDirectCallTarget(callExprNode.callee().function_declaration_or_null(), "call-node-resolved");
-
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
 	if (!matched_func_decl && sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
 		tryUseResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
-		if (!matched_func_decl && sema_normalized_current_function_) {
-			throw InternalError("Sema-normalized direct call is missing a resolved target");
-		}
 	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
