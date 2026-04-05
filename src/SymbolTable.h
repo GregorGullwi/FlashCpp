@@ -154,10 +154,6 @@ public:
 		if (it == current_scope.symbols.end()) {
 			std::string_view key = intern_string(identifier);
 			current_scope.symbols[key] = std::vector<ASTNode>{node};
-			if (current_scope.scope_type == ScopeType::Global && node.is<DeclarationNode>() && identifier.find("streamoff") != std::string_view::npos) {
-				FLASH_LOG_FORMAT(General, Error, "SymbolTable: inserting '{}' as DeclarationNode in GLOBAL scope, tok_line={} tok_value='{}'",
-					identifier, node.as<DeclarationNode>().identifier_token().line(), node.as<DeclarationNode>().identifier_token().value());
-			}
 		} else {
 			// Identifier exists - check if we can add this as an overload
 			auto& existing_nodes = it->second;
@@ -390,10 +386,6 @@ public:
 			// here so they correctly participate in shadowing and overload formation.
 			auto symbolIt = scope.symbols.find(identifier);
 			if (symbolIt != scope.symbols.end() && !symbolIt->second.empty()) {
-				if (identifier == "streamoff") {
-					FLASH_LOG_FORMAT(General, Error, "lookup 'streamoff': found in direct scope symbols, scope_type={} node_type={}",
-						static_cast<int>(scope.scope_type), symbolIt->second[0].type_name());
-				}
 				// Return the first match for backward compatibility
 				return symbolIt->second[0];
 			}
@@ -404,10 +396,6 @@ public:
 				const auto& [using_namespace_handle, original_name] = using_handle_it->second;
 				auto result = lookup_qualified(using_namespace_handle, original_name);
 				if (result.has_value()) {
-					if (identifier == "streamoff") {
-						FLASH_LOG_FORMAT(General, Error, "lookup 'streamoff': found via using declaration, scope_type={} node_type={}",
-							static_cast<int>(scope.scope_type), result->type_name());
-					}
 					return result;
 				}
 			}
@@ -415,10 +403,6 @@ public:
 			// Third, check using directives in this scope
 			auto using_result = lookup_using_directives_first(scope, identifier);
 			if (using_result.has_value()) {
-				if (identifier == "streamoff") {
-					FLASH_LOG_FORMAT(General, Error, "lookup 'streamoff': found via using directive, scope_type={} node_type={}",
-						static_cast<int>(scope.scope_type), using_result->type_name());
-				}
 				return using_result;
 			}
 
@@ -432,10 +416,6 @@ public:
 						StringHandle key = StringTable::getOrInternStringHandle(identifier);
 						auto symbol_it = ns_it->second.find(key);
 						if (symbol_it != ns_it->second.end() && !symbol_it->second.empty()) {
-							if (identifier == "streamoff") {
-								FLASH_LOG_FORMAT(General, Error, "lookup 'streamoff': found in namespace_symbols_, scope_type={} node_type={}",
-									static_cast<int>(scope.scope_type), symbol_it->second[0].type_name());
-							}
 							return symbol_it->second[0];
 						}
 					}
@@ -570,15 +550,6 @@ public:
 	void insert_into_namespace(NamespaceHandle ns, StringHandle name_handle, ASTNode node, bool adl_only = false) {
 		if (!ns.isValid())
 			return;
-		if (StringTable::getStringView(name_handle) == "streamoff") {
-			if (node.is<DeclarationNode>()) {
-				FLASH_LOG_FORMAT(General, Error, "insert_into_namespace: 'streamoff' as DeclarationNode, tok_line={} adl_only={}",
-					node.as<DeclarationNode>().identifier_token().line(), adl_only);
-			} else {
-				FLASH_LOG_FORMAT(General, Error, "insert_into_namespace: 'streamoff' as {} adl_only={}",
-					node.type_name(), adl_only);
-			}
-		}
 		auto& target = adl_only ? adl_only_symbols_[ns] : namespace_symbols_[ns];
 		auto it = target.find(name_handle);
 		if (it == target.end()) {

@@ -1468,14 +1468,16 @@ private:	 // Resume private methods
 			// the template body opening brace (C++20 [temp.res]/9).
 		auto checkPhase1 = [&](const Token& decl_tok) {
 			if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
-				decl_tok.file_index() == phase1_cutoff_file_idx_ &&
-				decl_tok.line() > phase1_cutoff_line_) {
+				decl_tok.file_index() == phase1_cutoff_file_idx_) {
+				// Use source line numbers for the comparison, not preprocessed line numbers.
+				// Preprocessed line numbers can be misleading when a header is included multiple
+				// times (even if guarded) or when forward declarations are created during template
+				// reparsing.  Source line numbers within the same file are always correctly ordered.
 				size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
 				size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
-				FLASH_LOG_FORMAT(Parser, Error, "Phase1 violation: name='{}' decl_file={} decl_pp_line={} decl_src_line={} cutoff_pp_line={} cutoff_src_line={} file={} decl_tok_value='{}'",
-					token.value(), decl_tok.file_index(), decl_tok.line(), decl_src_line, phase1_cutoff_line_, cutoff_src_line,
-					lexer_.getFilePath(decl_tok.file_index()), decl_tok.value());
-				phase1_violation_token_ = token;
+				if (decl_src_line > cutoff_src_line) {
+					phase1_violation_token_ = token;
+				}
 			}
 		};
 

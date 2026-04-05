@@ -3775,7 +3775,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Not a template function, or instantiation failed
 				// Create a forward declaration for the function (only if we haven't already found it)
 				// Skip if we already found this as a member function in the class context
-				if (!found_member_function_in_context && !identifierType.has_value()) {
+				// Skip if the identifier is a known type name — `TypeName(expr)` is a functional
+				// cast, not a function call, so we must not pollute the global scope with a
+				// bogus forward declaration that would confuse Phase 1 two-phase lookup.
+				if (!found_member_function_in_context && !identifierType.has_value() &&
+					!lookupTypeInCurrentContext(identifier_token.handle())) {
 					// We'll assume it returns int for now (this is a simplification)
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
