@@ -770,7 +770,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// direct-call target stored by semantic analysis. Only use it when the
 	// codegen recovery chain below has no needed side effects, or when those
 	// side effects can be reproduced directly from the sema-owned target.
-	if (sema_) {
+	if (sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
 		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&callExprNode);
 		if (sema_resolved) {
 			std::string_view parent = sema_resolved->parent_struct_name();
