@@ -2744,40 +2744,41 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						SaveHandle current_pos = save_token_position();
-						const FunctionDeclarationNode* saved_current_function = current_function_;
 
 						restore_lexer_position_only(orig_func.template_body_position());
 
-						gSymbolTable.enter_scope(ScopeType::Function);
-						current_function_ = &new_func;
+						// Use FunctionParsingScopeGuard for full member-function context:
+						// scope, current_function_, member context push, 'this' injection,
+						// and parameter registration — matching the normal delayed-body path.
+						{
+							FlashCpp::FunctionParsingScopeGuard func_guard(
+								*this,
+								!orig_func.is_static(), // is_member
+								&instantiated_struct_ref,
+								instantiated_name,
+								struct_type_info.type_index_,
+								new_func.parameter_nodes(),
+								&new_func);
 
-						for (const auto& param : new_func.parameter_nodes()) {
-							if (param.is<DeclarationNode>()) {
-								const auto& param_decl = param.as<DeclarationNode>();
-								gSymbolTable.insert(param_decl.identifier_token().value(), param);
+							auto block_result = parse_function_body();
+
+							if (!block_result.is_error() && block_result.node().has_value()) {
+								// Substitute template parameters in the parsed body
+								ASTNode substituted_body = substituteTemplateParameters(
+									*block_result.node(),
+									template_params,
+									template_args_for_pattern);
+								if (orig_func.is_static()) {
+									const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
+									substituted_body = rebindStaticMemberInitializerFunctionCalls(
+										substituted_body,
+										rebound_type_info ? rebound_type_info->getStructInfo() : nullptr,
+										true);
+								}
+								new_func.set_definition(substituted_body);
 							}
-						}
+						} // func_guard dtor: pops member ctx, restores current_function_, exits scope
 
-						auto block_result = parse_function_body();
-
-						if (!block_result.is_error() && block_result.node().has_value()) {
-							// Substitute template parameters in the parsed body
-							ASTNode substituted_body = substituteTemplateParameters(
-								*block_result.node(),
-								template_params,
-								template_args_for_pattern);
-							if (orig_func.is_static()) {
-								const TypeInfo* rebound_type_info = findTypeByName(instantiated_name);
-								substituted_body = rebindStaticMemberInitializerFunctionCalls(
-									substituted_body,
-									rebound_type_info ? rebound_type_info->getStructInfo() : nullptr,
-									true);
-							}
-							new_func.set_definition(substituted_body);
-						}
-
-						current_function_ = saved_current_function;
-						gSymbolTable.exit_scope();
 						restore_lexer_position_only(current_pos);
 						discard_saved_token(current_pos);
 					} else {
@@ -6180,33 +6181,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					// Save current position and parsing context
 					SaveHandle current_pos = save_token_position();
-					const FunctionDeclarationNode* saved_current_function = current_function_;
 
 					// Restore to the function body start
 					restore_lexer_position_only(func_decl.template_body_position());
 
-					// Set up parsing context for the function
-					gSymbolTable.enter_scope(ScopeType::Function);
-					current_function_ = &new_func_ref;
+					// Use FunctionParsingScopeGuard for full member-function context:
+					// scope, current_function_, member context push, 'this' injection,
+					// and parameter registration — matching the normal delayed-body path.
+					{
+						FlashCpp::FunctionParsingScopeGuard func_guard(
+							*this,
+							!func_decl.is_static(), // is_member
+							&instantiated_struct_ref,
+							instantiated_name,
+							struct_type_info.type_index_,
+							new_func_ref.parameter_nodes(),
+							&new_func_ref);
 
-					// Add parameters to symbol table
-					for (const auto& param : new_func_ref.parameter_nodes()) {
-						if (param.is<DeclarationNode>()) {
-							const auto& param_decl = param.as<DeclarationNode>();
-							gSymbolTable.insert(param_decl.identifier_token().value(), param);
+						// Parse the function body (handles function-try-blocks too)
+						auto block_result = parse_function_body();
+
+						if (!block_result.is_error() && block_result.node().has_value()) {
+							body_to_substitute = block_result.node();
 						}
-					}
-
-					// Parse the function body (handles function-try-blocks too)
-					auto block_result = parse_function_body();
-
-					if (!block_result.is_error() && block_result.node().has_value()) {
-						body_to_substitute = block_result.node();
-					}
-
-					// Clean up context
-					current_function_ = saved_current_function;
-					gSymbolTable.exit_scope();
+					} // func_guard dtor: pops member ctx, restores current_function_, exits scope
 
 					// Restore original position
 					restore_lexer_position_only(current_pos);
@@ -6877,51 +6875,46 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 
-					// Match the normal delayed-body flow so member/parameter lookup works
-					// during parsing and auto-return deduction.
-					current_function_ = &inst_func;
-					gSymbolTable.enter_scope(ScopeType::Function);
-					register_parameters_in_scope(inst_func.parameter_nodes());
-					member_function_context_stack_.push_back({instantiated_name,
-															  struct_type_info.type_index_,
-															  &instantiated_struct_ref,
-															  nullptr});
-					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
-
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
 
-					// Parse the function body (handles function-try-blocks too)
-					auto body_result = parse_function_body();
-					if (body_result.is_error() || !body_result.node().has_value()) {
-						FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ",
-								  decl.identifier_token().value());
-						current_function_ = nullptr;
-						member_function_context_stack_.pop_back();
-						gSymbolTable.exit_scope();
-						restore_lexer_position_only(saved_pos);
-						continue;
-					}
+					// Use FunctionParsingScopeGuard for full member-function context:
+					// scope, current_function_, member context push, 'this' injection,
+					// and parameter registration — matching the normal delayed-body path.
+					{
+						FlashCpp::FunctionParsingScopeGuard func_guard(
+							*this,
+							true, // is_member (out-of-line member function)
+							&instantiated_struct_ref,
+							instantiated_name,
+							struct_type_info.type_index_,
+							inst_func.parameter_nodes(),
+							&inst_func);
 
-					// Now substitute template parameters in the parsed body
-					try {
-						ASTNode substituted_body = substituteTemplateParameters(
-							*body_result.node(),
-							out_of_line_member.template_params,
-							template_args_to_use);
-						inst_func.set_definition(substituted_body);
-						finalize_function_after_definition(inst_func, true);
-						found_match = true;
-					} catch (const std::exception& e) {
-						FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line function ",
-								  decl.identifier_token().value(), ": ", e.what());
-					}
+						// Parse the function body (handles function-try-blocks too)
+						auto body_result = parse_function_body();
+						if (body_result.is_error() || !body_result.node().has_value()) {
+							FLASH_LOG(Templates, Error, "Failed to parse out-of-line function body for ",
+									  decl.identifier_token().value());
+							restore_lexer_position_only(saved_pos);
+							continue;
+						}
 
-					// Pop member function context and parameter scope after body-based
-					// finalization so auto return deduction can still resolve members.
-					current_function_ = nullptr;
-					member_function_context_stack_.pop_back();
-					gSymbolTable.exit_scope();
+						// Now substitute template parameters in the parsed body
+						try {
+							ASTNode substituted_body = substituteTemplateParameters(
+								*body_result.node(),
+								out_of_line_member.template_params,
+								template_args_to_use);
+							inst_func.set_definition(substituted_body);
+							finalize_function_after_definition(inst_func, true);
+							found_match = true;
+						} catch (const std::exception& e) {
+							FLASH_LOG(Templates, Error, "Exception during template parameter substitution for out-of-line function ",
+									  decl.identifier_token().value(), ": ", e.what());
+						}
+					} // func_guard dtor: pops member ctx, restores current_function_, exits scope
+
 					restore_lexer_position_only(saved_pos);
 
 					if (found_match) {
@@ -6947,17 +6940,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					// Save current position
 					SaveHandle saved_pos = save_token_position();
 
-					// Match the normal delayed-body flow for member functions/constructors.
-					gSymbolTable.enter_scope(ScopeType::Function);
-					register_parameters_in_scope(ctor.parameter_nodes());
-					member_function_context_stack_.push_back({instantiated_name,
-															  struct_type_info.type_index_,
-															  &instantiated_struct_ref,
-															  nullptr});
-					register_member_functions_in_scope(&instantiated_struct_ref, struct_type_info.type_index_);
-
 					// Restore to the out-of-line function body position
 					restore_lexer_position_only(out_of_line_member.body_start);
+
+					// Use setup_member_function_context for full member context:
+					// member context push, member-function registration, and 'this' injection.
+					// Constructors use ConstructorDeclarationNode (not FunctionDeclarationNode),
+					// so we manage the scope manually but delegate context to the shared helper.
+					gSymbolTable.enter_scope(ScopeType::Function);
+					register_parameters_in_scope(ctor.parameter_nodes());
+					setup_member_function_context(
+						&instantiated_struct_ref,
+						instantiated_name,
+						struct_type_info.type_index_);
 
 					// Parse the function body (handles function-try-blocks too)
 					// Pass true for is_ctor_or_dtor so constructor function-try-blocks
