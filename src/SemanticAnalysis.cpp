@@ -2937,7 +2937,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (arg.is<ExpressionNode>()) {
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
-				// C++20 [expr.ref]: a non-reference member access keeps lvalue-ness for
+				// C++20 [expr.ref]: a non-reference member access keeps lvalueness for
 				// lvalue bases but yields an xvalue for prvalue/xvalue bases. The generic
 				// overload-resolution helper treats all member accesses as lvalues, so keep
 				// this sema-owned refinement here instead of calling the generic helper
@@ -2945,10 +2945,17 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				handled_member_access_category = true;
 				if (!arg_type.is_reference()) {
 					const ValueCategory object_category = inferExpressionValueCategory(member_access->object());
-					arg_type.set_reference_qualifier(
-						object_category == ValueCategory::LValue
-							? ReferenceQualifier::LValueReference
-							: ReferenceQualifier::RValueReference);
+					switch (object_category) {
+						case ValueCategory::LValue:
+							arg_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+							break;
+						case ValueCategory::XValue:
+						case ValueCategory::PRValue:
+							arg_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+							break;
+						default:
+							throw InternalError("Unexpected member-access object value category");
+					}
 				}
 			}
 		}
