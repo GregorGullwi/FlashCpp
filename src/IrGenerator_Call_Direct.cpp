@@ -766,105 +766,112 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return &fd;
 	};
 
-	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
-	// direct-call target stored by semantic analysis. Only use it when the
-	// codegen recovery chain below has no needed side effects, or when those
-	// side effects can be reproduced directly from the sema-owned target.
-	if (sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
-		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(sema_call_key);
-		if (sema_resolved) {
-			std::string_view parent = sema_resolved->parent_struct_name();
-			const bool is_current_struct_or_unowned = parent.empty() ||
-				(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
-			if (is_current_struct_or_unowned) {
-				matched_func_decl = sema_resolved;
-				resolveMangledName(matched_func_decl, parent);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved direct call target for: {}", func_name_view);
-			} else {
-				StringHandle owner_handle;
-				std::string_view resolved_owner_name = parent;
-				const StructTypeInfo* owner_struct_info = nullptr;
+	auto consumeResolvedDirectCallTarget = [&](const FunctionDeclarationNode* resolved_target, std::string_view source_label) {
+		if (!resolved_target || matched_func_decl) {
+			return;
+		}
+		std::string_view parent = resolved_target->parent_struct_name();
+		const bool is_current_struct_or_unowned = parent.empty() ||
+			(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
+		if (is_current_struct_or_unowned) {
+			matched_func_decl = resolved_target;
+			resolveMangledName(matched_func_decl, parent);
+			FLASH_LOG_FORMAT(Codegen, Debug, "Using {} direct call target for: {}", source_label, func_name_view);
+			return;
+		}
 
-				{
-					StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
-					auto owner_it = getTypesByNameMap().find(parent_handle);
-					if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
-						owner_handle = owner_it->second->name();
-						resolved_owner_name = StringTable::getStringView(owner_handle);
-						owner_struct_info = owner_it->second->getStructInfo();
-					}
-				}
+		StringHandle owner_handle;
+		std::string_view resolved_owner_name = parent;
+		const StructTypeInfo* owner_struct_info = nullptr;
 
-				if (owner_handle.isValid()) {
-					matched_func_decl = sema_resolved;
-					std::string_view owner_for_mangling = parent;
-					if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
-						owner_for_mangling = resolved_owner_name;
-					}
-					resolveMangledName(matched_func_decl, owner_for_mangling);
-					if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
-						queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
-					} else if (const FunctionDeclarationNode* instantiated_func =
-						instantiateAndQueueLazyMember(owner_handle,
-							matched_func_decl->decl_node().identifier_token().handle(),
-							resolved_owner_name,
-							callExprNode.arguments().size())) {
-						matched_func_decl = instantiated_func;
-						resolveMangledName(matched_func_decl, resolved_owner_name);
-					}
-					FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved cross-struct direct call target for: {}", func_name_view);
-				}
+		{
+			StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+			auto owner_it = getTypesByNameMap().find(parent_handle);
+			if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
+				owner_handle = owner_it->second->name();
+				resolved_owner_name = StringTable::getStringView(owner_handle);
+				owner_struct_info = owner_it->second->getStructInfo();
 			}
 		}
+
+		if (!owner_handle.isValid()) {
+			return;
+		}
+
+		matched_func_decl = resolved_target;
+		std::string_view owner_for_mangling = parent;
+		if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
+			owner_for_mangling = resolved_owner_name;
+		}
+		resolveMangledName(matched_func_decl, owner_for_mangling);
+		if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
+			queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
+		} else if (const FunctionDeclarationNode* instantiated_func =
+			instantiateAndQueueLazyMember(owner_handle,
+				matched_func_decl->decl_node().identifier_token().handle(),
+				resolved_owner_name,
+				callExprNode.arguments().size())) {
+			matched_func_decl = instantiated_func;
+			resolveMangledName(matched_func_decl, resolved_owner_name);
+		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Using {} cross-struct direct call target for: {}", source_label, func_name_view);
+	};
+
+	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
+	// direct-call target stored by semantic analysis before attempting any
+	// duplicate symbol-table recovery work in codegen.
+	if (!matched_func_decl && sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
+		consumeResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
 	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
-		// If so, use it directly and skip the lookup logic
+	// If so, use it directly and skip the lookup logic
 	if (has_precomputed_mangled) {
 		function_name = callExprNode.mangled_name();
 		FLASH_LOG_FORMAT(Codegen, Debug, "Using pre-computed mangled name from call expression: {}", function_name);
-			// We don't need to find matched_func_decl since we already have the mangled name
-			// The mangled name is sufficient for generating the call instruction
+		// We don't need to find matched_func_decl since we already have the mangled name
+		// The mangled name is sufficient for generating the call instruction
 	}
 
+	if (!matched_func_decl) {
 		// Look up the function in the global symbol table to get all overloads
 		// Use global_symbol_table_ if available, otherwise fall back to local symbol_table
-	auto scoped_overloads = global_symbol_table_
-								? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
-								: symbol_table.lookup_all(decl_node.identifier_token().value());
+		auto scoped_overloads = global_symbol_table_
+									? global_symbol_table_->lookup_all(decl_node.identifier_token().value())
+									: symbol_table.lookup_all(decl_node.identifier_token().value());
 
 		// Also try looking up in gSymbolTable directly for comparison
-	extern SymbolTable gSymbolTable;
-	auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
+		extern SymbolTable gSymbolTable;
+		auto gSymbolTable_overloads = gSymbolTable.lookup_all(decl_node.identifier_token().value());
 
 		// Find the matching overload by comparing the DeclarationNode address
 		// This works because the call expression holds a reference to the specific
 		// DeclarationNode that was selected by overload resolution
-	FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}",
-					 lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
-	for (const auto& overload : scoped_overloads) {
-		const FunctionDeclarationNode* overload_func_decl = nullptr;
-		if (overload.is<FunctionDeclarationNode>()) {
-			overload_func_decl = &overload.as<FunctionDeclarationNode>();
-		} else if (overload.is<TemplateFunctionDeclarationNode>()) {
-			overload_func_decl = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
-		}
+		FLASH_LOG_FORMAT(Codegen, Debug, "Looking for function: {}, all_overloads size: {}, gSymbolTable_overloads size: {}",
+						 lookup_name_view, scoped_overloads.size(), gSymbolTable_overloads.size());
+		for (const auto& overload : scoped_overloads) {
+			const FunctionDeclarationNode* overload_func_decl = nullptr;
+			if (overload.is<FunctionDeclarationNode>()) {
+				overload_func_decl = &overload.as<FunctionDeclarationNode>();
+			} else if (overload.is<TemplateFunctionDeclarationNode>()) {
+				overload_func_decl = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+			}
 
-		if (overload_func_decl) {
-			const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
-			FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}",
-							 (void*)overload_decl, (void*)&decl_node);
-			if (overload_decl == &decl_node ||
-				(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
-				 overload_func_decl->mangled_name() == callExprNode.mangled_name())) {
-					// Found the matching overload
-				matched_func_decl = overload_func_decl;
-				resolveMangledName(matched_func_decl);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Matched overload, function_name: {}", function_name);
-				break;
+			if (overload_func_decl) {
+				const DeclarationNode* overload_decl = &overload_func_decl->decl_node();
+				FLASH_LOG_FORMAT(Codegen, Debug, "  Checking overload at {}, looking for {}",
+								 (void*)overload_decl, (void*)&decl_node);
+				if (overload_decl == &decl_node ||
+					(has_precomputed_mangled && overload_func_decl->has_mangled_name() &&
+					 overload_func_decl->mangled_name() == callExprNode.mangled_name())) {
+						// Found the matching overload
+					matched_func_decl = overload_func_decl;
+					resolveMangledName(matched_func_decl);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Matched overload, function_name: {}", function_name);
+					break;
+				}
 			}
 		}
-	}
 
 		// For instantiated template calls, the concrete specialization is registered under its
 		// mangled name in the symbol table. Prefer that over falling back to the template pattern.
@@ -1175,6 +1182,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				}
 			}
 		}
+	}
 	}
 
 		// consteval enforcement: every call to a consteval function is an immediate invocation and
