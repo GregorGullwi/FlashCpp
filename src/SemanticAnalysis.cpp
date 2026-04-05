@@ -2327,7 +2327,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(
 	return result;
 }
 
-ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return ValueCategory::PRValue;
 	}

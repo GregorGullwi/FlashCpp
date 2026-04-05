@@ -160,7 +160,7 @@ private:
 	// Handles: NumericLiteralNode, BoolLiteralNode, IdentifierNode (via scope stack).
 	// Returns invalid CanonicalTypeId if inference is not possible.
 	CanonicalTypeId inferExpressionType(const ASTNode& node);
-	ValueCategory inferExpressionValueCategory(const ASTNode& node) const;
+	ValueCategory inferExpressionValueCategory(const ASTNode& node);
 	void registerOuterTemplateBindingsInScope(const LambdaExpressionNode& lambda);
 	void registerOuterTemplateBindingsInScope(const LambdaInfo& lambda_info);
 	void registerOuterTemplateBindingsInScope(const StructDeclarationNode& decl);
