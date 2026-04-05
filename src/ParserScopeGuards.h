@@ -152,7 +152,7 @@ private:
 //   - Enters a function scope in the symbol table
 //   - Saves and overwrites current_function_
 //   - For member functions: calls setup_member_function_context() which handles
-//     context-stack push, member-function registration, and 'this' injection
+//     context-stack push, member-function registration, and optional 'this' injection
 //   - Registers function parameters in the symbol table
 //
 //  Destruction (in reverse order):
@@ -161,7 +161,7 @@ private:
 //   - Exits the function scope (via SymbolTableScope)
 //
 // Usage:
-//   FunctionParsingScopeGuard guard(parser, is_member,
+//   FunctionParsingScopeGuard guard(parser, has_member_context, inject_this,
 //                                   struct_node, struct_name, struct_type_index,
 //                                   params, current_function);
 //   // ... parse function body ...
@@ -171,7 +171,8 @@ class FunctionParsingScopeGuard {
 public:
 	FunctionParsingScopeGuard(
 		Parser& parser,
-		bool is_member,
+		bool has_member_context,
+		bool inject_this,
 		StructDeclarationNode* struct_node,
 		StringHandle struct_name,
 		TypeIndex struct_type_index,
