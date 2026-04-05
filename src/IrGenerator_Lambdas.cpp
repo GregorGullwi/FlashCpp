@@ -1,6 +1,24 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 
+namespace {
+
+struct SemaNormalizedScopeGuard {
+	bool& flag;
+	bool saved;
+
+	explicit SemaNormalizedScopeGuard(bool& flag_ref)
+		: flag(flag_ref), saved(flag_ref) {
+		flag = false;
+	}
+
+	~SemaNormalizedScopeGuard() {
+		flag = saved;
+	}
+};
+
+} // namespace
+
 LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNode& lambda) {
 	LambdaInfo info;
 	info.lambda_id = lambda.lambda_id();
@@ -549,6 +567,11 @@ void AstToIr::generateLambdaFunctions(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
+	// Lambda bodies are normalized through normalizeInstantiatedLambdaBody(), but they are
+	// not yet tracked in normalized_bodies_. Keep direct-call enforcement on the existing
+	// function/ctor/dtor boundary until lambda bodies participate in the same tracking.
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
+
 		// Generate function declaration for operator()
 	FunctionDeclOp func_decl_op;
 	func_decl_op.function_name = StringTable::getOrInternStringHandle("operator()"sv);  // Phase 4: Variant needs explicit type
@@ -708,6 +731,8 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 }
 
 void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
+	SemaNormalizedScopeGuard sema_normalized_scope_guard(sema_normalized_current_function_);
+
 		// Generate function declaration for __invoke
 	FunctionDeclOp func_decl_op;
 	func_decl_op.function_name = StringTable::getOrInternStringHandle(lambda_info.invoke_name);	// Variant needs explicit type
