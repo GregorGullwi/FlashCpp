@@ -36,37 +36,29 @@ Range-for loops using struct iterators with inline member function definitions
 definitions work correctly. See `tests/test_range_for_auto_struct_iterator_ret0.cpp`
 for a working pattern.
 
-## Parser: member postfix object type deduction limited to identifier expressions
+## Member calls on reference-valued complex receivers remain incomplete
 
-`parse_member_postfix` (`src/Parser_Expr_PostfixCalls.cpp:205-225`) resolves
-`object_struct_name` only when the object expression is a simple
-`IdentifierNode`. For complex expressions such as
-`static_cast<Foo&>(x).method()`, `(cond ? a : b).method()`, or
-`getObj().method()`, the struct name remains unknown (`std::nullopt`).
+Template or lazy member calls on reference-valued complex receivers such as
+`static_cast<Foo&>(x).method()` or `(cond ? a : b).method()` can still fall
+back into ordinary direct-call lowering or mis-handle the receiver object.
 
-When the struct name is not deduced the following features are skipped:
+One current failure mode is:
 
-- Template member function instantiation (explicit and argument-deduced)
-- Lazy member function instantiation
-- SFINAE member-existence validation
-
-This is a pre-existing limitation carried over from the original duplicated
-`.` / `->` handling in `apply_postfix_operators` / `parse_postfix_expression`
-and is **not** a regression introduced by the `parse_member_postfix`
-refactoring.
-
-**Workaround:** Assign the complex expression to a named variable before
-calling the member function so the parser sees an `IdentifierNode`:
-
-```cpp
-auto obj = static_cast<Foo&>(x);
-obj.method();  // object type is now deducible
+```text
+Phase 1: sema-normalized direct call missing resolved target for '...'
 ```
 
-**Possible fix:** Use `get_expression_type()` (already available on the
-`Parser` class and used by `tryResolveMemberFunctionTemplate` at
-`src/Parser_Expr_PostfixCalls.cpp:17`) to deduce the object type for
-arbitrary expressions, not just identifiers.
+`parse_member_postfix` now deduces object types for arbitrary expressions, but
+`generateMemberFunctionCallIr` (`src/IrGenerator_Call_Indirect.cpp`) still has
+receiver-shape-specific lowering and does not yet handle all reference-valued
+complex receivers all the way through member-call codegen.
+
+**Workaround:** Bind the expression result to a named reference first:
+
+```cpp
+auto& obj = static_cast<Foo&>(x);
+obj.method();
+```
 
 ## Return statement implicit constructor materialization uses triple-fallback strategy
 
