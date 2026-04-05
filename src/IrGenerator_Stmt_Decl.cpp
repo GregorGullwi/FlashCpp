@@ -73,16 +73,8 @@ bool requiresSemaOwnedOverloadArgTypeInNormalizedBody(const ASTNode& arg) {
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return std::visit([](const auto& inner) -> bool {
-		using T = std::decay_t<decltype(inner)>;
-		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			return inner.binding() == IdentifierBinding::EnumConstant;
-		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-			return true;
-		}
-		return false;
-	},
-					  expr);
+	return !std::holds_alternative<IdentifierNode>(expr) &&
+		   !std::holds_alternative<MemberAccessNode>(expr);
 }
 
 } // namespace
@@ -100,14 +92,14 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	const bool require_sema_owned_arg_type =
-		sema_ && sema_normalized_current_function_ &&
-		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 	if (sema_) {
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
 	}
+	const bool require_sema_owned_arg_type =
+		sema_ && sema_normalized_current_function_ &&
+		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 
 	if (!arg.is<ExpressionNode>()) {
 		return tryParserFallback();
