@@ -203,10 +203,10 @@ ParseResult Parser::parse_member_postfix(std::optional<ASTNode>& result, bool is
 		}
 
 		std::optional<std::string_view> object_struct_name;
-		if (auto type_opt = get_expression_type(*result); type_opt.has_value()) {
-			const auto& type_spec = *type_opt;
-			if (is_struct_type(type_spec.category())) {
-				TypeIndex type_idx = type_spec.type_index();
+		if (auto type_opt = get_expression_type(*result); type_opt.has_value() &&
+													  is_struct_type(type_opt->category())) {
+			TypeIndex type_idx = type_opt->type_index();
+			if (type_idx.is_valid()) {
 				if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
 					object_struct_name = StringTable::getStringView(type_info->name());
 					instantiateLazyClassToPhase(type_info->name(), ClassInstantiationPhase::Full);
