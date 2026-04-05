@@ -8,7 +8,7 @@
 
 namespace {
 
-constexpr int function_pointer_size_bits = static_cast<int>(sizeof(void*) * CHAR_BIT);
+constexpr int FunctionPointerSizeBits = static_cast<int>(sizeof(void*) * CHAR_BIT);
 
 }
 
@@ -901,7 +901,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
 				skip_noexcept_specifier();
 
-				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, function_pointer_size_bits, Token{}, CVQualifier::None);
+				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, FunctionPointerSizeBits, Token{}, CVQualifier::None);
 				FunctionSignature signature;
 				signature.return_type_index = base_type.type_index();
 				signature.parameter_type_indices = return_param_types;
@@ -1063,7 +1063,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		// Create a new TypeSpecifierNode for the function pointer
 		// Function pointers are 64 bits (8 bytes) on x64
-		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, function_pointer_size_bits, Token{}, CVQualifier::None);
+		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, FunctionPointerSizeBits, Token{}, CVQualifier::None);
 
 		FunctionSignature sig;
 		sig.return_type_index = return_type_index;
