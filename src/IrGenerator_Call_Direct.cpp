@@ -49,7 +49,18 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 }
 
 TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const {
+	if (!needs_type_index(signature.returnType())) {
+		TypeIndex native = nativeTypeIndex(signature.returnType());
+		return native.is_valid()
+			? native.withCategory(signature.returnType())
+			: TypeIndex{}.withCategory(signature.returnType());
+	}
+
 	if (signature.return_type_index.is_valid()) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(signature.return_type_index);
+		if (resolved_alias.type_index.is_valid()) {
+			return resolved_alias.type_index.withCategory(resolved_alias.type_index.category());
+		}
 		return signature.return_type_index.withCategory(signature.returnType());
 	}
 
@@ -62,6 +73,10 @@ TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& 
 int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
 	if (signature.returnType() == TypeCategory::Void) {
 		return 0;
+	}
+
+	if (!needs_type_index(signature.returnType())) {
+		return get_type_size_bits(signature.returnType());
 	}
 
 	if (signature.return_type_index.is_valid()) {
@@ -467,7 +482,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.result = ret_var,
 				.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
 				.arguments = std::move(arguments)};
-			if (func_type.has_function_signature()) {
+			if (func_type.has_function_signature() && needs_type_index(func_type.function_signature().returnType())) {
 				populateIndirectCallReturnInfo(op, func_type.function_signature());
 			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
@@ -475,7 +490,10 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				// Return the result variable with the return type from the function signature
 			if (func_type.has_function_signature()) {
 				const auto& sig = func_type.function_signature();
-				return buildIndirectCallReturnResult(sig, ret_var);
+				if (needs_type_index(sig.returnType())) {
+					return buildIndirectCallReturnResult(sig, ret_var);
+				}
+				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			} else {
 					// For auto types or missing signature, default to int
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);

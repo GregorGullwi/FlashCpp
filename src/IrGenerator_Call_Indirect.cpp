@@ -295,8 +295,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
 			std::vector<TypedValue> arguments;
+			std::vector<ExprResult> argument_results;
 			callExprNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+				argument_results.push_back(argument_result);
 				TypeCategory arg_type = argument_result.typeEnum();
 				int arg_size = argument_result.size_in_bits.value;
 				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -315,14 +317,42 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				.result = ret_var,
 				.function_pointer = std::move(function_pointer),
 				.arguments = std::move(arguments)};
-			if (callee_type->has_function_signature()) {
+			if (callee_type->has_function_signature() && needs_type_index(callee_type->function_signature().returnType())) {
 				populateIndirectCallReturnInfo(op, callee_type->function_signature());
 			}
 			ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
 
 			if (callee_type->has_function_signature()) {
 				const auto& sig = callee_type->function_signature();
-				return buildIndirectCallReturnResult(sig, ret_var);
+				if (sig.return_type_index.is_valid() &&
+					(sig.returnType() == TypeCategory::UserDefined ||
+					 sig.returnType() == TypeCategory::TypeAlias ||
+					 sig.returnType() == TypeCategory::Template ||
+					 isPlaceholderAutoType(sig.returnType()))) {
+					for (size_t i = 0; i < sig.parameter_type_indices.size() && i < argument_results.size(); ++i) {
+						if (sig.parameter_type_indices[i] == sig.return_type_index) {
+							const ExprResult& deduced_result = argument_results[i];
+							TypeIndex deduced_type_index = deduced_result.type_index.is_valid()
+								? deduced_result.type_index.withCategory(deduced_result.typeEnum())
+								: nativeTypeIndex(deduced_result.typeEnum());
+							return makeExprResult(
+								deduced_type_index,
+								deduced_result.size_in_bits,
+								IrOperand{ret_var},
+								PointerDepth{},
+								ValueStorage::ContainsData);
+						}
+					}
+				}
+				if (needs_type_index(sig.returnType())) {
+					return buildIndirectCallReturnResult(sig, ret_var);
+				}
+				return makeExprResult(
+					nativeTypeIndex(sig.returnType()),
+					SizeInBits{64},
+					IrOperand{ret_var},
+					PointerDepth{},
+					ValueStorage::ContainsData);
 			}
 
 			return makeExprResult(
@@ -493,9 +523,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 				if (!resolved_member->function_signature) {
 					throw InternalError("Function pointer member missing function_signature for indirect call return type");
 				}
-				populateIndirectCallReturnInfo(op, *resolved_member->function_signature);
+				if (needs_type_index(resolved_member->function_signature->returnType())) {
+					populateIndirectCallReturnInfo(op, *resolved_member->function_signature);
+				}
 				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-				return buildIndirectCallReturnResult(*resolved_member->function_signature, ret_var);
+				if (needs_type_index(resolved_member->function_signature->returnType())) {
+					return buildIndirectCallReturnResult(*resolved_member->function_signature, ret_var);
+				}
+				TypeCategory ret_type = resolved_member->function_signature->returnType();
+				int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+				return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 			}
 
 			// We resolved the member access - now check if it's a struct type
@@ -549,9 +586,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 								if (!member.function_signature) {
 									throw InternalError("Function pointer member missing function_signature for indirect call return type");
 								}
-								populateIndirectCallReturnInfo(op, *member.function_signature);
+								if (needs_type_index(member.function_signature->returnType())) {
+									populateIndirectCallReturnInfo(op, *member.function_signature);
+								}
 								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-								return buildIndirectCallReturnResult(*member.function_signature, ret_var);
+								if (needs_type_index(member.function_signature->returnType())) {
+									return buildIndirectCallReturnResult(*member.function_signature, ret_var);
+								}
+								TypeCategory ret_type = member.function_signature->returnType();
+								int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+								return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 							}
 						}
 
@@ -1037,9 +1081,16 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					if (!member.function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					populateIndirectCallReturnInfo(op, *member.function_signature);
+					if (needs_type_index(member.function_signature->returnType())) {
+						populateIndirectCallReturnInfo(op, *member.function_signature);
+					}
 					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
-					return buildIndirectCallReturnResult(*member.function_signature, ret_var);
+					if (needs_type_index(member.function_signature->returnType())) {
+						return buildIndirectCallReturnResult(*member.function_signature, ret_var);
+					}
+					TypeCategory ret_type = member.function_signature->returnType();
+					int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+					return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 				}
 			}
 		}
