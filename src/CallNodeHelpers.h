@@ -65,7 +65,6 @@ struct CallInfo {
 };
 
 struct CallMetadataCopyOptions {
-	bool copy_indirect_call = true;
 	bool copy_mangled_name = true;
 	bool copy_qualified_name = true;
 	bool copy_template_arguments = true;
@@ -76,12 +75,6 @@ inline void copyCallMetadataFromInfo(
 	CallNodeT& target,
 	const CallInfo& source,
 	const CallMetadataCopyOptions& options) {
-	if constexpr (requires(CallNodeT& node, bool indirect) { node.set_indirect_call(indirect); }) {
-		if (options.copy_indirect_call) {
-			target.set_indirect_call(source.is_indirect);
-		}
-	}
-
 	if (options.copy_mangled_name && source.mangled_name.isValid()) {
 		target.set_mangled_name(source.mangled_name.view());
 	}
