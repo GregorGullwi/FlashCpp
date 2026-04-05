@@ -336,6 +336,35 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			}
 		}
 
+		ChunkedVector<ASTNode> substituted_args_nodes;
+		std::vector<TypeSpecifierNode> substituted_arg_types;
+		bool have_complete_substituted_arg_types = true;
+		substituted_args_nodes.reserve(call.arguments().size());
+		substituted_arg_types.reserve(call.arguments().size());
+		for (size_t i = 0; i < call.arguments().size(); ++i) {
+			ASTNode substituted_arg = substitute(call.arguments()[i]);
+			substituted_args_nodes.push_back(substituted_arg);
+			auto substituted_arg_type = parser_.get_expression_type(substituted_arg);
+			if (substituted_arg_type.has_value()) {
+				substituted_arg_types.push_back(*substituted_arg_type);
+			} else {
+				have_complete_substituted_arg_types = false;
+			}
+		}
+
+		auto tryInstantiateExplicitFunctionTemplate = [&](std::string_view template_name) -> std::optional<ASTNode> {
+			if (template_name.empty()) {
+				return std::nullopt;
+			}
+			if (have_complete_substituted_arg_types) {
+				return parser_.try_instantiate_template_explicit(
+					template_name,
+					substituted_template_args,
+					substituted_arg_types);
+			}
+			return parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
+		};
+
 		// Now we have substituted template arguments - instantiate the template
 		if (!substituted_template_args.empty()) {
 			FLASH_LOG(Templates, Debug, "  Attempting to instantiate template: ", func_name, " with ", substituted_template_args.size(), " arguments");
@@ -354,26 +383,24 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 							owner_name = instantiated_owner;
 						}
 					}
-					instantiated_template = parser_.try_instantiate_member_function_template_explicit(
-						owner_name,
-						member_name,
-						substituted_template_args);
+					StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
+					if (getTypesByNameMap().find(owner_name_handle) != getTypesByNameMap().end()) {
+						instantiated_template = parser_.try_instantiate_member_function_template_explicit(
+							owner_name,
+							member_name,
+							substituted_template_args);
+					}
 				}
 				if (!instantiated_template.has_value()) {
-					instantiated_template = parser_.try_instantiate_template_explicit(qualified_name, substituted_template_args);
+					instantiated_template = tryInstantiateExplicitFunctionTemplate(qualified_name);
 				}
 			}
 			if (!instantiated_template.has_value()) {
-				instantiated_template = parser_.try_instantiate_template_explicit(func_name, substituted_template_args);
+				instantiated_template = tryInstantiateExplicitFunctionTemplate(func_name);
 			}
 			if (instantiated_template.has_value()) {
 				if (instantiated_template->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
-
-					ChunkedVector<ASTNode> substituted_args_nodes;
-					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
-					}
 
 					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
 						func_decl.decl_node(),
