@@ -339,7 +339,6 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		ChunkedVector<ASTNode> substituted_args_nodes;
 		std::vector<TypeSpecifierNode> substituted_arg_types;
 		bool have_complete_substituted_arg_types = true;
-		substituted_args_nodes.reserve(call.arguments().size());
 		substituted_arg_types.reserve(call.arguments().size());
 		for (size_t i = 0; i < call.arguments().size(); ++i) {
 			ASTNode substituted_arg = substitute(call.arguments()[i]);
@@ -377,10 +376,13 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					std::string_view member_name = qualified_name.substr(scope_pos + 2);
 					std::vector<TemplateTypeArg> current_inst_args = collectCurrentInstantiationArgs();
 					if (!current_inst_args.empty() && extractBaseTemplateName(owner_name).empty()) {
-						parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
-						std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
-						if (!instantiated_owner.empty()) {
-							owner_name = instantiated_owner;
+						auto owner_template = gTemplateRegistry.lookupTemplate(owner_name);
+						if (owner_template.has_value()) {
+							parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
+							std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
+							if (!instantiated_owner.empty()) {
+								owner_name = instantiated_owner;
+							}
 						}
 					}
 					StringHandle owner_name_handle = StringTable::getOrInternStringHandle(owner_name);
@@ -464,14 +466,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
 
 					// Create a ConstructorCallNode instead of FunctionCallNode
-					ChunkedVector<ASTNode> substituted_args_nodes;
+					ChunkedVector<ASTNode> substituted_ctor_args_nodes;
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
-						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+						substituted_ctor_args_nodes.push_back(substitute(call.arguments()[i]));
 					}
 
 					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
 						ASTNode(&new_type),
-						std::move(substituted_args_nodes),
+						std::move(substituted_ctor_args_nodes),
 						call.called_from());
 
 					// Wrap in ExpressionNode

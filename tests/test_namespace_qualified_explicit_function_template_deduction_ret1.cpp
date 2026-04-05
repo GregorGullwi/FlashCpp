@@ -1,15 +1,15 @@
 namespace ns {
-	template<bool Flag = false, typename T>
+	template<typename Tag, typename T>
 	int f(T value) {
-		return Flag ? value : 0;
+		return value;
 	}
 }
 
-template<bool Flag>
+template<typename Tag>
 int g() {
-	return ns::f<Flag>(1);
+	return ns::f<Tag>(1);
 }
 
 int main() {
-	return g<true>();
+	return g<void>();
 }
