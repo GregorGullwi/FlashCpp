@@ -1,6 +1,5 @@
 #include "Parser.h"
 
-#include <climits>
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -8,7 +7,7 @@
 
 namespace {
 
-constexpr int kFunctionPointerSizeBits = static_cast<int>(sizeof(void*) * CHAR_BIT);
+constexpr int kFunctionPointerSizeBits = 64; // x64 target: always 8 bytes
 
 }
 
