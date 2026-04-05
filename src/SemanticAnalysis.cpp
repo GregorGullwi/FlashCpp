@@ -2205,8 +2205,6 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				   expr);
 	}
 
-	cacheOverloadResolutionArgType(node);
-
 	return {};
 }
 
@@ -2321,7 +2319,12 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(
 			return it->second;
 		}
 	}
-	return buildOverloadResolutionArgType(arg, nullptr);
+	auto result = buildOverloadResolutionArgType(arg, nullptr);
+	if (result.has_value() && arg.is<ExpressionNode>()) {
+		const void* key = getExpressionKey(arg);
+		overload_resolution_arg_types_.emplace(key, *result);
+	}
+	return result;
 }
 
 ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
@@ -2465,20 +2468,6 @@ void SemanticAnalysis::popScope() {
 void SemanticAnalysis::addLocalType(StringHandle name, CanonicalTypeId type_id) {
 	if (!scope_stack_.empty())
 		scope_stack_.back()[name] = type_id;
-}
-
-void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg) {
-	if (!arg.is<ExpressionNode>()) {
-		return;
-	}
-
-	auto overload_arg_type = buildOverloadResolutionArgType(arg, nullptr);
-	if (!overload_arg_type.has_value()) {
-		return;
-	}
-
-	const void* key = getExpressionKey(arg);
-	overload_resolution_arg_types_[key] = std::move(*overload_arg_type);
 }
 
 CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
