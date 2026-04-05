@@ -771,7 +771,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// codegen recovery chain below has no needed side effects, or when those
 	// side effects can be reproduced directly from the sema-owned target.
 	if (sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
-		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&callExprNode);
+		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(sema_call_key);
 		if (sema_resolved) {
 			std::string_view parent = sema_resolved->parent_struct_name();
 			const bool is_current_struct_or_unowned = parent.empty() ||
@@ -1200,7 +1200,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	if (matched_func_decl && matched_func_decl->is_consteval()) {
 			// Use the global symbol table so free functions declared at namespace scope can be found.
 		extern SymbolTable gSymbolTable;
-		ConstExpr::EvaluationContext ctx(symbol_table);
+		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);

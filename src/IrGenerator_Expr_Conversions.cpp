@@ -2560,7 +2560,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	const ConstructorDeclarationNode& selected_ctor,
 	const Token& source_token,
 	bool use_return_slot) {
-	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
+	if (!is_struct_type(target_type.category()) || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
 	const TypeInfo* target_type_info = tryGetTypeInfo(target_type.type_index());
@@ -2629,7 +2629,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
 	setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
-	return makeExprResult(target_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(target_type.type_index().withCategory(target_type.category()), SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(
@@ -2639,7 +2639,7 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	const Token& source_token,
 	bool use_return_slot) {
 	if (!sema_ || !source_expr.is<ExpressionNode>() ||
-		target_type.category() != TypeCategory::Struct ||
+		!is_struct_type(target_type.category()) ||
 		target_type.is_reference() ||
 		target_type.is_rvalue_reference()) {
 		return std::nullopt;
@@ -2656,7 +2656,7 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	}
 
 	const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
-	if (target_desc.category() != TypeCategory::Struct ||
+	if (!is_struct_type(target_desc.category()) ||
 		target_desc.type_index != target_type.type_index()) {
 		return std::nullopt;
 	}

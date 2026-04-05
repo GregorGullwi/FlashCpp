@@ -6454,13 +6454,16 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 	if (is_initialized) {
 		auto dst_offset = var_it->second.offset;
 		const TypedValue& init = op.initializer.value();
-		auto loadReferenceSourceIntoRegister = [&](X64Register dest_reg, int32_t source_stack_offset, bool is_float) {
+		auto loadReferenceSourceIntoRegister = [&](X64Register dest_reg, int32_t source_stack_offset, int source_value_size_bits, bool is_float) {
+			if (source_value_size_bits <= 0) {
+				source_value_size_bits = op.size_in_bits.value;
+			}
 			X64Register ptr_reg = allocateRegisterWithSpilling(dest_reg);
 			emitMovFromFrame(ptr_reg, source_stack_offset);
 			if (is_float) {
-				emitFloatMovFromMemory(dest_reg, ptr_reg, 0, var_type == TypeCategory::Float);
+				emitFloatMovFromMemory(dest_reg, ptr_reg, 0, source_value_size_bits == 32);
 			} else {
-				emitMovFromMemory(dest_reg, ptr_reg, 0, (op.size_in_bits.value + 7) / 8);
+				emitMovFromMemory(dest_reg, ptr_reg, 0, (source_value_size_bits + 7) / 8);
 			}
 			regAlloc.release(ptr_reg);
 		};
@@ -6611,14 +6614,14 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 						// Use float mov instructions instead of integer mov
 					bool is_float = (var_type == TypeCategory::Float);
 					if (should_deref_reference_source) {
-						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, is_float);
+						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, src_ref_info->value_size_bits.value, is_float);
 					}
 					emitFloatMovToFrame(src_reg.value(), dst_offset, is_float);
 				} else {
 						// For integer types, use regular mov
 						// Use the actual size from the variable type, not hardcoded 64 bits
 					if (should_deref_reference_source) {
-						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, false);
+						loadReferenceSourceIntoRegister(src_reg.value(), src_offset, src_ref_info->value_size_bits.value, false);
 					}
 					emitMovToFrameSized(
 						SizedRegister{src_reg.value(), static_cast<uint8_t>(op.size_in_bits.value), false},
@@ -6738,17 +6741,17 @@ void IrToObjConverter<TWriterClass>::handleVariableDecl(const IrInstruction& ins
 					allocated_reg_val = allocateXMMRegisterWithSpilling();
 					bool is_float = (var_type == TypeCategory::Float);
 					if (should_deref_reference_source) {
-						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, is_float);
+						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, src_ref_info->value_size_bits.value, is_float);
 					} else {
 						emitFloatMovFromFrame(allocated_reg_val, src_offset, is_float);
 					}
 					emitFloatMovToFrame(allocated_reg_val, dst_offset, is_float);
 					regAlloc.release(allocated_reg_val);
 				} else {
-						// For integer types, use GPR and integer moves
+					// For integer types, use GPR and integer moves
 					allocated_reg_val = allocateRegisterWithSpilling();
 					if (should_deref_reference_source) {
-						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, false);
+						loadReferenceSourceIntoRegister(allocated_reg_val, src_offset, src_ref_info->value_size_bits.value, false);
 					} else {
 						emitMovFromFrameBySize(allocated_reg_val, src_offset, op.size_in_bits.value);
 					}

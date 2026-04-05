@@ -686,7 +686,8 @@ ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
 		call,
 		[this](const ASTNode& template_arg) {
 			return substitute(template_arg);
-		});
+		},
+		CallMetadataCopyOptions{});
 
 	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(substituted_call);
 	return ASTNode(&new_expr);
@@ -1327,4 +1328,3 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 
 	return expanded_args;
 }
-

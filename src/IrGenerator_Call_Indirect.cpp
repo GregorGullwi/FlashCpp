@@ -433,7 +433,9 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		const DeclarationNode& decl = *call_info->declaration;
 		if (decl.type_node().is<TypeSpecifierNode>()) {
 			TypeSpecifierNode ret_type = decl.type_node().as<TypeSpecifierNode>();
-			if (isIrStructType(toIrType(ret_type.type()))) {
+			if (isIrStructType(toIrType(ret_type.type())) ||
+				ret_type.is_function_pointer() ||
+				ret_type.has_function_signature()) {
 				object_type = ret_type;
 				// object_name remains empty; expression will be evaluated when needed
 			}

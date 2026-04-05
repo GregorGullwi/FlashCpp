@@ -82,12 +82,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Set current function return type and size for type checking in return statements
 	const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
 	current_function_returns_reference_ = ret_type_spec.is_reference();
+	current_function_returns_function_pointer_ = ret_type_spec.is_function_pointer() || ret_type_spec.has_function_signature();
 
 	int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
 
 		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
 		// References are represented as pointers at the IR level
-	current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference())
+	current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference() || current_function_returns_function_pointer_)
 										? 64
 										: actual_ret_size;
 
@@ -155,7 +156,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// For pointer return types, use 64-bit size (pointer size on x64)
 		// For reference return types, keep the base type size (the reference itself is 64-bit at ABI level,
 		// but we display it as the base type with a reference qualifier)
-	func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0)
+	func_decl_op.return_size_in_bits = SizeInBits{(ret_type.pointer_depth() > 0 || ret_type.is_function_pointer() || ret_type.has_function_signature())
 													  ? 64
 													  : actual_return_size};
 	func_decl_op.return_pointer_depth = PointerDepth{static_cast<int>(ret_type.pointer_depth())};

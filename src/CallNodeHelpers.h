@@ -75,7 +75,7 @@ template <typename CallNodeT>
 inline void copyCallMetadataFromInfo(
 	CallNodeT& target,
 	const CallInfo& source,
-	const CallMetadataCopyOptions& options = {}) {
+	const CallMetadataCopyOptions& options) {
 	if constexpr (requires(CallNodeT& node, bool indirect) { node.set_indirect_call(indirect); }) {
 		if (options.copy_indirect_call) {
 			target.set_indirect_call(source.is_indirect);
@@ -104,7 +104,7 @@ template <typename TargetCallNodeT, typename SourceCallNodeT>
 inline void copyCallMetadata(
 	TargetCallNodeT& target,
 	const SourceCallNodeT& source,
-	const CallMetadataCopyOptions& options = {}) {
+	const CallMetadataCopyOptions& options) {
 	copyCallMetadataFromInfo(target, CallInfo::from(source), options);
 }
 
@@ -130,7 +130,7 @@ inline void copyCallMetadataWithTransformedTemplateArguments(
 	TargetCallNodeT& target,
 	const SourceCallNodeT& source,
 	TransformFn&& transform_template_arg,
-	const CallMetadataCopyOptions& options = {}) {
+	const CallMetadataCopyOptions& options) {
 	CallMetadataCopyOptions base_options = options;
 	base_options.copy_template_arguments = false;
 	copyCallMetadata(target, source, base_options);
@@ -186,7 +186,7 @@ inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVe
 		}
 		throw InternalError("TemplateFunctionDeclarationNode call target is missing FunctionDeclarationNode");
 	}
-	return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);
+	throw InternalError(std::string("Unsupported call target node type in makeCallExprFromNode: ") + callee_node.type_name());
 }
 
 inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
@@ -232,7 +232,7 @@ inline void setCallIndirect(ExpressionNode& expr) {
 			call_expr->callee().declaration(),
 			copyCallArguments(call_expr->arguments()),
 			call_expr->called_from());
-		copyCallMetadata(indirect_call, *call_expr);
+		copyCallMetadata(indirect_call, *call_expr, CallMetadataCopyOptions{});
 		expr = std::move(indirect_call);
 	}
 }
@@ -242,6 +242,6 @@ inline void setCallIndirect(CallExprNode& call_expr) {
 		call_expr.callee().declaration(),
 		copyCallArguments(call_expr.arguments()),
 		call_expr.called_from());
-	copyCallMetadata(indirect_call, call_expr);
+	copyCallMetadata(indirect_call, call_expr, CallMetadataCopyOptions{});
 	call_expr = std::move(indirect_call);
 }

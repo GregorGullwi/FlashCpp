@@ -110,7 +110,8 @@ ASTNode Parser::substituteTemplateParameters(
 			call,
 			[&](const ASTNode& template_arg) {
 				return substituteTemplateParameters(template_arg, template_params, template_args);
-			});
+			},
+			CallMetadataCopyOptions{});
 		if (call.has_receiver()) {
 			return emplace_node<ExpressionNode>(substituted_call);
 		}
@@ -1452,7 +1453,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 				call,
 				[&](const ASTNode& template_arg) {
 					return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-				});
+				},
+				CallMetadataCopyOptions{});
 			return new_call;
 		}
 
@@ -1550,7 +1552,8 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			call,
 			[&](const ASTNode& template_arg) {
 				return replacePackIdentifierInExpr(template_arg, pack_name, element_index);
-			});
+			},
+			CallMetadataCopyOptions{});
 		return new_call;
 	}
 

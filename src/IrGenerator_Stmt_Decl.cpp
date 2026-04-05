@@ -87,20 +87,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	const bool legacy_supported_shape = std::visit([](const auto& inner) -> bool {
-		using T = std::decay_t<decltype(inner)>;
-		return std::is_same_v<T, IdentifierNode> ||
-			   std::is_same_v<T, MemberAccessNode> ||
-			   std::is_same_v<T, StaticCastNode> ||
-			   std::is_same_v<T, ConstCastNode> ||
-			   std::is_same_v<T, ReinterpretCastNode> ||
-			   std::is_same_v<T, DynamicCastNode> ||
-			   std::is_same_v<T, ConstructorCallNode> ||
-			   std::is_same_v<T, InitializerListConstructionNode> ||
-			   std::is_same_v<T, CallExprNode>;
-	},
-											 expr);
-	if (sema_ && legacy_supported_shape) {
+	if (sema_) {
 		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
 			return sema_type;
 		}

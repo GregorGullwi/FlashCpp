@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "CallNodeHelpers.h"
+#include "RebindStaticMemberAst.h"
 
 AstToIr::AstToIr(SymbolTable& global_symbol_table, CompileContext& context, Parser& parser)
 	: global_symbol_table_(&global_symbol_table), context_(&context), parser_(&parser) {
@@ -554,6 +555,53 @@ void AstToIr::generateStaticMemberDeclarations() {
 		return false;
 	};
 
+	auto hasUnsubstitutedTemplateDependency = [&](const ASTNode& initializer, const StructTypeInfo* owner_struct) -> bool {
+		auto hasUnresolvedTypeSpecifier = [](const ASTNode& node) {
+			if (!node.is<TypeSpecifierNode>()) {
+				return false;
+			}
+
+			const auto& type_spec = node.as<TypeSpecifierNode>();
+			return type_spec.type_index().needsTypeIndex() && !type_spec.type_index().is_valid();
+		};
+
+		return RebindStaticMemberAst::visitASTUntil(initializer, [&](const ASTNode& current) {
+			if (current.is<SizeofPackNode>() || current.is<TemplateParameterReferenceNode>()) {
+				return true;
+			}
+			if (hasUnresolvedTypeSpecifier(current)) {
+				return true;
+			}
+
+			if (current.is<IdentifierNode>()) {
+				const auto& identifier = current.as<IdentifierNode>();
+				if (global_symbol_table_->lookup(identifier.name()).has_value()) {
+					return false;
+				}
+
+				StringHandle member_name_handle = identifier.getOrInternNameHandle();
+				if (owner_struct != nullptr &&
+					owner_struct->findStaticMemberRecursive(member_name_handle).first != nullptr) {
+					return false;
+				}
+
+				return true;
+			}
+
+			if (current.is<SizeofExprNode>()) {
+				const auto& sizeof_expr = current.as<SizeofExprNode>();
+				return sizeof_expr.is_type() && hasUnresolvedTypeSpecifier(sizeof_expr.type_or_expr());
+			}
+
+			if (current.is<AlignofExprNode>()) {
+				const auto& alignof_expr = current.as<AlignofExprNode>();
+				return alignof_expr.is_type() && hasUnresolvedTypeSpecifier(alignof_expr.type_or_expr());
+			}
+
+			return false;
+		});
+	};
+
 	for (const auto& [type_name, type_info] : getTypesByNameMap()) {
 		if (!type_info->isStruct()) {
 			continue;
@@ -584,6 +632,14 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Generate static members that this struct directly owns
 		if (!struct_info->static_members.empty()) {
 			for (const auto& static_member : struct_info->static_members) {
+				if (!type_info->isTemplateInstantiation() &&
+					static_member.initializer.has_value() &&
+					hasUnsubstitutedTemplateDependency(*static_member.initializer, struct_info)) {
+					FLASH_LOG(Codegen, Debug, "Skipping static member '", static_member.getName(),
+							  "' with unsubstituted template-dependent initializer in type '", type_name, "'");
+					continue;
+				}
+
 				bool unresolved_identifier_initializer = false;
 				// Skip static members with unsubstituted template parameters, identifiers, or sizeof...
 				// These are in pattern templates and should only generate code when instantiated
@@ -871,26 +927,22 @@ void AstToIr::generateStaticMemberDeclarations() {
 									TypeIndex ctor_type_index = ctor_type_spec.type_index();
 									if (const StructTypeInfo* ctor_struct_info = tryGetStructTypeInfo(ctor_type_index)) {
 										const ConstructorDeclarationNode* matching_ctor = nullptr;
-										if (parser_) {
-											std::vector<TypeSpecifierNode> arg_types;
-											arg_types.reserve(ctor_call.arguments().size());
-											for (const auto& arg : ctor_call.arguments()) {
-												auto arg_type_opt = parser_->get_expression_type(arg);
-												if (!arg_type_opt.has_value()) {
-													arg_types.clear();
-													break;
-												}
-												TypeSpecifierNode arg_type = *arg_type_opt;
-												adjust_argument_type_for_overload_resolution(arg, arg_type);
-												arg_types.push_back(std::move(arg_type));
+										std::vector<TypeSpecifierNode> arg_types;
+										arg_types.reserve(ctor_call.arguments().size());
+										for (const auto& arg : ctor_call.arguments()) {
+											auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+											if (!arg_type_opt.has_value()) {
+												arg_types.clear();
+												break;
 											}
-											if (arg_types.size() == ctor_call.arguments().size()) {
-												auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
-												if (resolution.is_ambiguous) {
-													throw CompileError("Ambiguous constructor call");
-												}
-												matching_ctor = resolution.selected_overload;
+											arg_types.push_back(std::move(*arg_type_opt));
+										}
+										if (arg_types.size() == ctor_call.arguments().size()) {
+											auto resolution = resolve_constructor_overload(*ctor_struct_info, arg_types, false);
+											if (resolution.is_ambiguous) {
+												throw CompileError("Ambiguous constructor call");
 											}
+											matching_ctor = resolution.selected_overload;
 										}
 										if (!matching_ctor) {
 											auto arity_resolution = resolve_constructor_overload_arity(*ctor_struct_info, ctor_call.arguments().size(), true);
