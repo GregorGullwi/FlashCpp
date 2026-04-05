@@ -96,8 +96,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// This is critical for member variable and static member lookup in generateIdentifierIr.
 		// Some instantiated member functions reach codegen with parent_struct_name set even when
 		// is_member_function() is false, so parent_struct_name() is the reliable ownership signal.
-	std::string_view parent_name = node.parent_struct_name();
-	if (!parent_name.empty()) {
+	if (std::string_view parent_name = node.parent_struct_name(); !parent_name.empty()) {
 			// Use the parent_struct_name directly (simple name like "Test") rather than
 			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
 			// The namespace will be added during mangling from current_namespace_stack_.
