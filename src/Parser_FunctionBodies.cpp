@@ -4,7 +4,7 @@
 #include "OverloadResolution.h"
 #include "ParserTemplateClassShared.h"
 #include "TypeTraitEvaluator.h"
-// Phase 5: Helper method to register member functions in the symbol table
+// Helper method to register member functions in the symbol table
 // This implements C++20's complete-class context for inline member function bodies
 void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_node, TypeIndex struct_type_index) {
 	// Add member functions from the struct itself
@@ -16,49 +16,48 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 			}
 		}
 	}
-	else if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
-		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-			for (const auto& member_func : struct_info->member_functions) {
-				if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-					gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
-				}
-			}
+
+	const TypeInfo* type_info = tryGetTypeInfo(struct_type_index);
+	const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
+	if (!struct_info)
+	{
+		return;
+	}
+
+	for (const auto& member_func : struct_info->member_functions) {
+		if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+			gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
 		}
 	}
 
 	// Also add inherited member functions from base classes
-	if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
-		const StructTypeInfo* struct_info = type_info->getStructInfo();
-		if (struct_info) {
-			std::vector<TypeIndex> base_classes_to_search;
-			for (const auto& base : struct_info->base_classes) {
-				base_classes_to_search.push_back(base.type_index);
+	InlineVector<TypeIndex, 8> base_classes_to_search;
+	for (const auto& base : struct_info->base_classes) {
+		base_classes_to_search.push_back(base.type_index);
+	}
+	for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
+		TypeIndex base_idx = base_classes_to_search[i];
+		const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
+		if (!base_type_info)
+			continue;
+		const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
+		if (!base_struct_info)
+			continue;
+		for (const auto& member_func : base_struct_info->member_functions) {
+			if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+				gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
 			}
-			for (size_t i = 0; i < base_classes_to_search.size(); ++i) {
-				TypeIndex base_idx = base_classes_to_search[i];
-				const TypeInfo* base_type_info = tryGetTypeInfo(base_idx);
-				if (!base_type_info)
-					continue;
-				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
-				if (!base_struct_info)
-					continue;
-				for (const auto& member_func : base_struct_info->member_functions) {
-					if (member_func.function_decl.is<FunctionDeclarationNode>()) {
-						gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
-					}
-				}
-				for (const auto& nested_base : base_struct_info->base_classes) {
-					bool already_in_list = false;
-					for (TypeIndex existing : base_classes_to_search) {
-						if (existing == nested_base.type_index) {
-							already_in_list = true;
-							break;
-						}
-					}
-					if (!already_in_list)
-						base_classes_to_search.push_back(nested_base.type_index);
+		}
+		for (const auto& nested_base : base_struct_info->base_classes) {
+			bool already_in_list = false;
+			for (TypeIndex existing : base_classes_to_search) {
+				if (existing == nested_base.type_index) {
+					already_in_list = true;
+					break;
 				}
 			}
+			if (!already_in_list)
+				base_classes_to_search.push_back(nested_base.type_index);
 		}
 	}
 }
@@ -114,7 +113,7 @@ void Parser::register_parameters_in_scope(const std::vector<ASTNode>& params) {
 	}
 }
 
-// Phase 5 + Priority 2: Unified delayed function body parsing.
+// Unified delayed function body parsing.
 // Uses FunctionParsingScopeGuard to handle all per-function entry/exit work:
 //   - Symbol table function scope (enter on construction, exit on destruction)
 //   - current_function_ save/restore
@@ -285,7 +284,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 		restore_token_position(delayed.body_start);
 	}
 
-	// Parse the function body.  For normal functions or member functions with body_start at 'try',
+	// Parse the function body. For normal functions or member functions with body_start at 'try',
 	// parse_function_body() handles everything.  For constructors/destructors with has_function_try
 	// set, the 'try' was already consumed during the first pass so body_start is at '{'; in that
 	// case we parse the block then parse the catch clauses ourselves and wrap everything in a try.
@@ -457,6 +456,7 @@ ParseResult Parser::parse_one_catch_clause(std::vector<ASTNode>& catch_clauses) 
 	}
 	return ParseResult::success();
 }
+
 FlashCpp::SignatureValidationResult Parser::validate_signature_match(
 	const FunctionDeclarationNode& declaration,
 	const FunctionDeclarationNode& definition) {
@@ -621,7 +621,7 @@ bool functionSignatureHasUnresolvedPlaceholder(const FunctionDeclarationNode& fu
 }
 } // namespace
 
-// Phase 6 (mangling): Generate and set mangled name on a FunctionDeclarationNode
+// Generate and set mangled name on a FunctionDeclarationNode
 // This should be called after all function properties are set (parameters, variadic flag, etc.)
 // Note: The mangled name is stored as a string_view pointing to ChunkedStringAllocator storage
 // which remains valid for the lifetime of the compilation.

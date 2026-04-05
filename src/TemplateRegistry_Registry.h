@@ -71,7 +71,7 @@ public:
 		return class_template_names_.count(name) > 0;
 	}
 
-	// Register a template using QualifiedIdentifier (Phase 2).
+	// Register a template using QualifiedIdentifier.
 	// Stores under the unqualified name for backward-compatible lookups.
 	// If the identifier has a non-global namespace, also stores under the
 	// fully-qualified name (e.g. "std::vector") so that namespace-qualified
@@ -97,7 +97,7 @@ public:
 		alias_templates_[name] = alias_node;
 	}
 
-	// Register an alias template using QualifiedIdentifier (Phase 2).
+	// Register an alias template using QualifiedIdentifier.
 	void register_alias_template(QualifiedIdentifier qi, ASTNode alias_node) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			register_alias_template(name, alias_node);
@@ -114,7 +114,7 @@ public:
 		variable_templates_[name] = variable_template_node;
 	}
 
-	// Register a variable template using QualifiedIdentifier (Phase 2).
+	// Register a variable template using QualifiedIdentifier.
 	void registerVariableTemplate(QualifiedIdentifier qi, ASTNode variable_template_node) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerVariableTemplate(name, variable_template_node);
@@ -255,7 +255,7 @@ public:
 		return std::nullopt;
 	}
 
-	// Look up a template using QualifiedIdentifier (Phase 2).
+	// Look up a template using QualifiedIdentifier.
 	// Tries the qualified name first, then falls back to unqualified.
 	std::optional<ASTNode> lookupTemplate(QualifiedIdentifier qi) const {
 		if (qi.hasNamespace()) {
@@ -613,7 +613,7 @@ public:
 		registerSpecializationPattern(key, template_params, pattern_args, specialized_node, sfinae_cond);
 	}
 
-	// Register a template specialization pattern using QualifiedIdentifier (Phase 4).
+	// Register a template specialization pattern using QualifiedIdentifier.
 	void registerSpecializationPattern(QualifiedIdentifier qi,
 									   const std::vector<ASTNode>& template_params,
 									   const std::vector<TemplateTypeArg>& pattern_args,
@@ -631,7 +631,7 @@ public:
 		FLASH_LOG(Templates, Debug, "registerSpecialization: '", template_name, "' with ", template_args.size(), " args");
 	}
 
-	// Register a template specialization using QualifiedIdentifier (Phase 4).
+	// Register a template specialization using QualifiedIdentifier.
 	void registerSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args, ASTNode specialized_node) {
 		forEachQualifiedName(qi, [&](std::string_view name) {
 			registerSpecialization(name, template_args, specialized_node);
@@ -673,7 +673,7 @@ public:
 		return pattern_result;
 	}
 
-	// Look up a template specialization using QualifiedIdentifier (Phase 4).
+	// Look up a template specialization using QualifiedIdentifier.
 	// Tries qualified name first, then falls back to unqualified.
 	std::optional<ASTNode> lookupSpecialization(QualifiedIdentifier qi, const std::vector<TemplateTypeArg>& template_args) const {
 		if (qi.hasNamespace()) {

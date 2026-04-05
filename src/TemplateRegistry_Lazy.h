@@ -219,7 +219,7 @@ private:
 };
 
 // ============================================================================
-// Phase 2: Lazy Class Instantiation Registry
+// Lazy Class Instantiation Registry
 // ============================================================================
 
 // Instantiation phases for three-phase class instantiation
@@ -345,7 +345,7 @@ private:
 };
 
 // ============================================================================
-// Phase 3: Lazy Type Alias Evaluation Registry
+// Lazy Type Alias Evaluation Registry
 // ============================================================================
 
 // Information needed for lazy type alias evaluation
@@ -479,7 +479,7 @@ private:
 };
 
 // ============================================================================
-// Phase 4: Lazy Nested Type Instantiation Registry
+// Lazy Nested Type Instantiation Registry
 // ============================================================================
 
 // Information needed for lazy nested type instantiation

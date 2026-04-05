@@ -84,18 +84,18 @@ struct TemplateInstantiationError {
 ///
 /// ## Supported Deduction Patterns
 ///
-/// ### 1. Constructor Call Pattern (Phase 1)
+/// ### 1. Constructor Call Pattern
 /// ```cpp
 /// func(__type_identity<int>{})  // Deduces T = int from type wrapper
 /// ```
 ///
-/// ### 2. Function Parameter Type Pattern (Phase 3)
+/// ### 2. Function Parameter Type Pattern
 /// ```cpp
 /// template<typename T> void foo(T x);
 /// foo(42);  // Deduces T = int from argument type
 /// ```
 ///
-/// ### 3. Template Template Parameters (Phase 3)
+/// ### 3. Template Template Parameters
 /// ```cpp
 /// template<template<typename...> class C, typename T>
 /// void bar(C<T> container);  // Deduces C and T from container type

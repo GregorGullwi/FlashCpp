@@ -137,7 +137,7 @@ public:
 		return insert(StringTable::getStringView(identifierHandle), node); // This should probably be the other way around
 	}
 
-	// Insert using QualifiedIdentifier (Phase 3).
+	// Insert using QualifiedIdentifier.
 	// Inserts under the unqualified name in the current scope.
 	// Note: namespace_symbols_ insertion is handled by the existing insert(string_view)
 	// pathway when the scope type is Namespace or Global.
@@ -694,7 +694,7 @@ public:
 		}
 
 		// Multiple overloads - find the best match based on argument types
-		// Phase 1: Try exact type match (accounting for default arguments)
+		// Try exact type match (accounting for default arguments)
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>())
 				continue;
@@ -715,7 +715,7 @@ public:
 				return overload;
 		}
 
-		// Phase 2: Try parameter count match only (allows implicit conversions)
+		// Try parameter count match only (allows implicit conversions)
 		// Also accounts for default arguments
 		for (const auto& overload : overloads) {
 			if (!overload.is<FunctionDeclarationNode>())
@@ -948,7 +948,7 @@ public:
 		return lookup_qualified(namespace_handle, StringTable::getStringView(identifier));
 	}
 
-	// Look up a symbol using QualifiedIdentifier (Phase 3).
+	// Look up a symbol using QualifiedIdentifier.
 	// If the QualifiedIdentifier has a namespace, uses lookup_qualified.
 	// Otherwise, falls back to regular unqualified lookup.
 	std::optional<ASTNode> lookup_qualified(QualifiedIdentifier qi) const {
