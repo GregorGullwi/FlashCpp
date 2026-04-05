@@ -139,6 +139,28 @@ public:
 
 	std::string_view get_source() const { return source_; }
 
+	// Look up the source line for a given preprocessed line number.
+	// Returns 0 if the line_map is empty or the line is out of range.
+	size_t getSourceLine(size_t preprocessed_line) const {
+		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
+			return 0;
+		return line_map_[preprocessed_line - 1].source_line;
+	}
+
+	// Look up the source file index for a given preprocessed line number.
+	size_t getSourceFileIndex(size_t preprocessed_line) const {
+		if (line_map_.empty() || preprocessed_line == 0 || preprocessed_line > line_map_.size())
+			return SIZE_MAX;
+		return line_map_[preprocessed_line - 1].source_file_index;
+	}
+
+	// Get the file path for a given file index.
+	std::string_view getFilePath(size_t file_index) const {
+		if (file_index < file_paths_.size())
+			return file_paths_[file_index];
+		return "<unknown>";
+	}
+
 	// Get current position for later restoration
 	TokenPosition getCurrentPosition() const {
 		return TokenPosition{cursor_, line_, column_, current_file_index_};

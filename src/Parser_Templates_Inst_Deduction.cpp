@@ -327,6 +327,8 @@ void Parser::reparse_template_function_body(
 				phase1_cutoff_line_ = it->second.current_token_.line();
 				phase1_cutoff_file_idx_ = it->second.current_token_.file_index();
 				phase1_violation_token_.reset();
+				FLASH_LOG_FORMAT(Parser, Debug, "Phase1 cutoff set: func='{}' cutoff_file={} cutoff_line={}",
+					func_decl.decl_node().identifier_token().value(), phase1_cutoff_file_idx_, phase1_cutoff_line_);
 			}
 		}
 
