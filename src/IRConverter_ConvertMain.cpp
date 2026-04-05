@@ -14229,8 +14229,10 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			emitFloatMovToFrame(X64Register::XMM0, result_offset, is_float);
 		} else if constexpr (std::is_same_v<TWriterClass, ElfFileWriter>) {
 			if (op.returnType() == TypeCategory::Struct && return_size_bits > 64 && return_size_bits <= 128) {
-				emitMovToFrame(X64Register::RAX, result_offset, return_size_bits);
-				emitMovToFrame(X64Register::RDX, result_offset + 8, return_size_bits - 64);
+				const int low_bits = std::min(return_size_bits, 64);
+				const int high_bits = std::max(return_size_bits - 64, 0);
+				emitMovToFrame(X64Register::RAX, result_offset, low_bits);
+				emitMovToFrame(X64Register::RDX, result_offset + 8, high_bits);
 			} else {
 				emitMovToFrameSized(
 					SizedRegister{X64Register::RAX, 64, false},

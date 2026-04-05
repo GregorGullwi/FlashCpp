@@ -281,6 +281,15 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (callee_type.has_value() &&
 			callee_type->category() != TypeCategory::Struct &&
 			(callee_type->is_function_pointer() || callee_type->has_function_signature())) {
+			const FunctionSignature* indirect_signature =
+				callee_type->has_function_signature() ? &callee_type->function_signature() : nullptr;
+			const bool needs_placeholder_return_deduction =
+				indirect_signature &&
+				indirect_signature->return_type_index.is_valid() &&
+				(indirect_signature->returnType() == TypeCategory::UserDefined ||
+				 indirect_signature->returnType() == TypeCategory::TypeAlias ||
+				 indirect_signature->returnType() == TypeCategory::Template ||
+				 isPlaceholderAutoType(indirect_signature->returnType()));
 			ExprResult function_ptr_result = visitExpressionNode(object_node.as<ExpressionNode>());
 			std::variant<StringHandle, TempVar> function_pointer;
 			if (std::holds_alternative<TempVar>(function_ptr_result.value)) {
@@ -296,9 +305,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 			std::vector<TypedValue> arguments;
 			std::vector<ExprResult> argument_results;
+			if (needs_placeholder_return_deduction) {
+				argument_results.reserve(callExprNode.arguments().size());
+			}
 			callExprNode.arguments().visit([&](ASTNode argument) {
 				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-				argument_results.push_back(argument_result);
+				if (needs_placeholder_return_deduction) {
+					argument_results.push_back(argument_result);
+				}
 				TypeCategory arg_type = argument_result.typeEnum();
 				int arg_size = argument_result.size_in_bits.value;
 				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
@@ -324,11 +338,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 			if (callee_type->has_function_signature()) {
 				const auto& sig = callee_type->function_signature();
-				if (sig.return_type_index.is_valid() &&
-					(sig.returnType() == TypeCategory::UserDefined ||
-					 sig.returnType() == TypeCategory::TypeAlias ||
-					 sig.returnType() == TypeCategory::Template ||
-					 isPlaceholderAutoType(sig.returnType()))) {
+				if (needs_placeholder_return_deduction) {
 					for (size_t i = 0; i < sig.parameter_type_indices.size() && i < argument_results.size(); ++i) {
 						if (sig.parameter_type_indices[i] == sig.return_type_index) {
 							const ExprResult& deduced_result = argument_results[i];
