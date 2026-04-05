@@ -1056,7 +1056,51 @@ inline MangledName generateMangledName(
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member);
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member);
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
 	bool is_const_method) {
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_types,
+		is_variadic,
+		struct_name,
+		namespace_path,
+		linkage,
+		is_const_method,
+		false);
+}
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member) {
 	StringBuilder builder;
 
 	// Special case: main function is never mangled
@@ -1105,8 +1149,12 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);  // Append the first (outermost) part
 
-		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
-		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+		// MSVC: static members use @@SA, non-static members use QEAA/QEBA (__cdecl/x64).
+		if (is_static_member) {
+			builder.append("@@SA");
+		} else {
+			builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+		}
 	} else if (!namespace_path.empty()) {
 		// Namespace-scoped free function: ?name@Namespace@@YA...
 		builder.append(func_name);
@@ -1160,6 +1208,28 @@ inline MangledName generateMangledName(
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method) {
+	return generateMangledName(
+		func_name,
+		return_type,
+		param_nodes,
+		is_variadic,
+		struct_name,
+		namespace_path,
+		linkage,
+		is_const_method,
+		false);
+}
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string_view>& namespace_path,
+	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member) {
 	StringBuilder builder;
 
 	// Special case: main function is never mangled
@@ -1205,8 +1275,11 @@ inline MangledName generateMangledName(
 		}
 		builder.append(remaining);
 
-		// MSVC: QEAA = non-const member, QEBA = const member (__cdecl/x64)
-		builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+		if (is_static_member) {
+			builder.append("@@SA");
+		} else {
+			builder.append(is_const_method ? "@@QEBA" : "@@QEAA");
+		}
 	} else if (!namespace_path.empty()) {
 		builder.append(func_name);
 		builder.append('@');
@@ -1379,7 +1452,25 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method);
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method, false);
+}
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<TypeSpecifierNode>& param_types,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path,
+	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member) {
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledName(func_name, return_type, param_types, is_variadic, struct_name, ns_views, linkage, is_const_method, is_static_member);
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)
@@ -1397,7 +1488,25 @@ inline MangledName generateMangledName(
 	for (const auto& ns : namespace_path) {
 		ns_views.push_back(ns);
 	}
-	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method);
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method, false);
+}
+
+inline MangledName generateMangledName(
+	std::string_view func_name,
+	const TypeSpecifierNode& return_type,
+	const std::vector<ASTNode>& param_nodes,
+	bool is_variadic,
+	std::string_view struct_name,
+	const std::vector<std::string>& namespace_path,
+	Linkage linkage,
+	bool is_const_method,
+	bool is_static_member) {
+	std::vector<std::string_view> ns_views;
+	ns_views.reserve(namespace_path.size());
+	for (const auto& ns : namespace_path) {
+		ns_views.push_back(ns);
+	}
+	return generateMangledName(func_name, return_type, param_nodes, is_variadic, struct_name, ns_views, linkage, is_const_method, is_static_member);
 }
 // Generate mangled name from a FunctionDeclarationNode
 // This is the main entry point for generating mangled names during parsing
@@ -1416,7 +1525,7 @@ inline MangledName generateMangledNameFromNode(
 	// Pass linkage from the function node
 	return generateMangledName(func_name, return_type, func_node.parameter_nodes(),
 							   func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-							   func_node.is_const_member_function());
+							   func_node.is_const_member_function(), func_node.is_static());
 }
 
 // Overload accepting std::vector<std::string> for namespace path (for CodeGen compatibility)

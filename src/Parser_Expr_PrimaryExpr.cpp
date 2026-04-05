@@ -5747,7 +5747,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 												if (!decl_ptr) {
 													return ParseResult::error("Invalid atomic builtin declaration", identifier_token);
 												}
-												result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), identifier_token));
+												result = emplace_node<ExpressionNode>(makeDirectCallExpr(*decl_ptr, std::move(args), identifier_token));
 												return ParseResult::success(*result);
 											}
 											// No matching regular function found - try template instantiation with deduction (skip in extern "C" - C has no templates)

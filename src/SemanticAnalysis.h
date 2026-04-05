@@ -103,11 +103,6 @@ public:
 
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
 
-	// Look up the pre-resolved ordinary direct-call target for a FunctionCallNode.
-	// Returns nullptr when no annotation was stored (e.g. operator() call or unresolvable).
-	// Populated by tryAnnotateCallArgConversions for non-operator() direct calls.
-	const FunctionDeclarationNode* getResolvedDirectCall(const FunctionCallNode* key) const;
-
 	// Look up the pre-resolved operator[] for an ArraySubscriptNode.
 	// Returns nullptr when the subscript is a built-in pointer/array subscript (not operator[]).
 	const FunctionDeclarationNode* getResolvedOpSubscript(const ArraySubscriptNode* key) const;
@@ -325,11 +320,6 @@ private:
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
-
-	// Side table: FunctionCallNode pointer → resolved ordinary direct-call target.
-	// Populated by tryAnnotateCallArgConversions for non-operator() direct calls.
-	// Codegen consumes this to skip symbol-table rescans and member-hierarchy walks.
-	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
 	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.

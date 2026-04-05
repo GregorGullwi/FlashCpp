@@ -267,6 +267,75 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		// using the generated closure variable as the object.
 	}
 
+	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
+		object_node.is<ExpressionNode>() &&
+		parser_) {
+		auto callee_type = parser_->get_expression_type(object_node);
+		if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
+				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+					callee_type = decl->type_node().as<TypeSpecifierNode>();
+				}
+			}
+		}
+		if (callee_type.has_value() &&
+			callee_type->category() != TypeCategory::Struct &&
+			(callee_type->is_function_pointer() || callee_type->has_function_signature())) {
+			ExprResult function_ptr_result = visitExpressionNode(object_node.as<ExpressionNode>());
+			std::variant<StringHandle, TempVar> function_pointer;
+			if (std::holds_alternative<TempVar>(function_ptr_result.value)) {
+				function_pointer = std::get<TempVar>(function_ptr_result.value);
+			} else if (std::holds_alternative<StringHandle>(function_ptr_result.value)) {
+				function_pointer = std::get<StringHandle>(function_ptr_result.value);
+			} else {
+				throw InternalError("Function-pointer call target did not produce a valid indirect call operand");
+			}
+
+			TempVar ret_var = var_counter.next();
+			setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
+
+			std::vector<TypedValue> arguments;
+			callExprNode.arguments().visit([&](ASTNode argument) {
+				ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+				TypeCategory arg_type = argument_result.typeEnum();
+				int arg_size = argument_result.size_in_bits.value;
+				IrValue arg_value = std::visit([](auto&& arg) -> IrValue {
+					using T = std::decay_t<decltype(arg)>;
+					if constexpr (std::is_same_v<T, TempVar> || std::is_same_v<T, StringHandle> ||
+								  std::is_same_v<T, unsigned long long> || std::is_same_v<T, double>) {
+						return arg;
+					}
+					return 0ULL;
+				},
+											   argument_result.value);
+				arguments.push_back(makeTypedValue(arg_type, SizeInBits{arg_size}, arg_value));
+			});
+
+			IndirectCallOp op{
+				.result = ret_var,
+				.function_pointer = std::move(function_pointer),
+				.arguments = std::move(arguments)};
+			ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from()));
+
+			if (callee_type->has_function_signature()) {
+				const auto& sig = callee_type->function_signature();
+				return makeExprResult(
+					nativeTypeIndex(sig.returnType()),
+					SizeInBits{64},
+					IrOperand{ret_var},
+					PointerDepth{},
+					ValueStorage::ContainsData);
+			}
+
+			return makeExprResult(
+				nativeTypeIndex(TypeCategory::Int),
+				SizeInBits{32},
+				IrOperand{ret_var},
+				PointerDepth{},
+				ValueStorage::ContainsData);
+		}
+	}
+
 	// Regular member function call on an expression
 	// Get the object's type
 	std::string_view object_name;
@@ -865,8 +934,33 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					instantiateLazySelectedMember(
 						type_info->name(),
 						called_member_func->getName(),
-						called_member_func->is_const());
+					called_member_func->is_const());
 				}
+			}
+
+			const FunctionDeclarationNode* resolved_member_func =
+				materialized_member_func_decl ? materialized_member_func_decl : &func_decl;
+			if (called_member_func &&
+				called_member_func->function_decl.is<FunctionDeclarationNode>()) {
+				resolved_member_func = &called_member_func->function_decl.as<FunctionDeclarationNode>();
+			}
+			if (resolved_member_func && resolved_member_func->is_static()) {
+				if (object_expr) {
+					const bool trivial_receiver =
+						std::holds_alternative<IdentifierNode>(*object_expr) ||
+						std::holds_alternative<QualifiedIdentifierNode>(*object_expr);
+					if (!trivial_receiver) {
+						visitExpressionNode(*object_expr);
+					}
+				}
+				CallExprNode direct_static_call = makeResolvedCallExpr(
+					*resolved_member_func,
+					copyCallArguments(callExprNode.arguments()),
+					callExprNode.called_from());
+				CallMetadataCopyOptions copy_options;
+				copy_options.copy_mangled_name = false;
+				copyCallMetadata(direct_static_call, callExprNode, copy_options);
+				return generateFunctionCallIr(direct_static_call, context, sema_call_key);
 			}
 
 			// Use declaring_struct instead of struct_info for mangled name generation

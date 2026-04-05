@@ -106,7 +106,7 @@ ExprResult AstToIr::buildCallReturnResult(
 			TypeCategory pointee_type = getRuntimeValueType(normalized_return_type.type_index().withCategory(normalized_return_type.type()), return_pointer_depth);
 			int pointee_size_bits = getRuntimeValueSizeBits(normalized_return_type.type_index(), referenced_size_bits, return_pointer_depth);
 			int dereference_pointer_depth = normalized_return_type.pointer_depth() > 0 ? static_cast<int>(normalized_return_type.pointer_depth()) : 1;
-			TempVar loaded_value = emitDereference(pointee_type, POINTER_SIZE_BITS, dereference_pointer_depth, IrValue(ret_var), source_token);
+			TempVar loaded_value = emitDereference(pointee_type, pointee_size_bits, dereference_pointer_depth, IrValue(ret_var), source_token);
 			LValueInfo deref_lvalue_info(LValueInfo::Kind::Indirect, ret_var, 0);
 			setTempVarMetadata(loaded_value, TempVarMetadata::makeLValue(deref_lvalue_info, TypeCategory::Invalid, 0));
 			return makeExprResult(
@@ -207,6 +207,26 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 	if (callExprNode.has_receiver()) {
 		if (!callExprNode.callee().has_function_declaration()) {
 			throw InternalError("CallExprNode with receiver is missing FunctionDeclarationNode");
+		}
+		const FunctionDeclarationNode& callee_function = *callExprNode.callee().function_declaration_or_null();
+		if (callExprNode.callee().is_static_member() || callee_function.is_static()) {
+			if (callExprNode.receiver().is<ExpressionNode>()) {
+				const ExpressionNode& receiver_expr = callExprNode.receiver().as<ExpressionNode>();
+				const bool trivial_receiver =
+					std::holds_alternative<IdentifierNode>(receiver_expr) ||
+					std::holds_alternative<QualifiedIdentifierNode>(receiver_expr);
+				if (!trivial_receiver) {
+					visitExpressionNode(receiver_expr);
+				}
+			}
+			CallExprNode direct_static_call = makeResolvedCallExpr(
+				callee_function,
+				copyCallArguments(callExprNode.arguments()),
+				callExprNode.called_from());
+			CallMetadataCopyOptions copy_options;
+			copy_options.copy_mangled_name = false;
+			copyCallMetadata(direct_static_call, callExprNode, copy_options);
+			return generateFunctionCallIr(direct_static_call, context, &callExprNode);
 		}
 		return generateMemberFunctionCallIr(callExprNode, context);
 	}
@@ -331,12 +351,31 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 
 	if (func_ptr_decl) {
 		const auto& func_type = func_ptr_decl->type_node().as<TypeSpecifierNode>();
+		const FunctionDeclarationNode* resolved_operator_call =
+			!sema_ ? nullptr : sema_->getResolvedOpCall(sema_call_key);
+
+		if (resolved_operator_call) {
+			ChunkedVector<ASTNode> member_args;
+			callExprNode.arguments().visit([&](ASTNode argument) {
+				member_args.push_back(argument);
+			});
+
+			ASTNode object_expr = ASTNode::emplace_node<ExpressionNode>(
+				IdentifierNode(func_ptr_decl->identifier_token()));
+			CallExprNode member_call = makeResolvedMemberCallExpr(
+				object_expr,
+				*resolved_operator_call,
+				std::move(member_args),
+				callExprNode.called_from());
+			return generateMemberFunctionCallIr(member_call, context, sema_call_key);
+		}
 
 			// Check if this is a function pointer or a substituted function type carrying
 			// a function signature. Free-function template parameters can instantiate into
 			// the latter form before full canonicalization.
 			// auto&& parameters in recursive lambdas need to be treated as callables
-		if (func_type.is_function_pointer() || func_type.has_function_signature()) {
+		if (func_type.category() != TypeCategory::Struct &&
+			(func_type.is_function_pointer() || func_type.has_function_signature())) {
 				// This is an indirect call through a function pointer
 				// Generate IndirectCall IR: [result_var, func_ptr_var, arg1, arg2, ...]
 			TempVar ret_var = var_counter.next();
@@ -382,10 +421,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 
 		if (func_type.category() == TypeCategory::Struct) {
-				// Check for a sema-pre-resolved operator() first.
-			const FunctionDeclarationNode* operator_call =
-				!sema_ ? nullptr
-					   : sema_->getResolvedOpCall(sema_call_key);
+			const FunctionDeclarationNode* operator_call = nullptr;
 
 				// Fallback: replicate the arity-based lookup for call sites that were
 				// not reached by the semantic pass (e.g. template instantiation paths
@@ -726,70 +762,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		deferred_member_functions_.push_back(std::move(deferred_info));
 		return &fd;
 	};
-
-		// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
-		// direct-call target stored by semantic analysis. Only use it when the
-		// codegen recovery chain below has no needed side effects, or when those
-		// side effects can be reproduced directly from the sema-owned target.
-	if (sema_) {
-		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&functionCallNode);
-		if (sema_resolved) {
-			std::string_view parent = sema_resolved->parent_struct_name();
-			bool is_local_or_free = parent.empty() ||
-				(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
-			if (is_local_or_free) {
-				matched_func_decl = sema_resolved;
-				resolveMangledName(matched_func_decl, parent);
-				FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved direct call target for: {}", func_name_view);
-			} else {
-				StringHandle owner_handle = StringHandle();
-				std::string_view resolved_owner_name = parent;
-				const StructTypeInfo* owner_struct_info = nullptr;
-
-				if (functionCallNode.has_qualified_name()) {
-					size_t scope_pos = lookup_name_view.find("::");
-					if (scope_pos != std::string_view::npos) {
-						if (const TypeInfo* owner_type_info = resolveQualifiedCallStruct(lookup_name_view.substr(0, scope_pos));
-							owner_type_info && owner_type_info->isStruct()) {
-							owner_handle = owner_type_info->name();
-							resolved_owner_name = StringTable::getStringView(owner_handle);
-							owner_struct_info = owner_type_info->getStructInfo();
-						}
-					}
-				}
-
-				if (!owner_handle.isValid()) {
-					StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
-					auto owner_it = getTypesByNameMap().find(parent_handle);
-					if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
-						owner_handle = owner_it->second->name();
-						resolved_owner_name = StringTable::getStringView(owner_handle);
-						owner_struct_info = owner_it->second->getStructInfo();
-					}
-				}
-
-				if (owner_handle.isValid()) {
-					matched_func_decl = sema_resolved;
-					std::string_view owner_for_mangling = parent;
-					if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
-						owner_for_mangling = resolved_owner_name;
-					}
-					resolveMangledName(matched_func_decl, owner_for_mangling);
-					if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
-						queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
-					} else if (const FunctionDeclarationNode* instantiated_func =
-								   instantiateAndQueueLazyMember(owner_handle,
-															 matched_func_decl->decl_node().identifier_token().handle(),
-															 resolved_owner_name,
-															 functionCallNode.arguments().size())) {
-						matched_func_decl = instantiated_func;
-						resolveMangledName(matched_func_decl, resolved_owner_name);
-					}
-					FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved cross-struct direct call target for: {}", func_name_view);
-				}
-			}
-		}
-	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic

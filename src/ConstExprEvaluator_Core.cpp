@@ -65,6 +65,131 @@ void maybe_set_binding_result_exact_type(EvalResult& result, const DeclarationNo
 	}
 }
 
+const TemplateTypeArg* findTemplateValueParameterBinding(std::string_view param_name, const EvaluationContext& context) {
+	for (size_t i = 0; i < context.template_param_names.size() && i < context.template_args.size(); ++i) {
+		if (context.template_param_names[i] == param_name) {
+			return &context.template_args[i];
+		}
+	}
+	return nullptr;
+}
+
+std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
+	if (!arg.is_value) {
+		return std::nullopt;
+	}
+	if (arg.category() == TypeCategory::Bool) {
+		return EvalResult::from_bool(arg.value != 0);
+	}
+	if (arg.category() == TypeCategory::Enum) {
+		return EvalResult::from_int(arg.value);
+	}
+	if (is_unsigned_integer_type(arg.category())) {
+		return EvalResult::from_uint(static_cast<unsigned long long>(arg.value));
+	}
+	if (arg.category() == TypeCategory::WChar) {
+		return (g_target_data_model == TargetDataModel::LLP64)
+			? EvalResult::from_uint(static_cast<unsigned long long>(arg.value))
+			: EvalResult::from_int(arg.value);
+	}
+	if (isIntegralType(arg.category())) {
+		return EvalResult::from_int(arg.value);
+	}
+	return std::nullopt;
+}
+
+const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle scope_handle) {
+	if (scope_handle.isGlobal()) {
+		return nullptr;
+	}
+
+	StringHandle struct_handle = gNamespaceRegistry.getQualifiedNameHandle(scope_handle);
+	if (!struct_handle.isValid()) {
+		std::string_view scope_name = gNamespaceRegistry.getQualifiedName(scope_handle);
+		if (scope_name.empty()) {
+			scope_name = gNamespaceRegistry.getName(scope_handle);
+		}
+		if (!scope_name.empty()) {
+			struct_handle = StringTable::getOrInternStringHandle(scope_name);
+		}
+	}
+	if (!struct_handle.isValid()) {
+		return nullptr;
+	}
+
+	auto type_it = getTypesByNameMap().find(struct_handle);
+	if (type_it == getTypesByNameMap().end()) {
+		std::string_view full_name = StringTable::getStringView(struct_handle);
+		size_t last_colon = full_name.rfind("::");
+		if (last_colon != std::string_view::npos) {
+			StringHandle short_handle = StringTable::getOrInternStringHandle(full_name.substr(last_colon + 2));
+			type_it = getTypesByNameMap().find(short_handle);
+		}
+	}
+	if (type_it == getTypesByNameMap().end()) {
+		return nullptr;
+	}
+
+	const TypeInfo* type_info = type_it->second;
+	constexpr size_t kMaxAliasChainDepth = 100;
+	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasChainDepth; ++alias_depth) {
+		if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
+			return type_info->getStructInfo();
+		}
+
+		const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+		if (!underlying || underlying == type_info) {
+			break;
+		}
+		type_info = underlying;
+	}
+
+	return nullptr;
+}
+
+struct MemberPointerTarget {
+	StringHandle member_name;
+	int64_t offset = 0;
+};
+
+std::optional<MemberPointerTarget> tryResolveMemberPointerTargetRecursive(
+	const StructTypeInfo* struct_info,
+	StringHandle member_name,
+	int64_t base_offset) {
+	if (!struct_info) {
+		return std::nullopt;
+	}
+
+	for (const auto& member : struct_info->members) {
+		if (member.getName() == member_name) {
+			return MemberPointerTarget{member_name, base_offset + static_cast<int64_t>(member.offset)};
+		}
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index);
+			base_type && base_type->getStructInfo()) {
+			if (auto resolved = tryResolveMemberPointerTargetRecursive(
+					base_type->getStructInfo(),
+					member_name,
+					base_offset + static_cast<int64_t>(base.offset))) {
+				return resolved;
+			}
+		}
+	}
+
+	return std::nullopt;
+}
+
+std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const QualifiedIdentifierNode& qualified_id) {
+	const StructTypeInfo* struct_info = tryResolveStructInfoFromQualifiedScope(qualified_id.namespace_handle());
+	if (!struct_info) {
+		return std::nullopt;
+	}
+
+	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle(), /*base_offset=*/0);
+}
+
 EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
 	const TypeCategory category = target_type.category();
 	if (category == TypeCategory::Bool) {
@@ -206,11 +331,25 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For TemplateParameterReferenceNode (references to template parameters like 'T' or 'N')
 	if (std::holds_alternative<TemplateParameterReferenceNode>(expr)) {
 		const auto& template_param = std::get<TemplateParameterReferenceNode>(expr);
-		// Template parameters cannot be evaluated at template definition time
-		// This is a template-dependent expression that needs to be deferred
-		return EvalResult::error("Template parameter in constant expression: " +
-									 std::string(StringTable::getStringView(template_param.param_name())),
-								 EvalErrorType::TemplateDependentExpression);
+		std::string_view param_name = StringTable::getStringView(template_param.param_name());
+		if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(param_name, context)) {
+			if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
+				return *resolved;
+			}
+			if (!arg->is_value) {
+				return EvalResult::error(
+					"Type template parameter used as value in constant expression: " + std::string(param_name),
+					EvalErrorType::TemplateDependentExpression);
+			}
+			return EvalResult::error(
+				"Unsupported non-type template parameter category '" +
+					std::string(TemplateRegistry::typeToString(arg->category())) +
+					"' in constant expression: " + std::string(param_name),
+				EvalErrorType::Other);
+		}
+		return EvalResult::error(
+			"Template parameter in constant expression: " + std::string(param_name),
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For TernaryOperatorNode (condition ? true_expr : false_expr)
@@ -428,6 +567,11 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 			const ExpressionNode& expr = operand_node.as<ExpressionNode>();
 			if (const auto* id = std::get_if<IdentifierNode>(&expr)) {
 				return EvalResult::from_pointer(id->name());
+			}
+			if (const auto* qualified_id = std::get_if<QualifiedIdentifierNode>(&expr)) {
+				if (auto member = tryResolveMemberPointerTarget(*qualified_id)) {
+					return EvalResult::from_member_pointer(member->member_name, member->offset);
+				}
 			}
 			// &arr[i]: address of array element → pointer with offset
 			if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
@@ -701,26 +845,26 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		}
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
-	// For scalar pointers: array_elements = {pointed_value}, offset = 0.
-	// For array pointers/materialized member-array pointers, array_elements may
+	// For scalar pointers: pointer_value_snapshot = {pointed_value}, offset = 0.
+	// For array pointers/materialized member-array pointers, pointer_value_snapshot may
 	// contain the full array snapshot so the current offset can still be applied
 	// after the original binding has gone out of scope.
-	if (!ptr.array_elements.empty()) {
+	if (!ptr.pointer_value_snapshot.empty()) {
 		if (offset < 0) {
 			return EvalResult::error("Negative pointer offset in dereference");
 		}
 		size_t idx = static_cast<size_t>(offset);
-		if (ptr.array_elements.size() == 1) {
+		if (ptr.pointer_value_snapshot.size() == 1) {
 			// Single-element snapshot (e.g., &arr[i] stored only element i).
 			if (idx != 0) {
 				return EvalResult::error("Array index out of bounds in constant expression");
 			}
-			return ptr.array_elements[0];
+			return ptr.pointer_value_snapshot[0];
 		}
-		if (idx >= ptr.array_elements.size()) {
+		if (idx >= ptr.pointer_value_snapshot.size()) {
 			return EvalResult::error("Array index out of bounds in constant expression");
 		}
-		return ptr.array_elements[idx];
+		return ptr.pointer_value_snapshot[idx];
 	}
 	return dereference_constexpr_pointer(var_name, context, offset);
 }
@@ -1927,6 +2071,19 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	std::string_view var_name = identifier.name();
 	StringHandle name_handle = identifier.getOrInternNameHandle();
+
+	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(var_name, context)) {
+		if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
+			return *resolved;
+		}
+		if (arg->is_value) {
+			return EvalResult::error(
+				"Unsupported non-type template parameter category '" +
+					std::string(TemplateRegistry::typeToString(arg->category())) +
+					"' in constant expression: " + std::string(var_name),
+				EvalErrorType::Other);
+		}
+	}
 
 	auto try_materialize_current_struct_static = [&](
 		ResolvedCurrentStructStaticInitializer& resolved_static_initializer,
@@ -3378,7 +3535,9 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 		// For static storage duration, also try non-constexpr functions with simple bodies
 		// (static initializers can call any function whose body is available)
 		if (!func_decl.is_constexpr() && !func_decl.is_consteval() && context.storage_duration != ConstExpr::StorageDuration::Static) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name));
+			return EvalResult::error(
+				"Function in constant expression must be constexpr: " + std::string(func_name),
+				EvalErrorType::NotConstantExpression);
 		}
 
 		// Get the function body

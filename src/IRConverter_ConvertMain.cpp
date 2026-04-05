@@ -8849,6 +8849,24 @@ void IrToObjConverter<TWriterClass>::handleReturn(const IrInstruction& instructi
 							regAlloc.flushSingleDirtyRegister(X64Register::RAX);
 						}
 					}
+				} else {
+					const bool is_float_return = isFloatingPointType(ret_op.return_type_index.category());
+					if (current_function_returns_reference_) {
+						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+						uint32_t reloc_offset = emitLeaRipRelative(X64Register::RAX);
+						pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
+						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+					} else if (is_float_return) {
+						const bool is_float = (ret_op.return_size == 32);
+						spillAndInvalidateRegisterForManualOverwrite(X64Register::XMM0);
+						uint32_t reloc_offset = emitFloatMovRipRelative(X64Register::XMM0, is_float);
+						pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
+					} else {
+						spillAndInvalidateRegisterForManualOverwrite(X64Register::RAX);
+						uint32_t reloc_offset = emitMovRipRelative(X64Register::RAX, ret_op.return_size);
+						pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
+						regAlloc.flushSingleDirtyRegister(X64Register::RAX);
+					}
 				}
 			} else if (std::holds_alternative<double>(ret_val)) {
 					// Floating point return in XMM0

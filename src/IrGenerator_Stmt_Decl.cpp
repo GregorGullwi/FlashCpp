@@ -97,8 +97,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			   std::is_same_v<T, DynamicCastNode> ||
 			   std::is_same_v<T, ConstructorCallNode> ||
 			   std::is_same_v<T, InitializerListConstructionNode> ||
-			   std::is_same_v<T, FunctionCallNode> ||
-			   std::is_same_v<T, MemberFunctionCallNode>;
+			   std::is_same_v<T, CallExprNode>;
 	},
 											 expr);
 	if (sema_ && legacy_supported_shape) {

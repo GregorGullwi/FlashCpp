@@ -830,6 +830,16 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						}
 					}
 
+					if (context == ExpressionContext::LValueAddress && !static_member->is_reference()) {
+						TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
+						return makeExprResult(
+							type_index.withCategory(static_member->memberType()),
+							SizeInBits{member_size_bits},
+							IrOperand{qualified_name},
+							PointerDepth{},
+							ValueStorage::ContainsData);
+					}
+
 					TempVar result_temp = var_counter.next();
 					GlobalLoadOp op;
 					op.result.setType(static_member->type_index.category());

@@ -3185,7 +3185,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 				resolveSelfReferentialType(resolved_return_type_copy, struct_type_index);
 				return NameMangling::generateMangledName(func_name, resolved_return_type_copy, resolved_params,
 														 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-														 func_node.is_const_member_function())
+														 func_node.is_const_member_function(), func_node.is_static())
 					.view();
 			}
 		}
@@ -3194,7 +3194,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 	// Pass linkage from the function node to ensure extern "C" functions aren't mangled
 	return NameMangling::generateMangledName(func_name, return_type, func_node.parameter_nodes(),
 											 func_node.is_variadic(), struct_name, namespace_path, func_node.linkage(),
-											 func_node.is_const_member_function())
+											 func_node.is_const_member_function(), func_node.is_static())
 		.view();
 }
 
