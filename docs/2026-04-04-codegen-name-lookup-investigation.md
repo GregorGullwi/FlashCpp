@@ -63,7 +63,7 @@ Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reco
 3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with sema-owned type queries.
 4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
 5. Once sema value-category coverage is correct for the broader expression surface, delete the temporary expression-shape whitelist in `buildCodegenOverloadResolutionArgType(...)` and let the sema query run first for any `ExpressionNode`.
-6. **Known risk — enum constant value category**: `inferExpressionValueCategory` must classify enum constants (enumerators) as `PRValue`, not `LValue`. If the `IdentifierBinding::EnumConstant` check is unreliable or missing, sema will emit an lvalue-reference qualifier for enumerator arguments, causing constructor overload resolution to prefer deleted `const T&` overloads over `T&&` overloads. Regression test: `tests/test_ctor_enum_prvalue_ret0.cpp`.
+6. **Known risk — enum constant value category**: `inferExpressionValueCategory` must classify enum constants (enumerators) as `PRValue`, not `LValue`. If the `IdentifierBinding::EnumConstant` check is unreliable or missing, sema will emit an lvalue-reference qualifier for enumerator arguments, causing constructor overload resolution to prefer deleted `const T&` overloads over `T&&` overloads. Regression test: `tests/test_ctor_enum_prvalue_ret0.cpp`. See also `docs/KNOWN_ISSUES.md`.
 
 **Done when**
 
