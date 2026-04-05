@@ -46,6 +46,19 @@ bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candida
 	return argument_count <= candidate.parameter_nodes().size();
 }
 
+ValueCategory valueCategoryFromReferenceQualifier(ReferenceQualifier qualifier) {
+	switch (qualifier) {
+		case ReferenceQualifier::LValueReference:
+			return ValueCategory::LValue;
+		case ReferenceQualifier::RValueReference:
+			return ValueCategory::XValue;
+		case ReferenceQualifier::None:
+			return ValueCategory::PRValue;
+		default:
+			throw InternalError("Unexpected reference qualifier in value-category helper");
+	}
+}
+
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
 	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
@@ -2921,9 +2934,38 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 	const auto& expr = node.as<ExpressionNode>();
 	return std::visit([this](const auto& e) -> ValueCategory {
 		using T = std::decay_t<decltype(e)>;
-		if constexpr (std::is_same_v<T, IdentifierNode> ||
-					  std::is_same_v<T, MemberAccessNode> ||
-					  std::is_same_v<T, ArraySubscriptNode>) {
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			if (e.binding() == IdentifierBinding::EnumConstant) {
+				return ValueCategory::PRValue;
+			}
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			if (const CanonicalTypeId member_type_id = inferExpressionType(node)) {
+				const CanonicalTypeDesc& member_desc = type_context_.get(member_type_id);
+				if (member_desc.ref_qualifier != ReferenceQualifier::None) {
+					return valueCategoryFromReferenceQualifier(member_desc.ref_qualifier);
+				}
+				const ValueCategory object_category = inferExpressionValueCategory(e.object());
+				return object_category == ValueCategory::LValue ? ValueCategory::LValue : ValueCategory::XValue;
+			}
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			if (const FunctionDeclarationNode* op_subscript = getResolvedOpSubscript(&e)) {
+				const ASTNode& return_type_node = op_subscript->decl_node().type_node();
+				if (return_type_node.is<TypeSpecifierNode>()) {
+					return valueCategoryFromReferenceQualifier(
+						return_type_node.as<TypeSpecifierNode>().reference_qualifier());
+				}
+			}
+
+			if (const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr())) {
+				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
+				if (!array_desc.array_dimensions.empty()) {
+					const ValueCategory object_category = inferExpressionValueCategory(e.array_expr());
+					return object_category == ValueCategory::LValue ? ValueCategory::LValue : ValueCategory::XValue;
+				}
+			}
+
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			if (e.op() == "*" || ((e.op() == "++" || e.op() == "--") && e.is_prefix())) {

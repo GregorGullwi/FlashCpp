@@ -62,11 +62,13 @@ Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reco
 2. Add a sema accessor for that expression-type data.
 3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with sema-owned type queries.
 4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
+5. Once sema value-category coverage is correct for the broader expression surface, delete the temporary expression-shape whitelist in `buildCodegenOverloadResolutionArgType(...)` and let the sema query run first for any `ExpressionNode`.
 
 **Done when**
 
 - constructor/copy/move-sensitive codegen decisions no longer depend on ad-hoc declaration lookups or recursive AST-shape type recovery,
-- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies.
+- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies,
+- widening sema-first queries no longer depends on a hand-maintained whitelist of expression shapes.
 
 **Read/query first**
 
