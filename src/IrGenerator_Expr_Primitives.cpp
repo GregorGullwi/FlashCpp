@@ -916,7 +916,6 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					if (!visited_type_infos.insert(type_info).second) {
 						continue;
 					}
-					}
 					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (!struct_info) {
 						continue;
