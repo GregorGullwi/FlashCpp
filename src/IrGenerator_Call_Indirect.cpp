@@ -265,9 +265,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 	const DeclarationNode* object_decl = nullptr;
 	TypeSpecifierNode object_type;
 	const ExpressionNode* object_expr = nullptr;
+	const StringHandle call_operator_name = StringTable::getOrInternStringHandle("operator()");
 	auto tryEmitFunctionPointerOperatorCall = [&](const TypeSpecifierNode& function_pointer_type) -> std::optional<ExprResult> {
 		const DeclarationNode& called_decl = memberFunctionCallNode.function_declaration().decl_node();
-		if (called_decl.identifier_token().value() != "operator()") {
+		if (called_decl.identifier_token().handle() != call_operator_name) {
 			return std::nullopt;
 		}
 		if (!function_pointer_type.is_function_pointer() && !function_pointer_type.has_function_signature()) {
