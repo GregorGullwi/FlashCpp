@@ -2272,12 +2272,18 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	return std::nullopt;
 }
 
+namespace {
+const void* getExpressionKey(const ASTNode& node) {
+	return static_cast<const void*>(&node.as<ExpressionNode>());
+}
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
 
-	const auto* key = static_cast<const void*>(&node.as<ExpressionNode>());
+	const auto* key = getExpressionKey(node);
 	auto slot = getSlot(key);
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
@@ -2309,7 +2315,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
 	if (arg.is<ExpressionNode>()) {
-		const void* key = static_cast<const void*>(&arg.as<ExpressionNode>());
+		const void* key = getExpressionKey(arg);
 		auto it = overload_resolution_arg_types_.find(key);
 		if (it != overload_resolution_arg_types_.end()) {
 			return it->second;
@@ -2471,7 +2477,7 @@ void SemanticAnalysis::cacheOverloadResolutionArgType(const ASTNode& arg) {
 		return;
 	}
 
-	const void* key = static_cast<const void*>(&arg.as<ExpressionNode>());
+	const void* key = getExpressionKey(arg);
 	overload_resolution_arg_types_[key] = std::move(*overload_arg_type);
 }
 
