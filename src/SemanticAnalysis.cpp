@@ -2287,6 +2287,11 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const Functio
 	return it != op_call_table_.end() ? it->second : nullptr;
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const FunctionCallNode* key) const {
+	auto it = resolved_direct_call_table_.find(key);
+	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
 	auto it = op_subscript_table_.find(key);
 	return it != op_subscript_table_.end() ? it->second : nullptr;
@@ -4082,6 +4087,11 @@ void SemanticAnalysis::tryAnnotateCallArgConversions(const FunctionCallNode& cal
 			if (!func_decl)
 				return;
 		}
+
+		// Store the resolved ordinary direct-call target for codegen to consume.
+		// Only non-operator() calls reach this point; operator() calls are stored
+		// in op_call_table_ and resolved before this block.
+		resolved_direct_call_table_[&call_node] = func_decl;
 	}
 
 	if (func_decl->is_variadic())

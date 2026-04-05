@@ -16,6 +16,15 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 			}
 		}
 	}
+	else if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
+		if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+			for (const auto& member_func : struct_info->member_functions) {
+				if (member_func.function_decl.is<FunctionDeclarationNode>()) {
+					gSymbolTable.insert(StringTable::getStringView(member_func.getName()), member_func.function_decl);
+				}
+			}
+		}
+	}
 
 	// Also add inherited member functions from base classes
 	if (const TypeInfo* type_info = tryGetTypeInfo(struct_type_index)) {
@@ -61,22 +70,22 @@ void Parser::register_member_functions_in_scope(StructDeclarationNode* struct_no
 //  3. Inject 'this' pointer into the symbol table
 // Both immediate (parse_function_body_with_context) and delayed
 // (parse_delayed_function_body) paths call this so they share identical setup.
-void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index) {
+void Parser::setup_member_function_context(StructDeclarationNode* struct_node, StringHandle struct_name, TypeIndex struct_type_index, bool inject_this) {
 	// Push member function context
 	member_function_context_stack_.push_back({
 		struct_name,
 		struct_type_index,
 		struct_node,
-		nullptr	// local_struct_info - not needed here since TypeInfo should be available
+		nullptr, // local_struct_info - not needed here since TypeInfo should be available
+		inject_this
 	});
 
 	// Register member functions in symbol table for complete-class context
 	register_member_functions_in_scope(struct_node, struct_type_index);
 
-	// Inject 'this' pointer into the symbol table.
-	// Every member function, constructor, and destructor has an implicit 'this'
-	// parameter of type StructName* (C++20 [class.this]).
-	if (tryGetTypeInfo(struct_type_index)) {
+	// Inject 'this' pointer into the symbol table for non-static member functions,
+	// constructors, and destructors (C++20 [class.this]).
+	if (inject_this && tryGetTypeInfo(struct_type_index)) {
 		auto [this_type_node, this_type_ref] = emplace_node_ref<TypeSpecifierNode>(
 			struct_type_index.withCategory(TypeCategory::Struct),
 			64,	// Pointer size in bits
@@ -133,7 +142,8 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 	// member-context push/pop, 'this' injection, and parameter registration.
 	// s_empty_params is used for destructors (no parameters) and as a fallback.
 	static const std::vector<ASTNode> s_empty_params;
-	FlashCpp::FunctionParsingScopeGuard func_guard(*this, has_member_ctx,
+	bool inject_this = has_member_ctx && (!func_node || !func_node->is_static());
+	FlashCpp::FunctionParsingScopeGuard func_guard(*this, has_member_ctx, inject_this,
 												   delayed.struct_node, delayed.struct_name, delayed.struct_type_index,
 												   params_ptr ? *params_ptr : s_empty_params, func_node);
 

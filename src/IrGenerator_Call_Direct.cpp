@@ -607,6 +607,142 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 		return nullptr;
 	};
 
+	auto buildNamespaceStack = [](std::string_view qualified_name, std::vector<std::string>& out) {
+		size_t ns_end = qualified_name.rfind("::");
+		if (ns_end == std::string_view::npos)
+			return;
+		std::string_view ns_part = qualified_name.substr(0, ns_end);
+		size_t start = 0;
+		while (start < ns_part.size()) {
+			size_t pos = ns_part.find("::", start);
+			if (pos == std::string_view::npos) {
+				out.emplace_back(ns_part.substr(start));
+				break;
+			}
+			out.emplace_back(ns_part.substr(start, pos - start));
+			start = pos + 2;
+		}
+	};
+
+	auto queueDeferredMemberFunctions = [&](StringHandle struct_name,
+											 const StructTypeInfo* struct_info,
+											 std::string_view preferred_qualified_name) {
+		if (!struct_name.isValid() || !struct_info) {
+			return;
+		}
+		std::vector<std::string> ns_stack;
+		buildNamespaceStack(preferred_qualified_name, ns_stack);
+		if (ns_stack.empty()) {
+			buildNamespaceStack(StringTable::getStringView(struct_name), ns_stack);
+		}
+		for (const auto& member_func : struct_info->member_functions) {
+			DeferredMemberFunctionInfo deferred_info;
+			deferred_info.struct_name = struct_name;
+			deferred_info.function_node = member_func.function_decl;
+			deferred_info.namespace_stack = ns_stack;
+			deferred_member_functions_.push_back(std::move(deferred_info));
+		}
+	};
+
+	auto instantiateAndQueueLazyMember = [&](StringHandle struct_name_handle,
+											   StringHandle member_handle,
+											   std::string_view qualified_name_for_ns,
+											   size_t expected_param_count) -> const FunctionDeclarationNode* {
+		if (!parser_ || !struct_name_handle.isValid() || !member_handle.isValid()) {
+			return nullptr;
+		}
+		if (!LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_name_handle, member_handle)) {
+			return nullptr;
+		}
+		auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_name_handle, member_handle);
+		if (!lazy_info_opt.has_value()) {
+			return nullptr;
+		}
+		auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+		LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
+		if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
+			return nullptr;
+		}
+		const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
+		if (fd.parameter_nodes().size() != expected_param_count) {
+			return nullptr;
+		}
+
+		DeferredMemberFunctionInfo deferred_info;
+		deferred_info.struct_name = struct_name_handle;
+		deferred_info.function_node = *instantiated_func;
+		buildNamespaceStack(qualified_name_for_ns, deferred_info.namespace_stack);
+		if (deferred_info.namespace_stack.empty()) {
+			buildNamespaceStack(StringTable::getStringView(struct_name_handle), deferred_info.namespace_stack);
+		}
+		deferred_member_functions_.push_back(std::move(deferred_info));
+		return &fd;
+	};
+
+		// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
+		// direct-call target stored by semantic analysis. Only use it when the
+		// codegen recovery chain below has no needed side effects, or when those
+		// side effects can be reproduced directly from the sema-owned target.
+	if (sema_) {
+		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&functionCallNode);
+		if (sema_resolved) {
+			std::string_view parent = sema_resolved->parent_struct_name();
+			bool is_local_or_free = parent.empty() ||
+				(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
+			if (is_local_or_free) {
+				matched_func_decl = sema_resolved;
+				resolveMangledName(matched_func_decl, parent);
+				FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved direct call target for: {}", func_name_view);
+			} else {
+				StringHandle owner_handle = StringHandle();
+				std::string_view resolved_owner_name = parent;
+				const StructTypeInfo* owner_struct_info = nullptr;
+
+				if (functionCallNode.has_qualified_name()) {
+					size_t scope_pos = lookup_name_view.find("::");
+					if (scope_pos != std::string_view::npos) {
+						if (const TypeInfo* owner_type_info = resolveQualifiedCallStruct(lookup_name_view.substr(0, scope_pos));
+							owner_type_info && owner_type_info->isStruct()) {
+							owner_handle = owner_type_info->name();
+							resolved_owner_name = StringTable::getStringView(owner_handle);
+							owner_struct_info = owner_type_info->getStructInfo();
+						}
+					}
+				}
+
+				if (!owner_handle.isValid()) {
+					StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+					auto owner_it = getTypesByNameMap().find(parent_handle);
+					if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
+						owner_handle = owner_it->second->name();
+						resolved_owner_name = StringTable::getStringView(owner_handle);
+						owner_struct_info = owner_it->second->getStructInfo();
+					}
+				}
+
+				if (owner_handle.isValid()) {
+					matched_func_decl = sema_resolved;
+					std::string_view owner_for_mangling = parent;
+					if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
+						owner_for_mangling = resolved_owner_name;
+					}
+					resolveMangledName(matched_func_decl, owner_for_mangling);
+					if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
+						queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
+					} else if (const FunctionDeclarationNode* instantiated_func =
+								   instantiateAndQueueLazyMember(owner_handle,
+															 matched_func_decl->decl_node().identifier_token().handle(),
+															 resolved_owner_name,
+															 functionCallNode.arguments().size())) {
+						matched_func_decl = instantiated_func;
+						resolveMangledName(matched_func_decl, resolved_owner_name);
+					}
+					FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved cross-struct direct call target for: {}", func_name_view);
+				}
+			}
+		}
+	}
+
 		// Check if FunctionCallNode has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 	if (has_precomputed_mangled) {
@@ -865,39 +1001,7 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 							// since the matched function may call other members (e.g., lowest() calls min()).
 							// Derive namespace from the matched function's parent struct first (authoritative),
 							// then fall back to the resolved type name when needed.
-						std::vector<std::string> ns_stack;
-						auto parse_namespace_into_stack = [&](std::string_view qualified_name) {
-							size_t ns_end = qualified_name.rfind("::");
-							if (ns_end == std::string_view::npos) {
-								return;
-							}
-							std::string_view ns_part = qualified_name.substr(0, ns_end);
-							size_t start = 0;
-							while (start < ns_part.size()) {
-								size_t pos = ns_part.find("::", start);
-								if (pos == std::string_view::npos) {
-									ns_stack.emplace_back(ns_part.substr(start));
-									break;
-								}
-								ns_stack.emplace_back(ns_part.substr(start, pos - start));
-								start = pos + 2;
-							}
-						};
-
-						parse_namespace_into_stack(parent_for_mangling);
-						if (ns_stack.empty()) {
-							parse_namespace_into_stack(struct_type_name);
-						}
-						if (ns_stack.empty()) {
-							parse_namespace_into_stack(StringTable::getStringView(type_info_ptr->name()));
-						}
-						for (const auto& mf : struct_info->member_functions) {
-							DeferredMemberFunctionInfo deferred_info;
-							deferred_info.struct_name = type_info_ptr->name();
-							deferred_info.function_node = mf.function_decl;
-							deferred_info.namespace_stack = ns_stack;
-							deferred_member_functions_.push_back(std::move(deferred_info));
-						}
+						queueDeferredMemberFunctions(type_info_ptr->name(), struct_info, parent_for_mangling);
 
 						break;
 					}
@@ -937,84 +1041,21 @@ ExprResult AstToIr::generateFunctionCallIr(const FunctionCallNode& functionCallN
 								matched_func_decl = &fd;
 								resolveMangledName(matched_func_decl, resolved_struct_part);
 									// Queue all member functions of this struct for deferred generation
-								std::vector<std::string> ns_stack;
-								auto parse_ns = [&](std::string_view qualified_name) {
-									size_t ns_end = qualified_name.rfind("::");
-									if (ns_end == std::string_view::npos)
-										return;
-									std::string_view ns_part = qualified_name.substr(0, ns_end);
-									size_t start = 0;
-									while (start < ns_part.size()) {
-										size_t pos = ns_part.find("::", start);
-										if (pos == std::string_view::npos) {
-											ns_stack.emplace_back(ns_part.substr(start));
-											break;
-										}
-										ns_stack.emplace_back(ns_part.substr(start, pos - start));
-										start = pos + 2;
-									}
-								};
-								parse_ns(resolved_struct_part);
-								if (ns_stack.empty()) {
-									parse_ns(StringTable::getStringView(direct_type_info->name()));
-								}
-								for (const auto& dmf : si->member_functions) {
-									DeferredMemberFunctionInfo deferred_info;
-									deferred_info.struct_name = direct_type_info->name();
-									deferred_info.function_node = dmf.function_decl;
-									deferred_info.namespace_stack = ns_stack;
-									deferred_member_functions_.push_back(std::move(deferred_info));
-								}
+								queueDeferredMemberFunctions(direct_type_info->name(), si, resolved_struct_part);
 								break;
 							}
 						}
 					}
 						// If member_functions is empty (lazy-instantiated template), check
 						// LazyMemberInstantiationRegistry and trigger instantiation now.
-					if (!matched_func_decl && parser_) {
+					if (!matched_func_decl) {
 						StringHandle struct_name_handle = direct_type_info->name();
 						StringHandle member_handle = StringTable::getOrInternStringHandle(member_name_direct);
-						if (LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_name_handle, member_handle)) {
-							auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_name_handle, member_handle);
-							if (lazy_info_opt.has_value()) {
-								auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
-								LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
-								if (instantiated_func.has_value() && instantiated_func->is<FunctionDeclarationNode>()) {
-									const FunctionDeclarationNode& fd = instantiated_func->as<FunctionDeclarationNode>();
-									if (fd.parameter_nodes().size() == direct_expected_param_count) {
-										matched_func_decl = &fd;
-										resolveMangledName(matched_func_decl, resolved_struct_part);
-										DeferredMemberFunctionInfo deferred_info;
-										deferred_info.struct_name = direct_type_info->name();
-										deferred_info.function_node = *instantiated_func;
-											// Compute namespace stack from struct name for correct mangling
-										{
-											auto build_ns_stack = [](std::string_view qualified_name, std::vector<std::string>& out) {
-												size_t ns_end = qualified_name.rfind("::");
-												if (ns_end == std::string_view::npos)
-													return;
-												std::string_view ns_part = qualified_name.substr(0, ns_end);
-												size_t start = 0;
-												while (start < ns_part.size()) {
-													size_t pos = ns_part.find("::", start);
-													if (pos == std::string_view::npos) {
-														out.emplace_back(ns_part.substr(start));
-														break;
-													}
-													out.emplace_back(ns_part.substr(start, pos - start));
-													start = pos + 2;
-												}
-											};
-											build_ns_stack(resolved_struct_part, deferred_info.namespace_stack);
-											if (deferred_info.namespace_stack.empty()) {
-												build_ns_stack(StringTable::getStringView(direct_type_info->name()), deferred_info.namespace_stack);
-											}
-										}
-										deferred_member_functions_.push_back(std::move(deferred_info));
-										FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
-									}
-								}
-							}
+						if (const FunctionDeclarationNode* instantiated_func =
+								instantiateAndQueueLazyMember(struct_name_handle, member_handle, resolved_struct_part, direct_expected_param_count)) {
+							matched_func_decl = instantiated_func;
+							resolveMangledName(matched_func_decl, resolved_struct_part);
+							FLASH_LOG_FORMAT(Codegen, Debug, "Resolved lazy member '{}::{}' via LazyMemberInstantiationRegistry -> {}", resolved_struct_part, member_name_direct, function_name);
 						}
 					}
 				}
