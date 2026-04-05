@@ -73,8 +73,16 @@ bool requiresSemaOwnedOverloadArgTypeInNormalizedBody(const ASTNode& arg) {
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return !std::holds_alternative<IdentifierNode>(expr) &&
-		   !std::holds_alternative<MemberAccessNode>(expr);
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return inner.binding() == IdentifierBinding::EnumConstant;
+		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
+			return true;
+		}
+		return false;
+	},
+					  expr);
 }
 
 } // namespace
