@@ -2942,6 +2942,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				// this sema-owned refinement here instead of calling the generic helper
 				// until that shared helper learns the same rule.
 				if (!arg_type.is_reference()) {
+					// Reference-typed members keep their declared reference category;
+					// only object members without an explicit reference qualifier inherit
+					// lvalue/xvalue behavior from the base expression.
 					const ValueCategory object_category = inferExpressionValueCategory(member_access->object());
 					switch (object_category) {
 						case ValueCategory::LValue:
@@ -2957,7 +2960,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				}
 				// Member-access cases already have their final overload-resolution
 				// category here; the generic helper would incorrectly rewrite all of
-				// them to lvalues.
+				// them to lvalues. TODO: fold this into the shared helper once it
+				// understands member-access categories.
 				return arg_type;
 			}
 		}

@@ -38,5 +38,5 @@ int main() {
 		return 1;
 
 	Sink xvalue_sink(makeWrapper().payload);
-	return xvalue_sink.value == 2 ? 0 : 2;
+	return xvalue_sink.value == 2 ? 0 : 1;
 }
