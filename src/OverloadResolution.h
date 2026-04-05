@@ -1390,8 +1390,14 @@ inline TypeSpecifierNode resolveBinaryOperatorTypeForSelfReference(const TypeSpe
 
 inline ConversionRank rankBinaryOperatorOperandMatch(const TypeSpecifierNode& arg_spec, const TypeSpecifierNode& param_spec, TypeIndex enclosing_type_index) {
 	TypeSpecifierNode resolved_param_spec = resolveBinaryOperatorTypeForSelfReference(param_spec, enclosing_type_index);
-	if (isUserDefinedBinaryOperatorOperandType(arg_spec) && isUserDefinedBinaryOperatorOperandType(resolved_param_spec) && arg_spec.type_index().is_valid() && resolved_param_spec.type_index().is_valid() && arg_spec.type_index() != resolved_param_spec.type_index()) {
-		return ConversionRank::NoMatch;
+	if (isUserDefinedBinaryOperatorOperandType(arg_spec) && isUserDefinedBinaryOperatorOperandType(resolved_param_spec) && arg_spec.type_index().is_valid() && resolved_param_spec.type_index().is_valid()) {
+		const CanonicalTypeAlias arg_canonical = canonicalize_type_alias(arg_spec.type_index());
+		const CanonicalTypeAlias param_canonical = canonicalize_type_alias(resolved_param_spec.type_index());
+		TypeIndex arg_type_index = arg_canonical.resolvedTypeIndex();
+		TypeIndex param_type_index = param_canonical.resolvedTypeIndex();
+		if (arg_type_index.is_valid() && param_type_index.is_valid() && arg_type_index != param_type_index) {
+			return ConversionRank::NoMatch;
+		}
 	}
 	auto conversion = can_convert_type(arg_spec, resolved_param_spec);
 	return conversion.is_valid ? conversion.rank : ConversionRank::NoMatch;

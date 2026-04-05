@@ -1541,14 +1541,26 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 		return 64;
 	}
 	TypeCategory t = type_spec.type();
-	if (needs_type_index(t)) {
-		TypeIndex idx = type_spec.type_index();
-		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
+	TypeIndex idx = type_spec.type_index();
+	if (idx.is_valid()) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
+		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
 			if (ti->hasStoredSize()) {
 				return ti->sizeInBits().value;
 			}
 		}
-	} else {
+		TypeIndex canonical_index = resolved_alias.type_index;
+		if (canonical_index.is_valid()) {
+			TypeCategory canonical_type = canonical_index.category();
+			if (!needs_type_index(canonical_type)) {
+				int bits = get_type_size_bits(canonical_type);
+				if (bits > 0) {
+					return bits;
+				}
+			}
+		}
+	}
+	if (!needs_type_index(t)) {
 		int bits = get_type_size_bits(t);
 		if (bits > 0)
 			return bits;
