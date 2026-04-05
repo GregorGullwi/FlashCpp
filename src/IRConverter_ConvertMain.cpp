@@ -2089,8 +2089,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				size_t outgoing_bytes = 0;
 				if (is_coff_format) {
 						// Win64 indirect calls still need caller-reserved shadow space, and any
-						// explicit arguments beyond the first 4 positions spill above it. Hidden
-						// aggregate return slots consume the first integer position.
+						// explicit arguments beyond the first 4 positions spill above it.
+						// `arg_count` already includes the hidden aggregate return slot when present,
+						// so the spill threshold shifts automatically in those cases.
 					size_t arg_count = call_op->arguments.size() + (call_op->usesReturnSlot() ? 1 : 0);
 					if (arg_count > 4) {
 						outgoing_bytes = 32 + (arg_count - 4) * 8;
@@ -14144,10 +14145,18 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	}
 
 		// First pass: spill overflow arguments into the caller's outgoing area.
-	size_t temp_int_idx = op.usesReturnSlot() ? 1 : 0;
-	size_t temp_float_idx = 0;
+	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
+	size_t float_reg_index = 0;
 	size_t win_position_idx = op.usesReturnSlot() ? 1 : 0;
 	size_t stack_arg_count = 0;
+	auto advanceSysVStackArgCount = [&](size_t slots) {
+		if (!is_coff_format) {
+			stack_arg_count += slots;
+		}
+	};
+	auto intRegSlotsNeeded = [&](const TypedValue& arg) -> size_t {
+		return isTwoRegisterStruct(arg, false) ? 2 : 1;
+	};
 	for (size_t i = 0; i < op.arguments.size(); ++i) {
 		const auto& arg = op.arguments[i];
 		const bool is_reference_arg = arg.is_reference();
@@ -14164,15 +14173,15 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				stack_offset = static_cast<int>(shadow_space + (position - max_int_regs) * 8);
 			}
 		} else if (is_float_arg) {
-			goes_on_stack = temp_float_idx >= max_float_regs;
-			temp_float_idx++;
+			goes_on_stack = float_reg_index >= max_float_regs;
+			float_reg_index++;
 			if (goes_on_stack) {
 				stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 			}
 		} else {
-			size_t regs_needed = is_two_reg_sysv ? 2 : 1;
-			goes_on_stack = temp_int_idx + regs_needed > max_int_regs;
-			temp_int_idx += regs_needed;
+			size_t regs_needed = intRegSlotsNeeded(arg);
+			goes_on_stack = int_reg_index + regs_needed > max_int_regs;
+			int_reg_index += regs_needed;
 			if (goes_on_stack) {
 				stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
 			}
@@ -14208,9 +14217,7 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			}
 			emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
 			regAlloc.release(temp_xmm);
-			if (!is_coff_format) {
-				stack_arg_count++;
-			}
+			advanceSysVStackArgCount(1);
 		} else if (is_reference_arg || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
 			X64Register temp_reg = allocateRegisterWithSpilling();
 			if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
@@ -14218,25 +14225,21 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			}
 			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 			regAlloc.release(temp_reg);
-			if (!is_coff_format) {
-				stack_arg_count++;
-			}
+			advanceSysVStackArgCount(1);
 		} else if (is_two_reg_sysv) {
 			emitTwoRegStructToStack(arg, stack_offset);
-			stack_arg_count += 2;
+			advanceSysVStackArgCount(2);
 		} else {
 			X64Register temp_reg = loadTypedValueIntoRegister(arg);
 			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
 			regAlloc.release(temp_reg);
-			if (!is_coff_format) {
-				stack_arg_count++;
-			}
+			advanceSysVStackArgCount(1);
 		}
 	}
 
 		// Second pass: load arguments that fit in registers.
-	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
-	size_t float_reg_index = 0;
+	int_reg_index = op.usesReturnSlot() ? 1 : 0;
+	float_reg_index = 0;
 	win_position_idx = op.usesReturnSlot() ? 1 : 0;
 	for (size_t i = 0; i < op.arguments.size(); ++i) {
 		const auto& arg = op.arguments[i];
@@ -14259,10 +14262,11 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 				target_reg = getFloatParamReg<TWriterClass>(float_reg_index++);
 			}
 		} else {
-			size_t regs_needed = is_two_reg_sysv ? 2 : 1;
+			size_t regs_needed = intRegSlotsNeeded(arg);
 			if (int_reg_index + regs_needed <= max_int_regs) {
 				use_register = true;
-				target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+				target_reg = getIntParamReg<TWriterClass>(int_reg_index);
+				int_reg_index++;
 			}
 		}
 
@@ -14333,7 +14337,8 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	}
 
 		// Load the call target after argument setup so temporary register traffic in the
-		// spill/register passes cannot overwrite the function pointer in RAX.
+		// spill/register passes cannot overwrite the function pointer in RAX. RAX is safe
+		// here because neither Win64 nor SysV uses it as an incoming argument register.
 	X64Register func_ptr_reg = X64Register::RAX;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.function_pointer)) {
 		int func_ptr_offset = getStackOffsetFromTempVar(*temp_var_ptr);
