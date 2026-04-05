@@ -21,10 +21,6 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
 			return generateTernaryOperatorIr(expr);
-		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-			return generateFunctionCallIr(expr, context);
-		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-			return generateMemberFunctionCallIr(expr, context);
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
@@ -80,8 +76,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 			FLASH_LOG(Codegen, Debug, "ThrowExpressionNode encountered in expression context - skipping codegen");
 			return ExprResult{};
 		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			// TODO(call-node-consolidation): route through unified call lowering
-			throw InternalError("CallExprNode not yet supported in IR generation");
+			return generateCallExprIr(expr, context);
 		} else {
 			static_assert(!std::is_same_v<T, T>, "Unhandled ExpressionNode variant");
 		}
@@ -833,6 +828,16 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 						if (member_si) {
 							member_size_bits = static_cast<int>(member_si->sizeInBits().value);
 						}
+					}
+
+					if (context == ExpressionContext::LValueAddress && !static_member->is_reference()) {
+						TypeIndex type_index = (is_struct_type(static_member->type_index.category())) ? static_member->type_index : TypeIndex{};
+						return makeExprResult(
+							type_index.withCategory(static_member->memberType()),
+							SizeInBits{member_size_bits},
+							IrOperand{qualified_name},
+							PointerDepth{},
+							ValueStorage::ContainsData);
 					}
 
 					TempVar result_temp = var_counter.next();

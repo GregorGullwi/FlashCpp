@@ -19,13 +19,14 @@ class NamespaceDeclarationNode;
 class ArraySubscriptNode;
 class BinaryOperatorNode;
 class UnaryOperatorNode;
-class FunctionCallNode;
+
 class ConstructorCallNode;
 class InitializerListNode;
 class RangedForStatementNode;
 class VariableDeclarationNode;
 struct StructTypeInfo;
 struct LambdaInfo;
+struct CallInfo;
 
 // --- Semantic analysis pass ---
 // Post-parse semantic normalization.  See docs/IMPLICIT_CAST_SEMA_PLAN.md for
@@ -73,13 +74,17 @@ public:
 		return normalized_bodies_.count(body_ptr) > 0;
 	}
 
-	// Returns true if sema attempted to annotate this FunctionCallNode but could not
+	// Returns true if sema attempted to annotate this call expression but could not
 	// resolve the callee (e.g. template specialization with separate DeclarationNode copies).
 	// Codegen uses this to suppress Phase 15 hard enforcement for known unresolvable cases.
-	bool hasUnresolvedCallArgs(const FunctionCallNode* call) const {
+	bool hasUnresolvedCallArgs(const void* call) const {
 		return unresolved_call_args_.count(call) > 0;
 	}
 
+	bool hasUnresolvedCallArgs(const CallExprNode* call) const {
+		return hasUnresolvedCallArgs(static_cast<const void*>(call));
+	}
+ 
 	// Look up the compound assignment back-conversion slot (keyed by BinaryOperatorNode address).
 	// Returns non-empty when sema annotated a commonType→lhsType result back-conversion.
 	std::optional<SemanticSlot> getCompoundAssignBackConv(const void* binop_key) const {
@@ -89,16 +94,16 @@ public:
 		return it->second;
 	}
 
-	// Look up the pre-resolved callable operator() for a FunctionCallNode.
+	// Look up the pre-resolved callable operator() for a call node.
 	// Returns nullptr when no annotation was stored (non-callable or not yet resolved).
-	const FunctionDeclarationNode* getResolvedOpCall(const FunctionCallNode* key) const;
-	const CallArgReferenceBindingInfo* getFunctionCallRefBinding(const FunctionCallNode* key, size_t arg_index) const;
-	const CallArgReferenceBindingInfo* getMemberFunctionCallRefBinding(const MemberFunctionCallNode* key, size_t arg_index) const;
+	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
-	// Look up the pre-resolved ordinary direct-call target for a FunctionCallNode.
-	// Returns nullptr when no annotation was stored (e.g. operator() call or unresolvable).
-	// Populated by tryAnnotateCallArgConversions for non-operator() direct calls.
-	const FunctionDeclarationNode* getResolvedDirectCall(const FunctionCallNode* key) const;
+	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
+	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
+
+	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
 
 	// Look up the pre-resolved operator[] for an ArraySubscriptNode.
 	// Returns nullptr when the subscript is a built-in pointer/array subscript (not operator[]).
@@ -109,6 +114,7 @@ public:
 		const std::vector<ASTNode>& parameter_nodes,
 		const std::vector<std::pair<size_t, TypeSpecifierNode>>& deduced_types) const;
 	void normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info);
+
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
 									   const TypeSpecifierNode& deduced_type) const;
 	ASTNode normalizeRangedForLoopDecl(const VariableDeclarationNode& original_var_decl,
@@ -221,10 +227,11 @@ private:
 	void tryAnnotateContextualBool(const ASTNode& expr_node);
 
 	// Annotate function-call arguments with their parameter-type conversions.
-	void tryAnnotateCallArgConversions(const FunctionCallNode& call_node);
+
+	void tryAnnotateCallArgConversions(const CallExprNode& call_node);
 
 	// Annotate member-function-call arguments with their parameter-type conversions.
-	void tryAnnotateMemberFunctionCallArgConversions(const MemberFunctionCallNode& call_node);
+
 
 	// Shared helper: annotate a single argument expression against a single parameter type.
 	// Handles reference binding, converting constructors, primitive conversions, and
@@ -236,6 +243,19 @@ private:
 	std::optional<CallArgReferenceBindingInfo> buildCallArgReferenceBinding(const ASTNode& arg,
 																			const TypeSpecifierNode& param_type,
 																			const char* context_description);
+	void annotateResolvedCallArgConversions(const void* call_key,
+											const ChunkedVector<ASTNode>& arguments,
+											const FunctionDeclarationNode& func_decl,
+											const char* context_description);
+	void tryAnnotateCallArgConversionsImpl(const CallInfo& call_info,
+										   const void* call_key,
+										   const char* context_description);
+	const FunctionDeclarationNode* resolveCallArgAnnotationTarget(const CallInfo& call_info,
+																 const void* call_key);
+	bool tryRecoverCallDeclFromStructMembers(const CallInfo& call_info,
+											 const DeclarationNode& decl,
+											 const ChunkedVector<ASTNode>& arguments,
+											 const FunctionDeclarationNode*& func_decl);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -248,10 +268,12 @@ private:
 	// (C++20 [expr.cond]/7: usual arithmetic conversions on the second and third operands).
 	void tryAnnotateTernaryBranchConversions(const TernaryOperatorNode& ternary_node);
 
-	// Resolve the callable operator() for a FunctionCallNode whose callee is a struct-typed
+	// Resolve the callable operator() for a call expression whose callee is a struct-typed
 	// variable (functor / closure). Stores the result in op_call_table_ so that codegen can
 	// consume it without performing its own member-function lookup.
-	void tryResolveCallableOperator(const FunctionCallNode& call_node);
+
+	void tryResolveCallableOperator(const CallExprNode& call_node);
+	void tryResolveCallableOperatorImpl(const CallInfo& call_info, const void* call_key);
 
 	// Resolve operator[] for an ArraySubscriptNode whose object is a struct type.
 	// Stores the resolved FunctionDeclarationNode* in op_subscript_table_ so that codegen
@@ -296,16 +318,11 @@ private:
 	// arithmetic is performed in the promoted common type.
 	std::unordered_map<const void*, SemanticSlot> compound_assign_back_conv_;
 
-	// Side table: FunctionCallNode pointer → resolved operator() declaration.
+	// Side table: call-expression pointer -> resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
-	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> op_call_table_;
-	std::unordered_map<const FunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> function_call_ref_bindings_;
-	std::unordered_map<const MemberFunctionCallNode*, std::vector<CallArgReferenceBindingInfo>> member_call_ref_bindings_;
-
-	// Side table: FunctionCallNode pointer → resolved ordinary direct-call target.
-	// Populated by tryAnnotateCallArgConversions for non-operator() direct calls.
-	// Codegen consumes this to skip symbol-table rescans and member-hierarchy walks.
-	std::unordered_map<const FunctionCallNode*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
+	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.
 	// Populated by tryResolveSubscriptOperator when the subscript object is a struct type.
@@ -317,10 +334,10 @@ private:
 	// (e.g. template instantiation member functions generated during parsing).
 	std::unordered_set<const void*> normalized_bodies_;
 
-	// Track FunctionCallNode pointers where sema attempted call-arg annotation
+	// Track call-expression pointers where sema attempted call-arg annotation
 	// but couldn't resolve the callee (e.g. template specialization static members
 	// whose DeclarationNode addresses differ from the call's stored decl).
-	std::unordered_set<const FunctionCallNode*> unresolved_call_args_;
+	std::unordered_set<const void*> unresolved_call_args_;
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;

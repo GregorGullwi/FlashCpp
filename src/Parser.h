@@ -968,11 +968,7 @@ public:	// Public methods for template instantiation
 private:	 // Resume private methods
 		// Helper: copy mangled name, substitute+copy template arguments, copy qualified name
 		// from old_call to new_call. Reduces duplication in substituteTemplateParameters.
-	void substituteFunctionCallExtras(
-		FunctionCallNode& new_call,
-		const FunctionCallNode& old_call,
-		const InlineVector<ASTNode, 4>& template_params,
-		const InlineVector<TemplateTypeArg, 4>& template_args);
+
 	void register_builtin_functions();  // Register compiler builtin functions
 	ParseResult parse_block();
 	ParseResult parse_statement_or_declaration();
@@ -1096,6 +1092,7 @@ private:	 // Resume private methods
 	const FunctionDeclarationNode* tryResolveConcreteMemberFunction(const std::optional<ASTNode>& object_expr, std::string_view member_name);
 	std::optional<ASTNode> tryResolveMemberFunctionTemplate(const std::optional<ASTNode>& object_expr, std::string_view member_name,
 															const std::optional<std::vector<TemplateTypeArg>>& explicit_template_args, const std::vector<TypeSpecifierNode>& arg_types);
+	ParseResult parse_member_postfix(std::optional<ASTNode>& result, bool is_arrow_access, const Token& operator_start_token);
 	ParseResult parse_unary_expression(ExpressionContext context);
 	ParseResult parse_qualified_operator_call(const Token& context_token, const std::vector<StringType<32>>& namespaces);  // Parse operator symbol + call after 'operator' keyword consumed
 		// Shared helper: parse operator symbol/name after the 'operator' keyword has been consumed.

@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
 #include "BuiltinListInitNarrowing.h"
+#include "CallNodeHelpers.h"
 
 namespace ConstExpr {
 
@@ -74,9 +75,6 @@ const TemplateTypeArg* findTemplateValueParameterBinding(std::string_view param_
 }
 
 std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg& arg) {
-	// Resolve a non-type template parameter from the active evaluation context.
-	// Returns std::nullopt when the bound parameter uses a category that the
-	// constexpr evaluator cannot yet materialize directly as an EvalResult.
 	if (!arg.is_value) {
 		return std::nullopt;
 	}
@@ -91,44 +89,13 @@ std::optional<EvalResult> tryResolveTemplateValueParameter(const TemplateTypeArg
 	}
 	if (arg.category() == TypeCategory::WChar) {
 		return (g_target_data_model == TargetDataModel::LLP64)
-				   ? EvalResult::from_uint(static_cast<unsigned long long>(arg.value))
-				   : EvalResult::from_int(arg.value);
+			? EvalResult::from_uint(static_cast<unsigned long long>(arg.value))
+			: EvalResult::from_int(arg.value);
 	}
 	if (isIntegralType(arg.category())) {
 		return EvalResult::from_int(arg.value);
 	}
 	return std::nullopt;
-}
-
-EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
-	const TypeCategory category = target_type.category();
-	if (category == TypeCategory::Bool) {
-		EvalResult result = EvalResult::from_bool(expr_result.as_bool());
-		result.set_exact_type(target_type);
-		return result;
-	}
-	if (isFloatingPointType(category)) {
-		EvalResult result = EvalResult::from_double(expr_result.as_double());
-		result.set_exact_type(target_type);
-		return result;
-	}
-	// For enum types, resolve the underlying type to determine signedness.
-	// is_unsigned_integer_type(Enum) is always false, so we must check the
-	// actual underlying type (e.g., unsigned int) to pick from_uint vs from_int.
-	TypeCategory effective_category = category;
-	if (category == TypeCategory::Enum) {
-		TypeIndex ti = target_type.type_index();
-		if (const TypeInfo* type_info = tryGetTypeInfo(ti)) {
-			if (const EnumTypeInfo* ei = type_info->getEnumInfo()) {
-				effective_category = ei->underlying_type;
-			}
-		}
-	}
-	EvalResult result = is_unsigned_integer_type(effective_category)
-							? EvalResult::from_uint(expr_result.as_uint_raw())
-							: EvalResult::from_int(expr_result.as_int());
-	result.set_exact_type(target_type);
-	return result;
 }
 
 const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle scope_handle) {
@@ -164,7 +131,6 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	}
 
 	const TypeInfo* type_info = type_it->second;
-	// Defensively cap alias chasing so malformed/self-referential type graphs do not loop forever.
 	constexpr size_t kMaxAliasChainDepth = 100;
 	for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasChainDepth; ++alias_depth) {
 		if (type_info->isStruct() && type_info->getStructInfo() != nullptr) {
@@ -181,8 +147,6 @@ const StructTypeInfo* tryResolveStructInfoFromQualifiedScope(NamespaceHandle sco
 	return nullptr;
 }
 
-// Resolved member-object pointer target. Carries both the source member name and
-// the byte offset within the complete object, including any inherited base offset.
 struct MemberPointerTarget {
 	StringHandle member_name;
 	int64_t offset = 0;
@@ -224,6 +188,37 @@ std::optional<MemberPointerTarget> tryResolveMemberPointerTarget(const Qualified
 	}
 
 	return tryResolveMemberPointerTargetRecursive(struct_info, qualified_id.nameHandle(), /*base_offset=*/0);
+}
+
+EvalResult makeConvertedEvalResult(const TypeSpecifierNode& target_type, const EvalResult& expr_result) {
+	const TypeCategory category = target_type.category();
+	if (category == TypeCategory::Bool) {
+		EvalResult result = EvalResult::from_bool(expr_result.as_bool());
+		result.set_exact_type(target_type);
+		return result;
+	}
+	if (isFloatingPointType(category)) {
+		EvalResult result = EvalResult::from_double(expr_result.as_double());
+		result.set_exact_type(target_type);
+		return result;
+	}
+	// For enum types, resolve the underlying type to determine signedness.
+	// is_unsigned_integer_type(Enum) is always false, so we must check the
+	// actual underlying type (e.g., unsigned int) to pick from_uint vs from_int.
+	TypeCategory effective_category = category;
+	if (category == TypeCategory::Enum) {
+		TypeIndex ti = target_type.type_index();
+		if (const TypeInfo* type_info = tryGetTypeInfo(ti)) {
+			if (const EnumTypeInfo* ei = type_info->getEnumInfo()) {
+				effective_category = ei->underlying_type;
+			}
+		}
+	}
+	EvalResult result = is_unsigned_integer_type(effective_category)
+							? EvalResult::from_uint(expr_result.as_uint_raw())
+							: EvalResult::from_int(expr_result.as_int());
+	result.set_exact_type(target_type);
+	return result;
 }
 
 } // namespace
@@ -342,21 +337,19 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 				return *resolved;
 			}
 			if (!arg->is_value) {
-				return EvalResult::error("Type template parameter used as value in constant expression: " +
-											 std::string(param_name),
-										 EvalErrorType::TemplateDependentExpression);
+				return EvalResult::error(
+					"Type template parameter used as value in constant expression: " + std::string(param_name),
+					EvalErrorType::TemplateDependentExpression);
 			}
-			return EvalResult::error("Unsupported non-type template parameter category '" +
-										 std::string(TemplateRegistry::typeToString(arg->category())) +
-										 "' in constant expression: " +
-										 std::string(param_name),
-									 EvalErrorType::Other);
+			return EvalResult::error(
+				"Unsupported non-type template parameter category '" +
+					std::string(TemplateRegistry::typeToString(arg->category())) +
+					"' in constant expression: " + std::string(param_name),
+				EvalErrorType::Other);
 		}
-
-		// Template parameter remains unresolved at template definition time.
-		return EvalResult::error("Template parameter in constant expression: " +
-									 std::string(param_name),
-								 EvalErrorType::TemplateDependentExpression);
+		return EvalResult::error(
+			"Template parameter in constant expression: " + std::string(param_name),
+			EvalErrorType::TemplateDependentExpression);
 	}
 
 	// For TernaryOperatorNode (condition ? true_expr : false_expr)
@@ -364,9 +357,14 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 		return evaluate_ternary_operator(*ternary_operator, context);
 	}
 
-	// For FunctionCallNode (constexpr function calls)
-	if (const auto* function_call = std::get_if<FunctionCallNode>(&expr)) {
-		return evaluate_function_call(*function_call, context);
+	// Unified call-expression node — reuse the legacy constexpr paths until
+	// the evaluator reads CallExprNode directly.
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (call_expr->has_receiver()) {
+			return evaluate_member_function_call(*call_expr, context);
+		}
+
+		return evaluate_function_call(*call_expr, context);
 	}
 
 	// For LambdaExpressionNode (callable lambda values)
@@ -387,11 +385,6 @@ EvalResult Evaluator::evaluate(const ASTNode& expr_node, EvaluationContext& cont
 	// For PointerToMemberAccessNode (e.g., obj.*pm or ptr->*pm)
 	if (const auto* member_pointer_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
 		return evaluate_pointer_to_member_access(*member_pointer_access, context);
-	}
-
-	// For MemberFunctionCallNode (e.g., obj.method() in constexpr context)
-	if (const auto* member_function_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		return evaluate_member_function_call(*member_function_call, context);
 	}
 
 	// For StaticCastNode (static_cast<Type>(expr) and C-style casts)
@@ -608,9 +601,7 @@ EvalResult Evaluator::evaluate_unary_operator(const ASTNode& operand_node, std::
 				StringTable::getStringView(operand_result.pointer_to_var),
 				context, operand_result.pointer_offset);
 		}
-		return EvalResult::error(
-			"Dereference operator (*) on a non-pointer value in constant expressions",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Dereference operator (*) on a non-pointer value in constant expressions");
 	}
 
 	return apply_unary_op(operand_result, op);
@@ -628,8 +619,7 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-										 std::string(var_name) + "' has already been deleted",
-									 EvalErrorType::NotConstantExpression);
+										 std::string(var_name) + "' has already been deleted");
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -637,25 +627,19 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-					return EvalResult::error(
-						"Array access out of bounds in constant expression (heap)",
-						EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Array access out of bounds in constant expression (heap)");
 				}
 				return heap_val.array_elements[static_cast<size_t>(offset)];
 			}
 			if (offset != 0) {
-				return EvalResult::error(
-					"Non-zero offset on non-array heap object in constant expression",
-					EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
 			}
 			return heap_val;
 		}
 	}
 
 	if (!context.symbols) {
-		return EvalResult::error(
-			"Cannot dereference constexpr pointer: no symbol table available",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference constexpr pointer: no symbol table available");
 	}
 
 	auto evaluate_array_element = [&](const ASTNode& element, TypeIndex element_type_index) -> EvalResult {
@@ -725,34 +709,24 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 		}
 	}
 	if (!symbol.has_value()) {
-		return EvalResult::error(
-			"Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' not found");
 	}
 	// The symbol should be a VariableDeclarationNode; evaluate its initializer.
 	if (!symbol->is<VariableDeclarationNode>()) {
-		return EvalResult::error(
-			"Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference constexpr pointer: '" + std::string(var_name) + "' is not a variable");
 	}
 	const VariableDeclarationNode& var_decl = symbol->as<VariableDeclarationNode>();
 	if (!var_decl.is_constexpr()) {
-		return EvalResult::error(
-			"Cannot dereference pointer to non-constexpr variable: " + std::string(var_name),
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference pointer to non-constexpr variable: " + std::string(var_name));
 	}
 	const auto& initializer = var_decl.initializer();
 	if (!initializer.has_value()) {
-		return EvalResult::error(
-			"Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference constexpr pointer: variable '" + std::string(var_name) + "' has no initializer");
 	}
 
 	// Reject negative pointer offsets regardless of variable type.
 	if (offset < 0) {
-		return EvalResult::error(
-			"Negative pointer offset " + std::to_string(offset) + " in constant expression",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Negative pointer offset " + std::to_string(offset) + " in constant expression");
 	}
 
 	// Check if the target variable is an array — if so, always use array element access.
@@ -793,16 +767,12 @@ EvalResult Evaluator::dereference_constexpr_pointer(std::string_view var_name, E
 				return EvalResult::from_int(arr_result.array_values[static_cast<size_t>(offset)]);
 			}
 		}
-		return EvalResult::error(
-			"Cannot dereference pointer with offset: variable '" + std::string(var_name) + "' is not evaluable as an array",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference pointer with offset: variable '" + std::string(var_name) + "' is not evaluable as an array");
 	}
 
 	// Non-array variable: only offset 0 is valid (pointer to scalar)
 	if (offset != 0) {
-		return EvalResult::error(
-			"Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'",
-			EvalErrorType::NotConstantExpression);
+		return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
 	}
 
 	EvalResult result = evaluate(initializer.value(), context);
@@ -831,8 +801,7 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		if (heap_it != context.constexpr_heap.end()) {
 			if (heap_it->second.freed) {
 				return EvalResult::error("Use after free in constant expression: pointer '" +
-										 std::string(var_name) + "' has already been deleted",
-									 EvalErrorType::NotConstantExpression);
+										 std::string(var_name) + "' has already been deleted");
 			}
 			const EvalResult& heap_val = heap_it->second.value;
 			if (offset == 0 && !heap_val.is_array) {
@@ -840,16 +809,12 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 			}
 			if (heap_val.is_array) {
 				if (offset < 0 || static_cast<size_t>(offset) >= heap_val.array_elements.size()) {
-					return EvalResult::error(
-						"Array access out of bounds in constant expression (heap)",
-						EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Array access out of bounds in constant expression (heap)");
 				}
 				return heap_val.array_elements[static_cast<size_t>(offset)];
 			}
 			if (offset != 0) {
-				return EvalResult::error(
-					"Non-zero offset on non-array heap object in constant expression",
-					EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Non-zero offset on non-array heap object in constant expression");
 			}
 			return heap_val;
 		}
@@ -861,30 +826,22 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 		const EvalResult& bound = it->second;
 		if (bound.is_array) {
 			if (offset < 0)
-				return EvalResult::error(
-					"Negative pointer offset in dereference",
-					EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Negative pointer offset in dereference");
 			size_t idx = static_cast<size_t>(offset);
 			if (!bound.array_elements.empty()) {
 				if (idx >= bound.array_elements.size())
-					return EvalResult::error(
-						"Array index out of bounds in constant expression",
-						EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Array index out of bounds in constant expression");
 				return bound.array_elements[idx];
 			}
 			if (!bound.array_values.empty()) {
 				if (idx >= bound.array_values.size())
-					return EvalResult::error(
-						"Array index out of bounds in constant expression",
-						EvalErrorType::NotConstantExpression);
+					return EvalResult::error("Array index out of bounds in constant expression");
 				return EvalResult::from_int(bound.array_values[idx]);
 			}
 		} else if (offset == 0) {
 			return bound;
 		} else {
-			return EvalResult::error(
-				"Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'",
-				EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Cannot dereference pointer with non-zero offset on non-array variable '" + std::string(var_name) + "'");
 		}
 	}
 	// Check for a value snapshot stored in the pointer EvalResult.
@@ -894,24 +851,18 @@ EvalResult Evaluator::deref_pointer_with_bindings(
 	// after the original binding has gone out of scope.
 	if (!ptr.pointer_value_snapshot.empty()) {
 		if (offset < 0) {
-			return EvalResult::error(
-				"Negative pointer offset in dereference",
-				EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Negative pointer offset in dereference");
 		}
 		size_t idx = static_cast<size_t>(offset);
 		if (ptr.pointer_value_snapshot.size() == 1) {
 			// Single-element snapshot (e.g., &arr[i] stored only element i).
 			if (idx != 0) {
-				return EvalResult::error(
-					"Array index out of bounds in constant expression",
-					EvalErrorType::NotConstantExpression);
+				return EvalResult::error("Array index out of bounds in constant expression");
 			}
 			return ptr.pointer_value_snapshot[0];
 		}
 		if (idx >= ptr.pointer_value_snapshot.size()) {
-			return EvalResult::error(
-				"Array index out of bounds in constant expression",
-				EvalErrorType::NotConstantExpression);
+			return EvalResult::error("Array index out of bounds in constant expression");
 		}
 		return ptr.pointer_value_snapshot[idx];
 	}
@@ -1441,11 +1392,12 @@ bool Evaluator::is_function_decl_noexcept(const FunctionDeclarationNode& func_de
 	return eval_result.as_bool();
 }
 
-const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context) {
-	StringHandle function_name_handle = func_call.function_declaration().identifier_token().handle();
+
+const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const CallExprNode& call_expr, EvaluationContext& context) {
+	StringHandle function_name_handle = call_expr.callee().declaration().identifier_token().handle();
 	auto current_match = find_current_struct_member_function_candidate(
 		function_name_handle,
-		func_call.arguments().size(),
+		call_expr.arguments().size(),
 		context,
 		MemberFunctionLookupMode::LookupOnly,
 		false,
@@ -1471,10 +1423,10 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const Funct
 		return get_function_decl_node(*symbol);
 	};
 
-	if (func_call.has_qualified_name()) {
+	if (call_expr.has_qualified_name()) {
 		if (const FunctionDeclarationNode* qualified_decl = lookup_function(
 				context.symbols,
-				StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+				StringTable::getOrInternStringHandle(call_expr.qualified_name()))) {
 			return qualified_decl;
 		}
 	}
@@ -1484,10 +1436,10 @@ const FunctionDeclarationNode* Evaluator::resolve_function_call_decl(const Funct
 	}
 
 	if (context.global_symbols && context.global_symbols != context.symbols) {
-		if (func_call.has_qualified_name()) {
+		if (call_expr.has_qualified_name()) {
 			if (const FunctionDeclarationNode* qualified_decl = lookup_function(
 					context.global_symbols,
-					StringTable::getOrInternStringHandle(func_call.qualified_name()))) {
+					StringTable::getOrInternStringHandle(call_expr.qualified_name()))) {
 				return qualified_decl;
 			}
 		}
@@ -1571,13 +1523,12 @@ bool Evaluator::is_expression_noexcept(const ExpressionNode& expr, EvaluationCon
 		return cond_noexcept && true_noexcept && false_noexcept;
 	}
 
-	if (const auto* func_call = std::get_if<FunctionCallNode>(&expr)) {
-		const FunctionDeclarationNode* func_decl = resolve_function_call_decl(*func_call, context);
-		return func_decl && is_function_decl_noexcept(*func_decl, context);
-	}
-
-	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		return is_function_decl_noexcept(member_call->function_declaration(), context);
+	if (const auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		if (const FunctionDeclarationNode* function_decl = call_expr->callee().function_declaration_or_null()) {
+			return is_function_decl_noexcept(*function_decl, context);
+		}
+		const FunctionDeclarationNode* function_decl = resolve_function_call_decl(*call_expr, context);
+		return function_decl && is_function_decl_noexcept(*function_decl, context);
 	}
 
 	if (const auto* subscript = std::get_if<ArraySubscriptNode>(&expr)) {
@@ -2120,16 +2071,17 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 
 	std::string_view var_name = identifier.name();
 	StringHandle name_handle = identifier.getOrInternNameHandle();
+
 	if (const TemplateTypeArg* arg = findTemplateValueParameterBinding(var_name, context)) {
 		if (auto resolved = tryResolveTemplateValueParameter(*arg)) {
 			return *resolved;
 		}
 		if (arg->is_value) {
-			return EvalResult::error("Unsupported non-type template parameter category '" +
-										 std::string(TemplateRegistry::typeToString(arg->category())) +
-										 "' in constant expression: " +
-										 std::string(var_name),
-									 EvalErrorType::Other);
+			return EvalResult::error(
+				"Unsupported non-type template parameter category '" +
+					std::string(TemplateRegistry::typeToString(arg->category())) +
+					"' in constant expression: " + std::string(var_name),
+				EvalErrorType::Other);
 		}
 	}
 
@@ -2270,7 +2222,22 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 			}
 		}
 
-		return evaluate(initializer, context);
+		if (!resolved_static_initializer.static_member) {
+			return evaluate(initializer, context);
+		}
+
+		const StructStaticMember* static_member = resolved_static_initializer.static_member;
+		if (gEvaluatingStaticMembers.contains(static_member)) {
+			return EvalResult::error("Circular dependency between static member initializers");
+		}
+		if (context.current_depth >= context.max_recursion_depth) {
+			return EvalResult::error("Constexpr recursion depth limit exceeded");
+		}
+		StaticMemberEvaluationGuard guard(static_member);
+		context.current_depth++;
+		EvalResult result = evaluate(initializer, context);
+		context.current_depth--;
+		return result;
 	};
 
 	std::optional<ASTNode> symbol_opt;
@@ -3254,26 +3221,21 @@ EvalResult Evaluator::evaluate_builtin_function(std::string_view func_name, cons
 	return EvalResult::error("Unknown builtin function: " + std::string(func_name));
 }
 
-// Try to evaluate a FunctionCallNode as a variable template instantiation.
-// Variable templates like __is_ratio_v<T> get parsed as FunctionCallNodes because
-// identifier<args> looks like a function call syntactically. This helper extracts
-// the template arguments, instantiates the variable template, and evaluates it.
-EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context) {
+
+EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context) {
 	if (!context.parser) {
 		return EvalResult::error("No parser available for variable template instantiation");
 	}
 
-	if (!func_call.has_template_arguments()) {
+	if (!call_expr.has_template_arguments()) {
 		return EvalResult::error("No template arguments for variable template");
 	}
 
 	std::vector<TemplateTypeArg> template_args;
-	for (const ASTNode& arg_node : func_call.template_arguments()) {
+	for (const ASTNode& arg_node : call_expr.template_arguments()) {
 		if (arg_node.is<TypeSpecifierNode>()) {
 			template_args.emplace_back(arg_node.as<TypeSpecifierNode>());
 		} else if (arg_node.is<ExpressionNode>()) {
-			// Evaluate the expression to get a constant value for a non-type template argument.
-			// This handles literals, binary expressions like 1+2, and other constant expressions.
 			EvalResult arg_val = evaluate(arg_node, context);
 			if (!arg_val.success()) {
 				return EvalResult::error("Failed to evaluate non-type template argument: " + arg_val.error_message);
@@ -3294,12 +3256,10 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 		return EvalResult::error("No template arguments extracted for variable template");
 	}
 
-	// Try to instantiate the variable template
 	auto var_node = context.parser->try_instantiate_variable_template(func_name, template_args);
 
-	// Try with qualified name if simple name didn't work
-	if (!var_node.has_value() && func_call.has_qualified_name()) {
-		var_node = context.parser->try_instantiate_variable_template(func_call.qualified_name(), template_args);
+	if (!var_node.has_value() && call_expr.has_qualified_name()) {
+		var_node = context.parser->try_instantiate_variable_template(call_expr.qualified_name(), template_args);
 	}
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
@@ -3312,14 +3272,14 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	return EvalResult::error("Variable template instantiation failed: " + std::string(func_name));
 }
 
-EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context) {
+EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, EvaluationContext& context) {
 	// Check recursion depth
 	if (context.current_depth >= context.max_recursion_depth) {
 		return EvalResult::error("Constexpr recursion depth limit exceeded");
 	}
 
 	// Get the function declaration
-	const DeclarationNode& func_decl_node = func_call.function_declaration();
+	const DeclarationNode& func_decl_node = call_expr.callee().declaration();
 
 	// Look up the function in the symbol table to get the FunctionDeclarationNode
 	if (!context.symbols) {
@@ -3331,8 +3291,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// First try to get the qualified source name (e.g., "std::__is_complete_or_unbounded")
 	// This is set by the parser for qualified function calls
 	std::string_view qualified_name = func_name;
-	if (func_call.has_qualified_name()) {
-		qualified_name = func_call.qualified_name();
+	if (call_expr.has_qualified_name()) {
+		qualified_name = call_expr.qualified_name();
 		FLASH_LOG(Templates, Debug, "Using qualified name for template lookup: ", qualified_name);
 	}
 
@@ -3340,7 +3300,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// This ensures that `helper()` in `static constexpr int value = helper()` resolves
 	// to Box<T>::helper() rather than a global helper() when inside a struct definition.
 	auto tryEvaluateCurrentStructStaticMemberFunction = [&]() -> std::optional<EvalResult> {
-		const auto& arguments = func_call.arguments();
+		const auto& arguments = call_expr.arguments();
 		StringHandle func_name_handle = StringTable::getOrInternStringHandle(func_name);
 		constexpr bool require_static_member = true;
 		auto current_match = find_current_struct_member_function_candidate(
@@ -3384,12 +3344,12 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 
 		// The function takes a __type_identity<T> argument
 		// We need to extract the type T and check if it's complete or unbounded
-		if (func_call.arguments().size() == 0) {
+		if (call_expr.arguments().size() == 0) {
 			return EvalResult::error("__is_complete_or_unbounded requires a type argument");
 		}
 
 		// Get the first argument (should be a ConstructorCallNode for __type_identity<T>{})
-		const ASTNode& arg = func_call.arguments()[0];
+		const ASTNode& arg = call_expr.arguments()[0];
 
 		// Try to extract the type from the argument
 		// The argument is typically __type_identity<T>{} which is a constructor call
@@ -3442,11 +3402,11 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	}
 
 	// Prefer the parser-stored exact call target before falling back to raw name lookup.
-	auto symbol_opt = lookup_function_symbol(func_call, func_name, *context.symbols);
+	auto symbol_opt = lookup_function_symbol(call_expr, func_name, *context.symbols);
 
 	// If not found in local symbol table, try the global symbol table (for free functions declared at global scope)
 	if (!symbol_opt.has_value() && context.global_symbols && context.global_symbols != context.symbols) {
-		symbol_opt = lookup_function_symbol(func_call, func_name, *context.global_symbols);
+		symbol_opt = lookup_function_symbol(call_expr, func_name, *context.global_symbols);
 	}
 
 	// If not found in symbol table, try the global template registry
@@ -3483,7 +3443,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// If simple lookup fails, try to find the function as a static member in struct types
 	if (!symbol_opt.has_value()) {
 		// Search all struct types for a static member function with this name
-		// This handles cases like Point::static_sum where the parser creates a FunctionCallNode
+		// This handles cases like Point::static_sum where the parser creates a CallExprNode
 		// but the function name is just "static_sum" without the qualifier
 
 		// Note: This search will find both static and non-static member functions.
@@ -3513,7 +3473,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 							const auto& definition = func_decl.get_definition();
 							if (definition.has_value()) {
 								// Evaluate arguments
-								const auto& arguments = func_call.arguments();
+								const auto& arguments = call_expr.arguments();
 								const auto& parameters = func_decl.parameter_nodes();
 
 								// This parameter count check implicitly ensures we're calling static members:
@@ -3536,7 +3496,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 
 		// Check if this is a compiler builtin function (starts with __builtin)
 		if (func_name.starts_with("__builtin")) {
-			auto builtin_result = evaluate_builtin_function(func_name, func_call.arguments(), context);
+			auto builtin_result = evaluate_builtin_function(func_name, call_expr.arguments(), context);
 			if (builtin_result.success()) {
 				return builtin_result;
 			}
@@ -3548,8 +3508,8 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// Try variable template instantiation before giving up
 		// Variable templates like __is_ratio_v<T> might not be in the symbol table
 		// but can be instantiated from the template registry
-		if (func_call.has_template_arguments() && context.parser) {
-			auto var_template_result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+		if (call_expr.has_template_arguments() && context.parser) {
+			auto var_template_result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 			if (var_template_result.success())
 				return var_template_result;
 		}
@@ -3560,9 +3520,9 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	const ASTNode& symbol_node = symbol_opt.value();
 
 	// Check if it's a TemplateVariableDeclarationNode (variable template like __is_ratio_v<T>)
-	// These get parsed as FunctionCallNodes because identifier<args> looks like a function call
+	// These get parsed as CallExprNode expressions because identifier<args> looks like a function call
 	if (symbol_node.is<TemplateVariableDeclarationNode>()) {
-		auto result = tryEvaluateAsVariableTemplate(func_name, func_call, context);
+		auto result = tryEvaluateAsVariableTemplate(func_name, call_expr, context);
 		if (result.success())
 			return result;
 		// If variable template instantiation failed, fall through to try other lookups
@@ -3575,8 +3535,9 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		// For static storage duration, also try non-constexpr functions with simple bodies
 		// (static initializers can call any function whose body is available)
 		if (!func_decl.is_constexpr() && !func_decl.is_consteval() && context.storage_duration != ConstExpr::StorageDuration::Static) {
-			return EvalResult::error("Function in constant expression must be constexpr: " + std::string(func_name),
-									 EvalErrorType::NotConstantExpression);
+			return EvalResult::error(
+				"Function in constant expression must be constexpr: " + std::string(func_name),
+				EvalErrorType::NotConstantExpression);
 		}
 
 		// Get the function body
@@ -3586,7 +3547,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 		}
 
 		// Evaluate arguments
-		const auto& arguments = func_call.arguments();
+		const auto& arguments = call_expr.arguments();
 		const auto& parameters = func_decl.parameter_nodes();
 
 		if (arguments.size() != parameters.size()) {
@@ -3604,7 +3565,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 
 	// Check if it's a TemplateFunctionDeclarationNode (template function)
 	if (symbol_node.is<TemplateFunctionDeclarationNode>()) {
-		const auto& arguments = func_call.arguments();
+		const auto& arguments = call_expr.arguments();
 
 		// Try to find or instantiate the function with the given arguments
 		// First, try to find an already-instantiated version in the symbol table
@@ -3663,7 +3624,7 @@ EvalResult Evaluator::evaluate_function_call(const FunctionCallNode& func_call, 
 	// Check if it's a VariableDeclarationNode (could be a lambda/functor callable object)
 	if (symbol_node.is<VariableDeclarationNode>()) {
 		const VariableDeclarationNode& var_decl = symbol_node.as<VariableDeclarationNode>();
-		return evaluate_callable_object(var_decl, func_call.arguments(), context);
+		return evaluate_callable_object(var_decl, call_expr.arguments(), context);
 	}
 
 	return EvalResult::error("Identifier is not a function or callable object: " + std::string(func_name));

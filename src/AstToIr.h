@@ -208,6 +208,7 @@ private:
 	ExprResult generateNoexceptExprIr(const NoexceptExprNode& noexcept_node);
 	ExprResult generatePseudoDestructorCallIr(const PseudoDestructorCallNode& dtor);
 	ExprResult generatePointerToMemberAccessIr(const PointerToMemberAccessNode& ptmNode);
+	ExprResult generateCallExprIr(const CallExprNode& callExprNode, ExpressionContext context);
 	int calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, bool is_array, std::string_view identifier_name);
 	ExprResult generateIdentifierIr(const IdentifierNode& identifierNode,
 									ExpressionContext context = ExpressionContext::Load);
@@ -261,21 +262,25 @@ private:
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
 	std::string_view generateMangledNameForCall(const FunctionDeclarationNode& func_node, std::string_view struct_name_override, const std::vector<std::string>& namespace_path);
-	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinAbsIntIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinAbsFloatIntrinsic(const FunctionCallNode& functionCallNode, std::string_view func_name);
+	std::optional<ExprResult> tryGenerateIntrinsicIr(std::string_view func_name, const CallExprNode& callExprNode);
+	ExprResult generateBuiltinAbsIntIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinAbsFloatIntrinsic(const CallExprNode& callExprNode, std::string_view func_name);
 	bool isVaListPointerType(const ASTNode& arg, const ExprResult& ir_result) const;
-	ExprResult generateVaArgIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateVaStartIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinUnreachableIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinAssumeIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinExpectIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateBuiltinLaunderIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateGetExceptionCodeIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateAbnormalTerminationIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateGetExceptionInformationIntrinsic(const FunctionCallNode& functionCallNode);
-	ExprResult generateFunctionCallIr(const FunctionCallNode& functionCallNode, ExpressionContext context);
-	ExprResult generateMemberFunctionCallIr(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+	ExprResult generateVaArgIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateVaStartIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinUnreachableIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinAssumeIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinExpectIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateBuiltinLaunderIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateGetExceptionCodeIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateAbnormalTerminationIntrinsic(const CallExprNode& callExprNode);
+	ExprResult generateGetExceptionInformationIntrinsic(const CallExprNode& callExprNode);
+
+	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
+
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context);
+	ExprResult generateFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
+	ExprResult generateMemberFunctionCallIr(const CallExprNode& callExprNode, ExpressionContext context, const void* sema_call_key);
 	MultiDimMemberArrayAccess collectMultiDimMemberArrayIndices(const ArraySubscriptNode& subscript);
 	MultiDimArrayAccess collectMultiDimArrayIndices(const ArraySubscriptNode& subscript);
 	ExprResult generateArraySubscriptIr(const ArraySubscriptNode& arraySubscriptNode,
@@ -526,17 +531,12 @@ private:
 		int base_offset,
 		const Token& token);
 
-	// Emit an IndirectCallOp for a function pointer and return the ExprResult.
-	// Shared by all indirect-call sites (operator() on function pointer return values,
-	// function pointer data members, and nested member access chains).
-	ExprResult emitIndirectCall(
-		std::variant<StringHandle, TempVar> function_pointer,
-		const FunctionSignature& signature,
-		const MemberFunctionCallNode& call_node);
-
-	// Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
-	// Used when a member function call syntax is used but the object is not a struct
-	ExprResult convertMemberCallToFunctionCall(const MemberFunctionCallNode& memberFunctionCallNode, ExpressionContext context);
+	// Helper function to route a misparsed member-call syntax through ordinary free-call lowering.
+	// When available, the original unified CallExprNode is preferred so the fallback preserves
+	// shared call metadata without re-materializing an ad-hoc legacy-style call node.
+	ExprResult convertMemberCallToFunctionCall(const CallExprNode& callExprNode,
+											   ExpressionContext context,
+											   const void* sema_call_key);
 
 	// Resolve a TypeIndex to the concrete StructTypeInfo*, chasing aliases.
 	// Returns nullptr if the type is not a struct.
@@ -840,9 +840,10 @@ private:
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_{0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
+	bool current_function_returns_function_pointer_ = false;
 
 	TypeCategory currentFunctionReturnType() const {
-		return current_function_return_type_index_.category();
+		return current_function_returns_function_pointer_ ? TypeCategory::FunctionPointer : current_function_return_type_index_.category();
 	}
 	TypeIndex currentFunctionReturnTypeIndex() const {
 		return current_function_return_type_index_;

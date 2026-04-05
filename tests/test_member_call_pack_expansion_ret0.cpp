@@ -1,8 +1,8 @@
-// Regression test: pack expansion in MemberFunctionCallNode arguments.
+// Regression test: pack expansion in member-style CallExprNode arguments.
 // obj.method(args...) inside a variadic template body must expand the
 // PackExpansionExprNode into individual arguments during substitution.
-// Previously only FunctionCallNode and ConstructorCallNode had this
-// expansion; MemberFunctionCallNode was missing it, leaving an unexpanded
+// Previously only ordinary CallExprNode and ConstructorCallNode had this
+// expansion; member-style CallExprNode was missing it, leaving an unexpanded
 // PackExpansionExprNode that would hit an InternalError in codegen.
 
 struct Adder {

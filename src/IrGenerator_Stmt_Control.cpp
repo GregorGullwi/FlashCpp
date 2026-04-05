@@ -1,6 +1,7 @@
 #include "Parser.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
+#include "CallNodeHelpers.h"
 
 void AstToIr::visitBlockNode(const BlockNode& node) {
 		// Check if this block contains only VariableDeclarationNodes
@@ -855,15 +856,16 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		return;
 	}
 
-	const FunctionDeclarationNode* member_begin_decl = node.resolved_member_begin_function();
-	const FunctionDeclarationNode* member_end_decl = node.resolved_member_end_function();
-	const bool has_member_begin = member_begin_decl != nullptr;
-	const bool has_member_end = member_end_decl != nullptr;
+	const FunctionDeclarationNode* resolved_member_begin_decl = node.resolved_member_begin_function();
+	const FunctionDeclarationNode* resolved_member_end_decl = node.resolved_member_end_function();
+	const bool has_member_begin = resolved_member_begin_decl != nullptr;
+	const bool has_member_end = resolved_member_end_decl != nullptr;
 	const bool has_adl_begin = node.resolved_adl_begin_function() != nullptr;
 	const bool has_adl_end = node.resolved_adl_end_function() != nullptr;
 	bool use_adl = false;
 	const FunctionDeclarationNode* adl_begin_decl = nullptr;
 	const FunctionDeclarationNode* adl_end_decl = nullptr;
+
 	if (has_member_begin != has_member_end) {
 		throw InternalError("Range-for member begin/end resolution is incomplete: only one of begin() or end() was found");
 	}
@@ -882,13 +884,12 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		throw InternalError("Range-for begin/end lookup failed or was not performed during semantic analysis");
 	}
 
-		// Unified begin/end function declarations for both member and ADL paths
 	const FunctionDeclarationNode& begin_func_decl = use_adl
 		? *adl_begin_decl
-		: *member_begin_decl;
+		: *resolved_member_begin_decl;
 	const FunctionDeclarationNode& end_func_decl = use_adl
 		? *adl_end_decl
-		: *member_end_decl;
+		: *resolved_member_end_decl;
 
 		// Create iterator variables: auto __begin = range.begin(), __end = range.end()
 	StringBuilder sb_begin;
@@ -900,8 +901,6 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	sb_end.append("__range_end_");
 	sb_end.append(counter);
 	std::string_view end_var_name = sb_end.commit();
-
-		// Get return type from begin() - should be a pointer type
 	const TypeSpecifierNode& begin_return_type = begin_func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
 		// Standard C++20 range-for with begin()/end() desugars to:
@@ -923,36 +922,39 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 	end_type_node.as<TypeSpecifierNode>().copy_indirection_from(begin_return_type);
 	auto end_decl_node = ASTNode::emplace_node<DeclarationNode>(end_type_node, end_token);
 
-		// Create call expressions: member calls or ADL free-function calls
 	auto make_adl_call = [&](const FunctionDeclarationNode& func_decl) -> ASTNode {
 		ChunkedVector<ASTNode> args;
 		args.push_back(range_object_expr);
-		auto call = FunctionCallNode(func_decl.decl_node(), std::move(args), Token());
+		auto call_expr = ASTNode::emplace_node<ExpressionNode>(
+			makeResolvedCallExpr(func_decl, std::move(args), Token()));
 		if (func_decl.has_mangled_name()) {
-			call.set_mangled_name(func_decl.mangled_name());
+			setCallMangledName(call_expr.as<ExpressionNode>(), func_decl.mangled_name());
 		}
-		return ASTNode::emplace_node<ExpressionNode>(std::move(call));
+		if (!func_decl.namespace_handle().isGlobal()) {
+			setCallQualifiedName(
+				call_expr.as<ExpressionNode>(),
+				buildQualifiedNameFromHandle(func_decl.namespace_handle(), func_decl.decl_node().identifier_token().value()));
+		}
+		return call_expr;
 	};
 
 	ASTNode begin_call_expr;
 	ASTNode end_call_expr;
 	if (use_adl) {
-		// Free-function calls: begin(range) and end(range)
 		begin_call_expr = make_adl_call(begin_func_decl);
 		end_call_expr = make_adl_call(end_func_decl);
 	} else {
-		// Member function calls: range.begin() and range.end()
 		ChunkedVector<ASTNode> empty_args;
 		begin_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_object_expr,
-								   begin_func_decl,
-								   std::move(empty_args), Token()));
+			makeResolvedMemberCallExpr(range_object_expr,
+									   begin_func_decl,
+									   std::move(empty_args), Token()));
 
 		ChunkedVector<ASTNode> empty_args2;
 		end_call_expr = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(range_object_expr,
-								   end_func_decl,
-								   std::move(empty_args2), Token()));
+			makeResolvedMemberCallExpr(range_object_expr,
+									   end_func_decl,
+									   std::move(empty_args2), Token()));
 	}
 
 	auto begin_var_decl_node = ASTNode::emplace_node<VariableDeclarationNode>(begin_decl_node, begin_call_expr);
@@ -1035,12 +1037,8 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
 		if (!dereference_func) {
 			if (sema_normalized_current_function_) {
-				// Sema-normalized bodies must have the dereference function pre-resolved
-				// on the RangedForStatementNode.  Missing resolution is an internal bug.
 				throw InternalError("Range-for struct iterator missing pre-resolved operator*() in sema-normalized body");
 			}
-			// Non-normalized bodies (e.g. template instantiation member functions
-			// generated after sema ran): fall back to sema resolution.
 			if (sema_) {
 				dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
 			}
@@ -1050,7 +1048,7 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		}
 		ChunkedVector<ASTNode> dereference_args;
 		ASTNode dereference_call = ASTNode::emplace_node<ExpressionNode>(
-			MemberFunctionCallNode(
+			makeResolvedMemberCallExpr(
 				ASTNode::emplace_node<ExpressionNode>(IdentifierNode(begin_token)),
 				*dereference_func,
 				std::move(dereference_args),

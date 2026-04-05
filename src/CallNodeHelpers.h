@@ -2,12 +2,12 @@
 
 #include "AstNodeTypes_DeclNodes.h"
 #include "AstNodeTypes_Expr.h"
+#include <vector>
 
 // ============================================================================
 // CallInfo — a lightweight read-only view over any call-expression node.
 //
-// Provides a uniform interface for extracting call metadata from
-// FunctionCallNode, MemberFunctionCallNode, or the new CallExprNode.
+// Provides a uniform interface for extracting call metadata from CallExprNode.
 // Downstream code can construct a CallInfo and then inspect fields without
 // branching on the concrete node type.
 //
@@ -40,36 +40,6 @@ struct CallInfo {
 
 	// --- Factory helpers ---------------------------------------------------
 
-	static CallInfo from(const FunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration();
-		info.function_declaration  = nullptr;
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = ASTNode();
-		info.has_receiver          = false;
-		info.mangled_name          = node.mangled_name_handle();
-		info.qualified_name        = node.qualified_name_handle();
-		info.template_arguments    = &node.template_arguments();
-		info.is_indirect           = node.is_indirect_call();
-		return info;
-	}
-
-	static CallInfo from(const MemberFunctionCallNode& node) {
-		CallInfo info;
-		info.declaration           = &node.function_declaration().decl_node();
-		info.function_declaration  = &node.function_declaration();
-		info.arguments             = &node.arguments();
-		info.called_from           = node.called_from();
-		info.receiver              = node.object();
-		info.has_receiver          = true;
-		info.mangled_name          = StringHandle();
-		info.qualified_name        = StringHandle();
-		info.template_arguments    = nullptr;
-		info.is_indirect           = false;
-		return info;
-	}
-
 	static CallInfo from(const CallExprNode& node) {
 		CallInfo info;
 		info.declaration           = &node.callee().declaration();
@@ -88,12 +58,183 @@ struct CallInfo {
 	// Build a CallInfo from an ExpressionNode that holds one of the three
 	// call-node alternatives.  Returns std::nullopt for any other alternative.
 	static std::optional<CallInfo> tryFrom(const ExpressionNode& expr) {
-		if (auto* p = std::get_if<FunctionCallNode>(&expr))
-			return from(*p);
-		if (auto* p = std::get_if<MemberFunctionCallNode>(&expr))
-			return from(*p);
 		if (auto* p = std::get_if<CallExprNode>(&expr))
 			return from(*p);
 		return std::nullopt;
 	}
 };
+
+struct CallMetadataCopyOptions {
+	bool copy_mangled_name = true;
+	bool copy_qualified_name = true;
+	bool copy_template_arguments = true;
+};
+
+template <typename CallNodeT>
+inline void copyCallMetadataFromInfo(
+	CallNodeT& target,
+	const CallInfo& source,
+	const CallMetadataCopyOptions& options) {
+	if (options.copy_mangled_name && source.mangled_name.isValid()) {
+		target.set_mangled_name(source.mangled_name.view());
+	}
+	if (options.copy_qualified_name && source.qualified_name.isValid()) {
+		target.set_qualified_name(source.qualified_name.view());
+	}
+	if (options.copy_template_arguments &&
+		source.template_arguments &&
+		!source.template_arguments->empty()) {
+		std::vector<ASTNode> copied_template_args;
+		copied_template_args.reserve(source.template_arguments->size());
+		for (const auto& template_arg : *source.template_arguments) {
+			copied_template_args.push_back(template_arg);
+		}
+		target.set_template_arguments(std::move(copied_template_args));
+	}
+}
+
+template <typename TargetCallNodeT, typename SourceCallNodeT>
+inline void copyCallMetadata(
+	TargetCallNodeT& target,
+	const SourceCallNodeT& source,
+	const CallMetadataCopyOptions& options) {
+	copyCallMetadataFromInfo(target, CallInfo::from(source), options);
+}
+
+template <typename SourceCallNodeT, typename TransformFn>
+inline std::vector<ASTNode> transformCallTemplateArguments(
+	const SourceCallNodeT& source,
+	TransformFn&& transform_template_arg) {
+	const CallInfo source_info = CallInfo::from(source);
+	std::vector<ASTNode> transformed_template_args;
+	if (!source_info.template_arguments || source_info.template_arguments->empty()) {
+		return transformed_template_args;
+	}
+
+	transformed_template_args.reserve(source_info.template_arguments->size());
+	for (const auto& template_arg : *source_info.template_arguments) {
+		transformed_template_args.push_back(transform_template_arg(template_arg));
+	}
+	return transformed_template_args;
+}
+
+template <typename TargetCallNodeT, typename SourceCallNodeT, typename TransformFn>
+inline void copyCallMetadataWithTransformedTemplateArguments(
+	TargetCallNodeT& target,
+	const SourceCallNodeT& source,
+	TransformFn&& transform_template_arg,
+	const CallMetadataCopyOptions& options) {
+	CallMetadataCopyOptions base_options = options;
+	base_options.copy_template_arguments = false;
+	copyCallMetadata(target, source, base_options);
+
+	if (!options.copy_template_arguments) {
+		return;
+	}
+
+	std::vector<ASTNode> transformed_template_args =
+		transformCallTemplateArguments(source, transform_template_arg);
+	if (!transformed_template_args.empty()) {
+		target.set_template_arguments(std::move(transformed_template_args));
+	}
+}
+
+inline ChunkedVector<ASTNode> copyCallArguments(const ChunkedVector<ASTNode>& arguments) {
+	ChunkedVector<ASTNode> copied_arguments;
+	arguments.visit([&](ASTNode arg) {
+		copied_arguments.push_back(arg);
+	});
+	return copied_arguments;
+}
+
+inline CallExprNode makeDirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	return CallExprNode(CalleeDescriptor::freeFunction(decl), std::move(arguments), called_from_token);
+}
+
+inline CallExprNode makeResolvedCallExpr(const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	CalleeDescriptor callee = func_decl.is_static()
+		? CalleeDescriptor::staticMemberFunction(func_decl)
+		: CalleeDescriptor::freeFunctionResolved(func_decl);
+	return CallExprNode(callee, std::move(arguments), called_from_token);
+}
+
+inline CallExprNode makeIndirectCallExpr(const DeclarationNode& decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	return CallExprNode(CalleeDescriptor::indirectCall(decl), std::move(arguments), called_from_token);
+}
+
+inline ExpressionNode makeCallExprFromNode(const ASTNode& callee_node, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	if (callee_node.is<FunctionDeclarationNode>()) {
+		return makeResolvedCallExpr(callee_node.as<FunctionDeclarationNode>(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<DeclarationNode>()) {
+		return makeDirectCallExpr(callee_node.as<DeclarationNode>(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<VariableDeclarationNode>()) {
+		return makeDirectCallExpr(callee_node.as<VariableDeclarationNode>().declaration(), std::move(arguments), called_from_token);
+	}
+	if (callee_node.is<TemplateFunctionDeclarationNode>()) {
+		const ASTNode& function_decl = callee_node.as<TemplateFunctionDeclarationNode>().function_declaration();
+		if (function_decl.is<FunctionDeclarationNode>()) {
+			return makeDirectCallExpr(function_decl.as<FunctionDeclarationNode>().decl_node(), std::move(arguments), called_from_token);
+		}
+		throw InternalError("TemplateFunctionDeclarationNode call target is missing FunctionDeclarationNode");
+	}
+	throw InternalError(std::string("Unsupported call target node type in makeCallExprFromNode: ") + callee_node.type_name());
+}
+
+inline CallExprNode makeResolvedMemberCallExpr(ASTNode receiver, const FunctionDeclarationNode& func_decl, ChunkedVector<ASTNode>&& arguments, Token called_from_token) {
+	CalleeDescriptor callee = func_decl.is_static()
+		? CalleeDescriptor::staticMemberFunction(func_decl)
+		: CalleeDescriptor::memberFunction(func_decl);
+	return CallExprNode(callee, receiver, std::move(arguments), called_from_token);
+}
+
+inline void setCallMangledName(ExpressionNode& expr, std::string_view name) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_mangled_name(name);
+	}
+}
+
+inline void setCallMangledName(CallExprNode& call_expr, std::string_view name) {
+	call_expr.set_mangled_name(name);
+}
+
+inline void setCallQualifiedName(ExpressionNode& expr, std::string_view name) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_qualified_name(name);
+	}
+}
+
+inline void setCallQualifiedName(CallExprNode& call_expr, std::string_view name) {
+	call_expr.set_qualified_name(name);
+}
+
+inline void setCallTemplateArguments(ExpressionNode& expr, std::vector<ASTNode>&& template_args) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		call_expr->set_template_arguments(std::move(template_args));
+	}
+}
+
+inline void setCallTemplateArguments(CallExprNode& call_expr, std::vector<ASTNode>&& template_args) {
+	call_expr.set_template_arguments(std::move(template_args));
+}
+
+inline void setCallIndirect(ExpressionNode& expr) {
+	if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+		CallExprNode indirect_call = makeIndirectCallExpr(
+			call_expr->callee().declaration(),
+			copyCallArguments(call_expr->arguments()),
+			call_expr->called_from());
+		copyCallMetadata(indirect_call, *call_expr, CallMetadataCopyOptions{});
+		expr = std::move(indirect_call);
+	}
+}
+
+inline void setCallIndirect(CallExprNode& call_expr) {
+	CallExprNode indirect_call = makeIndirectCallExpr(
+		call_expr.callee().declaration(),
+		copyCallArguments(call_expr.arguments()),
+		call_expr.called_from());
+	copyCallMetadata(indirect_call, call_expr, CallMetadataCopyOptions{});
+	call_expr = std::move(indirect_call);
+}

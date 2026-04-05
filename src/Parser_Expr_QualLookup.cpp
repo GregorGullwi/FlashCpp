@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -376,12 +377,15 @@ std::optional<ParseResult> Parser::try_parse_member_template_function_call(
 		}
 	}
 
-	auto result = emplace_node<ExpressionNode>(FunctionCallNode(*decl_ptr, std::move(args), func_token));
-	std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_qualified_name(func_name);
+	auto result = emplace_node<ExpressionNode>(
+		func_decl_ptr
+			? makeResolvedCallExpr(*func_decl_ptr, std::move(args), func_token)
+			: makeDirectCallExpr(*decl_ptr, std::move(args), func_token));
+	setCallQualifiedName(result.as<ExpressionNode>(), func_name);
 
 	// Set the mangled name on the function call if we have the function declaration
 	if (func_decl_ptr && func_decl_ptr->has_mangled_name()) {
-		std::get<FunctionCallNode>(result.as<ExpressionNode>()).set_mangled_name(func_decl_ptr->mangled_name());
+		setCallMangledName(result.as<ExpressionNode>(), func_decl_ptr->mangled_name());
 	}
 
 	return ParseResult::success(result);
@@ -1480,28 +1484,42 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 
 		// For other unary operators (+, -, !, ~, ++, --), return the operand type
 		return operand_type;
-	} else if (std::holds_alternative<FunctionCallNode>(expr)) {
-		// For function calls, get the return type
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		const auto& decl = func_call.function_declaration();
-		TypeSpecifierNode return_type = decl.type_node().as<TypeSpecifierNode>();
+	} else if (auto call_info_opt = CallInfo::tryFrom(expr)) {
+		const CallInfo& call_info = *call_info_opt;
+		const DeclarationNode& callee_decl = *call_info.declaration;
+		TypeSpecifierNode return_type;
+		if (call_info.function_declaration) {
+			return_type = call_info.function_declaration->decl_node().type_node().as<TypeSpecifierNode>();
+		} else {
+			return_type = callee_decl.type_node().as<TypeSpecifierNode>();
+		}
 
-		FLASH_LOG(Parser, Debug, "get_expression_type for function '", decl.identifier_token().value(), "': return_type=", (int)return_type.type(), ", is_ref=", return_type.is_reference(), ", is_rvalue_ref=", return_type.is_rvalue_reference());
+		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
+			const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(type.type_index());
+			if (return_alias_info.type_index.is_valid()) {
+				type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
+			}
+			type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
+			if (type.reference_qualifier() == ReferenceQualifier::None &&
+				return_alias_info.reference_qualifier != ReferenceQualifier::None) {
+				type.set_reference_qualifier(return_alias_info.reference_qualifier);
+			}
+			if (!type.has_function_signature() && return_alias_info.function_signature.has_value()) {
+				type.set_function_signature(*return_alias_info.function_signature);
+			}
+			if (!return_alias_info.array_dimensions.empty()) {
+				type.set_array_dimensions(return_alias_info.array_dimensions);
+			}
+			if (const int resolved_size_bits = getTypeSpecSizeBits(type); resolved_size_bits > 0) {
+				type.set_size_in_bits(resolved_size_bits);
+			}
+		};
 
-		// If the return type is still auto, the function should have been deduced already
-		// during parsing. The TypeSpecifierNode in the declaration should have been updated.
-		// If it's still auto, it means deduction failed or wasn't performed.
-		return return_type;
-	} else if (std::holds_alternative<MemberFunctionCallNode>(expr)) {
-		// For member function calls (including lambda operator() calls), get the return type
-		const auto& member_call = std::get<MemberFunctionCallNode>(expr);
-		const auto& decl = member_call.function_declaration();
-		TypeSpecifierNode return_type = decl.decl_node().type_node().as<TypeSpecifierNode>();
 		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {
-			if (!struct_info) {
+			if (!struct_info || !call_info.function_declaration) {
 				return;
 			}
-			std::string_view func_name = decl.decl_node().identifier_token().value();
+			std::string_view func_name = call_info.function_declaration->decl_node().identifier_token().value();
 			for (const auto& member_func : struct_info->member_functions) {
 				if (member_func.getName() == StringTable::getOrInternStringHandle(func_name) &&
 					member_func.function_decl.is<FunctionDeclarationNode>()) {
@@ -1513,46 +1531,23 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 			}
 		};
 
-		// Try to get the actual function declaration from the struct info
-		// The placeholder function declaration may have wrong return type
-		const ASTNode& object_node = member_call.object();
-		if (object_node.is<ExpressionNode>()) {
-			auto object_type_opt = get_expression_type(object_node);
+		if (call_info.has_receiver && call_info.receiver.is<ExpressionNode>()) {
+			auto object_type_opt = get_expression_type(call_info.receiver);
 			if (object_type_opt.has_value()) {
 				update_return_type_from_struct(tryGetStructTypeInfo(object_type_opt->type_index()));
 			}
 		}
-		if (const std::string_view parent_struct_name = decl.parent_struct_name(); !parent_struct_name.empty()) {
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(parent_struct_name));
-			if (type_it != getTypesByNameMap().end()) {
-				update_return_type_from_struct(type_it->second->getStructInfo());
+		if (call_info.function_declaration) {
+			if (const std::string_view parent_struct_name = call_info.function_declaration->parent_struct_name();
+				!parent_struct_name.empty()) {
+				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(parent_struct_name));
+				if (type_it != getTypesByNameMap().end()) {
+					update_return_type_from_struct(type_it->second->getStructInfo());
+				}
 			}
 		}
 
-		const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(return_type.type_index());
-		if (return_alias_info.type_index.is_valid()) {
-			return_type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
-		}
-		return_type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
-		if (return_type.reference_qualifier() == ReferenceQualifier::None &&
-			return_alias_info.reference_qualifier != ReferenceQualifier::None) {
-			return_type.set_reference_qualifier(return_alias_info.reference_qualifier);
-		}
-		if (!return_type.has_function_signature() && return_alias_info.function_signature.has_value()) {
-			return_type.set_function_signature(*return_alias_info.function_signature);
-		}
-		if (!return_alias_info.array_dimensions.empty()) {
-			return_type.set_array_dimensions(return_alias_info.array_dimensions);
-		}
-		if (const int resolved_size_bits = getTypeSpecSizeBits(return_type); resolved_size_bits > 0) {
-			return_type.set_size_in_bits(resolved_size_bits);
-		}
-
-		FLASH_LOG(Parser, Debug, "get_expression_type for member function call: ",
-				  decl.decl_node().identifier_token().value(),
-				  " return_type=", (int)return_type.type(), " size=", (int)return_type.size_in_bits());
-
-		// If the return type is still auto, it should have been deduced during parsing
+		normalize_alias_return_type(return_type);
 		return return_type;
 	} else if (std::holds_alternative<LambdaExpressionNode>(expr)) {
 		// For lambda expressions, return the closure struct type

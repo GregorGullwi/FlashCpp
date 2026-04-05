@@ -10,6 +10,7 @@
 #include "InlineVector.h"  // For InlineVector (small-buffer-optimized vector)
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <climits>  // For LLONG_MAX, LLONG_MIN
 #include <charconv>	// For std::from_chars
@@ -51,6 +52,21 @@ class Parser;  // For template instantiation
 /// @see TemplateInstantiationHelper for shared template instantiation utilities
 
 namespace ConstExpr {
+
+inline thread_local std::unordered_set<const StructStaticMember*> gEvaluatingStaticMembers;
+
+struct StaticMemberEvaluationGuard {
+	const StructStaticMember* member;
+
+	explicit StaticMemberEvaluationGuard(const StructStaticMember* static_member)
+		: member(static_member) {
+		gEvaluatingStaticMembers.insert(member);
+	}
+
+	~StaticMemberEvaluationGuard() {
+		gEvaluatingStaticMembers.erase(member);
+	}
+};
 
 // Error type classification for constexpr evaluation failures
 enum class EvalErrorType {
@@ -100,14 +116,14 @@ struct EvalResult {
 	// that this array was loaded from. Enables array-to-pointer decay for the pattern
 	// `return data + N;` inside a constexpr member function where `data` is a member array.
 	StringHandle array_origin_var;
-	// Snapshot used only by constexpr pointers so they can still be dereferenced after
-	// the original binding has gone out of scope. Scalar pointers store one element;
-	// array pointers may store multiple elements so pointer arithmetic still works.
+	// Snapshot of the pointed-to value so member access and pointer arithmetic can still work after
+	// the original binding has gone out of scope. Scalar pointers store one element; array pointers
+	// may store multiple elements so pointer arithmetic still works.
 	std::vector<EvalResult> pointer_value_snapshot;
 	// Constexpr member-object pointer support.
-	// When member_pointer_member is valid, this result represents a member pointer
-	// created from an expression like `&S::member`. `is_null_member_pointer` tracks
-	// null member pointers, which use the target ABI's sentinel representation.
+	// When member_pointer_member is valid, this result represents a member pointer created from an
+	// expression like `&S::member`. `is_null_member_pointer` tracks null member pointers, which use
+	// the target ABI's sentinel representation.
 	StringHandle member_pointer_member;
 	bool is_null_member_pointer = false;
 
@@ -478,7 +494,8 @@ public:
 	static EvalResult evaluate_qualified_identifier(const QualifiedIdentifierNode& qualified_id, EvaluationContext& context);
 	static EvalResult evaluate_member_access(const MemberAccessNode& member_access, EvaluationContext& context);
 	static EvalResult evaluate_pointer_to_member_access(const PointerToMemberAccessNode& member_access, EvaluationContext& context);
-	static EvalResult evaluate_member_function_call(const MemberFunctionCallNode& member_func_call, EvaluationContext& context);
+
+	static EvalResult evaluate_member_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	static EvalResult evaluate_array_subscript(const ArraySubscriptNode& subscript, EvaluationContext& context);
 	static EvalResult evaluate_type_trait(const TypeTraitExprNode& trait_expr);
 
@@ -500,8 +517,9 @@ public:
 	static EvalResult evaluate_static_member_initializer_or_default(
 		const StructStaticMember& static_member,
 		EvaluationContext& context);
+
 	static EvalResult evaluate_function_call_member_access(
-		const FunctionCallNode& func_call,
+		const CallExprNode& call_expr,
 		std::string_view member_name,
 		EvaluationContext& context);
 	static EvalResult extract_object_members(
@@ -677,7 +695,8 @@ private:
 	static EvalResult evaluate_ternary_operator(const TernaryOperatorNode& ternary, EvaluationContext& context);
 	static bool is_expression_noexcept(const ExpressionNode& expr, EvaluationContext& context);
 	static bool is_function_decl_noexcept(const FunctionDeclarationNode& func_decl, EvaluationContext& context);
-	static const FunctionDeclarationNode* resolve_function_call_decl(const FunctionCallNode& func_call, EvaluationContext& context);
+
+	static const FunctionDeclarationNode* resolve_function_call_decl(const CallExprNode& call_expr, EvaluationContext& context);
 	static const LambdaExpressionNode* extract_lambda_from_initializer(const std::optional<ASTNode>& initializer);
 	static std::optional<ExtractedIdentifier> extract_identifier_from_expression(const ASTNode& object_expr);
 	static EvalResult materialize_lambda_value(
@@ -709,8 +728,10 @@ private:
 		const std::unordered_map<std::string_view, EvalResult>* stored_capture_bindings = nullptr,
 		std::unordered_map<std::string_view, EvalResult>* mutable_stored_capture_bindings = nullptr);
 	static EvalResult evaluate_builtin_function(std::string_view func_name, const ChunkedVector<ASTNode>& arguments, EvaluationContext& context);
-	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const FunctionCallNode& func_call, EvaluationContext& context);
-	static EvalResult evaluate_function_call(const FunctionCallNode& func_call, EvaluationContext& context);
+
+	static EvalResult tryEvaluateAsVariableTemplate(std::string_view func_name, const CallExprNode& call_expr, EvaluationContext& context);
+
+	static EvalResult evaluate_function_call(const CallExprNode& call_expr, EvaluationContext& context);
 	enum class FunctionCallTemplateBindingLoadMode {
 		IfContextEmpty,
 		ForceCurrentStructIfAvailable,
@@ -776,15 +797,17 @@ private:
 	// Returns true if the identifier resolves to a declared array variable (not a pointer).
 	// Used by evaluate_array_subscript to route array and pointer subscripts correctly.
 	static bool identifier_is_array_var(const IdentifierNode& id, EvaluationContext& context);
+
 	static std::optional<ASTNode> lookup_function_symbol(
-		const FunctionCallNode& func_call,
+		const CallExprNode& call_expr,
 		std::string_view fallback_name,
 		const SymbolTable& symbols);
+
 	static EvalResult evaluate_function_call_with_outer_bindings(
-		const FunctionCallNode& func_call,
+		const CallExprNode& call_expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
 		EvaluationContext& context,
-		std::unordered_map<std::string_view, EvalResult>* mutable_bindings = nullptr);
+		std::unordered_map<std::string_view, EvalResult>* mutable_bindings);
 	static std::optional<EvalResult> try_evaluate_bound_member_operator_call(
 		const ExpressionNode& expr,
 		const std::unordered_map<std::string_view, EvalResult>& bindings,
@@ -829,8 +852,9 @@ private:
 		EvaluationContext& context,
 		MemberFunctionLookupMode lookup_mode,
 		bool require_static);
+
 	static const FunctionDeclarationNode* try_get_lowered_constexpr_member_call_target(
-		const MemberFunctionCallNode& member_func_call,
+		const CallExprNode& call_expr,
 		const StructTypeInfo* struct_info,
 		size_t argument_count,
 		EvaluationContext& context,

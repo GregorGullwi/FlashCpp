@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "IrGenerator.h"
 #include "LambdaHelpers.h"
 #include "SemanticAnalysis.h"
@@ -2102,30 +2103,19 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 		return cond_noexcept && then_noexcept && else_noexcept;
 	}
 
-	// Function calls: check if function is declared noexcept
-	if (std::holds_alternative<FunctionCallNode>(expr)) {
-		const auto& func_call = std::get<FunctionCallNode>(expr);
-		// Check if function_declaration is available and noexcept
-		// The FunctionCallNode contains a reference to the function's DeclarationNode
-		// We need to look up the FunctionDeclarationNode to check noexcept
-		const DeclarationNode& decl = func_call.function_declaration();
-		std::string_view func_name = decl.identifier_token().value();
+	if (const auto call_info = CallInfo::tryFrom(expr)) {
+		if (const FunctionDeclarationNode* func_decl = call_info->function_declaration) {
+			return isFunctionDeclNoexcept(*func_decl);
+		}
 
-		// Look up the function in the symbol table
+		const DeclarationNode& decl = *call_info->declaration;
+		std::string_view func_name = decl.identifier_token().value();
 		extern SymbolTable gSymbolTable;
 		auto symbol = gSymbolTable.lookup(StringTable::getOrInternStringHandle(func_name));
 		if (symbol.has_value() && symbol->is<FunctionDeclarationNode>()) {
-			const FunctionDeclarationNode& func_decl = symbol->as<FunctionDeclarationNode>();
-			return isFunctionDeclNoexcept(func_decl);
+			return isFunctionDeclNoexcept(symbol->as<FunctionDeclarationNode>());
 		}
-		// If we can't determine, conservatively assume it may throw
 		return false;
-	}
-
-	// Member function calls: check if method is declared noexcept
-	if (const auto* member_call = std::get_if<MemberFunctionCallNode>(&expr)) {
-		const FunctionDeclarationNode& func_decl = member_call->function_declaration();
-		return isFunctionDeclNoexcept(func_decl);
 	}
 
 	// Constructor calls: check if constructor is noexcept
@@ -2570,7 +2560,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	const ConstructorDeclarationNode& selected_ctor,
 	const Token& source_token,
 	bool use_return_slot) {
-	if (target_type.category() != TypeCategory::Struct || !target_type.type_index().is_valid()) {
+	if (!is_struct_type(target_type.category()) || !target_type.type_index().is_valid()) {
 		return std::nullopt;
 	}
 	const TypeInfo* target_type_info = tryGetTypeInfo(target_type.type_index());
@@ -2639,7 +2629,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
 	setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
 
-	return makeExprResult(target_type.type_index().withCategory(TypeCategory::Struct), SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(target_type.type_index().withCategory(target_type.category()), SizeInBits{actual_size_bits}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstructor(
@@ -2649,7 +2639,7 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	const Token& source_token,
 	bool use_return_slot) {
 	if (!sema_ || !source_expr.is<ExpressionNode>() ||
-		target_type.category() != TypeCategory::Struct ||
+		!is_struct_type(target_type.category()) ||
 		target_type.is_reference() ||
 		target_type.is_rvalue_reference()) {
 		return std::nullopt;
@@ -2666,7 +2656,7 @@ std::optional<ExprResult> AstToIr::tryMaterializeSemaSelectedConvertingConstruct
 	}
 
 	const CanonicalTypeDesc& target_desc = sema_->typeContext().get(cast_info.target_type_id);
-	if (target_desc.category() != TypeCategory::Struct ||
+	if (!is_struct_type(target_desc.category()) ||
 		target_desc.type_index != target_type.type_index()) {
 		return std::nullopt;
 	}

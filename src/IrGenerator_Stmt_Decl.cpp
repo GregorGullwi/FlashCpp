@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "IrGenerator.h"
 #include "SemanticAnalysis.h"
 
@@ -49,18 +50,21 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 		return false;
 	}
 
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	if (CallInfo::tryFrom(expr).has_value()) {
+		return true;
+	}
+
 	return std::visit([](const auto& expr) -> bool {
 		using T = std::decay_t<decltype(expr)>;
 		return std::is_same_v<T, ConstructorCallNode> ||
 			   std::is_same_v<T, InitializerListConstructionNode> ||
-			   std::is_same_v<T, FunctionCallNode> ||
-			   std::is_same_v<T, MemberFunctionCallNode> ||
 			   std::is_same_v<T, StaticCastNode> ||
 			   std::is_same_v<T, ConstCastNode> ||
 			   std::is_same_v<T, ReinterpretCastNode> ||
 			   std::is_same_v<T, DynamicCastNode>;
 	},
-					  node.as<ExpressionNode>());
+					  expr);
 }
 
 } // namespace
@@ -83,21 +87,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	const bool legacy_supported_shape = std::visit([](const auto& inner) -> bool {
-		using T = std::decay_t<decltype(inner)>;
-		return std::is_same_v<T, IdentifierNode> ||
-			   std::is_same_v<T, MemberAccessNode> ||
-			   std::is_same_v<T, StaticCastNode> ||
-			   std::is_same_v<T, ConstCastNode> ||
-			   std::is_same_v<T, ReinterpretCastNode> ||
-			   std::is_same_v<T, DynamicCastNode> ||
-			   std::is_same_v<T, ConstructorCallNode> ||
-			   std::is_same_v<T, InitializerListConstructionNode> ||
-			   std::is_same_v<T, FunctionCallNode> ||
-			   std::is_same_v<T, MemberFunctionCallNode>;
-	},
-											 expr);
-	if (sema_ && legacy_supported_shape) {
+	if (sema_) {
 		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
@@ -165,14 +155,9 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				return target_type_node.as<TypeSpecifierNode>();
 			}
 			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
-			const ASTNode& return_type_node = inner.function_declaration().type_node();
-			if (return_type_node.is<TypeSpecifierNode>()) {
-				return return_type_node.as<TypeSpecifierNode>();
-			}
-			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
-			const ASTNode& return_type_node = inner.function_declaration().decl_node().type_node();
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			const DeclarationNode& decl = inner.callee().declaration();
+			const ASTNode& return_type_node = decl.type_node();
 			if (return_type_node.is<TypeSpecifierNode>()) {
 				return return_type_node.as<TypeSpecifierNode>();
 			}
@@ -1054,12 +1039,11 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		const ASTNode& init_node = *node.initializer();
 
 			// Check if initializer is a function call (including callable object invocation)
-			// Lambda calls come through as MemberFunctionCallNode (operator() calls)
+			// Lambda calls come through as member-style CallExprNode operator() calls
 		bool is_function_call = false;
 		if (init_node.is<ExpressionNode>()) {
 			const ExpressionNode& expr = init_node.as<ExpressionNode>();
-			is_function_call = std::holds_alternative<FunctionCallNode>(expr) ||
-							   std::holds_alternative<MemberFunctionCallNode>(expr);
+			is_function_call = CallInfo::tryFrom(expr).has_value();
 		}
 
 		if (is_function_call) {

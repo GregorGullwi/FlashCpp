@@ -1,26 +1,8 @@
 #include "ExpressionSubstitutor.h"
+#include "CallNodeHelpers.h"
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
-
-namespace {
-// Copy call metadata from source to target. By default all metadata is copied
-// including template_arguments. Pass copy_template_args=false when the caller
-// will substitute and set template arguments explicitly (avoids a redundant
-// shallow copy of potentially-unsubstituted dependent template parameters).
-void copyFunctionCallMetadata(FunctionCallNode& target, const FunctionCallNode& source, bool copy_template_args = true) {
-	target.set_indirect_call(source.is_indirect_call());
-	if (source.has_mangled_name()) {
-		target.set_mangled_name(source.mangled_name());
-	}
-	if (source.has_qualified_name()) {
-		target.set_qualified_name(source.qualified_name());
-	}
-	if (copy_template_args && source.has_template_arguments()) {
-		target.set_template_arguments(std::vector<ASTNode>(source.template_arguments().begin(), source.template_arguments().end()));
-	}
-}
-}
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
@@ -51,8 +33,8 @@ ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	// Dispatch on concrete node types (reached directly or after ExpressionNode unwrap above).
 	if (expr.is<ConstructorCallNode>()) {
 		return substituteConstructorCall(expr.as<ConstructorCallNode>());
-	} else if (expr.is<FunctionCallNode>()) {
-		return substituteFunctionCall(expr.as<FunctionCallNode>());
+	} else if (expr.is<CallExprNode>()) {
+		return substituteCallExpr(expr.as<CallExprNode>());
 	} else if (expr.is<BinaryOperatorNode>()) {
 		return substituteBinaryOp(expr.as<BinaryOperatorNode>());
 	} else if (expr.is<UnaryOperatorNode>()) {
@@ -124,12 +106,12 @@ ASTNode ExpressionSubstitutor::substituteConstructorCall(const ConstructorCallNo
 	return ASTNode(&new_expr);
 }
 
-ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& call) {
+ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& call) {
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Processing function call");
 	FLASH_LOG(Templates, Debug, "  has_mangled_name: ", call.has_mangled_name());
 	FLASH_LOG(Templates, Debug, "  has_template_arguments: ", call.has_template_arguments());
 
-	const DeclarationNode& decl_node = call.function_declaration();
+	const DeclarationNode& decl_node = call.callee().declaration();
 	std::string_view func_name = call.called_from().value();
 	if (func_name.empty()) {
 		func_name = decl_node.identifier_token().value();
@@ -157,6 +139,21 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 			inst_args.insert(inst_args.end(), pack_args.begin(), pack_args.end());
 		}
 		return inst_args;
+	};
+	auto wrapOriginalCall = [&]() -> ASTNode {
+		ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+		return ASTNode(&new_expr);
+	};
+	auto copyMetadataToExpr = [&](ExpressionNode& expr, const CallMetadataCopyOptions& options = {}) {
+		if (auto* call_expr = std::get_if<CallExprNode>(&expr)) {
+			copyCallMetadata(*call_expr, call, options);
+		}
+	};
+	auto emplaceDirectCallExpr = [&](const DeclarationNode& target_decl, const FunctionDeclarationNode* target_func, ChunkedVector<ASTNode>&& args, const Token& called_from) -> ExpressionNode& {
+		CallExprNode new_call = target_func
+			? makeResolvedCallExpr(*target_func, std::move(args), called_from)
+			: makeDirectCallExpr(target_decl, std::move(args), called_from);
+		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
 
@@ -247,8 +244,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 							} else {
 								FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
 							// Return as-is if we can't substitute
-								ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
-								return ASTNode(&new_expr);
+								return wrapOriginalCall();
 							}
 						}
 					} else {
@@ -280,8 +276,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 						} else {
 							FLASH_LOG(Templates, Warning, "    Template parameter not found in substitution map: ", param_name);
 						// Return as-is if we can't substitute
-							ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
-							return ASTNode(&new_expr);
+							return wrapOriginalCall();
 						}
 					} else {
 					// Non-dependent template argument - substitute/evaluate to a value if possible
@@ -323,8 +318,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 		} // End of else block for non-pack arguments
 		if (failed_value_extraction) {
 			FLASH_LOG(Templates, Debug, "  Could not safely extract all substituted template argument values; keeping original call");
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
-			return ASTNode(&new_expr);
+			return wrapOriginalCall();
 		}
 
 		// If no arguments were collected but we have pack substitutions available, use them
@@ -411,22 +405,28 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				if (instantiated_template->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
 
-					FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+					substituted_args_nodes.clear();
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
+
+					ExpressionNode& new_expr = emplaceDirectCallExpr(
 						func_decl.decl_node(),
+						&func_decl,
 						std::move(substituted_args_nodes),
 						call.called_from());
-					copyFunctionCallMetadata(new_call, call, /*copy_template_args=*/false);
+					CallMetadataCopyOptions copy_options;
+					copy_options.copy_template_arguments = false;
+					copyMetadataToExpr(new_expr, copy_options);
 					if (func_decl.has_mangled_name()) {
-						new_call.set_mangled_name(func_decl.mangled_name());
+						setCallMangledName(new_expr, func_decl.mangled_name());
 					}
 					std::vector<ASTNode> substituted_template_arg_nodes;
 					substituted_template_arg_nodes.reserve(explicit_template_arg_nodes.size());
 					for (const auto& arg_node : explicit_template_arg_nodes) {
 						substituted_template_arg_nodes.push_back(substitute(arg_node));
 					}
-					new_call.set_template_arguments(std::move(substituted_template_arg_nodes));
-
-					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+					setCallTemplateArguments(new_expr, std::move(substituted_template_arg_nodes));
 					return ASTNode(&new_expr);
 				}
 			}
@@ -473,15 +473,19 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 					TypeSpecifierNode& new_type = gChunkedAnyStorage.emplace_back<TypeSpecifierNode>(
 						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
 
-					// Create a ConstructorCallNode instead of FunctionCallNode
+					// Create a ConstructorCallNode instead of an ordinary CallExprNode
+					substituted_args_nodes.clear();
+					for (size_t i = 0; i < call.arguments().size(); ++i) {
+						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
+					}
 					ConstructorCallNode& new_ctor = gChunkedAnyStorage.emplace_back<ConstructorCallNode>(
 						ASTNode(&new_type),
 						std::move(substituted_args_nodes),
 						call.called_from());
 
 					// Wrap in ExpressionNode
-					ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
-					return ASTNode(&new_expr);
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_ctor);
+				return ASTNode(&new_expr);
 				} else {
 					FLASH_LOG(Templates, Warning, "  Instantiated template not found in getTypesByNameMap(): ", instantiated_name.view());
 				}
@@ -515,7 +519,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				if (substituted_type.type_index() != type_spec.type_index()) {
 					FLASH_LOG(Templates, Debug, "  Type was substituted, creating ConstructorCallNode");
 
-					// Create a ConstructorCallNode instead of FunctionCallNode
+					// Create a ConstructorCallNode instead of an ordinary CallExprNode
 					ChunkedVector<ASTNode> substituted_args_nodes;
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
@@ -562,14 +566,13 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
 				FLASH_LOG(Templates, Debug, "  Successfully instantiated template function");
 
-				// Create a new FunctionCallNode with the instantiated function
-				FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
+				// Create a new direct CallExprNode with the instantiated function
+				ExpressionNode& new_expr = emplaceDirectCallExpr(
 					instantiated_func.decl_node(),
+					&instantiated_func,
 					std::move(substituted_args),
 					call.called_from());
-				copyFunctionCallMetadata(new_call, call);
-
-				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
+				copyMetadataToExpr(new_expr);
 				return ASTNode(&new_expr);
 			} else {
 				FLASH_LOG(Templates, Warning, "  Failed to instantiate template function: ", template_func_name);
@@ -647,21 +650,46 @@ ASTNode ExpressionSubstitutor::substituteFunctionCall(const FunctionCallNode& ca
 				}
 			}
 
-			FunctionCallNode& new_call = gChunkedAnyStorage.emplace_back<FunctionCallNode>(
-				*target_decl, std::move(substituted_args), new_func_token);
-			copyFunctionCallMetadata(new_call, call);
-			new_call.set_qualified_name(new_func_name);
+			ExpressionNode& new_expr = emplaceDirectCallExpr(
+				*target_decl,
+				target_func,
+				std::move(substituted_args),
+				new_func_token);
+			copyMetadataToExpr(new_expr);
+			setCallQualifiedName(new_expr, new_func_name);
 			if (target_func && target_func->has_mangled_name()) {
-				new_call.set_mangled_name(target_func->mangled_name());
+				setCallMangledName(new_expr, target_func->mangled_name());
 			}
-			ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_call);
 			return ASTNode(&new_expr);
 		}
 	}
 
 	// Return as-is
 	FLASH_LOG(Templates, Debug, "  Returning function call as-is");
-	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(call);
+	return wrapOriginalCall();
+}
+
+ASTNode ExpressionSubstitutor::substituteCallExpr(const CallExprNode& call) {
+	if (!call.has_receiver()) {
+		return substituteFunctionCallImpl(call);
+	}
+
+	ASTNode substituted_receiver = substitute(call.receiver());
+	ChunkedVector<ASTNode> substituted_args;
+	for (size_t i = 0; i < call.arguments().size(); ++i) {
+		substituted_args.push_back(substitute(call.arguments()[i]));
+	}
+
+	CallExprNode substituted_call(call.callee(), substituted_receiver, std::move(substituted_args), call.called_from());
+	copyCallMetadataWithTransformedTemplateArguments(
+		substituted_call,
+		call,
+		[this](const ASTNode& template_arg) {
+			return substitute(template_arg);
+		},
+		CallMetadataCopyOptions{});
+
+	ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(substituted_call);
 	return ASTNode(&new_expr);
 }
 

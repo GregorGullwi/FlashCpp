@@ -656,11 +656,12 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 		// Clear global TempVar metadata to prevent stale data from bleeding into this function
 	GlobalTempVarMetadataStorage::instance().clear();
 
-		// Set current function return type and size for type checking in return statements
-		// This is critical for lambdas returning other lambdas or structs
+	// Set current function return type and size for type checking in return statements
+	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
 	current_function_return_size_ = lambda_info.return_size;
 	current_function_returns_reference_ = lambda_info.returns_reference;
+	current_function_returns_function_pointer_ = (lambda_info.return_type_index.category() == TypeCategory::FunctionPointer);
 
 		// Set lambda context for captured variable access
 	pushLambdaContext(lambda_info);
@@ -796,11 +797,12 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 		// so TempVar() starts at 1 which is the first available slot.
 	var_counter = TempVar();
 
-		// Set current function return type and size for type checking in return statements
-		// This is critical for lambdas returning other lambdas or structs
+	// Set current function return type and size for type checking in return statements
+	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
 	current_function_return_size_ = lambda_info.return_size;
 	current_function_returns_reference_ = lambda_info.returns_reference;
+	current_function_returns_function_pointer_ = (lambda_info.return_type_index.category() == TypeCategory::FunctionPointer);
 
 		// Add lambda parameters to symbol table as function parameters (__invoke context).
 		// Instantiation-time semantic normalization has already rewritten generic

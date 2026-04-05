@@ -1,4 +1,5 @@
 #include "Parser.h"
+#include "CallNodeHelpers.h"
 #include "ConstExprEvaluator.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
@@ -860,7 +861,6 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 
 		// The symbol contains a FunctionDeclarationNode, get its underlying DeclarationNode
 		const FunctionDeclarationNode& func_decl_node = builtin_symbol->as<FunctionDeclarationNode>();
-		const DeclarationNode& func_decl = func_decl_node.decl_node();
 
 		// Create arguments vector with both the va_list expression and the type
 		ChunkedVector<ASTNode> args;
@@ -868,7 +868,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		args.push_back(*type_result.node());	 // Pass type node as second argument
 
 		auto builtin_call = emplace_node<ExpressionNode>(
-			FunctionCallNode(func_decl, std::move(args), builtin_token));
+			makeResolvedCallExpr(func_decl_node, std::move(args), builtin_token));
 
 		return ParseResult::success(builtin_call);
 	}
@@ -893,7 +893,7 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 	// 2. For UnaryOperatorNode with &:
 	//    a. Check if the operand type has an overloaded operator& (member or non-member)
 	//    b. If overloaded operator& exists and applies to regular &:
-	//       - Replace UnaryOperatorNode with FunctionCallNode to the overloaded operator
+	//       - Replace UnaryOperatorNode with a CallExprNode for the overloaded operator
 	//    c. If no overload or __builtin_addressof:
 	//       - Keep UnaryOperatorNode for direct address-of operation
 	// 3. Add a flag to UnaryOperatorNode: is_builtin_addressof

@@ -238,10 +238,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 				// Get the current function's return type
 			TypeCategory return_category = current_function_return_type_index_.category();
-			TypeCategory return_type = return_category;
+			TypeCategory return_type = currentFunctionReturnType();
 			int return_size = current_function_return_size_;
+			const TypeIndex return_type_index = is_struct_type(return_category)
+				? current_function_return_type_index_
+				: nativeTypeIndex(return_type);
 			TypeSpecifierNode return_type_spec(
-				current_function_return_type_index_.withCategory(return_type),
+				return_type_index,
 				return_size,
 				node.return_token(),
 				CVQualifier::None,
@@ -260,6 +263,70 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				expr_size = operands.size_in_bits.value;
 				sema_applied_conversion = true;
 			}
+			if (!sema_applied_conversion &&
+				is_struct_type(return_category) &&
+				return_type_spec.type_index().is_valid() &&
+				(!is_struct_type(expr_category) || operands.type_index != return_type_spec.type_index())) {
+				if (const TypeInfo* target_type_info = tryGetTypeInfo(return_type_spec.type_index())) {
+					if (const StructTypeInfo* target_struct_info = target_type_info->getStructInfo()) {
+						auto tryMaterializeReturnCtor = [&](const ConstructorDeclarationNode* ctor) {
+							if (!ctor) {
+								return false;
+							}
+							if (auto materialized = materializeSelectedConvertingConstructor(
+									operands, *expr_opt, return_type_spec, *ctor,
+									node.return_token(), use_return_slot_for_ctor)) {
+								operands = *materialized;
+								expr_type = operands.typeEnum();
+								expr_category = operands.category();
+								expr_size = operands.size_in_bits.value;
+								sema_applied_conversion = true;
+								return true;
+							}
+							return false;
+						};
+						if (auto arg_type_opt = buildCodegenOverloadResolutionArgType(*expr_opt)) {
+							std::vector<TypeSpecifierNode> arg_types;
+							arg_types.push_back(*arg_type_opt);
+							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
+							if (!resolution.is_ambiguous && resolution.has_match && resolution.selected_overload) {
+								tryMaterializeReturnCtor(resolution.selected_overload);
+							}
+						}
+						if (!sema_applied_conversion) {
+							auto arity_resolution = resolve_constructor_overload_arity(*target_struct_info, 1, true);
+							if (!arity_resolution.is_ambiguous && arity_resolution.has_match) {
+								tryMaterializeReturnCtor(arity_resolution.selected_overload);
+							}
+						}
+						if (!sema_applied_conversion) {
+							const ConstructorDeclarationNode* lone_viable_ctor = nullptr;
+							size_t viable_ctor_count = 0;
+							for (const auto& member_func : target_struct_info->member_functions) {
+								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
+									continue;
+								}
+								const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
+								if (isImplicitCopyOrMoveConstructorCandidate(*target_struct_info, ctor_decl)) {
+									continue;
+								}
+								const auto& params = ctor_decl.parameter_nodes();
+								const size_t min_required = countMinRequiredArgs(ctor_decl);
+								if (min_required <= 1 && params.size() >= 1) {
+									lone_viable_ctor = &ctor_decl;
+									++viable_ctor_count;
+									if (viable_ctor_count > 1) {
+										break;
+									}
+								}
+							}
+							if (viable_ctor_count == 1) {
+								tryMaterializeReturnCtor(lone_viable_ctor);
+							}
+						}
+					}
+				}
+			}
 			if (sema_ && expr_opt->is<ExpressionNode>()) {
 				const void* key = static_cast<const void*>(&expr_opt->as<ExpressionNode>());
 				auto slot = sema_->getSlot(key);
@@ -274,7 +341,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						TypeIndex source_type_idx = sema_->typeContext().get(cast_info.source_type_id).type_index;
 						if (const TypeInfo* src_type_info = tryGetTypeInfo(source_type_idx)) {
 							const StructTypeInfo* src_struct_info = src_type_info->getStructInfo();
-							const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
+							const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 							const bool source_is_const = ((static_cast<uint8_t>(sema_->typeContext().get(cast_info.source_type_id).base_cv)) & (static_cast<uint8_t>(CVQualifier::Const))) != 0;
 							const StructMemberFunction* conv_op = findConversionOperator(
 								src_struct_info, ret_type_idx, source_is_const);
@@ -306,12 +373,12 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			if (!sema_applied_conversion && (expr_type != return_type || expr_size != return_size)) {
 					// Check for user-defined conversion operator (fallback when sema did not run)
 					// If expr is a struct type with a conversion operator to return_type, call it
-				if (expr_category == TypeCategory::Struct) {
+				if (is_struct_type(expr_category)) {
 					TypeIndex expr_type_index = operands.type_index;
 
 					if (const TypeInfo* source_type_info = tryGetTypeInfo(expr_type_index)) {
 						const StructTypeInfo* source_struct_info = source_type_info->getStructInfo();
-						const TypeIndex ret_type_idx = (return_category == TypeCategory::Struct) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
+						const TypeIndex ret_type_idx = is_struct_type(return_category) ? current_function_return_type_index_ : nativeTypeIndex(return_category);
 
 							// Look for a conversion operator to the return type
 						const StructMemberFunction* conv_op = findConversionOperator(

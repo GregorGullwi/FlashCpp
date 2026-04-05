@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CallNodeHelpers.h"
 #include "AstNodeTypes_Stmt.h"
 #include "AstNodeTypes_Template.h"
 #include <type_traits>
@@ -59,20 +60,11 @@ inline std::pair<const FunctionDeclarationNode*, const StructTypeInfo*> findStat
 	return {nullptr, nullptr};
 }
 
-template <typename RecurseFn>
+template <typename CallNodeT, typename RecurseFn>
 std::vector<ASTNode> rebindFunctionCallTemplateArguments(
-	const FunctionCallNode& call,
+	const CallNodeT& call,
 	RecurseFn&& recurse) {
-	std::vector<ASTNode> rebound_template_args;
-	if (!call.has_template_arguments()) {
-		return rebound_template_args;
-	}
-
-	rebound_template_args.reserve(call.template_arguments().size());
-	for (const auto& template_arg : call.template_arguments()) {
-		rebound_template_args.push_back(recurse(template_arg));
-	}
-	return rebound_template_args;
+	return transformCallTemplateArguments(call, recurse);
 }
 
 template <typename RecurseFn>
@@ -636,21 +628,12 @@ bool visitASTImpl(const ASTNode& node, VisitorFn&& visitor) {
 			return visit_child(current.as<TypeidNode>().operand());
 		}
 
-		if (current.is<FunctionCallNode>()) {
-			for (const auto& argument : current.as<FunctionCallNode>().arguments()) {
-				if (visit_child(argument)) {
-					return true;
-				}
-			}
-			return false;
-		}
-
-		if (current.is<MemberFunctionCallNode>()) {
-			const auto& member_call = current.as<MemberFunctionCallNode>();
-			if (visit_child(member_call.object())) {
+		if (current.is<CallExprNode>()) {
+			const auto& call = current.as<CallExprNode>();
+			if (call.has_receiver() && visit_child(call.receiver())) {
 				return true;
 			}
-			for (const auto& argument : member_call.arguments()) {
+			for (const auto& argument : call.arguments()) {
 				if (visit_child(argument)) {
 					return true;
 				}
