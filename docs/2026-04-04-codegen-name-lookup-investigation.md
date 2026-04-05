@@ -62,11 +62,15 @@ Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reco
 2. Add a sema accessor for that expression-type data.
 3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with sema-owned type queries.
 4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
+5. Once sema value-category coverage is correct for the broader expression surface, delete the temporary expression-shape whitelist in `buildCodegenOverloadResolutionArgType(...)` and let the sema query run first for any `ExpressionNode`.
+6. **Known risk — enum constant value category**: `inferExpressionValueCategory` must classify enum constants (enumerators) as `PRValue`, not `LValue`. If the `IdentifierBinding::EnumConstant` check is unreliable or missing, sema will emit an lvalue-reference qualifier for enumerator arguments, causing constructor overload resolution to prefer deleted `const T&` overloads over `T&&` overloads. Regression test: `tests/test_ctor_enum_prvalue_ret0.cpp`. See also `docs/KNOWN_ISSUES.md`.
+7. **Known risk — string literal value category**: `inferExpressionValueCategory` currently falls through to the default `else` branch for `StringLiteralNode`, returning `PRValue`. Per C++20 [lex.string]/15, string literals are lvalues (they have static storage duration). The legacy path in `OverloadResolution.h` (`is_lvalue_expression_for_overload_resolution`) already handles this correctly. This is currently masked because `StringLiteralNode` is not in the `legacy_supported_shape` whitelist in `buildCodegenOverloadResolutionArgType` (`src/IrGenerator_Stmt_Decl.cpp`), so the sema slot is never consulted for string literal arguments. However, removing the whitelist (step 5 above) will expose incorrect `PRValue` data stored in the semantic slot, causing constructor overload resolution to treat string literal arguments as rvalues instead of lvalues.
 
 **Done when**
 
 - constructor/copy/move-sensitive codegen decisions no longer depend on ad-hoc declaration lookups or recursive AST-shape type recovery,
-- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies.
+- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies,
+- widening sema-first queries no longer depends on a hand-maintained whitelist of expression shapes.
 
 **Read/query first**
 

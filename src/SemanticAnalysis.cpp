@@ -46,6 +46,19 @@ bool callableOperatorAcceptsArgumentCount(const FunctionDeclarationNode& candida
 	return argument_count <= candidate.parameter_nodes().size();
 }
 
+ValueCategory valueCategoryFromReferenceQualifier(ReferenceQualifier qualifier) {
+	switch (qualifier) {
+		case ReferenceQualifier::LValueReference:
+			return ValueCategory::LValue;
+		case ReferenceQualifier::RValueReference:
+			return ValueCategory::XValue;
+		case ReferenceQualifier::None:
+			return ValueCategory::PRValue;
+		default:
+			throw InternalError("Unexpected reference qualifier in value-category helper");
+	}
+}
+
 ASTNode resolveRangedForLoopDeclNode(const VariableDeclarationNode& original_var_decl, const TypeSpecifierNode& deduced_type) {
 	const DeclarationNode& original_decl = original_var_decl.declaration();
 	const TypeSpecifierNode& placeholder_type = original_decl.type_node().as<TypeSpecifierNode>();
@@ -2239,6 +2252,26 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			// do not recurse into child expressions here.
 		},
 				   expr);
+
+		const auto* expr_key = static_cast<const void*>(&expr);
+		SemanticSlot slot = getSlot(expr_key).value_or(SemanticSlot{});
+		CanonicalTypeId inferred_type_id = slot.type_id;
+		if (!inferred_type_id) {
+			inferred_type_id = inferExpressionType(node);
+		}
+		if (inferred_type_id) {
+			slot.type_id = inferred_type_id;
+			// Don't overwrite value_category when a conversion annotation already
+			// set it — the conversion result's category (typically PRValue) was
+			// established by tryAnnotateConversion and must not be replaced with
+			// the source expression's natural category (e.g. LValue for a named
+			// variable), because the slot's type_id already holds the *target*
+			// type after conversion.
+			if (!slot.has_cast()) {
+				slot.value_category = inferExpressionValueCategory(node);
+			}
+			setSlot(expr_key, slot);
+		}
 	}
 
 	return {};
@@ -2280,6 +2313,33 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	if (it != semantic_slots_.end())
 		return it->second;
 	return std::nullopt;
+}
+
+std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
+	if (!node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const auto* key = static_cast<const void*>(&node.as<ExpressionNode>());
+	auto slot = getSlot(key);
+	if (!slot.has_value() || !slot->has_type()) {
+		return std::nullopt;
+	}
+
+	TypeSpecifierNode type = materializeTypeSpecifier(type_context_.get(slot->type_id));
+	switch (slot->value_category) {
+		case ValueCategory::LValue:
+			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			break;
+		case ValueCategory::XValue:
+			type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+			break;
+		case ValueCategory::PRValue:
+			break;
+		default:
+			throw InternalError("Unexpected semantic value category");
+	}
+	return type;
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const FunctionCallNode* key) const {
@@ -2872,6 +2932,103 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	}
 
 	return {};
+}
+
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
+	if (!node.is<ExpressionNode>()) {
+		return ValueCategory::PRValue;
+	}
+
+	const auto& expr = node.as<ExpressionNode>();
+	return std::visit([this, &node](const auto& e) -> ValueCategory {
+		using T = std::decay_t<decltype(e)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			if (e.binding() == IdentifierBinding::EnumConstant) {
+				return ValueCategory::PRValue;
+			}
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			if (const CanonicalTypeId member_type_id = inferExpressionType(node)) {
+				const CanonicalTypeDesc& member_desc = type_context_.get(member_type_id);
+				if (member_desc.ref_qualifier != ReferenceQualifier::None) {
+					return valueCategoryFromReferenceQualifier(member_desc.ref_qualifier);
+				}
+				const ValueCategory object_category = inferExpressionValueCategory(e.object());
+				return object_category == ValueCategory::LValue ? ValueCategory::LValue : ValueCategory::XValue;
+			}
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
+			if (const FunctionDeclarationNode* op_subscript = getResolvedOpSubscript(&e)) {
+				const ASTNode& return_type_node = op_subscript->decl_node().type_node();
+				if (return_type_node.is<TypeSpecifierNode>()) {
+					return valueCategoryFromReferenceQualifier(
+						return_type_node.as<TypeSpecifierNode>().reference_qualifier());
+				}
+			}
+
+			if (const CanonicalTypeId array_type_id = inferExpressionType(e.array_expr())) {
+				const CanonicalTypeDesc& array_desc = type_context_.get(array_type_id);
+				if (!array_desc.array_dimensions.empty()) {
+					const ValueCategory object_category = inferExpressionValueCategory(e.array_expr());
+					return object_category == ValueCategory::LValue ? ValueCategory::LValue : ValueCategory::XValue;
+				}
+			}
+
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			if (e.op() == "*" || ((e.op() == "++" || e.op() == "--") && e.is_prefix())) {
+				return ValueCategory::LValue;
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, FunctionCallNode>) {
+			const FunctionDeclarationNode* resolved_callable = getResolvedOpCall(&e);
+			ASTNode return_type_node;
+			if (resolved_callable) {
+				return_type_node = resolved_callable->decl_node().type_node();
+			} else {
+				return_type_node = e.function_declaration().type_node();
+			}
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				const auto& return_type = return_type_node.as<TypeSpecifierNode>();
+				if (return_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (return_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, MemberFunctionCallNode>) {
+			const ASTNode& return_type_node = e.function_declaration().decl_node().type_node();
+			if (return_type_node.is<TypeSpecifierNode>()) {
+				const auto& return_type = return_type_node.as<TypeSpecifierNode>();
+				if (return_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (return_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode> ||
+							 std::is_same_v<T, DynamicCastNode>) {
+			if (e.target_type().template is<TypeSpecifierNode>()) {
+				const auto& target_type = e.target_type().template as<TypeSpecifierNode>();
+				if (target_type.is_lvalue_reference()) {
+					return ValueCategory::LValue;
+				}
+				if (target_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else {
+			return ValueCategory::PRValue;
+		}
+	},
+					  expr);
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgType(

@@ -66,12 +66,44 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
+	auto tryParserFallback = [&]() -> std::optional<TypeSpecifierNode> {
+		if (!parser_) {
+			return std::nullopt;
+		}
+
+		auto parser_type = parser_->get_expression_type(arg);
+		if (parser_type.has_value()) {
+			adjust_argument_type_for_overload_resolution(arg, *parser_type);
+		}
+		return parser_type;
+	};
+
 	if (!arg.is<ExpressionNode>()) {
-		return std::nullopt;
+		return tryParserFallback();
 	}
 
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
+	const bool legacy_supported_shape = std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		return std::is_same_v<T, IdentifierNode> ||
+			   std::is_same_v<T, MemberAccessNode> ||
+			   std::is_same_v<T, StaticCastNode> ||
+			   std::is_same_v<T, ConstCastNode> ||
+			   std::is_same_v<T, ReinterpretCastNode> ||
+			   std::is_same_v<T, DynamicCastNode> ||
+			   std::is_same_v<T, ConstructorCallNode> ||
+			   std::is_same_v<T, InitializerListConstructionNode> ||
+			   std::is_same_v<T, FunctionCallNode> ||
+			   std::is_same_v<T, MemberFunctionCallNode>;
+	},
+											 expr);
+	if (sema_ && legacy_supported_shape) {
+		if (auto sema_type = sema_->getExpressionType(arg); sema_type.has_value()) {
+			return sema_type;
+		}
+	}
+
+	auto legacy_type = std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
 		using T = std::decay_t<decltype(inner)>;
 
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
@@ -149,7 +181,11 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 			return std::nullopt;
 		}
 	},
-					  expr);
+							 expr);
+	if (legacy_type.has_value()) {
+		return legacy_type;
+	}
+	return tryParserFallback();
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
@@ -615,26 +651,22 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						// Used when the constexpr evaluator cannot fully evaluate (e.g., non-constexpr constructors
 						// with compile-time-known arguments). Uses evalResultMemberToRaw for correct float/double handling.
 					const ConstructorDeclarationNode* matching_ctor = nullptr;
-					if (parser_) {
-						std::vector<TypeSpecifierNode> arg_types;
-						arg_types.reserve(ctor_call.arguments().size());
-						for (const auto& arg : ctor_call.arguments()) {
-							auto arg_type_opt = parser_->get_expression_type(arg);
-							if (!arg_type_opt.has_value()) {
-								arg_types.clear();
-								break;
-							}
-							TypeSpecifierNode arg_type = *arg_type_opt;
-							adjust_argument_type_for_overload_resolution(arg, arg_type);
-							arg_types.push_back(std::move(arg_type));
+					std::vector<TypeSpecifierNode> arg_types;
+					arg_types.reserve(ctor_call.arguments().size());
+					for (const auto& arg : ctor_call.arguments()) {
+						auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+						if (!arg_type_opt.has_value()) {
+							arg_types.clear();
+							break;
 						}
-						if (arg_types.size() == ctor_call.arguments().size()) {
-							auto resolution = resolve_constructor_overload(*si, arg_types, false);
-							if (resolution.is_ambiguous) {
-								throw CompileError("Ambiguous constructor call");
-							}
-							matching_ctor = resolution.selected_overload;
+						arg_types.push_back(std::move(*arg_type_opt));
+					}
+					if (arg_types.size() == ctor_call.arguments().size()) {
+						auto resolution = resolve_constructor_overload(*si, arg_types, false);
+						if (resolution.is_ambiguous) {
+							throw CompileError("Ambiguous constructor call");
 						}
+						matching_ctor = resolution.selected_overload;
 					}
 					if (!matching_ctor) {
 						auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
@@ -1282,45 +1314,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
-								// Try type-based constructor overload resolution first.
-								// Infer argument types: try parser first (handles literals,
-								// member access, etc.), then fall back to the IR generator's
-								// own symbol table for local variable identifiers whose type
-								// may not be available through the parser at IR-generation time.
+								// Try type-based constructor overload resolution first using the
+								// sema-backed expression typing helper. Legacy lookup fallback
+								// stays isolated behind buildCodegenOverloadResolutionArgType().
 									{
 										std::vector<TypeSpecifierNode> arg_types;
 										bool all_arg_types_known = true;
 										for (const auto& init_arg : initializers) {
-											std::optional<TypeSpecifierNode> arg_type_opt;
-											if (parser_) {
-												arg_type_opt = parser_->get_expression_type(init_arg);
-											}
-										// If parser couldn't infer the type, try symbol table lookup
-										// for simple identifier expressions (e.g., local variables).
-											if (!arg_type_opt.has_value() && init_arg.is<ExpressionNode>()) {
-												const auto& arg_expr = init_arg.as<ExpressionNode>();
-												if (std::holds_alternative<IdentifierNode>(arg_expr)) {
-													const auto& ident = std::get<IdentifierNode>(arg_expr);
-													auto sym = symbol_table.lookup(ident.name());
-													if (sym.has_value()) {
-														if (const DeclarationNode* arg_decl = get_decl_from_symbol(*sym)) {
-															if (arg_decl->type_node().is<TypeSpecifierNode>())
-																arg_type_opt = arg_decl->type_node().as<TypeSpecifierNode>();
-														} else if (sym->is<VariableDeclarationNode>()) {
-															const auto& vd = sym->as<VariableDeclarationNode>();
-															if (vd.declaration().type_node().is<TypeSpecifierNode>())
-																arg_type_opt = vd.declaration().type_node().as<TypeSpecifierNode>();
-														}
-													}
-												}
-											}
+											auto arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
 											if (!arg_type_opt.has_value()) {
 												all_arg_types_known = false;
 												break;
 											}
-											TypeSpecifierNode arg_type = *arg_type_opt;
-											adjust_argument_type_for_overload_resolution(init_arg, arg_type);
-											arg_types.push_back(std::move(arg_type));
+											arg_types.push_back(std::move(*arg_type_opt));
 										}
 										if (all_arg_types_known) {
 										// skip_implicit=true: avoid false ambiguity when an explicit
@@ -2013,19 +2019,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 								// If we didn't find a copy constructor, use general matching
-							if (!matching_ctor) {
-								if (parser_) {
+								if (!matching_ctor) {
 									std::vector<TypeSpecifierNode> arg_types;
 									arg_types.reserve(num_args);
 									direct_ctor->arguments().visit([&](ASTNode arg) {
-										auto arg_type_opt = parser_->get_expression_type(arg);
+										auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
 										if (!arg_type_opt.has_value()) {
 											arg_types.clear();
 											return;
 										}
-										TypeSpecifierNode arg_type = *arg_type_opt;
-										adjust_argument_type_for_overload_resolution(arg, arg_type);
-										arg_types.push_back(std::move(arg_type));
+										arg_types.push_back(std::move(*arg_type_opt));
 									});
 
 									if (arg_types.size() == num_args) {
@@ -2035,13 +2038,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										}
 										matching_ctor = resolution.selected_overload;
 									}
-								}
 
-								if (!matching_ctor) {
-									auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
-									matching_ctor = arity_resolution.selected_overload;
+									if (!matching_ctor) {
+										auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
+										matching_ctor = arity_resolution.selected_overload;
+									}
 								}
-							}
 						}
 
 							// C++20 aggregate parenthesized initialization (P0960):
