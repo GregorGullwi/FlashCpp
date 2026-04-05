@@ -2168,6 +2168,7 @@ void AstToIr::generateTemplateFunctionDecl(const TemplateInstantiationInfo& inst
 // Generate an instantiated member function template
 void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& inst_info) {
 	auto saved_namespace_stack = current_namespace_stack_;
+	StringHandle saved_struct_name = current_struct_name_;
 	auto parse_namespace_components = [](std::string_view qualified_prefix) {
 		std::vector<std::string> components;
 		size_t start = 0;
@@ -2228,6 +2229,9 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 		if (struct_type_it != getTypesByNameMap().end()) {
 			struct_type_info = struct_type_it->second;
 		}
+	}
+	if (struct_type_info != nullptr) {
+		current_struct_name_ = inst_info.struct_name;
 	}
 
 	// For member functions, add implicit 'this' pointer to symbol table
@@ -2310,6 +2314,7 @@ void AstToIr::generateTemplateInstantiation(const TemplateInstantiationInfo& ins
 
 	// Exit function scope
 	symbol_table.exit_scope();
+	current_struct_name_ = saved_struct_name;
 	current_namespace_stack_ = saved_namespace_stack;
 }
 

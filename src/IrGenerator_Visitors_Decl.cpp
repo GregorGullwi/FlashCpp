@@ -92,27 +92,25 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 										? 64
 										: actual_ret_size;
 
-		// Set or clear current_struct_name_ based on whether this is a member function
-		// This is critical for member variable lookup in generateIdentifierIr
-	if (node.is_member_function()) {
-			// For member functions, set current_struct_name_ from parent_struct_name
+		// Set or clear current_struct_name_ based on whether this declaration is owned by a struct.
+		// This is critical for member variable and static member lookup in generateIdentifierIr.
+		// Some instantiated member functions reach codegen with parent_struct_name set even when
+		// is_member_function() is false, so parent_struct_name() is the reliable ownership signal.
+	if (std::string_view parent_name = node.parent_struct_name(); !parent_name.empty()) {
 			// Use the parent_struct_name directly (simple name like "Test") rather than
 			// looking up the TypeInfo's name (which may be namespace-qualified like "ns::Test").
 			// The namespace will be added during mangling from current_namespace_stack_.
-		std::string_view parent_name = node.parent_struct_name();
+		StringHandle parent_handle = StringTable::getOrInternStringHandle(parent_name);
 			// If parent_struct_name is a template pattern but we have a valid struct context
-			// from visitStructDeclarationNode, keep the struct context (instantiated name)
-		if (!parent_name.empty() && !gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(parent_name))) {
-			current_struct_name_ = StringTable::getOrInternStringHandle(parent_name);
+			// from visitStructDeclarationNode, keep the instantiated struct context.
+		if (!gTemplateRegistry.isPatternStructName(parent_handle)) {
+			current_struct_name_ = parent_handle;
 		}
-			// else: keep current_struct_name_ from visitStructDeclarationNode context
-	} else if (node.parent_struct_name().empty()) {
+	} else {
 			// Clear current_struct_name_ for free functions (no parent struct association).
 			// Previously this only cleared when current_struct_name_ was already invalid,
 			// which caused free functions (like distance_like) to retain a stale struct
 			// context from a previously-visited member function.
-			// We preserve the struct context when parent_struct_name is non-empty, which
-			// covers template-instantiated member functions that may not set is_member_function_.
 		current_struct_name_ = StringHandle();
 	}
 
