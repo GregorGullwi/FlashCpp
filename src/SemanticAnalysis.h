@@ -99,6 +99,8 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const void* key) const;
 
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
+	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
 	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
 
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
@@ -319,6 +321,7 @@ private:
 	// Side table: call-expression pointer -> resolved operator() declaration.
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
+	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 
 	// Side table: ArraySubscriptNode pointer → resolved operator[] declaration.

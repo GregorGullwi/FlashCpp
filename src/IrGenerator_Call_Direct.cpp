@@ -766,6 +766,70 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return &fd;
 	};
 
+	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
+	// direct-call target stored by semantic analysis. Only use it when the
+	// codegen recovery chain below has no needed side effects, or when those
+	// side effects can be reproduced directly from the sema-owned target.
+	if (sema_) {
+		const FunctionDeclarationNode* sema_resolved = sema_->getResolvedDirectCall(&callExprNode);
+		if (sema_resolved) {
+			std::string_view parent = sema_resolved->parent_struct_name();
+			const bool is_current_struct_or_unowned = parent.empty() ||
+				(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
+			if (is_current_struct_or_unowned) {
+				matched_func_decl = sema_resolved;
+				resolveMangledName(matched_func_decl, parent);
+				FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved direct call target for: {}", func_name_view);
+			} else {
+				StringHandle owner_handle;
+				std::string_view resolved_owner_name = parent;
+				const StructTypeInfo* owner_struct_info = nullptr;
+
+				if (callExprNode.has_qualified_name()) {
+					size_t scope_pos = lookup_name_view.find("::");
+					if (scope_pos != std::string_view::npos) {
+						if (const TypeInfo* owner_type_info = resolveQualifiedCallStruct(lookup_name_view.substr(0, scope_pos));
+							owner_type_info && owner_type_info->isStruct()) {
+							owner_handle = owner_type_info->name();
+							resolved_owner_name = StringTable::getStringView(owner_handle);
+							owner_struct_info = owner_type_info->getStructInfo();
+						}
+					}
+				}
+
+				if (!owner_handle.isValid()) {
+					StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+					auto owner_it = getTypesByNameMap().find(parent_handle);
+					if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
+						owner_handle = owner_it->second->name();
+						resolved_owner_name = StringTable::getStringView(owner_handle);
+						owner_struct_info = owner_it->second->getStructInfo();
+					}
+				}
+
+				if (owner_handle.isValid()) {
+					matched_func_decl = sema_resolved;
+					std::string_view owner_for_mangling = parent;
+					if (gTemplateRegistry.isPatternStructName(StringTable::getOrInternStringHandle(owner_for_mangling))) {
+						owner_for_mangling = resolved_owner_name;
+					}
+					resolveMangledName(matched_func_decl, owner_for_mangling);
+					if (owner_struct_info && !owner_struct_info->member_functions.empty()) {
+						queueDeferredMemberFunctions(owner_handle, owner_struct_info, owner_for_mangling);
+					} else if (const FunctionDeclarationNode* instantiated_func =
+						instantiateAndQueueLazyMember(owner_handle,
+							matched_func_decl->decl_node().identifier_token().handle(),
+							resolved_owner_name,
+							callExprNode.arguments().size())) {
+						matched_func_decl = instantiated_func;
+						resolveMangledName(matched_func_decl, resolved_owner_name);
+					}
+					FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved cross-struct direct call target for: {}", func_name_view);
+				}
+			}
+		}
+	}
+
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)
 		// If so, use it directly and skip the lookup logic
 	if (has_precomputed_mangled) {

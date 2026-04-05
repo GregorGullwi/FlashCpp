@@ -2306,6 +2306,15 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const CallExp
 	return getResolvedOpCall(static_cast<const void*>(key));
 }
 
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const void* key) const {
+	auto it = resolved_direct_call_table_.find(key);
+	return it != resolved_direct_call_table_.end() ? it->second : nullptr;
+}
+
+const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const CallExprNode* key) const {
+	return getResolvedDirectCall(static_cast<const void*>(key));
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
 	auto it = op_subscript_table_.find(key);
 	return it != op_subscript_table_.end() ? it->second : nullptr;
@@ -4077,6 +4086,11 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
 	if (!func_decl)
 		return;
+
+	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
+	if (!call_info.has_receiver && !resolved_op_call) {
+		resolved_direct_call_table_[call_key] = func_decl;
+	}
 
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
 }
