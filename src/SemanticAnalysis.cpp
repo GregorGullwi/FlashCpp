@@ -2955,6 +2955,9 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 							throw InternalError("Unexpected member-access object value category");
 					}
 				}
+				// Member-access cases already have their final overload-resolution
+				// category here; the generic helper would incorrectly rewrite all of
+				// them to lvalues.
 				return arg_type;
 			}
 		}
