@@ -2270,12 +2270,18 @@ std::optional<SemanticSlot> SemanticAnalysis::getSlot(const void* key) const {
 	return std::nullopt;
 }
 
+namespace {
+const void* getExpressionKey(const ASTNode& node) {
+	return static_cast<const void*>(&node.as<ExpressionNode>());
+}
+}
+
 std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNode& node) const {
 	if (!node.is<ExpressionNode>()) {
 		return std::nullopt;
 	}
 
-	const auto* key = static_cast<const void*>(&node.as<ExpressionNode>());
+	const auto* key = getExpressionKey(node);
 	auto slot = getSlot(key);
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
@@ -2306,26 +2312,69 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 }
 
 std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(const ASTNode& arg) {
-	return buildOverloadResolutionArgType(arg, nullptr);
+	if (arg.is<ExpressionNode>()) {
+		const void* key = getExpressionKey(arg);
+		auto it = overload_resolution_arg_types_.find(key);
+		if (it != overload_resolution_arg_types_.end()) {
+			return it->second;
+		}
+	}
+	auto result = buildOverloadResolutionArgType(arg, nullptr);
+	if (result.has_value() && arg.is<ExpressionNode>()) {
+		const void* key = getExpressionKey(arg);
+		overload_resolution_arg_types_.emplace(key, *result);
+	}
+	return result;
 }
 
-ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return ValueCategory::PRValue;
 	}
 
 	const ExpressionNode& expr = node.as<ExpressionNode>();
-	return std::visit([](const auto& inner) -> ValueCategory {
+	return std::visit([this](const auto& inner) -> ValueCategory {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			return inner.binding() != IdentifierBinding::EnumConstant ? ValueCategory::LValue : ValueCategory::PRValue;
 		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
 			return ValueCategory::LValue;
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode> ||
-							 std::is_same_v<T, MemberAccessNode> ||
 							 std::is_same_v<T, PointerToMemberAccessNode> ||
 							 std::is_same_v<T, StringLiteralNode>) {
 			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			// C++20 [expr.ref]/4: if the member is a reference, the result is
+			// always an lvalue regardless of the object's value category.
+			const CanonicalTypeId obj_type_id = inferExpressionType(inner.object());
+			if (obj_type_id) {
+				const CanonicalTypeDesc& obj_desc = type_context_.get(obj_type_id);
+				if (obj_desc.category() == TypeCategory::Struct || obj_desc.category() == TypeCategory::UserDefined) {
+					const TypeInfo* ti = tryGetTypeInfo(obj_desc.type_index);
+					const StructTypeInfo* si = ti ? ti->getStructInfo() : nullptr;
+					if (si) {
+						const StringHandle member_handle = StringTable::getOrInternStringHandle(inner.member_name());
+						for (const auto& m : si->members) {
+							if (m.getName() == member_handle) {
+								if (m.is_reference()) {
+									return ValueCategory::LValue;
+								}
+								break;
+							}
+						}
+					}
+				}
+			}
+			const ValueCategory object_category = inferExpressionValueCategory(inner.object());
+			switch (object_category) {
+				case ValueCategory::LValue:
+					return ValueCategory::LValue;
+				case ValueCategory::XValue:
+				case ValueCategory::PRValue:
+					return ValueCategory::XValue;
+				default:
+					throw InternalError("Unexpected member-access object value category");
+			}
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			const std::string_view op = inner.op();
 			if (op == "*" || op == "++" || op == "--") {
@@ -2364,7 +2413,8 @@ ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node
 		} else {
 			return ValueCategory::PRValue;
 		}
-	}, expr);
+	},
+					  expr);
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* key) const {
