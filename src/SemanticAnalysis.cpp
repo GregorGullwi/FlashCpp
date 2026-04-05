@@ -2278,6 +2278,13 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	const auto* key = static_cast<const void*>(&node.as<ExpressionNode>());
 	auto slot = getSlot(key);
 	if (!slot.has_value() || !slot->has_type()) {
+		const ExpressionNode& expr = node.as<ExpressionNode>();
+		if (std::holds_alternative<StringLiteralNode>(expr)) {
+			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::Const);
+			type.add_pointer_level();
+			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+			return type;
+		}
 		return std::nullopt;
 	}
 
@@ -2295,6 +2302,64 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 			throw InternalError("Unexpected semantic value category");
 	}
 	return type;
+}
+
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
+	if (!node.is<ExpressionNode>()) {
+		return ValueCategory::PRValue;
+	}
+
+	const ExpressionNode& expr = node.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> ValueCategory {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return inner.binding() != IdentifierBinding::EnumConstant ? ValueCategory::LValue : ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, QualifiedIdentifierNode>) {
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, ArraySubscriptNode> ||
+							 std::is_same_v<T, MemberAccessNode> ||
+							 std::is_same_v<T, PointerToMemberAccessNode> ||
+							 std::is_same_v<T, StringLiteralNode>) {
+			return ValueCategory::LValue;
+		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
+			const std::string_view op = inner.op();
+			if (op == "*" || op == "++" || op == "--") {
+				return ValueCategory::LValue;
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			if (const FunctionDeclarationNode* func_decl = inner.callee().function_declaration_or_null()) {
+				const ASTNode& type_node = func_decl->decl_node().type_node();
+				if (type_node.is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& return_type = type_node.as<TypeSpecifierNode>();
+					if (return_type.is_rvalue_reference()) {
+						return ValueCategory::XValue;
+					}
+					if (return_type.is_reference()) {
+						return ValueCategory::LValue;
+					}
+				}
+			}
+			return ValueCategory::PRValue;
+		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode> ||
+							 std::is_same_v<T, DynamicCastNode>) {
+			const ASTNode& target_type_node = inner.target_type();
+			if (target_type_node.is<TypeSpecifierNode>()) {
+				const TypeSpecifierNode& target_type = target_type_node.as<TypeSpecifierNode>();
+				if (target_type.is_rvalue_reference()) {
+					return ValueCategory::XValue;
+				}
+				if (target_type.is_reference()) {
+					return ValueCategory::LValue;
+				}
+			}
+			return ValueCategory::PRValue;
+		} else {
+			return ValueCategory::PRValue;
+		}
+	}, expr);
 }
 
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpCall(const void* key) const {
