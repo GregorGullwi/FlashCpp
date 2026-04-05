@@ -1396,19 +1396,23 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		advance();
 
 		// Check for functional-style cast: Type(expression)
-		// This is needed for patterns like bool(x), int(y), etc.
-		// Check if this identifier is a type name and followed by '('
-		// NOTE: Only treat BUILT-IN types as functional casts here.
-		// User-defined types with Type(args) syntax are constructor calls, not casts,
-		// and should be handled by the normal identifier/function call path below.
+		// This is needed for patterns like bool(x), int(y), size_t(-1), etc.
+		// Check if this identifier is a type name and followed by '(' or '{'
 		if (current_token_.value() == "(" || current_token_.value() == "{") {
 			std::string_view id_name = identifier_token.value();
 
-			// Only check for built-in type names (not user-defined types)
-			// User-defined Type(args) is a constructor call, not a functional cast
+			// Check for built-in type names first
 			auto type_info = get_builtin_type_info(id_name);
 			if (type_info.has_value()) {
-				// This is a built-in type followed by '(' or '{' - parse as built-in type construction
+				return parse_functional_cast(id_name, identifier_token);
+			}
+
+			// Also check for type aliases (typedefs/using) that resolve to non-struct types.
+			// E.g., size_t(-1), streamoff(x) — these are functional casts, not function calls.
+			// Struct type aliases like `Pt{x, y}` are constructor/aggregate init and should
+			// go through the normal constructor call path below, not parse_functional_cast.
+			const TypeInfo* alias_info = lookupTypeInCurrentContext(identifier_token.handle());
+			if (alias_info && alias_info->isTypeAlias() && !alias_info->isStruct()) {
 				return parse_functional_cast(id_name, identifier_token);
 			}
 		}

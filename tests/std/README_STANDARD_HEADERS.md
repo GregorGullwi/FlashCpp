@@ -23,7 +23,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<string>` | `test_std_string.cpp` | ❌ Compile Error | ~4150ms (targeted retest 2026-03-31). Previous function-pointer mangling blocker fixed; now fails later on `Missing identifier: string`, missing `std::basic_string` primary template lookups, and explicit-constructor copy-init errors |
 | `<array>` | `test_std_array.cpp` | ❌ Codegen Error | ~1360ms (targeted retest 2026-04-03). The aggregate brace-init blocker stays fixed and the old array-alias regression tests remain green; current failures are still later iterator/ranges follow-ons (`Operator-` via `operator+`, `make_move_iterator`, `operator==`, and placeholder-sized helper types). |
 | `<algorithm>` | `test_std_algorithm.cpp` | ❌ Compile Error | ~2710ms (targeted retest 2026-04-03). Now gets well into ranges/view lowering, but still fails later on `_S_empty` / `_S_size`, iterator comparisons/arithmetic (`Operator==`, `Operator-`, `Operator<` / `Operator>`), and an eventual unresolved-`auto` mangling path. |
-| `<span>` | `test_std_span.cpp` | ❌ Parse Error | |
+| `<span>` | `test_std_span.cpp` | ❌ Codegen Error | Fatal error: Operator- not defined for operand types (previously `__detail::__extent_storage` primary template not found) |
 | `<tuple>` | `test_std_tuple.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~7830ms (targeted retest 2026-04-03). Base-member lookup is no longer the first stop; the current Linux repro now gets much deeper into `__copy_move_a` / `__copy_move_backward_a` / relocation helpers before failing on non-type deduction gaps, static-assert follow-ons, and a later unknown-type Itanium mangling abort. |
 | `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
@@ -34,7 +34,7 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<functional>` | `test_std_functional.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
 | `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<ranges>` | `test_std_ranges.cpp` | ❌ Parse Error | Ambiguous call to `__to_unsigned_like` |
+| `<ranges>` | `test_std_ranges.cpp` | ❌ Compile Error | ~1900ms. Previous Phase 1 `streamoff` violation and `size_t(-1)` functional cast errors are fixed; now fails later on `No matching function for call to 'wstring'` in basic_string.h |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
 | `<fstream>` | `test_std_fstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
