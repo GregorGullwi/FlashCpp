@@ -2088,6 +2088,9 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 				constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 				size_t outgoing_bytes = 0;
 				if (is_coff_format) {
+						// Win64 indirect calls still need caller-reserved shadow space, and any
+						// explicit arguments beyond the first 4 positions spill above it. Hidden
+						// aggregate return slots consume the first integer position.
 					size_t arg_count = call_op->arguments.size() + (call_op->usesReturnSlot() ? 1 : 0);
 					if (arg_count > 4) {
 						outgoing_bytes = 32 + (arg_count - 4) * 8;
@@ -2095,6 +2098,8 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						outgoing_bytes = 32;
 					}
 				} else {
+						// SysV uses a dynamically-sized overflow area. A hidden aggregate return
+						// slot shifts the integer-register starting position by one.
 					size_t int_slots_start = call_op->usesReturnSlot() ? 1 : 0;
 					outgoing_bytes = computeSysVOutgoingBytes(call_op->arguments, int_slots_start);
 				}
@@ -14131,18 +14136,210 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	constexpr bool is_coff_format = !std::is_same_v<TWriterClass, ElfFileWriter>;
 	const size_t max_int_regs = is_coff_format ? 4 : 6;
 	const size_t max_float_regs = is_coff_format ? 4 : 8;
+	const size_t shadow_space = is_coff_format ? 32 : 0;
 
-		// Load function pointer into RAX
-	X64Register func_ptr_reg;
+	if (op.usesReturnSlot()) {
+		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(return_slot_reg, result_offset);
+	}
+
+		// First pass: spill overflow arguments into the caller's outgoing area.
+	size_t temp_int_idx = op.usesReturnSlot() ? 1 : 0;
+	size_t temp_float_idx = 0;
+	size_t win_position_idx = op.usesReturnSlot() ? 1 : 0;
+	size_t stack_arg_count = 0;
+	for (size_t i = 0; i < op.arguments.size(); ++i) {
+		const auto& arg = op.arguments[i];
+		const bool is_reference_arg = arg.is_reference();
+		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool is_two_reg_sysv = isTwoRegisterStruct(arg, false);
+
+		bool goes_on_stack = false;
+		int stack_offset = 0;
+		if (is_coff_format) {
+				// Win64 uses unified argument positions across GPR/XMM registers.
+			size_t position = win_position_idx++;
+			goes_on_stack = position >= max_int_regs;
+			if (goes_on_stack) {
+				stack_offset = static_cast<int>(shadow_space + (position - max_int_regs) * 8);
+			}
+		} else if (is_float_arg) {
+			goes_on_stack = temp_float_idx >= max_float_regs;
+			temp_float_idx++;
+			if (goes_on_stack) {
+				stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+			}
+		} else {
+			size_t regs_needed = is_two_reg_sysv ? 2 : 1;
+			goes_on_stack = temp_int_idx + regs_needed > max_int_regs;
+			temp_int_idx += regs_needed;
+			if (goes_on_stack) {
+				stack_offset = static_cast<int>(shadow_space + stack_arg_count * 8);
+			}
+		}
+
+		if (!goes_on_stack) {
+			continue;
+		}
+
+		if (is_float_arg) {
+			X64Register temp_xmm = allocateXMMRegisterWithSpilling();
+			if (std::holds_alternative<double>(arg.value)) {
+				double float_value = std::get<double>(arg.value);
+				uint64_t bits;
+				if (arg.effectiveIrType() == IrType::Float) {
+					float float_val = static_cast<float>(float_value);
+					uint32_t float_bits;
+					std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+					bits = float_bits;
+				} else {
+					std::memcpy(&bits, &float_value, sizeof(bits));
+				}
+				X64Register temp_gpr = allocateRegisterWithSpilling();
+				emitMovImm64(temp_gpr, bits);
+				emitMovqGprToXmm(temp_gpr, temp_xmm);
+				regAlloc.release(temp_gpr);
+			} else if (const auto* temp_var = std::get_if<TempVar>(&arg.value)) {
+				int arg_offset = getStackOffsetFromTempVar(*temp_var, arg.size_in_bits.value);
+				emitFloatMovFromFrame(temp_xmm, arg_offset, arg.effectiveIrType() == IrType::Float);
+			} else if (const auto* string = std::get_if<StringHandle>(&arg.value)) {
+				int arg_offset = getVariableOffsetOrThrow(*string, "handleIndirectCall stack float arg");
+				emitFloatMovFromFrame(temp_xmm, arg_offset, arg.effectiveIrType() == IrType::Float);
+			}
+			emitFloatStoreToRSP(textSectionData, temp_xmm, stack_offset, arg.effectiveIrType() == IrType::Float);
+			regAlloc.release(temp_xmm);
+			if (!is_coff_format) {
+				stack_arg_count++;
+			}
+		} else if (is_reference_arg || shouldPassStructByAddress(arg, is_two_reg_sysv)) {
+			X64Register temp_reg = allocateRegisterWithSpilling();
+			if (!emitLoadAddressLikeArgument(temp_reg, arg)) {
+				throw InternalError("Stack indirect-call argument marked pass-by-address is not addressable");
+			}
+			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+			regAlloc.release(temp_reg);
+			if (!is_coff_format) {
+				stack_arg_count++;
+			}
+		} else if (is_two_reg_sysv) {
+			emitTwoRegStructToStack(arg, stack_offset);
+			stack_arg_count += 2;
+		} else {
+			X64Register temp_reg = loadTypedValueIntoRegister(arg);
+			emitStoreToRSP(textSectionData, temp_reg, stack_offset);
+			regAlloc.release(temp_reg);
+			if (!is_coff_format) {
+				stack_arg_count++;
+			}
+		}
+	}
+
+		// Second pass: load arguments that fit in registers.
+	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
+	size_t float_reg_index = 0;
+	win_position_idx = op.usesReturnSlot() ? 1 : 0;
+	for (size_t i = 0; i < op.arguments.size(); ++i) {
+		const auto& arg = op.arguments[i];
+		const TypeCategory arg_type = arg.typeEnum();
+		const bool is_reference_arg = arg.is_reference();
+		const bool is_float_arg = isIrFloatingPointType(arg.effectiveIrType()) && !is_reference_arg;
+		const bool is_two_reg_sysv = isTwoRegisterStruct(arg, false);
+
+		bool use_register = false;
+		X64Register target_reg = X64Register::RAX;
+		if (is_coff_format) {
+			size_t position = win_position_idx++;
+			use_register = position < max_int_regs;
+			if (use_register) {
+				target_reg = is_float_arg ? getFloatParamReg<TWriterClass>(position) : getIntParamReg<TWriterClass>(position);
+			}
+		} else if (is_float_arg) {
+			if (float_reg_index < max_float_regs) {
+				use_register = true;
+				target_reg = getFloatParamReg<TWriterClass>(float_reg_index++);
+			}
+		} else {
+			size_t regs_needed = is_two_reg_sysv ? 2 : 1;
+			if (int_reg_index + regs_needed <= max_int_regs) {
+				use_register = true;
+				target_reg = getIntParamReg<TWriterClass>(int_reg_index++);
+			}
+		}
+
+		if (!use_register) {
+			continue;
+		}
+
+		if ((is_reference_arg || shouldPassStructByAddress(arg, is_two_reg_sysv)) &&
+			(std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<TempVar>(arg.value))) {
+			if (!emitLoadAddressLikeArgument(target_reg, arg)) {
+				throw InternalError("Register indirect-call argument marked pass-by-address is not addressable");
+			}
+			continue;
+		}
+
+		if (is_two_reg_sysv && (std::holds_alternative<StringHandle>(arg.value) || std::holds_alternative<TempVar>(arg.value))) {
+			int src_offset = resolveTypedValueFrameOffset(arg);
+			emitTwoRegStructToRegs(src_offset, target_reg, int_reg_index, max_int_regs);
+			continue;
+		}
+
+		if (is_float_arg && std::holds_alternative<double>(arg.value)) {
+			double float_value = std::get<double>(arg.value);
+			uint64_t bits;
+			if (arg.effectiveIrType() == IrType::Float) {
+				float float_val = static_cast<float>(float_value);
+				uint32_t float_bits;
+				std::memcpy(&float_bits, &float_val, sizeof(float_bits));
+				bits = float_bits;
+			} else {
+				std::memcpy(&bits, &float_value, sizeof(bits));
+			}
+			X64Register temp_gpr = allocateRegisterWithSpilling();
+			emitMovImm64(temp_gpr, bits);
+			emitMovqGprToXmm(temp_gpr, target_reg);
+			regAlloc.release(temp_gpr);
+			continue;
+		}
+
+		if (std::holds_alternative<unsigned long long>(arg.value)) {
+			unsigned long long value = std::get<unsigned long long>(arg.value);
+			if (!is_float_arg && arg.size_in_bits == SizeInBits{32}) {
+				emitMovImm32(target_reg, static_cast<uint32_t>(value));
+			} else if (!is_float_arg) {
+				emitMovImm64(target_reg, value);
+			}
+		} else if (std::holds_alternative<TempVar>(arg.value)) {
+			const TempVar temp_var = std::get<TempVar>(arg.value);
+			int arg_offset = getStackOffsetFromTempVar(temp_var, arg.size_in_bits.value);
+			if (is_float_arg) {
+				emitFloatMovFromFrame(target_reg, arg_offset, arg.effectiveIrType() == IrType::Float);
+			} else {
+				emitMovFromFrameSized(
+					SizedRegister{target_reg, 64, false},
+					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(arg_type)});
+			}
+		} else if (std::holds_alternative<StringHandle>(arg.value)) {
+			StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
+			int arg_offset = getVariableOffsetOrThrow(arg_var_name_handle, "handleIndirectCall register arg");
+			if (is_float_arg) {
+				emitFloatMovFromFrame(target_reg, arg_offset, arg.effectiveIrType() == IrType::Float);
+			} else {
+				emitMovFromFrameSized(
+					SizedRegister{target_reg, 64, false},
+					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(arg_type)});
+			}
+		}
+	}
+
+		// Load the call target after argument setup so temporary register traffic in the
+		// spill/register passes cannot overwrite the function pointer in RAX.
+	X64Register func_ptr_reg = X64Register::RAX;
 	if (const auto* temp_var_ptr = std::get_if<TempVar>(&op.function_pointer)) {
-		TempVar func_ptr_temp = *temp_var_ptr;
-		int func_ptr_offset = getStackOffsetFromTempVar(func_ptr_temp);
-		func_ptr_reg = X64Register::RAX;
+		int func_ptr_offset = getStackOffsetFromTempVar(*temp_var_ptr);
 		emitMovFromFrame(func_ptr_reg, func_ptr_offset);
 	} else {
-			// Function pointer is a variable name — check if it's a global variable
 		StringHandle var_name_handle = std::get<StringHandle>(op.function_pointer);
-		func_ptr_reg = X64Register::RAX;
 		bool is_global = false;
 		for (const auto& global : global_variables_) {
 			if (global.name == var_name_handle) {
@@ -14151,75 +14348,11 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 			}
 		}
 		if (is_global) {
-				// Global function pointer: load via RIP-relative MOV + relocation
 			uint32_t reloc_offset = emitMovRipRelative(X64Register::RAX, 64);
 			pending_global_relocations_.push_back({reloc_offset, var_name_handle, IMAGE_REL_AMD64_REL32});
 		} else {
 			int func_ptr_offset = variable_scopes.back().variables[var_name_handle].offset;
 			emitMovFromFrame(func_ptr_reg, func_ptr_offset);
-		}
-	}
-
-	if (op.usesReturnSlot()) {
-		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
-		emitLeaFromFrame(return_slot_reg, result_offset);
-	}
-
-		// Process arguments (if any)
-	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
-	size_t float_reg_index = 0;
-	for (size_t i = 0; i < op.arguments.size(); ++i) {
-		const auto& arg = op.arguments[i];
-		TypeCategory argType = arg.typeEnum();
-
-			// Determine if this is a floating-point argument
-		bool is_float_arg = is_floating_point_type(argType);
-		if (is_float_arg) {
-			if (float_reg_index >= max_float_regs) {
-				continue;
-			}
-		} else if (int_reg_index >= max_int_regs) {
-			continue;
-		}
-
-			// Determine the target register for the argument
-		X64Register target_reg = is_float_arg
-			? getFloatParamReg<TWriterClass>(float_reg_index++)
-			: getIntParamReg<TWriterClass>(int_reg_index++);
-
-			// Load argument into target register
-		if (std::holds_alternative<TempVar>(arg.value)) {
-			const TempVar temp_var = std::get<TempVar>(arg.value);
-			int arg_offset = getStackOffsetFromTempVar(temp_var);
-			if (is_float_arg) {
-				bool is_float = (argType == TypeCategory::Float);
-				emitFloatMovFromFrame(target_reg, arg_offset, is_float);
-			} else {
-					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
-				emitMovFromFrameSized(
-					SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
-				);
-			}
-		} else if (std::holds_alternative<StringHandle>(arg.value)) {
-			StringHandle arg_var_name_handle = std::get<StringHandle>(arg.value);
-			int arg_offset = variable_scopes.back().variables[arg_var_name_handle].offset;
-			if (is_float_arg) {
-				bool is_float = (argType == TypeCategory::Float);
-				auto load_opcodes = generateFloatMovFromFrame(target_reg, arg_offset, is_float);
-				textSectionData.insert(textSectionData.end(), load_opcodes.op_codes.begin(),
-									   load_opcodes.op_codes.begin() + load_opcodes.size_in_bytes);
-			} else {
-					// Use size-aware load: source (sized stack slot) -> dest (64-bit register)
-				emitMovFromFrameSized(
-					SizedRegister{target_reg, 64, false},  // dest: 64-bit register
-					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(argType)}  // source: sized stack slot
-				);
-			}
-		} else if (const auto* ull_val = std::get_if<unsigned long long>(&arg.value)) {
-				// Immediate value
-			unsigned long long value = *ull_val;
-			emitMovImm64(target_reg, value);
 		}
 	}
 
