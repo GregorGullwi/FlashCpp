@@ -291,23 +291,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 			throw InternalError("Function pointer call target did not produce a valid indirect call operand");
 		}
 
-		TempVar ret_var = var_counter.next();
-		std::vector<TypedValue> arguments;
-		memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-			ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-			arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
-		});
-
-		IndirectCallOp op{
-			.result = ret_var,
-			.function_pointer = std::move(function_pointer),
-			.arguments = std::move(arguments)};
-		ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-
-		const FunctionSignature& sig = function_pointer_type.function_signature();
-		TypeCategory ret_type = sig.returnType();
-		int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-		return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+		return emitIndirectCall(std::move(function_pointer), function_pointer_type.function_signature(), memberFunctionCallNode);
 	};
 
 	if (immediate_lambda_object_name.has_value() && immediate_lambda_object_type.has_value()) {
@@ -461,25 +445,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					throw InternalError("Function pointer member access did not produce a valid call target");
 				}
 
-				TempVar ret_var = var_counter.next();
-				std::vector<TypedValue> arguments;
-				memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-					ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-					arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
-				});
-
-				IndirectCallOp op{
-					.result = ret_var,
-					.function_pointer = std::move(function_pointer),
-					.arguments = std::move(arguments)};
-				ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-
 				if (!resolved_member->function_signature) {
 					throw InternalError("Function pointer member missing function_signature for indirect call return type");
 				}
-				TypeCategory ret_type = resolved_member->function_signature->returnType();
-				int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-				return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+				return emitIndirectCall(std::move(function_pointer), *resolved_member->function_signature, memberFunctionCallNode);
 			}
 
 			// We resolved the member access - now check if it's a struct type
@@ -492,9 +461,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 						StringHandle func_name_handle = StringTable::getOrInternStringHandle(called_func_name);
 						for (const auto& member : member_struct_info->members) {
 							if (member.getName() == func_name_handle && member.type_index.category() == TypeCategory::FunctionPointer) {
-								// Found a function pointer member! Generate indirect call
-								TempVar ret_var = var_counter.next();
-
+								// Found a function pointer member! Generate indirect call via member access chain.
 								// Generate member access chain for o.inner.callback
 								// First get o.inner
 								ExprResult base_result = visitExpressionNode(*object_expr);
@@ -519,26 +486,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 								ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
-								// Build arguments for the indirect call
-								std::vector<TypedValue> arguments;
-								memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-									ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-									arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
-								});
-
-								IndirectCallOp op{
-									.result = ret_var,
-									.function_pointer = func_ptr_temp,
-									.arguments = std::move(arguments)};
-								ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-
-								// Use the function pointer's stored return type
 								if (!member.function_signature) {
 									throw InternalError("Function pointer member missing function_signature for indirect call return type");
 								}
-								TypeCategory ret_type = member.function_signature->returnType();
-								int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-								return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+								return emitIndirectCall(func_ptr_temp, *member.function_signature, memberFunctionCallNode);
 							}
 						}
 
@@ -936,10 +887,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 					const auto& member = *fp_member;
 					// This is a call through a function pointer member!
 					// Generate an indirect call instead of a member function call
+					// Load the function pointer via member access, then delegate to emitIndirectCall.
 
-					TempVar ret_var = var_counter.next();
-					// Get the function pointer member
-					// We need to generate member access to get the pointer value
 					TempVar func_ptr_temp = var_counter.next();
 
 					// Generate member access IR to load the function pointer
@@ -971,29 +920,10 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), Token()));
 
-					// Now add the indirect call with the function pointer temp var
-					irOperands.emplace_back(func_ptr_temp);
-
-					// Add arguments
-					std::vector<TypedValue> arguments;
-					memberFunctionCallNode.arguments().visit([&](ASTNode argument) {
-						ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
-						arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
-					});
-
-					IndirectCallOp op{
-						.result = ret_var,
-						.function_pointer = func_ptr_temp,
-						.arguments = std::move(arguments)};
-					ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), memberFunctionCallNode.called_from()));
-
-					// Use the function pointer's stored return type
 					if (!member.function_signature) {
 						throw InternalError("Function pointer member missing function_signature for indirect call return type");
 					}
-					TypeCategory ret_type = member.function_signature->returnType();
-					int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
-					return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+					return emitIndirectCall(func_ptr_temp, *member.function_signature, memberFunctionCallNode);
 				}
 			}
 		}
@@ -1834,6 +1764,32 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const MemberFunctionCallNode& m
 								  ? called_member_func->function_decl.as<FunctionDeclarationNode>().decl_node().type_node().as<TypeSpecifierNode>()
 								  : func_decl_node.type_node().as<TypeSpecifierNode>();
 	return buildCallReturnResult(return_type, ret_var, context, memberFunctionCallNode.called_from());
+}
+
+// Shared helper: emit an IndirectCallOp for a function pointer value and return the ExprResult.
+// Collects arguments from call_node, builds the IndirectCallOp, emits it, and computes the
+// return ExprResult from the function signature.
+ExprResult AstToIr::emitIndirectCall(
+	std::variant<StringHandle, TempVar> function_pointer,
+	const FunctionSignature& signature,
+	const MemberFunctionCallNode& call_node) {
+
+	TempVar ret_var = var_counter.next();
+	std::vector<TypedValue> arguments;
+	call_node.arguments().visit([&](ASTNode argument) {
+		ExprResult argument_result = visitExpressionNode(argument.as<ExpressionNode>());
+		arguments.push_back(makeTypedValue(argument_result.typeEnum(), argument_result.size_in_bits, toIrValue(argument_result.value)));
+	});
+
+	IndirectCallOp op{
+		.result = ret_var,
+		.function_pointer = std::move(function_pointer),
+		.arguments = std::move(arguments)};
+	ir_.addInstruction(IrInstruction(IrOpcode::IndirectCall, std::move(op), call_node.called_from()));
+
+	TypeCategory ret_type = signature.returnType();
+	int ret_size = (ret_type == TypeCategory::Void) ? 0 : get_type_size_bits(ret_type);
+	return makeExprResult(nativeTypeIndex(ret_type), SizeInBits{static_cast<int>(ret_size)}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
 }
 
 // Helper function to convert a MemberFunctionCallNode to a regular FunctionCallNode
