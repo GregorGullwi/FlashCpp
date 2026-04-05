@@ -766,7 +766,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return &fd;
 	};
 
-	auto tryUseResolvedDirectCallTarget = [&](const FunctionDeclarationNode* resolved_target, std::string_view source_label) {
+	auto consumeResolvedDirectCallTarget = [&](const FunctionDeclarationNode* resolved_target, std::string_view source_label) {
 		if (!resolved_target || matched_func_decl) {
 			return;
 		}
@@ -821,7 +821,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
 	if (!matched_func_decl && sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
-		tryUseResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
+		consumeResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
 	}
 
 	// Check if the call expression has a pre-computed mangled name (for namespace-scoped functions)

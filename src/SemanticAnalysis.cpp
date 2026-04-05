@@ -2280,7 +2280,8 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getExpressionType(const ASTNo
 	if (!slot.has_value() || !slot->has_type()) {
 		const ExpressionNode& expr = node.as<ExpressionNode>();
 		if (std::holds_alternative<StringLiteralNode>(expr)) {
-			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::Const);
+			const int char_size_bits = static_cast<int>(get_type_size_bits(TypeCategory::Char));
+			TypeSpecifierNode type(TypeCategory::Char, TypeQualifier::None, char_size_bits, Token{}, CVQualifier::Const);
 			type.add_pointer_level();
 			type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			return type;
