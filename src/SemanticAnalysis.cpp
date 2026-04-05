@@ -2641,7 +2641,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!struct_info) {
 					return {};
 				}
-				const StringHandle member_name = StringTable::getOrInternStringHandle(e.member_name());
+				StringHandle member_name = e.member_token().handle();
+				if (!member_name.isValid()) {
+					member_name = StringTable::getOrInternStringHandle(e.member_name());
+				}
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
 						continue;
