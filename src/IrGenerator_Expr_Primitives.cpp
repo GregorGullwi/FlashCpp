@@ -907,11 +907,15 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 			for (NamespaceHandle search_ns = current_ns; search_ns.isValid(); search_ns = search_ns.isGlobal() ? NamespaceHandle{} : gNamespaceRegistry.getParent(search_ns)) {
 				for (const auto& [_, type_info] : getTypesByNameMap()) {
-					if (!type_info || !visited_type_infos.insert(type_info).second) {
+					if (!type_info) {
 						continue;
 					}
 					if (type_info->namespaceHandle() != search_ns) {
 						continue;
+					}
+					if (!visited_type_infos.insert(type_info).second) {
+						continue;
+					}
 					}
 					const StructTypeInfo* struct_info = type_info->getStructInfo();
 					if (!struct_info) {
