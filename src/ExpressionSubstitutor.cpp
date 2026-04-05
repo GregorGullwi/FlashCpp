@@ -405,7 +405,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				if (instantiated_template->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& func_decl = instantiated_template->as<FunctionDeclarationNode>();
 
-					ChunkedVector<ASTNode> substituted_args_nodes;
+					substituted_args_nodes.clear();
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
 					}
@@ -474,7 +474,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						new_type_index.withCategory(TypeCategory::Struct), 64, Token{}, CVQualifier::None, ReferenceQualifier::None);
 
 					// Create a ConstructorCallNode instead of an ordinary CallExprNode
-					ChunkedVector<ASTNode> substituted_args_nodes;
+					substituted_args_nodes.clear();
 					for (size_t i = 0; i < call.arguments().size(); ++i) {
 						substituted_args_nodes.push_back(substitute(call.arguments()[i]));
 					}
@@ -1327,3 +1327,4 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::expandPacksInArguments(
 
 	return expanded_args;
 }
+
