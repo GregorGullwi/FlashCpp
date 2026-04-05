@@ -2926,13 +2926,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 	return {};
 }
 
-ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) const {
+ValueCategory SemanticAnalysis::inferExpressionValueCategory(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return ValueCategory::PRValue;
 	}
 
 	const auto& expr = node.as<ExpressionNode>();
-	return std::visit([this](const auto& e) -> ValueCategory {
+	return std::visit([this, &node](const auto& e) -> ValueCategory {
 		using T = std::decay_t<decltype(e)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
 			if (e.binding() == IdentifierBinding::EnumConstant) {
