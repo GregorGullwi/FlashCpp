@@ -2933,6 +2933,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+		bool handled_member_access_category = false;
 		if (arg.is<ExpressionNode>()) {
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
@@ -2941,6 +2942,7 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				// overload-resolution helper treats all member accesses as lvalues, so keep
 				// this sema-owned refinement here instead of calling the generic helper
 				// until that shared helper learns the same rule.
+				handled_member_access_category = true;
 				if (!arg_type.is_reference()) {
 					const ValueCategory object_category = inferExpressionValueCategory(member_access->object());
 					arg_type.set_reference_qualifier(
@@ -2948,10 +2950,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 							? ReferenceQualifier::LValueReference
 							: ReferenceQualifier::RValueReference);
 				}
-				return arg_type;
 			}
 		}
-		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		if (!handled_member_access_category) {
+			adjust_argument_type_for_overload_resolution(arg, arg_type);
+		}
 		return arg_type;
 	}
 

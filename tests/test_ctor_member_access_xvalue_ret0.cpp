@@ -23,8 +23,8 @@ struct Sink {
 
 	Sink(Payload&)
 		: value(1) {}
-	Sink(Payload payload)
-		: value(payload.value - 42) {}
+	Sink(Payload&&)
+		: value(2) {}
 };
 
 Wrapper makeWrapper() {
@@ -32,6 +32,11 @@ Wrapper makeWrapper() {
 }
 
 int main() {
-	Sink sink(makeWrapper().payload);
-	return sink.value;
+	Wrapper wrapper;
+	Sink lvalue_sink(wrapper.payload);
+	if (lvalue_sink.value != 1)
+		return 1;
+
+	Sink xvalue_sink(makeWrapper().payload);
+	return xvalue_sink.value == 2 ? 0 : 2;
 }
