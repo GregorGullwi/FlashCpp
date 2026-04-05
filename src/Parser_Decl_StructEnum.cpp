@@ -4,6 +4,37 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+ParseResult Parser::parse_member_function_declarator_result(ParseResult& member_result, FunctionDeclarationNode*& out_func_decl, DeclarationNode*& out_decl) {
+	out_func_decl = nullptr;
+	out_decl = nullptr;
+
+	if (!member_result.node().has_value()) {
+		return ParseResult::error("Expected member declaration", peek_info());
+	}
+
+	if (member_result.node()->is<FunctionDeclarationNode>()) {
+		out_func_decl = &member_result.node()->as<FunctionDeclarationNode>();
+		out_decl = &out_func_decl->decl_node();
+		return ParseResult::success();
+	}
+
+	if (!member_result.node()->is<DeclarationNode>()) {
+		return ParseResult::error("Expected declaration node for member function", peek_info());
+	}
+
+	out_decl = &member_result.node()->as<DeclarationNode>();
+	auto func_result = parse_function_declaration(*out_decl);
+	if (func_result.is_error()) {
+		return func_result;
+	}
+	if (!func_result.node().has_value()) {
+		return ParseResult::error("Failed to create function declaration node", peek_info());
+	}
+
+	out_func_decl = &func_result.node()->as<FunctionDeclarationNode>();
+	return ParseResult::success();
+}
+
 ParseResult Parser::parse_struct_declaration() {
 	return parse_struct_declaration_with_specs(false, false);
 }
@@ -2088,25 +2119,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			// This is a member function declaration
 			FunctionDeclarationNode* parsed_func_decl = nullptr;
 			DeclarationNode* parsed_decl_node = nullptr;
-			if (member_result.node()->is<FunctionDeclarationNode>()) {
-				parsed_func_decl = &member_result.node()->as<FunctionDeclarationNode>();
-				parsed_decl_node = &parsed_func_decl->decl_node();
-			} else if (!member_result.node()->is<DeclarationNode>()) {
-				return ParseResult::error("Expected declaration node for member function", peek_info());
-			} else {
-				parsed_decl_node = &member_result.node()->as<DeclarationNode>();
-			}
-
-			if (!parsed_func_decl) {
-				auto func_result = parse_function_declaration(*parsed_decl_node);
-				if (func_result.is_error()) {
-					return func_result;
-				}
-
-				if (!func_result.node().has_value()) {
-					return ParseResult::error("Failed to create function declaration node", peek_info());
-				}
-				parsed_func_decl = &func_result.node()->as<FunctionDeclarationNode>();
+			auto parsed_member_result = parse_member_function_declarator_result(member_result, parsed_func_decl, parsed_decl_node);
+			if (parsed_member_result.is_error()) {
+				return parsed_member_result;
 			}
 
 			DeclarationNode& decl_node = *parsed_decl_node;

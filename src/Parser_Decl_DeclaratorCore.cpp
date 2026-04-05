@@ -8,7 +8,7 @@
 
 namespace {
 
-constexpr int FunctionPointerSizeBits = static_cast<int>(sizeof(void*) * CHAR_BIT);
+constexpr int kFunctionPointerSizeBits = static_cast<int>(sizeof(void*) * CHAR_BIT);
 
 }
 
@@ -901,7 +901,7 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 
 				skip_noexcept_specifier();
 
-				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, FunctionPointerSizeBits, Token{}, CVQualifier::None);
+				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 				FunctionSignature signature;
 				signature.return_type_index = base_type.type_index();
 				signature.parameter_type_indices = return_param_types;
@@ -1063,7 +1063,7 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		// Create a new TypeSpecifierNode for the function pointer
 		// Function pointers are 64 bits (8 bytes) on x64
-		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, FunctionPointerSizeBits, Token{}, CVQualifier::None);
+		TypeSpecifierNode fp_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 
 		FunctionSignature sig;
 		sig.return_type_index = return_type_index;
@@ -1127,6 +1127,9 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 	return ParseResult::success(decl_node);
 }
 
+// Parse the parameter-type-list that appears inside a function pointer declarator.
+// This shared helper covers both standalone function pointers and function
+// declarations whose return type is itself a function pointer.
 ParseResult Parser::parse_function_pointer_parameter_types(std::vector<TypeIndex>& out_param_types) {
 	if (peek() == ")"_tok) {
 		return ParseResult::success();
