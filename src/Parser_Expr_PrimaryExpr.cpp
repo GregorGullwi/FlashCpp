@@ -1407,12 +1407,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				return parse_functional_cast(id_name, identifier_token);
 			}
 
-			// Also check for type aliases (typedefs/using) that resolve to non-struct types.
-			// E.g., size_t(-1), streamoff(x) — these are functional casts, not function calls.
-			// Struct type aliases like `Pt{x, y}` are constructor/aggregate init and should
-			// go through the normal constructor call path below, not parse_functional_cast.
+			// Also check for type aliases and enums.  Per C++20 [expr.type.conv],
+			// T(expr) is a valid functional cast / explicit type conversion for any
+			// simple-type-specifier T, including typedef names and enum names.
+			// Struct types go through the normal constructor call path below.
 			const TypeInfo* alias_info = lookupTypeInCurrentContext(identifier_token.handle());
-			if (alias_info && alias_info->isTypeAlias() && !alias_info->isStruct()) {
+			if (alias_info && !alias_info->isStruct() &&
+				(alias_info->isTypeAlias() || alias_info->isEnum())) {
 				return parse_functional_cast(id_name, identifier_token);
 			}
 		}
