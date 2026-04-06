@@ -4419,10 +4419,6 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 			throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
 		return;
 	}
-	if (num_args == 0) {
-		call_node.set_resolved_constructor(resolution.selected_overload);
-		return;
-	}
 	call_node.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
