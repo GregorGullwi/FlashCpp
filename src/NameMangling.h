@@ -123,18 +123,60 @@ inline TypeIndex resolveTypeAliasIndex(TypeIndex idx) {
 	return idx;
 }
 
+inline TypeSpecifierNode normalizeTypeSpecifierForMangling(TypeSpecifierNode type_node) {
+	const TypeIndex original_index = type_node.type_index();
+	if (!original_index.is_valid()) {
+		return type_node;
+	}
+
+	const auto raw_category = static_cast<uint8_t>(type_node.category());
+	constexpr auto max_valid_category = static_cast<uint8_t>(TypeCategory::Template);
+	const bool category_out_of_range = raw_category > max_valid_category;
+
+	const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(original_index);
+	if (alias_info.type_index.is_valid()) {
+		const TypeCategory resolved_category = alias_info.typeEnum();
+		const bool should_use_resolved_category =
+			category_out_of_range ||
+			type_node.category() == TypeCategory::Invalid ||
+			type_node.category() == TypeCategory::TypeAlias ||
+			(type_node.category() == TypeCategory::UserDefined && resolved_category != TypeCategory::UserDefined) ||
+			(type_node.category() == TypeCategory::Template && resolved_category != TypeCategory::Template);
+		if (should_use_resolved_category) {
+			type_node.set_type_index(alias_info.type_index.withCategory(resolved_category));
+		}
+		if (!type_node.has_function_signature() && alias_info.function_signature.has_value()) {
+			type_node.set_function_signature(*alias_info.function_signature);
+		}
+	}
+
+	if ((category_out_of_range || type_node.category() == TypeCategory::Invalid) && type_node.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_node.type_index())) {
+			type_node.set_type_index(type_node.type_index().withCategory(type_info->typeEnum()));
+			if (type_node.size_in_bits() == 0 && type_info->hasStoredSize()) {
+				type_node.set_size_in_bits(type_info->sizeInBits());
+			}
+		}
+	}
+
+	return type_node;
+}
+
 // Generate MSVC type code for mangling
 // Works with both std::string and StringBuilder
 template <typename OutputType>
 void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
+	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
+	const TypeSpecifierNode& normalized = normalized_type;
+
 	// Handle references - MSVC uses different prefixes for lvalue vs rvalue references
 	// Format: [AE|$$QE][A|B|C|D] where A/B/C/D are CV-qualifiers on the REFERENCED type
-	if (type_node.is_lvalue_reference()) {
+	if (normalized.is_lvalue_reference()) {
 		output += "AE";
-		appendCVQualifier(output, type_node.cv_qualifier());
-	} else if (type_node.is_rvalue_reference()) {
+		appendCVQualifier(output, normalized.cv_qualifier());
+	} else if (normalized.is_rvalue_reference()) {
 		output += "$$QE";
-		appendCVQualifier(output, type_node.cv_qualifier());
+		appendCVQualifier(output, normalized.cv_qualifier());
 	}
 
 	// Add pointer prefix for each level of indirection with CV-qualifiers
@@ -142,7 +184,7 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	//   P = pointer, Q = const pointer, R = volatile pointer, S = const volatile pointer
 	//   E = 64-bit (always E for x64)
 	//   A = no CV-quals on pointee, B = const pointee, C = volatile pointee, D = const volatile pointee
-	const auto& ptr_levels = type_node.pointer_levels();
+	const auto& ptr_levels = normalized.pointer_levels();
 	for (size_t i = 0; i < ptr_levels.size(); ++i) {
 		const auto& ptr_level = ptr_levels[i];
 
@@ -161,14 +203,14 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 		// For the last pointer level, use the base type's CV-qualifier
 		// For intermediate levels, get CV from the next pointer level
 		CVQualifier pointee_cv = (i == ptr_levels.size() - 1)
-									 ? type_node.cv_qualifier()
+									 ? normalized.cv_qualifier()
 									 : ptr_levels[i + 1].cv_qualifier;
 
 		appendCVQualifier(output, pointee_cv);
 	}
 
 	// Add base type code
-	switch (type_node.category()) {
+	switch (normalized.category()) {
 	case TypeCategory::Void:
 		output += 'X';
 		break;
@@ -234,11 +276,11 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 			// Enum types use format: W4<name>@@
 			// TypeAlias mangles the same as UserDefined (resolved struct/class reference)
 			// Get the type name from the global type registry
-		if (type_node.type_index().index() >= getTypeInfoCount()) {
+		if (normalized.type_index().index() >= getTypeInfoCount()) {
 			throw CompileError("MSVC name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
-		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
-		if (type_node.category() == TypeCategory::Enum) {
+		const TypeInfo& type_info = getTypeInfo(normalized.type_index());
+		if (normalized.category() == TypeCategory::Enum) {
 			output += "W4";
 		} else {
 			output += 'V';
@@ -250,8 +292,8 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 	case TypeCategory::FunctionPointer: {
 			// MSVC function pointer: P6A<return><params>@Z
 		output += "P6A";
-		if (type_node.has_function_signature()) {
-			const auto& sig = type_node.function_signature();
+		if (normalized.has_function_signature()) {
+			const auto& sig = normalized.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
 				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.
@@ -291,10 +333,13 @@ void appendTypeCode(OutputType& output, const TypeSpecifierNode& type_node) {
 // Reference: https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling-type
 template <typename OutputType>
 inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& type_node, bool is_function_parameter = false) {
+	TypeSpecifierNode normalized_type = normalizeTypeSpecifierForMangling(type_node);
+	const TypeSpecifierNode& normalized = normalized_type;
+
 	// Handle pointers first (they modify what comes after)
-	for (size_t i = 0; i < type_node.pointer_levels().size(); ++i) {
+	for (size_t i = 0; i < normalized.pointer_levels().size(); ++i) {
 		output += 'P';
-		const auto& ptr_level = type_node.pointer_levels()[i];
+		const auto& ptr_level = normalized.pointer_levels()[i];
 		// CV-qualifiers on the pointer itself
 		// NOTE: For function parameters, top-level const on the pointer (i == 0) is ignored
 		// per C++ standard [dcl.fct]p5. Examples:
@@ -314,9 +359,9 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	}
 
 	// Handle references (also modify what comes after)
-	if (type_node.is_lvalue_reference()) {
+	if (normalized.is_lvalue_reference()) {
 		output += 'R';
-	} else if (type_node.is_rvalue_reference()) {
+	} else if (normalized.is_rvalue_reference()) {
 		output += 'O';  // rvalue reference
 	}
 
@@ -324,24 +369,24 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	// According to Itanium ABI: K = const, V = volatile
 	// NOTE: For function parameters passed by value (not pointer/reference),
 	// top-level const is ignored per C++ standard [dcl.fct]p5
-	bool is_by_value = type_node.pointer_levels().empty() &&
-					   !type_node.is_lvalue_reference() &&
-					   !type_node.is_rvalue_reference();
+	bool is_by_value = normalized.pointer_levels().empty() &&
+					   !normalized.is_lvalue_reference() &&
+					   !normalized.is_rvalue_reference();
 	bool skip_cv = is_function_parameter && is_by_value;
 
 	if (!skip_cv) {
-		if (type_node.cv_qualifier() == CVQualifier::Const) {
+		if (normalized.cv_qualifier() == CVQualifier::Const) {
 			output += 'K';
-		} else if (type_node.cv_qualifier() == CVQualifier::Volatile) {
+		} else if (normalized.cv_qualifier() == CVQualifier::Volatile) {
 			output += 'V';
-		} else if (type_node.cv_qualifier() == CVQualifier::ConstVolatile) {
+		} else if (normalized.cv_qualifier() == CVQualifier::ConstVolatile) {
 			output += 'K';  // const first
 			output += 'V';  // then volatile
 		}
 	}
 
 	// Basic type codes (Itanium ABI section 5.1.5)
-	switch (type_node.category()) {
+	switch (normalized.category()) {
 	case TypeCategory::Void:
 		output += 'v';
 		break;
@@ -350,9 +395,9 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 		break;
 	case TypeCategory::Char:
 			// Char can be signed or unsigned depending on qualifier
-		if (type_node.qualifier() == TypeQualifier::Unsigned) {
+		if (normalized.qualifier() == TypeQualifier::Unsigned) {
 			output += 'h';  // unsigned char
-		} else if (type_node.qualifier() == TypeQualifier::Signed) {
+		} else if (normalized.qualifier() == TypeQualifier::Signed) {
 			output += 'a';  // signed char
 		} else {
 			output += 'c';  // plain char (implementation-defined signedness)
@@ -413,10 +458,10 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 			// For structs/classes/enums, use the type name
 			// For nested types, we need to split the name into components
 			// e.g., "Outer::Inner" should be encoded as "6Outer5Inner", not "12Outer::Inner"
-		if (type_node.type_index().index() >= getTypeInfoCount()) {
+		if (normalized.type_index().index() >= getTypeInfoCount()) {
 			throw CompileError("Itanium name mangling: unknown struct/enum type index — cannot generate valid symbol");
 		}
-		const TypeInfo& type_info = getTypeInfo(type_node.type_index());
+		const TypeInfo& type_info = getTypeInfo(normalized.type_index());
 		auto struct_name = StringTable::getStringView(type_info.name());
 
 			// Check if this is a nested class (contains "::")
@@ -457,8 +502,8 @@ inline void appendItaniumTypeCode(OutputType& output, const TypeSpecifierNode& t
 	case TypeCategory::FunctionPointer: {
 			// Itanium ABI: function pointer is encoded as PF<return-type><param-types>E
 		output += "PF";
-		if (type_node.has_function_signature()) {
-			const auto& sig = type_node.function_signature();
+		if (normalized.has_function_signature()) {
+			const auto& sig = normalized.function_signature();
 				// Use explicit constructor (not default + set_type) to prevent uninitialized
 				// cv_qualifier_ and other fields from emitting garbage into the mangled name.
 				// Resolve TypeAlias TypeIndex values to their underlying concrete type first.

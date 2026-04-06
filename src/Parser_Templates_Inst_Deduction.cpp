@@ -1864,6 +1864,34 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
 
+	// Parse the template_name to extract namespace and function name
+	// template_name might be like "ns::sum" or just "sum"
+	std::vector<std::string_view> namespace_path;
+	std::string_view function_name_only;
+
+	size_t last_colon = template_name.rfind("::");
+	if (last_colon != std::string_view::npos) {
+		// Has namespace - split it
+		std::string_view namespace_part = template_name.substr(0, last_colon);
+		function_name_only = template_name.substr(last_colon + 2);
+
+		// Parse namespace parts (could be nested like "a::b::c")
+		size_t start = 0;
+		while (start < namespace_part.size()) {
+			size_t end = namespace_part.find("::", start);
+			if (end == std::string_view::npos) {
+				end = namespace_part.size();
+			}
+			if (end > start) {
+				namespace_path.push_back(namespace_part.substr(start, end - start));
+			}
+			start = (end == namespace_part.size()) ? end : end + 2;
+		}
+	} else {
+		// No namespace
+		function_name_only = template_name;
+	}
+
 	// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
 	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
 		if (!type_node.is<TypeSpecifierNode>())
@@ -1903,7 +1931,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
-		// Fast path: check alias registry for the exact dependent name
 		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
@@ -1928,7 +1955,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				  " base_part=", base_part, " member_part=", member_part,
 				  " template_args=", template_args.size());
 
-		// Substitute template parameter names with concrete argument strings
 		forEachNonPackTemplateParamArgBinding(
 			template_params,
 			template_args,
@@ -1946,12 +1972,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto type_it = getTypesByNameMap().find(resolved_handle);
 
 		if (type_it == getTypesByNameMap().end()) {
-			// Try instantiating the base template to register member aliases
-			// The base_part contains a mangled name like "enable_if_void_int"
-			// We need to find the actual template name, which could be "enable_if" not just "enable"
 			std::string_view base_template_name = extract_base_template_name(base_part);
-
-			// Only try to instantiate if we found a class template (not a function template)
 			if (!base_template_name.empty()) {
 				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -1961,7 +1982,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = getTypesByNameMap().find(resolved_handle);
 
-					// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
 					if (type_it == getTypesByNameMap().end()) {
 						StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
 						type_it = getTypesByNameMap().find(primary_handle);
@@ -1973,7 +1993,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 
 		if (type_it == getTypesByNameMap().end()) {
-			// Fallback: check alias templates registry
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
@@ -2009,34 +2028,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto new_decl = emplace_node<DeclarationNode>(return_type, func_name_token);
 
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
-
-	// Parse the template_name to extract namespace and function name
-	// template_name might be like "ns::sum" or just "sum"
-	std::vector<std::string_view> namespace_path;
-	std::string_view function_name_only;
-
-	size_t last_colon = template_name.rfind("::");
-	if (last_colon != std::string_view::npos) {
-		// Has namespace - split it
-		std::string_view namespace_part = template_name.substr(0, last_colon);
-		function_name_only = template_name.substr(last_colon + 2);
-
-		// Parse namespace parts (could be nested like "a::b::c")
-		size_t start = 0;
-		while (start < namespace_part.size()) {
-			size_t end = namespace_part.find("::", start);
-			if (end == std::string_view::npos) {
-				end = namespace_part.size();
-			}
-			if (end > start) {
-				namespace_path.push_back(namespace_part.substr(start, end - start));
-			}
-			start = (end == namespace_part.size()) ? end : end + 2;
-		}
-	} else {
-		// No namespace
-		function_name_only = template_name;
-	}
 
 	// Add parameters with substituted types
 	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
@@ -2145,7 +2136,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						deduced_arg_type.type(),
 						TypeQualifier::None,
 						deduced_arg_type.size_in_bits(),
-						Token(),
+						orig_param_type.token(),
 						cv);
 					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
 					if (deduced_arg_type.has_function_signature()) {
@@ -2202,7 +2193,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						subst_type_index.category(),
 						TypeQualifier::None,
 						get_type_size_bits(subst_type_index.category()),
-						Token(),
+						orig_param_type.token(),
 						orig_param_type.cv_qualifier());
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
 					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
@@ -2238,6 +2229,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
+				resolve_dependent_member_alias(param_type);
 				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
 				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
 				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {
