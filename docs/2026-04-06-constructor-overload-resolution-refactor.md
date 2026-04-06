@@ -23,9 +23,12 @@ Status on `copilot/refactor-unifying-constructor-overload-selection` after the s
 - **Done:** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` stores the selected constructor on `InitializerListNode`.
 - **Done:** several IrGenerator and ConstExprEvaluator paths now consume the sema annotation first and only fall back when it is absent.
 - **Done:** parser-time brace-init constructor overload selection was removed from the `ConstructorCallNode` path for user-defined constructors; semantic analysis now reports those no-match / ambiguity diagnostics after parsing instead of during parsing.
-- **Remaining:** `src/IRConverter_ConvertMain.cpp` still re-runs constructor overload resolution from lowered IR argument types.
+- **Done:** `ConstructorCallOp` now carries the constructor selected earlier in the pipeline, and more default/same-type constructor emission paths now stamp that annotation before lowering.
+- **Done:** the CI regression from missing `ConstructorCallOp` annotations was fixed by restoring an `IRConverter` safety-net fallback when the propagated constructor is absent.
 - **Remaining:** the parser still keeps a member-less/non-aggregate brace-init guard outside the unified sema-owned constructor path.
+- **Done:** `new`/placement-`new`, delegating constructors, and explicit base-initializer constructor forwarding now also resolve and stamp `ConstructorCallOp.resolved_constructor` from AST/sema-aware argument types before lowering.
 - **Remaining:** some constructor-selection fallbacks still exist in codegen by design for unresolved/dependent cases and should only be reached when sema did not annotate a constructor.
+- **Remaining:** `IRConverter` still keeps a constructor-overload safety net for legacy/unmigrated `ConstructorCallOp` producers, so the pipeline is not yet purely annotation-driven end-to-end.
 
 This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
 
@@ -321,8 +324,13 @@ Audit the IRConverter path to confirm that ConstructorCallOp.struct_name + the a
 emitted argument list uniquely identifies the constructor after Step 3, and remove the
 redundant `resolve_constructor_overload` calls at lines 4951 and 4957.
 
-**Current progress:** not started yet. This is now one of the two main remaining
-authoritative-resolution gaps.
+**Current progress:** partially complete. `ConstructorCallOp` now carries the
+selected constructor declaration across the main direct-init, converting-init,
+same-type, default-constructor, `new`, delegating-constructor, and explicit
+base-initializer forwarding paths. The branch still keeps an `IRConverter`
+fallback for legacy/unmigrated constructor-call producers, but that path is now a
+compatibility safety net rather than the expected route for the common constructor
+emission sites.
 
 ---
 
@@ -455,7 +463,9 @@ This refactor should be considered complete once all of the following are true:
 - Semantic analysis is the authoritative constructor-overload selection point for non-dependent constructor calls.
 - IrGenerator prefers the sema annotation in every constructor emission path and only falls back when sema genuinely could not resolve.
 - Constexpr evaluation prefers the sema annotation in every constructor-evaluation path and only falls back when running outside a full sema flow.
-- IRConverter no longer calls `resolve_constructor_overload` for `ConstructorCallOp`.
+- IRConverter prefers the constructor already selected upstream for
+  `ConstructorCallOp`, and any remaining fallback is only a temporary safety net for
+  legacy/unmigrated emission paths rather than the primary resolution path.
 - Parser no longer performs constructor overload selection for the `ConstructorCallNode` brace-init path; any remaining parser gate must be limited to structural validation or legacy non-unified paths that are explicitly tracked.
 - `make main CXX=clang++` succeeds.
 - `bash tests/run_all_tests.sh` succeeds.

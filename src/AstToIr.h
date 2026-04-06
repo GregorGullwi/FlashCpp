@@ -632,6 +632,112 @@ private:
 								 const StructTypeInfo*& out_struct_info,
 								 const StructMember*& out_member) const;
 	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
+	// Resolve a constructor for an AST argument range using sema-aware/codegen-aware
+	// argument types, falling back to arity matching when precise types are
+	// unavailable. Returns nullptr when no viable constructor can be recovered.
+	template <typename ArgRange>
+	const ConstructorDeclarationNode* resolveCodegenConstructorFromArgs(
+		const StructTypeInfo& target_struct_info,
+		const ArgRange& args) const {
+		const size_t num_args = args.size();
+		std::vector<TypeSpecifierNode> arg_types;
+		arg_types.reserve(num_args);
+
+		for (const auto& arg : args) {
+			auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+			if (!arg_type_opt.has_value()) {
+				arg_types.clear();
+				break;
+			}
+			arg_types.push_back(std::move(*arg_type_opt));
+		}
+
+		if (arg_types.size() == num_args) {
+			auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
+			if (resolution.is_ambiguous) {
+				throw CompileError("Ambiguous constructor call");
+			}
+			if (resolution.selected_overload) {
+				return resolution.selected_overload;
+			}
+		}
+
+		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
+		return arity_resolution.selected_overload;
+	}
+	// Materialize explicit constructor arguments for an already-selected constructor.
+	// resolved_ctor may be null, in which case arguments are lowered without parameter-
+	// type-guided conversions/reference binding. args must contain expression AST nodes.
+	// This also appends trailing default arguments when resolved_ctor provides them.
+	template <typename ArgRange>
+	void appendConstructorCallArguments(
+		ConstructorCallOp& ctor_op,
+		const ConstructorDeclarationNode* resolved_ctor,
+		const ArgRange& args,
+		const Token& source_token) {
+		ctor_op.resolved_constructor = resolved_ctor;
+		const auto* ctor_params = resolved_ctor ? &resolved_ctor->parameter_nodes() : nullptr;
+		size_t arg_index = 0;
+		for (const auto& arg : args) {
+			if (!arg.template is<ExpressionNode>()) {
+				throw InternalError(std::string("Constructor argument is not an expression at index ") + std::to_string(arg_index));
+			}
+
+			const TypeSpecifierNode* param_type = nullptr;
+			if (ctor_params &&
+				arg_index < ctor_params->size() &&
+				(*ctor_params)[arg_index].is<DeclarationNode>()) {
+				param_type = &(*ctor_params)[arg_index].as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
+			}
+
+			ExpressionContext arg_context = ExpressionContext::Load;
+			if (param_type && (param_type->is_reference() || param_type->is_rvalue_reference())) {
+				arg_context = ExpressionContext::LValueAddress;
+			}
+
+			ExprResult argument_result = visitExpressionNode(arg.template as<ExpressionNode>(), arg_context);
+			if (param_type) {
+				const TypeCategory param_base_type = param_type->type();
+				if (resolved_ctor &&
+					param_type->pointer_depth() == 0 &&
+					argument_result.typeEnum() != param_base_type &&
+					is_standard_arithmetic_type(argument_result.typeEnum()) &&
+					is_standard_arithmetic_type(param_base_type)) {
+					TypeConversionResult conv = can_convert_type(argument_result.typeEnum(), param_base_type);
+					if (conv.is_valid && conv.rank != ConversionRank::UserDefined) {
+						argument_result = generateTypeConversion(
+							argument_result,
+							argument_result.typeEnum(),
+							param_base_type,
+							source_token);
+					} else {
+						argument_result = applyConstructorArgConversion(
+							argument_result,
+							arg,
+							*param_type,
+							source_token);
+					}
+				} else {
+					argument_result = applyConstructorArgConversion(
+						argument_result,
+						arg,
+						*param_type,
+						source_token);
+				}
+			}
+
+			ctor_op.arguments.push_back(buildConstructorArgumentValue(
+				argument_result,
+				arg,
+				param_type,
+				source_token));
+			arg_index++;
+		}
+
+		if (resolved_ctor && resolved_ctor->parameter_nodes().size() > ctor_op.arguments.size()) {
+			fillInConstructorDefaultArguments(ctor_op, *resolved_ctor, ctor_op.arguments.size());
+		}
+	}
 	std::optional<bool> getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const;
 	bool isSameTypeXValueSource(const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) const;
 

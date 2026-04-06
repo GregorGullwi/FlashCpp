@@ -1463,6 +1463,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
+								ctor_op.resolved_constructor = matching_ctor;
 
 								// Get constructor parameter types for reference handling
 								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -2222,6 +2223,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info->name();
 							ctor_op.object = decl.identifier_token().handle();
+							ctor_op.resolved_constructor = matching_ctor;
 
 							// Get constructor parameter types for reference handling
 							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -2418,6 +2420,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
+						const ConstructorDeclarationNode* selected_ctor = sema_selected_converting_ctor;
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = decl.identifier_token().handle();
@@ -2531,11 +2534,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 							if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+								selected_ctor = &matched_ctor;
 								if (matched_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
 									fillInConstructorDefaultArguments(ctor_op, matched_ctor, ctor_op.arguments.size());
 								}
 							}
 						}
+						ctor_op.resolved_constructor = selected_ctor;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
@@ -2600,25 +2605,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									ctor_op.object = decl.identifier_token().handle();
 									ctor_op.array_index = i;	 // Mark this as an array element constructor call
 
-										// If the constructor has parameters with default values, generate the default arguments
 									if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 										const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
-										const auto& params = ctor_node.parameter_nodes();
-
-										for (const auto& param : params) {
-											if (param.is<DeclarationNode>()) {
-												const auto& param_decl = param.as<DeclarationNode>();
-												if (param_decl.has_default_value()) {
-														// Generate IR for the default value expression
-													const ASTNode& default_node = param_decl.default_value();
-													if (default_node.is<ExpressionNode>()) {
-														ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-														TypedValue default_arg = toTypedValue(default_operands);
-														ctor_op.arguments.push_back(std::move(default_arg));
-													}
-												}
-											}
-										}
+										fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 									}
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
@@ -2629,25 +2618,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
 
-									// If the constructor has parameters with default values, generate the default arguments
 								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
-									const auto& params = ctor_node.parameter_nodes();
-
-									for (const auto& param : params) {
-										if (param.is<DeclarationNode>()) {
-											const auto& param_decl = param.as<DeclarationNode>();
-											if (param_decl.has_default_value()) {
-													// Generate IR for the default value expression
-												const ASTNode& default_node = param_decl.default_value();
-												if (default_node.is<ExpressionNode>()) {
-													ExprResult default_operands = visitExpressionNode(default_node.as<ExpressionNode>());
-													TypedValue default_arg = toTypedValue(default_operands);
-													ctor_op.arguments.push_back(std::move(default_arg));
-												}
-											}
-										}
-									}
+									fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 								}
 
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));

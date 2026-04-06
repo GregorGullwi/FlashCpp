@@ -4885,8 +4885,6 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 		// Phase 4 helper: builds a TypeSpecifierNode from TypedValue metadata.
 		// Centralises the .type dependency so it can later be replaced with IrType-based logic.
-		// TODO(Phase 5): Replace arg.type with IrType-based TypeSpecifierNode construction
-		// once TypeSpecifierNode supports construction from IrType + metadata.
 	auto buildTypeSpecFromTypedValue = [](const TypedValue& arg) {
 		const SizeInBits arg_size_bits = arg.size_in_bits;
 		TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
@@ -4902,25 +4900,11 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		return ts;
 	};
 
-		// Look up the struct type once for use in both loops
-	auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-
-		// Find the actual constructor to get the correct parameter types
-		// This is more reliable than trying to infer from argument types
-	const ConstructorDeclarationNode* actual_ctor = nullptr;
-	if (struct_type_it != getTypesByNameMap().end()) {
+	const auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
+	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
+	if (!actual_ctor && struct_type_it != getTypesByNameMap().end()) {
 		const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
 		if (struct_info) {
-				// FIRST: If we have exactly one IR-level argument that's a reference to the same
-				// struct type, prefer the corresponding same-type copy/move constructor.
-				// Note: num_params == 1 is correct here because:
-				//   (a) For direct-init `Foo b(a)` with `Foo(const Foo&, int=0)`, the IrGenerator
-				//       calls fillInConstructorDefaultArguments before emitting ConstructorCallOp,
-				//       producing num_params==2 which skips this branch and falls through to
-				//       resolve_constructor_overload below.
-				//   (b) For copy-init `Foo b = a` with `Foo(const Foo&, int=0)`, the IrGenerator
-				//       also fills in defaults (IrGenerator_Stmt_Decl.cpp copy-init path),
-				//       again producing num_params==2.
 			if (num_params == 1 && !ctor_op.arguments.empty()) {
 				const TypedValue& arg = ctor_op.arguments[0];
 				bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
@@ -4933,14 +4917,13 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 						actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
 						FLASH_LOG_FORMAT(Codegen, Debug,
-										 "Constructor call for {}: matched same-type {} constructor",
+										 "Constructor call for {}: recovered same-type {} constructor in IRConverter fallback",
 										 struct_name,
 										 prefer_move_ctor ? "move" : "copy");
 					}
 				}
 			}
 
-				// SECOND: If no same-type constructor matched, look for other constructors with matching parameter count.
 			if (!actual_ctor) {
 				std::vector<TypeSpecifierNode> arg_types;
 				arg_types.reserve(num_params);
@@ -4961,7 +4944,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		}
 	}
 
-		// Extract parameter types for overload resolution
+		// Extract parameter types for constructor argument lowering.
 	std::vector<TypeSpecifierNode> parameter_types;
 
 		// If we found the actual constructor, use its parameter types directly

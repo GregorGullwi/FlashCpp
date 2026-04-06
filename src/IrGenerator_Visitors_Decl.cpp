@@ -1643,18 +1643,21 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		// No base class or member initialization should happen
 	if (node.delegating_initializer().has_value()) {
 		const auto& delegating_init = node.delegating_initializer().value();
+		const StructTypeInfo* enclosing_struct_info = nullptr;
+		if (auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+			struct_type_it != getTypesByNameMap().end()) {
+			enclosing_struct_info = struct_type_it->second->getStructInfo();
+		}
 
 			// Build constructor call: StructName::StructName(this, args...)
 		ConstructorCallOp ctor_op;
 		ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
-
-			// Add constructor arguments from delegating initializer
-		for (const auto& arg : delegating_init.arguments) {
-			ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(arg_operands);
-			ctor_op.arguments.push_back(std::move(tv));
+		const ConstructorDeclarationNode* resolved_ctor = nullptr;
+		if (enclosing_struct_info) {
+			resolved_ctor = resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
 		}
+		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 
@@ -1703,6 +1706,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				if (!base_type_info) {
 					continue;  // Invalid base type index
 				}
+				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 
 					// Build constructor call: Base::Base(this, args...)
 				ConstructorCallOp ctor_op;
@@ -1712,13 +1716,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 				ctor_op.base_class_offset = static_cast<int>(base.offset);
 
-					// Add constructor arguments from base initializer
 				if (base_init) {
-					for (const auto& arg : base_init->arguments) {
-						ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-						TypedValue tv = toTypedValue(arg_operands);
-						ctor_op.arguments.push_back(std::move(tv));
+					const ConstructorDeclarationNode* resolved_ctor = nullptr;
+					if (base_struct_info) {
+						resolved_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
 					}
+					appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
 						// If there's an explicit initializer, generate the constructor call
 					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				}
@@ -1732,7 +1735,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					if (!node.is_implicit() || is_implicit_default_ctor) {
 							// Only call base default constructor if the base class actually has constructors
 							// This avoids link errors when inheriting from classes without constructors
-						const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 						if (base_struct_info && base_struct_info->hasAnyConstructor()) {
 								// Call default constructor with no arguments
 							fillInDefaultConstructorArguments(ctor_op, *base_struct_info);
@@ -1824,6 +1826,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = base_type_info->name();
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
+						if (const StructMemberFunction* base_same_type_ctor =
+								base_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							ctor_op.resolved_constructor =
+								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+						}
 							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 						assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 						ctor_op.base_class_offset = static_cast<int>(base.offset);
@@ -1865,6 +1873,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = member_type_info->name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
+								if (const StructMemberFunction* member_same_type_ctor =
+										member_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+									member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+									ctor_op.resolved_constructor =
+										&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+								}
 								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 								ctor_op.base_class_offset = static_cast<int>(member.offset);
 
@@ -2906,6 +2920,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			matching_ctor = arity_resolution.selected_overload;
 		}
 	}
+	ctor_op.resolved_constructor = matching_ctor;
 	// Get constructor parameter types for reference handling
 	// But first check for aggregate initialization: if no matching constructor was found
 	// (excluding implicit copy/move), and the struct has public members, generate direct
