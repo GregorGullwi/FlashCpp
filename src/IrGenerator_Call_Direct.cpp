@@ -1879,18 +1879,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		}
 	});
 
-		// Create CallOp structure
-	CallOp call_op = createCallOp(
-		ret_var,
-		StringTable::getOrInternStringHandle(function_name),
-		TypeIndex{},
-		SizeInBits{},
-		false,
-		false);
-
-		// Check if this is an indirect call (function pointer/reference)
-	call_op.is_indirect_call = callExprNode.callee().is_indirect();
-
 		// Get return type information
 		// Prefer the matched function declaration's return type over the original call's,
 		// since template instantiation may have resolved dependent types (e.g., Tp* → int*)
@@ -1906,7 +1894,15 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
 	}
 	const auto& return_type = *best_return_type;
-	populateCallReturnInfo(call_op, return_type);
+	CallOp call_op = createCallOp(
+		ret_var,
+		StringTable::getOrInternStringHandle(function_name),
+		return_type,
+		false,
+		false);
+
+		// Check if this is an indirect call (function pointer/reference)
+	call_op.is_indirect_call = callExprNode.callee().is_indirect();
 	if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 		call_op.is_member_function = true;
 		TypeCategory this_type = TypeCategory::Struct;

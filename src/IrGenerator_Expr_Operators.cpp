@@ -1442,9 +1442,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						// Generate function call
 						CallOp call_op = createCallOp(
 							result_var,
-							StringTable::getOrInternStringHandle(mangled_name),
-							TypeIndex{},
-							SizeInBits{},
+							mangled_name,
+							return_type,
 							true,
 							false);
 
@@ -1458,8 +1457,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 						// Pass RHS value as second argument
 						call_op.args.push_back(toTypedValue(rhsExprResult));
-
-						populateCallReturnInfo(call_op, return_type);
 
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
@@ -1777,11 +1774,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			CallOp call_op = createCallOp(
 				result_var,
 				StringTable::getOrInternStringHandle(mangled_name),
-				TypeIndex{},
-				SizeInBits{},
+				return_type,
 				false,
 				false);
-			populateCallReturnInfo(call_op, return_type);
 			int actual_return_size = call_op.return_size_in_bits.value;
 			if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
@@ -1917,9 +1912,8 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			// Create the call operation
 			CallOp call_op = createCallOp(
 				result_var,
-				StringTable::getOrInternStringHandle(mangled_name),
-				TypeIndex{},
-				SizeInBits{},
+				mangled_name,
+				return_type,
 				true,
 				false);
 

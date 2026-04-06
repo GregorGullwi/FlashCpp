@@ -1658,7 +1658,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 		member_func.is_const());
 
 	TempVar ret_var = var_counter.next();
-	CallOp call_op = createCallOp(ret_var, StringTable::getOrInternStringHandle(mangled_name), return_type, true, false);
+	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
 	if (!call_op.return_size_in_bits.is_set()) {
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
 			return_type_info && return_type_info->struct_info_) {
