@@ -760,17 +760,29 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
+						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+						TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+							? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+							: resolved_info->registeredTypeIndex();
 						int resolved_size_bits = resolved_info->hasStoredSize()
 							? static_cast<int>(resolved_info->sizeInBits().value)
-							: get_type_size_bits(resolved_info->typeEnum());
+							: get_type_size_bits(resolved_type_index.category());
 						TypeSpecifierNode resolved_spec(
-							resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
+							resolved_type_index,
 							resolved_size_bits,
 							ts.token(),
 							ts.cv_qualifier(),
 							ts.reference_qualifier());
+						if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+							resolved_spec.copy_indirection_from(*alias_type_spec);
+							if (alias_type_spec->has_function_signature()) {
+								resolved_spec.set_function_signature(alias_type_spec->function_signature());
+							}
+						}
 						resolved_spec.copy_indirection_from(ts);
-						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+						if (ts.reference_qualifier() != ReferenceQualifier::None) {
+							resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+						}
 						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 						return;
 					}
@@ -780,8 +792,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 				if (alias_node.target_type().is<TypeSpecifierNode>()) {
-					type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
-					return;
+					type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
+					if (!type_node.is<TypeSpecifierNode>())
+						return;
+					idx = type_node.as<TypeSpecifierNode>().type_index();
+					type_info = tryGetTypeInfo(idx);
+					if (!type_info)
+						return;
+					type_name = StringTable::getStringView(type_info->name());
 				}
 			}
 
@@ -836,12 +854,21 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+				TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+					? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+					: resolved_info->registeredTypeIndex();
 				TypeSpecifierNode resolved_spec(
-					resolved_info->typeEnum(),
+					resolved_type_index,
 					TypeQualifier::None,
-					get_type_size_bits(resolved_info->typeEnum()),
+					get_type_size_bits(resolved_type_index.category()),
 					Token(), CVQualifier::None);
-				resolved_spec.set_type_index(resolved_info->type_index_);
+				if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+					resolved_spec.copy_indirection_from(*alias_type_spec);
+					if (alias_type_spec->has_function_signature()) {
+						resolved_spec.set_function_signature(alias_type_spec->function_signature());
+					}
+				}
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
@@ -1914,17 +1941,29 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
 				if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
 					const TypeInfo* resolved_info = qualified_type_it->second;
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+					TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+						? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+						: resolved_info->registeredTypeIndex();
 					int resolved_size_bits = resolved_info->hasStoredSize()
 						? static_cast<int>(resolved_info->sizeInBits().value)
-						: get_type_size_bits(resolved_info->typeEnum());
+						: get_type_size_bits(resolved_type_index.category());
 					TypeSpecifierNode resolved_spec(
-						resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
+						resolved_type_index,
 						resolved_size_bits,
 						ts.token(),
 						ts.cv_qualifier(),
 						ts.reference_qualifier());
+					if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+						resolved_spec.copy_indirection_from(*alias_type_spec);
+						if (alias_type_spec->has_function_signature()) {
+							resolved_spec.set_function_signature(alias_type_spec->function_signature());
+						}
+					}
 					resolved_spec.copy_indirection_from(ts);
-					resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+					if (ts.reference_qualifier() != ReferenceQualifier::None) {
+						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+					}
 					type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 					return;
 				}
@@ -1935,9 +1974,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 			if (alias_node.target_type().is<TypeSpecifierNode>()) {
-				type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
-				FLASH_LOG(Templates, Debug, "Resolved dependent alias directly: ", type_name);
-				return;
+				type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
+				if (!type_node.is<TypeSpecifierNode>())
+					return;
+				idx = type_node.as<TypeSpecifierNode>().type_index();
+				type_info = tryGetTypeInfo(idx);
+				if (!type_info)
+					return;
+				type_name = StringTable::getStringView(type_info->name());
+				FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
 			}
 		}
 
@@ -2005,12 +2050,21 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		} else {
 			const TypeInfo* resolved_info = type_it->second;
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+			TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+				? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+				: resolved_info->registeredTypeIndex();
 			TypeSpecifierNode resolved_spec(
-				resolved_info->typeEnum(),
+				resolved_type_index,
 				TypeQualifier::None,
-				get_type_size_bits(resolved_info->typeEnum()),
+				get_type_size_bits(resolved_type_index.category()),
 				Token(), CVQualifier::None);
-			resolved_spec.set_type_index(resolved_info->type_index_);
+			if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+				resolved_spec.copy_indirection_from(*alias_type_spec);
+				if (alias_type_spec->has_function_signature()) {
+					resolved_spec.set_function_signature(alias_type_spec->function_signature());
+				}
+			}
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
 					  ", index=", resolved_info->type_index_);

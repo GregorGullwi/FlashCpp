@@ -5676,9 +5676,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		TypeIndex substituted_type_index = alias_type_spec.type_index();
 		int substituted_size = alias_type_spec.size_in_bits();
 
-		// Substitute template parameters in the alias type
-		// Handle both UserDefined and Struct types (template types are often registered as Struct)
-		if (is_struct_type(substituted_type)) {
+		// Substitute template parameters in the alias type.
+		// Alias targets like `using type = T;` are typically registered as
+		// UserDefined/TypeAlias placeholders rather than concrete Struct types, so
+		// they need the same substitution path as struct-like aliases here.
+		if (is_struct_type(substituted_type) ||
+			substituted_type == TypeCategory::UserDefined ||
+			substituted_type == TypeCategory::TypeAlias ||
+			substituted_type == TypeCategory::Template) {
 			TypeIndex type_idx = alias_type_spec.type_index();
 			if (const TypeInfo* type_info = tryGetTypeInfo(type_idx)) {
 				std::string_view type_name = StringTable::getStringView(type_info->name());
