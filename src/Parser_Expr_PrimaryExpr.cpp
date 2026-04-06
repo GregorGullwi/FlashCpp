@@ -5046,25 +5046,89 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
+			auto tryResolveConstructibleTypeAlias = [&](const Token& type_token) -> std::optional<std::pair<TypeIndex, SizeInBits>> {
+				const TypeInfo* type_info = lookupTypeInCurrentContext(type_token.handle());
+				if (!type_info) {
+					auto type_it = getTypesByNameMap().find(type_token.handle());
+					if (type_it != getTypesByNameMap().end()) {
+						type_info = type_it->second;
+					}
+				}
+				if (!type_info) {
+					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+					if (!current_namespace.isGlobal()) {
+						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_token.handle());
+						auto qualified_type_it = getTypesByNameMap().find(qualified_handle);
+						if (qualified_type_it != getTypesByNameMap().end()) {
+							type_info = qualified_type_it->second;
+						}
+					}
+				}
+				if (!type_info) {
+					return std::nullopt;
+				}
+
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+				if (!resolved_alias.type_index.is_valid() ||
+					!is_struct_type(resolved_alias.typeEnum()) ||
+					resolved_alias.pointer_depth != 0 ||
+					resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+					resolved_alias.function_signature.has_value() ||
+					resolved_alias.isArray()) {
+					return std::nullopt;
+				}
+
+				SizeInBits type_size{};
+				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
+					type_size = struct_info->sizeInBits();
+				} else if (resolved_alias.terminal_type_info) {
+					type_size = resolved_alias.terminal_type_info->sizeInBits();
+				}
+
+				return std::pair{resolved_alias.type_index.withCategory(TypeCategory::Struct), type_size};
+			};
+
+			if (found_as_type_alias && !identifierType && peek() == "("_tok) {
+				if (auto resolved_ctor_type = tryResolveConstructibleTypeAlias(identifier_token)) {
+					advance(); // consume '('
+
+					ChunkedVector<ASTNode> args;
+					while (!current_token_.kind().is_eof() &&
+						   (current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")")) {
+						auto argResult = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+						if (argResult.is_error()) {
+							return argResult;
+						}
+						if (auto node = argResult.node()) {
+							args.push_back(*node);
+						}
+
+						if (current_token_.type() == Token::Type::Punctuator && current_token_.value() == ",") {
+							advance(); // consume ','
+						} else if (current_token_.kind().is_eof() || current_token_.type() != Token::Type::Punctuator || current_token_.value() != ")") {
+							return ParseResult::error("Expected ',' or ')' in constructor arguments", current_token_);
+						}
+					}
+
+					if (!consume(")"_tok)) {
+						return ParseResult::error("Expected ')' after constructor arguments", current_token_);
+					}
+
+					auto type_spec_node = emplace_node<TypeSpecifierNode>(
+						resolved_ctor_type->first, resolved_ctor_type->second, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+					result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
+					return ParseResult::success(*result);
+				}
+			}
+
 			// Handle brace initialization for type names: TypeName{} or TypeName{args}
 			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
 			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
 				// Look up the actual type info to determine if this is an aggregate
-				StringHandle identifier_handle = identifier_token.handle();
-				auto type_it = getTypesByNameMap().find(identifier_handle);
-				if (type_it == getTypesByNameMap().end()) {
-					// Try namespace-qualified lookup
-					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
-					if (!current_namespace.isGlobal()) {
-						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, identifier_handle);
-						type_it = getTypesByNameMap().find(qualified_handle);
-					}
-				}
-
-				if (type_it != getTypesByNameMap().end()) {
-					const TypeInfo* type_info_ptr = type_it->second;
-					const StructTypeInfo* struct_info = type_info_ptr->getStructInfo();
-					TypeIndex type_index = type_info_ptr->type_index_;
+				if (auto resolved_ctor_type = tryResolveConstructibleTypeAlias(identifier_token)) {
+					TypeIndex type_index = resolved_ctor_type->first;
+					const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
 
 					// Check if this is an aggregate type (no user-declared constructors, all public, no vtable)
 					bool is_aggregate = false;
@@ -5090,7 +5154,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
-						const SizeInBits type_size = struct_info ? SizeInBits{getStructTypeSizeBits(type_index)} : SizeInBits{};
+						const SizeInBits type_size = resolved_ctor_type->second;
 						auto type_spec = TypeSpecifierNode(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
@@ -5134,7 +5198,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 							return ParseResult::error("Expected '}' after brace initializer", current_token_);
 						}
 
-						const SizeInBits type_size = struct_info ? SizeInBits{getStructTypeSizeBits(type_index)} : SizeInBits{};
+						const SizeInBits type_size = resolved_ctor_type->second;
 						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);
