@@ -252,6 +252,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
 			bool return_requires_ctor_resolution = false;
 			bool return_ctor_no_match = false;
+			std::string_view return_ctor_target_name;
 
 				// Check whether the semantic pass has already computed a cast annotation.
 				// When present for a non-struct conversion, apply it and skip the local policy.
@@ -273,6 +274,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				if (const TypeInfo* target_type_info = tryGetTypeInfo(return_type_spec.type_index())) {
 					if (const StructTypeInfo* target_struct_info = target_type_info->getStructInfo()) {
 						return_requires_ctor_resolution = true;
+						return_ctor_target_name = StringTable::getStringView(target_type_info->name());
 						auto tryMaterializeReturnCtor = [&](const ConstructorDeclarationNode* ctor) {
 							if (!ctor) {
 								return false;
@@ -294,7 +296,11 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
 							if (resolution.is_ambiguous) {
-								throw CompileError("Ambiguous constructor call");
+								throw CompileError(std::string(StringBuilder()
+									.append("Ambiguous constructor call for '")
+									.append(return_ctor_target_name)
+									.append("'")
+									.commit()));
 							}
 							if (resolution.has_match && resolution.selected_overload) {
 								tryMaterializeReturnCtor(resolution.selected_overload);
@@ -381,7 +387,11 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 					}
 				} else {
 					if (return_requires_ctor_resolution && return_ctor_no_match) {
-						throw CompileError("No matching constructor");
+						throw CompileError(std::string(StringBuilder()
+							.append("No matching constructor for '")
+							.append(return_ctor_target_name)
+							.append("'")
+							.commit()));
 					}
 						// Phase 15: sema should annotate standard arithmetic return conversions.
 						// Log a warning when sema missed it (inferExpressionType may fail for
