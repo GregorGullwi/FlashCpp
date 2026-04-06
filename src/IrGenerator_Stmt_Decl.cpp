@@ -100,14 +100,14 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return parser_type;
 	};
 
-	const bool require_sema_owned_arg_type =
-		sema_ && sema_normalized_current_function_ &&
-		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 	if (sema_) {
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
 	}
+	const bool require_sema_owned_arg_type =
+		sema_ && sema_normalized_current_function_ &&
+		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 
 	if (!arg.is<ExpressionNode>()) {
 		return tryParserFallback();

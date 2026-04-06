@@ -2318,6 +2318,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::getOverloadResolutionArgType(
 		if (it != overload_resolution_arg_types_.end()) {
 			return it->second;
 		}
+
+		if (auto slot_backed_type = getExpressionType(arg); slot_backed_type.has_value()) {
+			overload_resolution_arg_types_.emplace(key, *slot_backed_type);
+			return slot_backed_type;
+		}
 	}
 	auto result = buildOverloadResolutionArgType(arg, nullptr);
 	if (result.has_value() && arg.is<ExpressionNode>()) {
@@ -2507,8 +2512,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 		return {};
 
 	if (node.is<ExpressionNode>()) {
+		if (auto slot = getSlot(getExpressionKey(node)); slot.has_value() && slot->has_type()) {
+			return slot->type_id;
+		}
+
 		const auto& expr = node.as<ExpressionNode>();
-		return std::visit([this](const auto& e) -> CanonicalTypeId {
+		return std::visit([this, &node](const auto& e) -> CanonicalTypeId {
 			using T = std::decay_t<decltype(e)>;
 			if constexpr (std::is_same_v<T, NumericLiteralNode>) {
 				CanonicalTypeDesc desc;
@@ -2571,6 +2580,10 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					}
 				}
 
+				if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
+					return canonicalizeType(*parser_type);
+				}
+
 				if (e.binding() == IdentifierBinding::NonStaticMember &&
 					!member_context_stack_.empty()) {
 					const TypeIndex current_struct_type = member_context_stack_.back();
@@ -2628,7 +2641,13 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!struct_info) {
 					return {};
 				}
+				// MemberAccessNode stores the parser token directly, so the identifier handle
+				// must already be interned at tokenization time. If this ever fails,
+				// fix token construction/parser plumbing instead of re-interning here.
 				const StringHandle member_name = e.member_token().handle();
+				if (!member_name.isValid()) {
+					throw InternalError("Member token handle was not interned for '" + std::string(e.member_name()) + "'");
+				}
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
 						continue;
