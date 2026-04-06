@@ -164,8 +164,8 @@ CallOp AstToIr::createCallOp(
 	return call_op;
 }
 
-ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const {
-	return buildCallReturnResult(buildFunctionSignatureReturnType(signature), ret_var, ExpressionContext::Normal, Token{});
+ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) {
+	return buildCallReturnResult(buildFunctionSignatureReturnType(signature), ret_var, ExpressionContext::Load, Token{});
 }
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {

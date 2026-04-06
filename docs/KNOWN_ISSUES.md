@@ -72,39 +72,3 @@ diagnosed.
 call that always has access to the argument type. When the argument type
 cannot be inferred, report an ambiguity diagnostic instead of falling back
 to looser matching.
-
-## populateIndirectCallReturnInfo hardcodes pointer_depth=0 and is_reference=false
-
-`populateIndirectCallReturnInfo` (`src/IrGenerator_Call_Direct.cpp:102-111`)
-passes `0` for `pointer_depth` and `false` for `is_reference` to
-`needsHiddenReturnParam`. A `FunctionSignature` does not carry
-reference/pointer qualifiers for its return type — those live in the
-enclosing `TypeSpecifierNode`.
-
-If a function pointer returns a struct by reference (e.g.,
-`Foo& (*fp)(int)`), the signature's `returnType()` would be
-`TypeCategory::Struct` while the actual return is a reference
-(pointer-sized, returned in RAX). With `is_reference=false`,
-`returnsStructByValue` would return true, and if the struct exceeds the
-ABI threshold, `needsHiddenReturnParam` would incorrectly return true.
-This would cause the codegen to emit a hidden return slot for what should
-be a simple pointer return in RAX.
-
-Compare with the direct-call path at `src/IrGenerator_Call_Direct.cpp:1876-1877`
-which correctly passes `return_type.pointer_depth()` and
-`return_type.is_reference()` from the full `TypeSpecifierNode`.
-
-**Likelihood:** Low in practice. Function-pointer-to-reference-returning-function
-is rare, and the signature often encodes such returns differently. However, the
-mismatch between the indirect and direct call paths is a latent correctness issue.
-
-**Affected code:**
-- `AstToIr::populateIndirectCallReturnInfo` — `src/IrGenerator_Call_Direct.cpp:105-110`
-- `needsHiddenReturnParam` / `returnsStructByValue` — called with hardcoded
-  `pointer_depth=0`, `is_reference=false`
-
-**Possible fix:** Extend `FunctionSignature` to carry return-type reference
-and pointer qualifiers, or resolve them from the `TypeSpecifierNode` at the
-call site before invoking `populateIndirectCallReturnInfo`. Alternatively,
-check the resolved alias chain for reference qualifiers inside
-`populateIndirectCallReturnInfo` itself.
