@@ -1985,7 +1985,12 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Direct constructor call like S s(x) - process its arguments directly
 						FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
 							// Find the matching constructor to get parameter types for reference handling
-						const ConstructorDeclarationNode* matching_ctor = direct_ctor->resolved_constructor();
+						const ConstructorDeclarationNode* matching_ctor = nullptr;
+						if (const ConstructorDeclarationNode* resolved_ctor = direct_ctor->resolved_constructor()) {
+							if (resolved_ctor->struct_name() == type_info->name()) {
+								matching_ctor = resolved_ctor;
+							}
+						}
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
@@ -2291,6 +2296,39 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										FLASH_LOG(General, Error, "  Use direct initialization: ",
 												  decl.identifier_token().value(), "(value) instead of = value");
 										throw CompileError("Cannot use copy initialization with explicit constructor");
+									}
+								}
+							}
+
+							if (is_converting_ctor && !sema_selected_converting_ctor && type_info->struct_info_) {
+								if (auto init_arg_type_opt = buildCodegenOverloadResolutionArgType(init_node)) {
+									std::vector<TypeSpecifierNode> arg_types;
+									arg_types.push_back(*init_arg_type_opt);
+									auto resolution = resolve_constructor_overload(*type_info->struct_info_, arg_types, true);
+									if (resolution.is_ambiguous) {
+										throw CompileError("Ambiguous constructor call");
+									}
+									if (resolution.selected_overload && !resolution.selected_overload->is_explicit()) {
+										sema_selected_converting_ctor = resolution.selected_overload;
+									}
+								}
+								if (!sema_selected_converting_ctor) {
+									auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, 1, true);
+									if (!arity_resolution.is_ambiguous &&
+										arity_resolution.selected_overload &&
+										!arity_resolution.selected_overload->is_explicit()) {
+										sema_selected_converting_ctor = arity_resolution.selected_overload;
+									}
+								}
+								if (sema_selected_converting_ctor) {
+									const auto& ctor_params = sema_selected_converting_ctor->parameter_nodes();
+									if (!ctor_params.empty() && ctor_params[0].is<DeclarationNode>()) {
+										const ASTNode& param_type_node =
+											ctor_params[0].as<DeclarationNode>().type_node();
+										if (param_type_node.is<TypeSpecifierNode>()) {
+											sema_selected_param_type =
+												&param_type_node.as<TypeSpecifierNode>();
+										}
 									}
 								}
 							}
