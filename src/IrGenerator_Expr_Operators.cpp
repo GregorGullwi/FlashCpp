@@ -632,11 +632,8 @@ void AstToIr::finalizeConstructorCallOp(
 		ctor_op.target_type_index = ctor_op.resolved_constructor->owning_type_index();
 	}
 	if (!ctor_op.target_type_index.is_valid()) {
-		throw InternalError(std::string(StringBuilder()
-											.append("ConstructorCallOp missing target type index for '")
-											.append(StringTable::getStringView(target_struct_info.name))
-											.append("'")
-											.commit()));
+		throw InternalError("ConstructorCallOp missing target type index for '" +
+							std::string(StringTable::getStringView(target_struct_info.name)) + "'");
 	}
 	const bool is_metadata_free_implicit_default_ctor =
 		ctor_op.arguments.empty() &&

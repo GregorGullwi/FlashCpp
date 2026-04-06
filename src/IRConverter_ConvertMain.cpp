@@ -4824,11 +4824,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	};
 	const TypeInfo* actual_ctor_owner_type_info = resolveConstructorTargetTypeInfo();
 	if (!actual_ctor_owner_type_info) {
-		throw InternalError(std::string(StringBuilder()
-											.append("ConstructorCallOp missing target type info for '")
-											.append(struct_name)
-											.append("'")
-											.commit()));
+		throw InternalError("ConstructorCallOp missing target type info for '" + std::string(struct_name) + "'");
 	}
 	const std::string_view resolved_struct_name = StringTable::getStringView(actual_ctor_owner_type_info->name());
 

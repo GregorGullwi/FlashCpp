@@ -2063,13 +2063,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 
 				if (!template_args.has_value()) {
+					const auto& types_by_name = getTypesByNameMap();
 					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
-					auto type_it = getTypesByNameMap().find(qualified_handle);
-					if (type_it == getTypesByNameMap().end()) {
-						type_it = getTypesByNameMap().find(qual_id.nameHandle());
+					auto type_it = types_by_name.find(qualified_handle);
+					if (type_it == types_by_name.end()) {
+						type_it = types_by_name.find(qual_id.nameHandle());
 					}
-					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
+					if (type_it != types_by_name.end() && type_it->second->isStruct()) {
 						const TypeInfo& type_info = *type_it->second;
 						const StructTypeInfo* struct_info = type_info.getStructInfo();
 						const SizeInBits type_size = struct_info ? struct_info->sizeInBits() : SizeInBits{};
