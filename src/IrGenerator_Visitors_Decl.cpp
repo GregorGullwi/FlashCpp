@@ -2865,29 +2865,35 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	ctor_op.object = ret_var;  // The temporary variable that will hold the result
 
 	// Find the matching constructor to get parameter types for reference handling
-	const ConstructorDeclarationNode* matching_ctor = nullptr;
+	const ConstructorDeclarationNode* matching_ctor = constructorCallNode.resolved_constructor();
 
 	if (struct_info) {
-		std::vector<TypeSpecifierNode> arg_types;
-		arg_types.reserve(num_args);
-		constructorCallNode.arguments().visit([&](ASTNode arg) {
-			auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-			if (!arg_type_opt.has_value()) {
-				arg_types.clear();
-				return;
-			}
-			arg_types.push_back(std::move(*arg_type_opt));
-		});
+		if (matching_ctor) {
+			FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(constructor_name));
+		}
+		if (!matching_ctor) {
+			std::vector<TypeSpecifierNode> arg_types;
+			arg_types.reserve(num_args);
+			constructorCallNode.arguments().visit([&](ASTNode arg) {
+				auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+				if (!arg_type_opt.has_value()) {
+					arg_types.clear();
+					return;
+				}
+				arg_types.push_back(std::move(*arg_type_opt));
+			});
 
-		if (arg_types.size() == num_args) {
-			auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
-			if (resolution.is_ambiguous) {
-				throw CompileError("Ambiguous constructor call");
+			if (arg_types.size() == num_args) {
+				auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+				if (resolution.is_ambiguous) {
+					throw CompileError("Ambiguous constructor call");
+				}
+				matching_ctor = resolution.selected_overload;
 			}
-			matching_ctor = resolution.selected_overload;
 		}
 
 		if (!matching_ctor) {
+			FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(constructor_name));
 			auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
 			matching_ctor = arity_resolution.selected_overload;
 		}

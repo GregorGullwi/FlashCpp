@@ -3921,7 +3921,10 @@ std::optional<EvalResult> Evaluator::resolve_constexpr_member_source_from_initia
 	}
 
 	const auto& ctor_args = ctor_call.arguments();
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
+	if (!matching_ctor) {
+		matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+	}
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr " + std::string(usage_name));
 	}
@@ -4508,52 +4511,54 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 		}
 
 		const auto& ctor_args = ctor_call.arguments();
-		const ConstructorDeclarationNode* matching_ctor = nullptr;
-		auto ctor_candidates = struct_info->getConstructorsByParameterCount(ctor_args.size(), false);
-		for (const StructMemberFunction* candidate : ctor_candidates) {
-			if (!candidate || !candidate->function_decl.is<ConstructorDeclarationNode>()) {
-				continue;
-			}
-			const ConstructorDeclarationNode& candidate_ctor = candidate->function_decl.as<ConstructorDeclarationNode>();
-			const auto& params = candidate_ctor.parameter_nodes();
-			bool has_static_cast_arg = false;
-			bool matches_cast_targets = true;
-			for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
-				if (!ctor_args[i].is<ExpressionNode>()) {
+		const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
+		if (!matching_ctor) {
+			auto ctor_candidates = struct_info->getConstructorsByParameterCount(ctor_args.size(), false);
+			for (const StructMemberFunction* candidate : ctor_candidates) {
+				if (!candidate || !candidate->function_decl.is<ConstructorDeclarationNode>()) {
 					continue;
 				}
-				const ExpressionNode& arg_expr = ctor_args[i].as<ExpressionNode>();
-				if (!std::holds_alternative<StaticCastNode>(arg_expr)) {
-					continue;
-				}
-				has_static_cast_arg = true;
-				if (!params[i].is<DeclarationNode>()) {
-					matches_cast_targets = false;
-					break;
+				const ConstructorDeclarationNode& candidate_ctor = candidate->function_decl.as<ConstructorDeclarationNode>();
+				const auto& params = candidate_ctor.parameter_nodes();
+				bool has_static_cast_arg = false;
+				bool matches_cast_targets = true;
+				for (size_t i = 0; i < params.size() && i < ctor_args.size(); ++i) {
+					if (!ctor_args[i].is<ExpressionNode>()) {
+						continue;
+					}
+					const ExpressionNode& arg_expr = ctor_args[i].as<ExpressionNode>();
+					if (!std::holds_alternative<StaticCastNode>(arg_expr)) {
+						continue;
+					}
+					has_static_cast_arg = true;
+					if (!params[i].is<DeclarationNode>()) {
+						matches_cast_targets = false;
+						break;
+					}
+
+					const StaticCastNode& cast_node = std::get<StaticCastNode>(arg_expr);
+					const ASTNode& cast_type_node = cast_node.target_type();
+					const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
+					const ASTNode& param_type_node = param_decl.type_node();
+					if (!cast_type_node.is<TypeSpecifierNode>() || !param_type_node.is<TypeSpecifierNode>()) {
+						matches_cast_targets = false;
+						break;
+					}
+
+					const TypeSpecifierNode& cast_type = cast_type_node.as<TypeSpecifierNode>();
+					const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
+					if (cast_type.type() != param_type.type() ||
+						cast_type.type_index() != param_type.type_index() ||
+						cast_type.pointer_depth() != param_type.pointer_depth()) {
+						matches_cast_targets = false;
+						break;
+					}
 				}
 
-				const StaticCastNode& cast_node = std::get<StaticCastNode>(arg_expr);
-				const ASTNode& cast_type_node = cast_node.target_type();
-				const DeclarationNode& param_decl = params[i].as<DeclarationNode>();
-				const ASTNode& param_type_node = param_decl.type_node();
-				if (!cast_type_node.is<TypeSpecifierNode>() || !param_type_node.is<TypeSpecifierNode>()) {
-					matches_cast_targets = false;
+				if (has_static_cast_arg && matches_cast_targets) {
+					matching_ctor = &candidate_ctor;
 					break;
 				}
-
-				const TypeSpecifierNode& cast_type = cast_type_node.as<TypeSpecifierNode>();
-				const TypeSpecifierNode& param_type = param_type_node.as<TypeSpecifierNode>();
-				if (cast_type.type() != param_type.type() ||
-					cast_type.type_index() != param_type.type_index() ||
-					cast_type.pointer_depth() != param_type.pointer_depth()) {
-					matches_cast_targets = false;
-					break;
-				}
-			}
-
-			if (has_static_cast_arg && matches_cast_targets) {
-				matching_ctor = &candidate_ctor;
-				break;
 			}
 		}
 		if (!matching_ctor) {
@@ -5891,7 +5896,10 @@ EvalResult Evaluator::extract_object_members(
 	const auto& ctor_args = ctor_call.arguments();
 
 	// Find the matching constructor
-	const ConstructorDeclarationNode* matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+	const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
+	if (!matching_ctor) {
+		matching_ctor = find_matching_constructor(struct_info, ctor_args, context);
+	}
 
 	if (!matching_ctor) {
 		return EvalResult::error("No matching constructor found for constexpr object");
