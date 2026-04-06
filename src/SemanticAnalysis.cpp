@@ -1868,9 +1868,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
 		if (stmt.has_condition()) {
-			// C++20 [stmt.for]: the condition is contextually converted to bool.
-			tryAnnotateContextualBool(stmt.get_condition().value());
-			normalizeExpression(stmt.get_condition().value(), ctx);
+			normalizeCondition(stmt.get_condition().value(), true);
 		}
 		if (stmt.has_update()) {
 			normalizeExpression(stmt.get_update_expression().value(), ctx);
@@ -4470,13 +4468,18 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return func_decl;
 	}
 
-	for (const auto& overload : overloads) {
-		const FunctionDeclarationNode* candidate = nullptr;
+	auto getFunctionCandidate = [](const ASTNode& overload) -> const FunctionDeclarationNode* {
 		if (overload.is<FunctionDeclarationNode>()) {
-			candidate = &overload.as<FunctionDeclarationNode>();
-		} else if (overload.is<TemplateFunctionDeclarationNode>()) {
-			candidate = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+			return &overload.as<FunctionDeclarationNode>();
 		}
+		if (overload.is<TemplateFunctionDeclarationNode>()) {
+			return &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+		}
+		return nullptr;
+	};
+
+	for (const auto& overload : overloads) {
+		const FunctionDeclarationNode* candidate = getFunctionCandidate(overload);
 		if (candidate && &candidate->decl_node() == &decl) {
 			func_decl = candidate;
 			break;
@@ -4486,24 +4489,16 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (!func_decl) {
 		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
 			for (const auto& overload : overloads) {
-				if (overload.is<FunctionDeclarationNode>()) {
-					const auto& candidate = overload.as<FunctionDeclarationNode>();
-					if (arguments.size() == candidate.parameter_nodes().size())
-						return &candidate;
-				} else if (overload.is<TemplateFunctionDeclarationNode>()) {
-					const auto& candidate = overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
-					if (arguments.size() == candidate.parameter_nodes().size())
-						return &candidate;
+				if (const FunctionDeclarationNode* candidate = getFunctionCandidate(overload)) {
+					if (arguments.size() == candidate->parameter_nodes().size()) {
+						return candidate;
+					}
 				}
 			}
 			return nullptr;
 		};
 		if (overloads.size() == 1) {
-			if (overloads[0].is<FunctionDeclarationNode>()) {
-				func_decl = &overloads[0].as<FunctionDeclarationNode>();
-			} else if (overloads[0].is<TemplateFunctionDeclarationNode>()) {
-				func_decl = &overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
-			}
+			func_decl = getFunctionCandidate(overloads[0]);
 		} else {
 			func_decl = find_by_arg_count();
 		}
