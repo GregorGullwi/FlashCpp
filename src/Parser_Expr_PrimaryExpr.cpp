@@ -195,6 +195,52 @@ bool isSupportedAtomicBuiltin(std::string_view name) {
 		name == "__atomic_thread_fence" ||
 		name == "__atomic_signal_fence";
 }
+
+std::optional<std::pair<TypeIndex, SizeInBits>> tryResolveConstructibleClassAlias(const Token& type_token) {
+	const TypeInfo* type_info = lookupTypeInCurrentContext(type_token.handle());
+	if (!type_info) {
+		auto type_it = getTypesByNameMap().find(type_token.handle());
+		if (type_it != getTypesByNameMap().end()) {
+			type_info = type_it->second;
+		}
+	}
+	if (!type_info) {
+		NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
+		while (current_namespace.isValid() && !current_namespace.isGlobal()) {
+			StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_token.handle());
+			auto qualified_type_it = getTypesByNameMap().find(qualified_handle);
+			if (qualified_type_it != getTypesByNameMap().end()) {
+				type_info = qualified_type_it->second;
+				break;
+			}
+			current_namespace = gNamespaceRegistry.getParent(current_namespace);
+		}
+	}
+	if (!type_info) {
+		return std::nullopt;
+	}
+
+	ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+		type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+	const TypeCategory ctor_type = resolved_alias.typeEnum();
+	if (!resolved_alias.type_index.is_valid() ||
+		!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
+		resolved_alias.pointer_depth != 0 ||
+		resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+		resolved_alias.function_signature.has_value() ||
+		resolved_alias.isArray()) {
+		return std::nullopt;
+	}
+
+	SizeInBits type_size{};
+	if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
+		type_size = struct_info->sizeInBits();
+	} else if (resolved_alias.terminal_type_info) {
+		type_size = resolved_alias.terminal_type_info->sizeInBits();
+	}
+
+	return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
+}
 }
 
 std::optional<ASTNode> Parser::try_synthesize_atomic_builtin_overload(
@@ -2348,17 +2394,17 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// ENHANCED: In TemplateTypeArg context, also check for ',' or '>' or '<' because type aliases
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && !peek().is_eof()) {
-			std::string_view peek_value = peek_info().value();
+			std::string_view lookahead_value = peek_info().value();
 			// Check getTypesByNameMap() if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
-			bool should_check_types = (peek_value == "::" || peek_value == "(" || peek_value == "{");
+			bool should_check_types = (lookahead_value == "::" || lookahead_value == "(" || lookahead_value == "{");
 
 			// In template argument context, also check for various tokens that indicate a type context.
 			// Type aliases and template class names are commonly used as template arguments
 			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>, declval<_Tp&>())
 			// The '&' and '&&' handle reference type declarators like T& or T&&
 			if (!should_check_types && context == ExpressionContext::TemplateTypeArg) {
-				should_check_types = (peek_value == "," || peek_value == ">" || peek_value == ">>" || peek_value == "<" ||
-									  peek_value == "&" || peek_value == "&&");
+				should_check_types = (lookahead_value == "," || lookahead_value == ">" || lookahead_value == ">>" || lookahead_value == "<" ||
+									  lookahead_value == "&" || lookahead_value == "&&");
 			}
 
 			if (should_check_types) {
@@ -2366,7 +2412,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				const TypeInfo* contextual_type_info = lookupTypeInCurrentContext(identifier_handle);
 				if (contextual_type_info) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in getTypesByNameMap() (peek='{}', context={})",
-									 identifier_token.value(), peek_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
+									 identifier_token.value(), lookahead_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
@@ -2374,7 +2420,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					auto type_it = getTypesByNameMap().find(identifier_handle);
 					if (type_it != getTypesByNameMap().end()) {
 						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in getTypesByNameMap() (peek='{}', context={})",
-										 identifier_token.value(), peek_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
+										 identifier_token.value(), lookahead_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
 						found_as_type_alias = true;
 						// Mark that we found it as a type so it can be used for type references
 						// The actual type info will be retrieved later when needed
@@ -3662,42 +3708,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Identifier already consumed at line 1621
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
 			if (!is_lambda_variable && consume("("_tok)) {
-				auto tryResolveConstructorCallType = [&]() -> std::optional<std::pair<TypeIndex, SizeInBits>> {
-					const TypeInfo* type_info = lookupTypeInCurrentContext(identifier_token.handle());
-					if (!type_info) {
-						auto type_it = getTypesByNameMap().find(identifier_token.handle());
-						if (type_it != getTypesByNameMap().end()) {
-							type_info = type_it->second;
-						}
-					}
-					if (!type_info) {
-						return std::nullopt;
-					}
-
-					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-						type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-					const TypeCategory ctor_type = resolved_alias.typeEnum();
-					if (!resolved_alias.type_index.is_valid() ||
-						!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
-						resolved_alias.pointer_depth != 0 ||
-						resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-						resolved_alias.function_signature.has_value() ||
-						resolved_alias.isArray()) {
-						return std::nullopt;
-					}
-
-					SizeInBits type_size{};
-					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
-						type_size = struct_info->sizeInBits();
-					} else if (resolved_alias.terminal_type_info) {
-						type_size = resolved_alias.terminal_type_info->sizeInBits();
-					}
-
-					return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
-				};
-
 				// First, check if this is a type name (constructor call)
-				if (auto resolved_ctor_type = tryResolveConstructorCallType()) {
+				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
 					ChunkedVector<ASTNode> args;
@@ -5090,52 +5102,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				}
 			}
 
-			auto tryResolveConstructibleTypeAlias = [&](const Token& type_token) -> std::optional<std::pair<TypeIndex, SizeInBits>> {
-				const TypeInfo* type_info = lookupTypeInCurrentContext(type_token.handle());
-				if (!type_info) {
-					auto type_it = getTypesByNameMap().find(type_token.handle());
-					if (type_it != getTypesByNameMap().end()) {
-						type_info = type_it->second;
-					}
-				}
-				if (!type_info) {
-					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
-					if (!current_namespace.isGlobal()) {
-						StringHandle qualified_handle = gNamespaceRegistry.buildQualifiedIdentifier(current_namespace, type_token.handle());
-						auto qualified_type_it = getTypesByNameMap().find(qualified_handle);
-						if (qualified_type_it != getTypesByNameMap().end()) {
-							type_info = qualified_type_it->second;
-						}
-					}
-				}
-				if (!type_info) {
-					return std::nullopt;
-				}
-
-				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-				const TypeCategory ctor_type = resolved_alias.typeEnum();
-				if (!resolved_alias.type_index.is_valid() ||
-					!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
-					resolved_alias.pointer_depth != 0 ||
-					resolved_alias.reference_qualifier != ReferenceQualifier::None ||
-					resolved_alias.function_signature.has_value() ||
-					resolved_alias.isArray()) {
-					return std::nullopt;
-				}
-
-				SizeInBits type_size{};
-				if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
-					type_size = struct_info->sizeInBits();
-				} else if (resolved_alias.terminal_type_info) {
-					type_size = resolved_alias.terminal_type_info->sizeInBits();
-				}
-
-				return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
-			};
-
 			if (found_as_type_alias && !identifierType && peek() == "("_tok) {
-				if (auto resolved_ctor_type = tryResolveConstructibleTypeAlias(identifier_token)) {
+				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
 					advance(); // consume '('
 
 					ChunkedVector<ASTNode> args;
@@ -5171,7 +5139,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// This handles expressions like "throw bad_any_cast{}" where bad_any_cast is a class
 			if (found_as_type_alias && !identifierType && peek() == "{"_tok) {
 				// Look up the actual type info to determine if this is an aggregate
-				if (auto resolved_ctor_type = tryResolveConstructibleTypeAlias(identifier_token)) {
+				if (auto resolved_ctor_type = tryResolveConstructibleClassAlias(identifier_token)) {
 					TypeIndex type_index = resolved_ctor_type->first;
 					const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
 
