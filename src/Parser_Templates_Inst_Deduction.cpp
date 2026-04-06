@@ -86,15 +86,25 @@ void registerTypeParamsInScope(
 	const InlineVector<TemplateTypeArg, 4>& type_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
+	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
+		if (arg.type_index.is_valid()) {
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				getTypeSizeFromTemplateArgument(arg));
+		}
+		return add_template_param_type(
+			param_name,
+			arg.typeEnum(),
+			getTypeSizeFromTemplateArgument(arg));
+	};
 	for (size_t i = 0; i < param_names.size() && i < type_args.size(); ++i) {
 		const TemplateTypeArg& arg = type_args[i];
 		if (arg.is_value)
 			continue;  // Non-type (value) params must NOT be registered as TypeInfo
 		if (arg.is_template_template_arg)
 			continue;  // Template-template params don't represent concrete types
-		auto& type_info = add_template_param_type(
-			param_names[i],
-			arg.typeEnum(), 0);
+		auto& type_info = register_type_binding(param_names[i], arg);
 		if (is_builtin_type(arg.typeEnum())) {
 			type_info.fallback_size_bits_ = get_type_size_bits(arg.category());
 		} else {
@@ -126,16 +136,25 @@ void registerTypeParamsInScope(
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	bool preserve_ref_qualifier) {
+	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
+		if (arg.type_index.is_valid()) {
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				getTypeSizeFromTemplateArgument(arg));
+		}
+		return add_template_param_type(
+			param_name,
+			arg.typeEnum(),
+			getTypeSizeFromTemplateArgument(arg));
+	};
 	forEachNonPackTemplateParamArgBinding(
 		template_param_nodes,
 		template_args,
 		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
-			auto& type_info = add_template_param_type(
-				param.nameHandle(),
-				arg.typeEnum(),
-				getTypeSizeFromTemplateArgument(arg));
+			auto& type_info = register_type_binding(param.nameHandle(), arg);
 			if (preserve_ref_qualifier) {
 				type_info.reference_qualifier_ = arg.is_rvalue_reference()
 													 ? ReferenceQualifier::RValueReference
@@ -150,16 +169,25 @@ void registerTypeParamsInScope(
 	const std::vector<TemplateTypeArg>& template_args,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
+	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg) -> TypeInfo& {
+		if (arg.type_index.is_valid()) {
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				getTypeSizeFromTemplateArgument(arg));
+		}
+		return add_template_param_type(
+			param_name,
+			arg.typeEnum(),
+			getTypeSizeFromTemplateArgument(arg));
+	};
 	forEachNonPackTemplateParamArgBinding(
 		template_param_nodes,
 		template_args,
 		[&](const TemplateParameterNode& param, const TemplateTypeArg& arg, size_t) {
 			if (arg.is_value || arg.is_template_template_arg)
 				return;
-			auto& type_info = add_template_param_type(
-				param.nameHandle(),
-				arg.typeEnum(),
-				getTypeSizeFromTemplateArgument(arg));
+			auto& type_info = register_type_binding(param.nameHandle(), arg);
 			scope.addParameter(&type_info);
 			if (sfinae_map)
 				(*sfinae_map)[type_info.name()] = arg.type_index;
@@ -179,13 +207,22 @@ void registerOuterBindingInScope(
 	const OuterTemplateBinding& outer_binding,
 	FlashCpp::TemplateParameterScope& scope,
 	std::unordered_map<StringHandle, TypeIndex, StringHash, StringEqual>* sfinae_map) {
+	auto register_type_binding = [&](StringHandle param_name, const TemplateTypeArg& arg, uint32_t size) -> TypeInfo& {
+		if (arg.type_index.is_valid()) {
+			return add_type_alias_copy(
+				param_name,
+				arg.type_index.withCategory(arg.typeEnum()),
+				size);
+		}
+		return add_template_param_type(param_name, arg.typeEnum(), size);
+	};
 	for (size_t i = 0; i < outer_binding.param_names.size() && i < outer_binding.param_args.size(); ++i) {
 		const TemplateTypeArg& arg = outer_binding.param_args[i];
 		uint32_t size = get_type_size_bits(arg.typeEnum());
 		if (const TypeInfo* arg_type_info = tryGetTypeInfo(arg.type_index))
 			size = static_cast<uint32_t>(arg_type_info->sizeInBits().value);
-		auto& type_info = add_template_param_type(
-			outer_binding.param_names[i], arg.typeEnum(), size);
+		auto& type_info = register_type_binding(
+			outer_binding.param_names[i], arg, size);
 		scope.addParameter(&type_info);
 		if (sfinae_map)
 			(*sfinae_map)[type_info.name()] = arg.type_index;

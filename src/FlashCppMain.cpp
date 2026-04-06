@@ -495,7 +495,10 @@ int main_impl(int argc, char* argv[]) {
 	bool has_compile_errors = false;
 	{
 		PhaseTimer ir_timer("IR Conversion", false, &ir_conversion_time);
-		for (auto& node_handle : ast) {
+		// Re-evaluate ast.size() each iteration so template/member instantiations appended
+		// during IR conversion are also visited in the same pass.
+		for (size_t node_index = 0; node_index < ast.size(); ++node_index) {
+			ASTNode node_handle = ast[node_index];
 			if (show_debug && node_handle.is<FunctionDeclarationNode>()) {
 				const auto& func = node_handle.as<FunctionDeclarationNode>();
 				bool has_def = func.get_definition().has_value();

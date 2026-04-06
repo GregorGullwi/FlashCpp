@@ -1260,9 +1260,33 @@ bool Parser::looks_like_function_parameters() {
 	// If it starts with a type keyword, it's likely function parameters
 	// If it starts with a literal or identifier that's not a type, it's likely direct init
 
-	if (!peek().is_eof()) {
-		Token::Type token_type = peek_info().type();
-		std::string_view token_value = peek_info().value();
+		if (!peek().is_eof()) {
+			Token::Type token_type = peek_info().type();
+			std::string_view token_value = peek_info().value();
+			auto looks_like_qualified_direct_init_arg = [&]() -> bool {
+				SaveHandle qualified_saved = save_token_position();
+				auto restore_before_return = [&](bool result) {
+					restore_token_position(qualified_saved);
+					return result;
+				};
+				if (peek() == "<"_tok) {
+					skip_template_arguments();
+				}
+				if (peek() != "::"_tok) {
+					return restore_before_return(false);
+				}
+				while (peek() == "::"_tok) {
+					advance(); // consume '::'
+					if (!peek().is_identifier()) {
+						return restore_before_return(false);
+					}
+					advance(); // consume the qualified-name component
+					if (peek() == "<"_tok) {
+						skip_template_arguments();
+					}
+				}
+				return restore_before_return(peek() == "("_tok);
+			};
 
 		// Literals (numbers, strings) = direct initialization
 		if (token_type == Token::Type::Literal) {
@@ -1314,8 +1338,9 @@ bool Parser::looks_like_function_parameters() {
 			auto type_iter = getTypesByNameMap().find(id_handle);
 			if (type_iter != getTypesByNameMap().end()) {
 				// Before deciding it's a function parameter type, check if '::' follows.
-				// Qualified-id expressions such as `Factory::make(7)` or `Color::Green`
-				// are direct-initialization arguments, not parameter declarations.
+				// Qualified-id expressions such as `Factory::make(7)`,
+				// `Factory<int>::make(7)`, or `Color::Green` are
+				// direct-initialization arguments, not parameter declarations.
 				advance();  // consume the identifier
 				if (peek() == "::"_tok) {
 					if (type_iter->second && type_iter->second->getEnumInfo()) {
@@ -1323,24 +1348,13 @@ bool Parser::looks_like_function_parameters() {
 						restore_token_position(saved);
 						return false;
 					}
+				}
 
-					while (peek() == "::"_tok) {
-						advance(); // consume '::'
-						if (!peek().is_identifier()) {
-							break;
-						}
-						advance(); // consume the qualified-name component
-						if (peek() == "<"_tok) {
-							skip_template_arguments();
-						}
-					}
-
-					if (peek() == "("_tok) {
-						// `KnownType::name(...)` is a qualified call expression used as a
-						// direct-initializer argument, not a function parameter list.
-						restore_token_position(saved);
-						return false;
-					}
+				if (looks_like_qualified_direct_init_arg()) {
+					// `KnownType::name(...)` is a qualified call expression used as a
+					// direct-initializer argument, not a function parameter list.
+					restore_token_position(saved);
+					return false;
 				}
 				// It's a known type = function parameters
 				restore_token_position(saved);
@@ -1359,6 +1373,10 @@ bool Parser::looks_like_function_parameters() {
 			// e.g., `int x(MyType y)` where 'y' is identifier = function param
 			// e.g., `int x(a + b)` where '+' follows = expression = direct init
 			advance();  // consume the identifier
+			if (looks_like_qualified_direct_init_arg()) {
+				restore_token_position(saved);
+				return false;
+			}
 
 			if (!peek().is_eof()) {
 				std::string_view next_val = peek_info().value();
