@@ -665,7 +665,7 @@ public:
 		case IrOpcode::ConstructorCall: {
 			// constructor_call StructName %object_var [param1_type, param1_size, param1_value, ...]
 			const ConstructorCallOp& op = getTypedPayload<ConstructorCallOp>();
-			oss << "constructor_call " << op.struct_name << " %";
+			oss << "constructor_call type_" << op.target_type_index.index() << " %";
 
 			// Object can be either string_view or TempVar
 			if (const auto* string_ptr = std::get_if<StringHandle>(&op.object))

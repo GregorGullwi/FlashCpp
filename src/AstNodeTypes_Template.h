@@ -375,6 +375,7 @@ public:
 
 	StringHandle struct_name() const { return struct_name_; }
 	StringHandle name() const { return name_; }
+	TypeIndex owning_type_index() const { return owning_type_index_; }
 	Token name_token() const { return Token(Token::Type::Identifier, StringTable::getStringView(name_), 0, 0, 0); }	// Create token on demand
 	const std::vector<ASTNode>& parameter_nodes() const { return parameter_nodes_; }
 	const std::vector<MemberInitializer>& member_initializers() const { return member_initializers_; }
@@ -409,6 +410,9 @@ public:
 
 	void set_is_implicit(bool implicit) {
 		is_implicit_ = implicit;
+	}
+	void set_owning_type_index(TypeIndex owning_type_index) {
+		owning_type_index_ = owning_type_index;
 	}
 
 	const std::optional<ASTNode>& get_definition() const {
@@ -503,6 +507,7 @@ private:
 	SaveHandle template_body_position_handle_;  // Handle to saved position for template body
 	InlineVector<StringHandle, 4> outer_template_param_names_;
 	InlineVector<TypeInfo::TemplateArgInfo, 4> outer_template_args_;
+	TypeIndex owning_type_index_{};
 };
 
 // Destructor declaration node

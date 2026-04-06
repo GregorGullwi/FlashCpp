@@ -247,7 +247,6 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 	// Emit constructor call (default ctor to allocate the struct)
 	ConstructorCallOp ctor_op;
-	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
 	// Keep any callable default-constructor annotation on the temporary object even
 	// when aggregate-style member stores will finish its initialization afterwards.
@@ -626,6 +625,15 @@ void AstToIr::finalizeConstructorCallOp(
 	const StructTypeInfo& target_struct_info,
 	const Token& source_token) const {
 	(void)source_token;
+	if (target_struct_info.own_type_index_.has_value()) {
+		ctor_op.target_type_index = *target_struct_info.own_type_index_;
+	} else if (ctor_op.resolved_constructor && ctor_op.resolved_constructor->owning_type_index().is_valid()) {
+		ctor_op.target_type_index = ctor_op.resolved_constructor->owning_type_index();
+	}
+	if (!ctor_op.target_type_index.is_valid()) {
+		throw InternalError("ConstructorCallOp missing target type index for '" +
+							std::string(StringTable::getStringView(target_struct_info.name)) + "'");
+	}
 	const bool is_metadata_free_implicit_default_ctor =
 		ctor_op.arguments.empty() &&
 		target_struct_info.findDefaultConstructor() == nullptr &&

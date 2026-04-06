@@ -196,10 +196,7 @@ struct StructTypeInfo {
 		propagateAstProperties(func);
 	}
 
-	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public) {
-		auto& ctor = member_functions.emplace_back(getName(), constructor_decl, access, true, false);
-		propagateAstProperties(ctor);
-	}
+	void addConstructor(ASTNode constructor_decl, AccessSpecifier access = AccessSpecifier::Public);
 
 	void addDestructor(ASTNode destructor_decl, AccessSpecifier access = AccessSpecifier::Public, bool is_virtual = false) {
 		StringBuilder sb;
@@ -891,12 +888,7 @@ struct TypeInfo {
 	const StructTypeInfo* getStructInfo() const { return struct_info_.get(); }
 	StructTypeInfo* getStructInfo() { return struct_info_.get(); }
 
-	void setStructInfo(std::unique_ptr<StructTypeInfo> info) {
-		if (info) {
-			info->own_type_index_ = type_index_;
-		}
-		struct_info_ = std::move(info);
-	}
+	void setStructInfo(std::unique_ptr<StructTypeInfo> info);
 
 	// Helper methods for enum types
 	bool isEnum() const { return category() == TypeCategory::Enum; }

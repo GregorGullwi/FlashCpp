@@ -643,6 +643,14 @@ private:
 								 const StructTypeInfo*& out_struct_info,
 								 const StructMember*& out_member) const;
 	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
+	bool resolvedConstructorMatchesTargetType(const ConstructorDeclarationNode& ctor, TypeIndex target_type_index) const {
+		const TypeIndex owning_type_index = ctor.owning_type_index();
+		if (owning_type_index.is_valid()) {
+			return owning_type_index == target_type_index;
+		}
+		const StructTypeInfo* target_struct_info = tryGetStructTypeInfo(target_type_index);
+		return target_struct_info && ctor.struct_name() == target_struct_info->name;
+	}
 	// Resolve a constructor for an AST argument range using sema-aware/codegen-aware
 	// argument types, falling back to arity matching when precise types are
 	// unavailable. Returns nullptr when no viable constructor can be recovered.
