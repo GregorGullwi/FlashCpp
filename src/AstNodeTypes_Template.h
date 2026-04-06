@@ -239,8 +239,8 @@ enum class StorageClass {
 
 class VariableDeclarationNode {
 public:
-	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None, bool is_thread_local = false)
-		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_thread_local_(is_thread_local), is_constexpr_(false), is_constinit_(false) {}
+	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
+		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
 
 	DeclarationNode& declaration() { return declaration_node_.as<DeclarationNode>(); }
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
@@ -294,7 +294,7 @@ private:
 	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
 	StorageClass storage_class_;
-	bool is_thread_local_;
+	bool is_thread_local_ = false;
 	bool is_constexpr_;
 	bool is_constinit_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;
