@@ -4379,6 +4379,9 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 				.append(" argument(s)")
 				.commit());
 	};
+	const bool require_constructor_match =
+		struct_info->hasUserDefinedConstructor() &&
+		call_node.called_from().value() == std::string_view{"{"};
 
 	// Resolve the matching constructor via overload resolution.
 	const auto& arguments = call_node.arguments();
@@ -4409,12 +4412,14 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
-	if (resolution.is_ambiguous)
+	if (resolution.is_ambiguous && require_constructor_match)
 		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
-	if (!resolution.selected_overload)
-		throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
-	if (num_args == 0)
-	{
+	if (!resolution.selected_overload) {
+		if (require_constructor_match)
+			throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
+		return;
+	}
+	if (num_args == 0) {
 		call_node.set_resolved_constructor(resolution.selected_overload);
 		return;
 	}
@@ -4465,18 +4470,6 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	if (initializers.empty())
 		return;
 
-	auto buildBraceDiagnostic = [&](std::string_view prefix) {
-		return std::string(
-			StringBuilder()
-				.append(prefix)
-				.append(" for '")
-				.append(StringTable::getStringView(struct_info.getName()))
-				.append("' with ")
-				.append(initializers.size())
-				.append(" argument(s)")
-				.commit());
-	};
-
 	// Build argument types for overload resolution.
 	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution
 	// so that lvalue arguments prefer reference overloads, and use skip_implicit=true
@@ -4500,9 +4493,6 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
-	if (resolution.is_ambiguous && struct_info.hasUserDefinedConstructor()) {
-		throw CompileError(buildBraceDiagnostic("Ambiguous constructor for brace initialization"));
-	}
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,
@@ -4543,9 +4533,6 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 								   std::string(StringTable::getStringView(ei->name)) +
 								   "' in constructor argument; use static_cast");
 			}
-		}
-		if (struct_info.hasUserDefinedConstructor()) {
-			throw CompileError(buildBraceDiagnostic("No matching constructor for brace initialization"));
 		}
 		return;
 	}
