@@ -29,33 +29,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 		TypedValue init_value = toTypedValue(init_operands);
 		emitDereferenceStore(init_value, allocated_type_enum, size_in_bits, pointer_var, Token());
 	};
-	auto resolveCtorFromArgs = [&](const StructTypeInfo& target_struct_info, const auto& args) -> const ConstructorDeclarationNode* {
-		const size_t num_args = args.size();
-		std::vector<TypeSpecifierNode> arg_types;
-		arg_types.reserve(num_args);
-
-		for (const auto& arg : args) {
-			auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-			if (!arg_type_opt.has_value()) {
-				arg_types.clear();
-				break;
-			}
-			arg_types.push_back(std::move(*arg_type_opt));
-		}
-
-		if (arg_types.size() == num_args) {
-			auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
-			if (resolution.is_ambiguous) {
-				throw CompileError("Ambiguous constructor call");
-			}
-			if (resolution.selected_overload) {
-				return resolution.selected_overload;
-			}
-		}
-
-		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
-		return arity_resolution.selected_overload;
-	};
 
 		// Check if this is an array allocation (with or without placement)
 	if (newExpr.is_array()) {
@@ -153,7 +126,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 											TypedValue tv = toTypedValue(arg_operands);
 											ctor_op.arguments.push_back(std::move(tv));
 										}
-										ctor_op.resolved_constructor = resolveCtorFromArgs(*struct_info, init_list.initializers());
+										ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 									}
@@ -271,7 +244,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 										TypedValue tv = toTypedValue(arg_operands);
 										ctor_op.arguments.push_back(std::move(tv));
 									}
-									ctor_op.resolved_constructor = resolveCtorFromArgs(*struct_info, init_list.initializers());
+									ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 								}
@@ -420,7 +393,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 							TypedValue tv = toTypedValue(arg_operands);
 							ctor_op.arguments.push_back(std::move(tv));
 						}
-						ctor_op.resolved_constructor = resolveCtorFromArgs(*type_info->struct_info_, ctor_args);
+						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}
@@ -467,7 +440,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 							TypedValue tv = toTypedValue(arg_operands);
 							ctor_op.arguments.push_back(std::move(tv));
 						}
-						ctor_op.resolved_constructor = resolveCtorFromArgs(*type_info->struct_info_, ctor_args);
+						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}

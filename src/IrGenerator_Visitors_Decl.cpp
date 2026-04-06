@@ -1639,34 +1639,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		symbol_table.insert(param_decl.identifier_token().value(), param);
 	}
 
-	auto resolveCtorFromArgs = [&](const StructTypeInfo& target_struct_info, const auto& args) -> const ConstructorDeclarationNode* {
-		const size_t num_args = args.size();
-		std::vector<TypeSpecifierNode> arg_types;
-		arg_types.reserve(num_args);
-
-		for (const auto& arg : args) {
-			auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-			if (!arg_type_opt.has_value()) {
-				arg_types.clear();
-				break;
-			}
-			arg_types.push_back(std::move(*arg_type_opt));
-		}
-
-		if (arg_types.size() == num_args) {
-			auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
-			if (resolution.is_ambiguous) {
-				throw CompileError("Ambiguous constructor call");
-			}
-			if (resolution.selected_overload) {
-				return resolution.selected_overload;
-			}
-		}
-
-		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
-		return arity_resolution.selected_overload;
-	};
-
 		// C++11 Delegating constructor: if present, ONLY call the target constructor
 		// No base class or member initialization should happen
 	if (node.delegating_initializer().has_value()) {
@@ -1689,7 +1661,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			ctor_op.arguments.push_back(std::move(tv));
 		}
 		if (enclosing_struct_info) {
-			ctor_op.resolved_constructor = resolveCtorFromArgs(*enclosing_struct_info, delegating_init.arguments);
+			ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
 		}
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
@@ -1757,7 +1729,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ctor_op.arguments.push_back(std::move(tv));
 					}
 					if (base_struct_info) {
-						ctor_op.resolved_constructor = resolveCtorFromArgs(*base_struct_info, base_init->arguments);
+						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
 					}
 						// If there's an explicit initializer, generate the constructor call
 					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));

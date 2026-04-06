@@ -632,6 +632,39 @@ private:
 								 const StructTypeInfo*& out_struct_info,
 								 const StructMember*& out_member) const;
 	std::optional<TypeSpecifierNode> buildCodegenOverloadResolutionArgType(const ASTNode& arg) const;
+	// Resolve a constructor for an AST argument range using sema-aware/codegen-aware
+	// argument types, falling back to arity matching when precise types are
+	// unavailable. Returns nullptr when no viable constructor can be recovered.
+	template <typename ArgRange>
+	const ConstructorDeclarationNode* resolveCodegenConstructorFromArgs(
+		const StructTypeInfo& target_struct_info,
+		const ArgRange& args) const {
+		const size_t num_args = args.size();
+		std::vector<TypeSpecifierNode> arg_types;
+		arg_types.reserve(num_args);
+
+		for (const auto& arg : args) {
+			auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+			if (!arg_type_opt.has_value()) {
+				arg_types.clear();
+				break;
+			}
+			arg_types.push_back(std::move(*arg_type_opt));
+		}
+
+		if (arg_types.size() == num_args) {
+			auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
+			if (resolution.is_ambiguous) {
+				throw CompileError("Ambiguous constructor call");
+			}
+			if (resolution.selected_overload) {
+				return resolution.selected_overload;
+			}
+		}
+
+		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
+		return arity_resolution.selected_overload;
+	}
 	std::optional<bool> getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const;
 	bool isSameTypeXValueSource(const ASTNode& init_node, const ExprResult& init_operands, const TypeSpecifierNode& target_type) const;
 
