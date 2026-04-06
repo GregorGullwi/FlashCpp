@@ -938,3 +938,16 @@ using ExpressionNode = std::variant<IdentifierNode, QualifiedIdentifierNode, Str
 									ArraySubscriptNode, SizeofExprNode, SizeofPackNode, AlignofExprNode, OffsetofExprNode, TypeTraitExprNode, NewExpressionNode, DeleteExpressionNode, StaticCastNode,
 									DynamicCastNode, ConstCastNode, ReinterpretCastNode, TypeidNode, LambdaExpressionNode, TemplateParameterReferenceNode, FoldExpressionNode, PackExpansionExprNode, PseudoDestructorCallNode, NoexceptExprNode, InitializerListConstructionNode, ThrowExpressionNode,
 									CallExprNode>;
+
+// ExpressionNode storage is currently dominated by LambdaExpressionNode on our
+// 64-bit targets. Keep these checks close to the variant so investigations into
+// merging cast or identifier nodes can immediately see whether those changes can
+// affect the variant footprint.
+static_assert(sizeof(LambdaExpressionNode) > sizeof(CallExprNode), "LambdaExpressionNode should remain the largest expression payload");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(IdentifierNode), "IdentifierNode does not dominate ExpressionNode storage");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(QualifiedIdentifierNode), "QualifiedIdentifierNode does not dominate ExpressionNode storage");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(StaticCastNode), "StaticCastNode does not dominate ExpressionNode storage");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(DynamicCastNode), "DynamicCastNode does not dominate ExpressionNode storage");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(ConstCastNode), "ConstCastNode does not dominate ExpressionNode storage");
+static_assert(sizeof(LambdaExpressionNode) > sizeof(ReinterpretCastNode), "ReinterpretCastNode does not dominate ExpressionNode storage");
+static_assert(sizeof(ExpressionNode) >= sizeof(LambdaExpressionNode), "ExpressionNode must be able to store its largest alternative");
