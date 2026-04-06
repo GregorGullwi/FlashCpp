@@ -4094,9 +4094,6 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 														   const DeclarationNode& decl,
 														   const ChunkedVector<ASTNode>& arguments,
 														   const FunctionDeclarationNode*& func_decl) {
-	if (!call_info.qualified_name.isValid())
-		return false;
-
 	auto searchStructMembers = [&](const StructTypeInfo* si) -> bool {
 		if (!si)
 			return false;
@@ -4150,6 +4147,51 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		}
 		return false;
 	};
+
+	auto searchMemberContextHierarchy = [&]() -> bool {
+		if (member_context_stack_.empty()) {
+			return false;
+		}
+
+		const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back());
+		if (!current_type_info) {
+			return false;
+		}
+
+		const StructTypeInfo* current_struct = current_type_info->getStructInfo();
+		if (!current_struct) {
+			return false;
+		}
+
+		std::unordered_set<const StructTypeInfo*> visited;
+		auto searchHierarchy = [&](auto&& self, const StructTypeInfo* struct_info) -> bool {
+			if (!struct_info || !visited.insert(struct_info).second) {
+				return false;
+			}
+			if (searchStructMembers(struct_info)) {
+				return true;
+			}
+			for (const auto& base_spec : struct_info->base_classes) {
+				if (!base_spec.type_index.is_valid()) {
+					continue;
+				}
+				const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index);
+				if (!base_type_info) {
+					continue;
+				}
+				if (self(self, base_type_info->getStructInfo())) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+		return searchHierarchy(searchHierarchy, current_struct);
+	};
+
+	if (!call_info.qualified_name.isValid()) {
+		return searchMemberContextHierarchy();
+	}
 
 	const std::string_view qname = call_info.qualified_name.view();
 	const size_t scope_sep = qname.rfind("::");
