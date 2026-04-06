@@ -908,11 +908,80 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return &fd;
 	};
 
+	auto findCurrentStructMemberInHierarchy = [&]() -> const FunctionDeclarationNode* {
+		if (!current_struct_name_.isValid()) {
+			return nullptr;
+		}
+		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+		if (current_struct_it == getTypesByNameMap().end() || !current_struct_it->second->isStruct()) {
+			return nullptr;
+		}
+		const StructTypeInfo* struct_info = current_struct_it->second->getStructInfo();
+		const size_t expected_param_count = callExprNode.arguments().size();
+		auto findMemberInHierarchy = [&](auto&& self, const StructTypeInfo* current_struct) -> const FunctionDeclarationNode* {
+			if (!current_struct) {
+				return nullptr;
+			}
+
+			for (const auto& member_func : current_struct->member_functions) {
+				if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
+					continue;
+				}
+
+				const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+				if (func_decl.decl_node().identifier_token().value() == func_name_view &&
+					func_decl.parameter_nodes().size() == expected_param_count) {
+					return &func_decl;
+				}
+			}
+
+			for (const auto& base_spec : current_struct->base_classes) {
+				if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
+					if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
+						if (const FunctionDeclarationNode* base_match = self(self, base_struct_info)) {
+							return base_match;
+						}
+					}
+				}
+			}
+
+			return nullptr;
+		};
+
+		return findMemberInHierarchy(findMemberInHierarchy, struct_info);
+	};
+
 	auto consumeResolvedDirectCallTarget = [&](const FunctionDeclarationNode* resolved_target, std::string_view source_label) {
 		if (!resolved_target || matched_func_decl) {
 			return;
 		}
 		std::string_view parent = resolved_target->parent_struct_name();
+		// Decl-only member-like calls still need the legacy lookup/remap path; sema only
+		// becomes authoritative here once the call node already carries a concrete callee.
+		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
+			return;
+		}
+		// Qualified/precomputed member calls still rely on the legacy remapping path for
+		// template-instantiation-sensitive owner recovery.
+		if (!parent.empty() && (has_precomputed_mangled || callExprNode.has_qualified_name())) {
+			return;
+		}
+		if (!parent.empty() && current_struct_name_.isValid()) {
+			const std::string_view current_struct_name_view = StringTable::getStringView(current_struct_name_);
+			const StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+			const bool current_struct_matches_parent =
+				current_struct_name_view == parent ||
+				extractBaseTemplateName(current_struct_name_view) == parent ||
+				([&] { auto pat = gTemplateRegistry.get_instantiation_pattern(current_struct_name_); return pat.has_value() && pat.value() == parent_handle; }());
+			if (current_struct_matches_parent) {
+				if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
+					matched_func_decl = instantiated_member;
+					resolveMangledName(matched_func_decl, current_struct_name_view);
+					FLASH_LOG_FORMAT(Codegen, Debug, "Remapped {} direct call target to current struct for: {}", source_label, func_name_view);
+					return;
+				}
+			}
+		}
 		const bool is_current_struct_or_unowned = parent.empty() ||
 			(current_struct_name_.isValid() && StringTable::getStringView(current_struct_name_) == parent);
 		if (is_current_struct_or_unowned) {
@@ -962,7 +1031,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
-	if (!matched_func_decl && sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
+	if (!matched_func_decl && sema_) {
 		consumeResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
 	}
 
@@ -978,8 +1047,8 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Keep lookup recovery only for call shapes that the direct-call sema cache does not
 	// fully own yet:
 	// - no sema or no tracked normalized body,
-	// - precomputed mangled / qualified calls that bypass the ordinary-call cache,
-	// - static-member lowering that still rewrites through the direct-call path,
+	// - precomputed mangled / qualified calls that still need template-era remapping,
+	// - static-member lowering paths that are still partly synthetic,
 	// - and explicit sema unresolved-call escape hatches.
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
@@ -988,7 +1057,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		callExprNode.callee().is_static_member() || // member call rewritten through direct-call lowering
 		(callExprNode.callee().has_function_declaration() &&
 		 callExprNode.callee().function_declaration_or_null()->is_static()) || // static member metadata on full declaration
-		callExprNode.has_qualified_name() || // qualified lookup is not owned by resolved_direct_call_table_
+		callExprNode.has_qualified_name() || // qualified lookup is not fully owned by resolved_direct_call_table_
 		sema_->hasUnresolvedCallArgs(sema_call_key); // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
@@ -1054,46 +1123,11 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// inside an instantiated template class body.
 	if (!matched_func_decl && has_precomputed_mangled && current_struct_name_.isValid() &&
 		!callExprNode.has_qualified_name()) {
-		auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
-		if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
-			const StructTypeInfo* struct_info = current_struct_it->second->getStructInfo();
-			const size_t expected_param_count = callExprNode.arguments().size();
-			auto findMemberInHierarchy = [&](auto&& self, const StructTypeInfo* current_struct) -> const FunctionDeclarationNode* {
-				if (!current_struct) {
-					return nullptr;
-				}
-
-				for (const auto& member_func : current_struct->member_functions) {
-					if (!member_func.function_decl.is<FunctionDeclarationNode>()) {
-						continue;
-					}
-
-					const auto& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
-					if (func_decl.decl_node().identifier_token().value() == func_name_view &&
-						func_decl.parameter_nodes().size() == expected_param_count) {
-						return &func_decl;
-					}
-				}
-
-				for (const auto& base_spec : current_struct->base_classes) {
-					if (const TypeInfo* base_type_info = tryGetTypeInfo(base_spec.type_index)) {
-						if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
-							if (const FunctionDeclarationNode* base_match = self(self, base_struct_info)) {
-								return base_match;
-							}
-						}
-					}
-				}
-
-				return nullptr;
-			};
-
-			if (const FunctionDeclarationNode* instantiated_member = findMemberInHierarchy(findMemberInHierarchy, struct_info)) {
-				matched_func_decl = instantiated_member;
-				has_precomputed_mangled = false;
-				resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
-				FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
-			}
+		if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
+			matched_func_decl = instantiated_member;
+			has_precomputed_mangled = false;
+			resolveMangledName(matched_func_decl, StringTable::getStringView(current_struct_name_));
+			FLASH_LOG_FORMAT(Codegen, Debug, "Remapped stale precomputed member call {} to {}", func_name_view, function_name);
 		}
 	}
 

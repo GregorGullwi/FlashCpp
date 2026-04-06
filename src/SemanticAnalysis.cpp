@@ -4297,13 +4297,22 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 														 const void* call_key,
 														 const char* context_description) {
 	const FunctionDeclarationNode* func_decl = resolveCallArgAnnotationTarget(call_info, call_key);
-	if (!func_decl)
+	if (!func_decl) {
+		resolved_direct_call_table_.erase(call_key);
 		return;
+	}
 
 	const FunctionDeclarationNode* resolved_op_call = getResolvedOpCall(call_key);
-	if (!call_info.has_receiver && !resolved_op_call) {
+	const bool cache_as_direct_call =
+		!resolved_op_call &&
+		(!call_info.has_receiver ||
+		 (call_info.function_declaration && call_info.function_declaration->is_static()));
+	if (cache_as_direct_call) {
 		resolved_direct_call_table_[call_key] = func_decl;
+	} else {
+		resolved_direct_call_table_.erase(call_key);
 	}
+	unresolved_call_args_.erase(call_key);
 
 	annotateResolvedCallArgConversions(call_key, *call_info.arguments, *func_decl, context_description);
 }
