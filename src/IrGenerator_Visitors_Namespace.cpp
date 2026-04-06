@@ -178,7 +178,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		}
 
 			// Fast path: reference return of '*this' can directly return the this pointer
-		if (current_function_returns_reference_ && expr_opt->is<ExpressionNode>()) {
+		if (currentFunctionReturnsReference() && expr_opt->is<ExpressionNode>()) {
 			const auto& ret_expr = expr_opt->as<ExpressionNode>();
 			if (std::holds_alternative<UnaryOperatorNode>(ret_expr)) {
 				const auto& unary = std::get<UnaryOperatorNode>(ret_expr);
@@ -202,7 +202,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// For reference return types, use LValueAddress context to get the address instead of the value
 			// This ensures "return *this" returns the address (this pointer), not the dereferenced value
-		ExpressionContext return_context = current_function_returns_reference_
+		ExpressionContext return_context = currentFunctionReturnsReference()
 											   ? ExpressionContext::LValueAddress
 											   : ExpressionContext::Load;
 		ExprResult operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
@@ -231,7 +231,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
-		if (!current_function_returns_reference_) {
+		if (!currentFunctionReturnsReference()) {
 			TypeCategory expr_type = operands.typeEnum();
 			TypeCategory expr_category = operands.category();
 			int expr_size = operands.size_in_bits.value;
@@ -268,7 +268,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 			if (!sema_applied_conversion &&
 				is_struct_type(return_category) &&
-				!current_function_returns_pointer_ &&
+				!currentFunctionReturnsPointer() &&
 				return_type_spec.type_index().is_valid() &&
 				(!is_struct_type(expr_category) || operands.type_index != return_type_spec.type_index())) {
 				if (const TypeInfo* target_type_info = tryGetTypeInfo(return_type_spec.type_index())) {
@@ -410,7 +410,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// For reference returns, prefer materializing the referred-to address in IR when we
 			// have direct member lvalue metadata. This avoids relying on backend reconstruction
 			// from a loaded member temp.
-		if (current_function_returns_reference_ &&
+		if (currentFunctionReturnsReference() &&
 			std::holds_alternative<TempVar>(operands.value)) {
 			TempVar return_temp = std::get<TempVar>(operands.value);
 			auto lv_info_opt = getTempVarLValueInfo(return_temp);

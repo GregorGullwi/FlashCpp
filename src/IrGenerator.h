@@ -30,6 +30,30 @@
 
 class Parser;
 
+enum class ReturnValueMode : uint8_t {
+	None = 0,
+	Pointer = 1 << 0,
+	Reference = 1 << 1,
+	FunctionPointer = 1 << 2,
+};
+
+inline ReturnValueMode operator|(ReturnValueMode lhs, ReturnValueMode rhs) {
+	return static_cast<ReturnValueMode>(static_cast<uint8_t>(lhs) | static_cast<uint8_t>(rhs));
+}
+
+inline ReturnValueMode operator&(ReturnValueMode lhs, ReturnValueMode rhs) {
+	return static_cast<ReturnValueMode>(static_cast<uint8_t>(lhs) & static_cast<uint8_t>(rhs));
+}
+
+inline ReturnValueMode& operator|=(ReturnValueMode& lhs, ReturnValueMode rhs) {
+	lhs = lhs | rhs;
+	return lhs;
+}
+
+inline bool hasReturnValueMode(ReturnValueMode modes, ReturnValueMode mode) {
+	return (modes & mode) != ReturnValueMode::None;
+}
+
 // MSVC RTTI runtime structures (must match ObjFileWriter.h MSVC format):
 // These are the actual structures that exist at runtime in the object file
 
@@ -92,10 +116,12 @@ struct LambdaInfo {
 	std::string_view conversion_op_name;	 // e.g., "__lambda_0_conversion" (persistent via StringBuilder)
 	TypeIndex return_type_index{};	   // TypeCategory embedded; replaces Type return_type
 	int return_size;
+	ReturnValueMode return_value_mode = ReturnValueMode::None;
 
 	TypeCategory returnType() const { return return_type_index.category(); }
-	bool returns_pointer = false;
-	bool returns_reference = false;		// True if lambda returns a reference type (T& or T&&)
+	bool returnsPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Pointer); }
+	bool returnsReference() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::Reference); }		// True if lambda returns a reference type (T& or T&&)
+	bool returnsFunctionPointer() const { return hasReturnValueMode(return_value_mode, ReturnValueMode::FunctionPointer); }
 	std::vector<std::tuple<TypeCategory, int, int, std::string>> parameters;	 // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table
 	ASTNode lambda_body;				 // Copy of the lambda body
