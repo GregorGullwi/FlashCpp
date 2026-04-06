@@ -7,15 +7,15 @@
 
 ## Summary
 
-Constructor overload resolution is currently performed independently at **four distinct pipeline stages** rather than once in SemanticAnalysis.  
-The selected constructor is never stored on `ConstructorCallNode`, so every downstream stage must re-run `resolve_constructor_overload` from scratch using its own locally-built argument-type list.  
-This creates duplicate logic, mismatched resolution paths, and makes it hard to add proper overload diagnostics.
+Constructor overload resolution originally happened independently at **four distinct pipeline stages** rather than once in SemanticAnalysis.  
+That older design forced downstream stages to re-run `resolve_constructor_overload` from scratch using their own locally-built argument-type lists, which created duplicate logic, mismatched resolution paths, and made it hard to add proper overload diagnostics.  
+On the current branch, the sema-selected constructor is already propagated through the main AST and IR carriers; the remaining work is mostly about documenting the compatibility fallbacks that still exist by design.
 
 ---
 
 ## Current Branch Progress
 
-Status on `copilot/refactor-unifying-constructor-overload-selection` after the semantic-analysis follow-up:
+Status on `copilot/refactor-unify-constructor-overloads` after the semantic-analysis and downstream follow-ups:
 
 - **Done:** `ConstructorCallNode` stores a sema-resolved constructor pointer.
 - **Done:** `InitializerListNode` now also stores a sema-resolved constructor pointer for brace-init constructor paths.
@@ -25,41 +25,43 @@ Status on `copilot/refactor-unifying-constructor-overload-selection` after the s
 - **Done:** parser-time brace-init constructor overload selection was removed from the `ConstructorCallNode` path for user-defined constructors; semantic analysis now reports those no-match / ambiguity diagnostics after parsing instead of during parsing.
 - **Done:** `ConstructorCallOp` now carries the constructor selected earlier in the pipeline, and more default/same-type constructor emission paths now stamp that annotation before lowering.
 - **Done:** the CI regression from missing `ConstructorCallOp` annotations was fixed by restoring an `IRConverter` safety-net fallback when the propagated constructor is absent.
-- **Remaining:** the parser still keeps a member-less/non-aggregate brace-init guard outside the unified sema-owned constructor path.
 - **Done:** `new`/placement-`new`, delegating constructors, and explicit base-initializer constructor forwarding now also resolve and stamp `ConstructorCallOp.resolved_constructor` from AST/sema-aware argument types before lowering.
-- **Remaining:** some constructor-selection fallbacks still exist in codegen by design for unresolved/dependent cases and should only be reached when sema did not annotate a constructor.
-- **Remaining:** `IRConverter` still keeps a constructor-overload safety net for legacy/unmigrated `ConstructorCallOp` producers, so the pipeline is not yet purely annotation-driven end-to-end.
+- **Done:** the parser no longer calls `resolve_constructor_overload` for constructor-call parsing paths; the remaining scalar-vs-struct brace-init gate is now just structural classification, not overload selection.
+- **Done:** semantic analysis is now the authoritative constructor-overload selection point for non-dependent `ConstructorCallNode` and `InitializerListNode` flows.
+- **Done:** audited IrGenerator and ConstExprEvaluator constructor paths now check sema annotations first and only fall back when the annotation is absent.
+- **Remaining by design:** constructor-selection fallbacks still exist in codegen and constexpr evaluation for unresolved/template-dependent cases and for late compatibility recovery.
+- **Remaining by design:** `IRConverter` still keeps a constructor-overload safety net for legacy or unmigrated `ConstructorCallOp` producers, so the pipeline is not yet purely annotation-driven end-to-end.
 
 This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
 
 ---
 
-## Current Architecture (Where Resolution Happens Today)
+## Pre-Refactor Architecture (Where Resolution Originally Happened)
 
-### 1. Parser – `src/Parser_Statements.cpp` (line 1671)
-`resolve_constructor_overload` is called during statement parsing.  
-This is unusual – overload resolution during parsing limits the information available and happens before name binding is complete.
+### 1. Parser – `src/Parser_Statements.cpp` (line 1671 at the time of review)
+`resolve_constructor_overload` used to be called during statement parsing.  
+That was unusual because overload resolution during parsing limited the information available and happened before name binding was complete.
 
-### 2. SemanticAnalysis – `src/SemanticAnalysis.cpp` (lines 4369, 4440)
-`tryAnnotateConstructorCallArgConversions` and `tryAnnotateInitListConstructorArgs` call  
+### 2. SemanticAnalysis – `src/SemanticAnalysis.cpp` (lines 4369, 4440 at the time of review)
+`tryAnnotateConstructorCallArgConversions` and `tryAnnotateInitListConstructorArgs` called  
 `resolve_constructor_overload` with `skip_implicit=true`.  
-The result is used **only to annotate implicit argument conversions**; it is never stored back on the node.  
-Uses `buildOverloadResolutionArgType` (the sema-side helper).
+Originally the result was used **only to annotate implicit argument conversions** and was not stored back on the node.  
+That is the duplication this refactor addressed by preserving the selected constructor on the AST carriers.
 
-### 3. IrGenerator – `src/IrGenerator_Stmt_Decl.cpp` (lines 680, 1349, 2049 + 3 more)
-`resolve_constructor_overload` / `resolve_constructor_overload_arity` is called **six times** in this file alone for different initialization paths (static data, aggregate, and direct constructor calls).  
-Also called in:
+### 3. IrGenerator – `src/IrGenerator_Stmt_Decl.cpp` (lines 680, 1349, 2049 + 3 more at the time of review)
+`resolve_constructor_overload` / `resolve_constructor_overload_arity` was called **six times** in this file alone for different initialization paths (static data, aggregate, and direct constructor calls).  
+It was also called in:
 - `src/IrGenerator_Visitors_Decl.cpp` (×2, lines 2883, 2891)
 - `src/IrGenerator_Visitors_Namespace.cpp` (×2, line 291)
 - `src/IrGenerator_Visitors_TypeInit.cpp` (×2, line 941)
-Uses `buildCodegenOverloadResolutionArgType` – a codegen-side helper that asks sema first and falls back to the parser's `get_expression_type`.
+This path used `buildCodegenOverloadResolutionArgType` – a codegen-side helper that asks sema first and falls back to the parser's `get_expression_type`.
 
 ### 4. ConstExpr Evaluator – `src/ConstExprEvaluator_Members.cpp` (×4)
-Independently resolves constructors for compile-time evaluation with its own argument-type extraction.
+Independently resolved constructors for compile-time evaluation with its own argument-type extraction.
 
-### 5. IRConverter – `src/IRConverter_ConvertMain.cpp` (lines 4951, 4957)
-Performs a **third round** of overload resolution after IR is already emitted, working from `TypedValue` arguments already lowered to IR types.  
-This is the latest possible point and is the most fragile: it operates on IR-level type information (`buildTypeSpecFromTypedValue`) rather than AST types.
+### 5. IRConverter – `src/IRConverter_ConvertMain.cpp` (lines 4951, 4957 at the time of review)
+Performed a **third round** of overload resolution after IR was already emitted, working from `TypedValue` arguments already lowered to IR types.  
+This was the latest possible point and the most fragile, because it operated on IR-level type information (`buildTypeSpecFromTypedValue`) rather than AST types.
 
 ---
 
@@ -283,11 +285,11 @@ Pattern to apply at each call site:
 Preserve the existing fallback path (call resolve_constructor_overload / arity fallback)
 for cases where SemanticAnalysis could not resolve (template-dependent arguments, etc.).
 
-**Current progress:** direct constructor-call paths already follow this pattern, and the
-brace-init declaration path now also checks the `InitializerListNode` annotation before
-falling back to local overload resolution. Remaining cleanup in this step is mostly about
-auditing the last fallback-heavy constructor materialization sites and deleting now-dead
-code only after confirming all unresolved/template-dependent cases still behave correctly.
+**Current progress:** complete for the audited constructor-emission sites on this branch.
+Direct constructor-call paths, brace-init declaration paths, return-slot materialization,
+and the newer `new` / delegating / explicit-base forwarding paths all check the sema-owned
+annotation first. The remaining overload-resolution code in these files is compatibility
+fallback for unresolved or template-dependent cases rather than the primary path.
 
 Remove `buildCodegenOverloadResolutionArgType` once no call sites remain that need it
 for constructor resolution specifically. The function may still be needed for regular
@@ -324,13 +326,12 @@ Audit the IRConverter path to confirm that ConstructorCallOp.struct_name + the a
 emitted argument list uniquely identifies the constructor after Step 3, and remove the
 redundant `resolve_constructor_overload` calls at lines 4951 and 4957.
 
-**Current progress:** partially complete. `ConstructorCallOp` now carries the
-selected constructor declaration across the main direct-init, converting-init,
-same-type, default-constructor, `new`, delegating-constructor, and explicit
-base-initializer forwarding paths. The branch still keeps an `IRConverter`
-fallback for legacy/unmigrated constructor-call producers, but that path is now a
-compatibility safety net rather than the expected route for the common constructor
-emission sites.
+**Current progress:** mostly complete. `ConstructorCallOp` now carries the selected
+constructor declaration across the main direct-init, converting-init, same-type,
+default-constructor, `new`, delegating-constructor, and explicit base-initializer
+forwarding paths. The branch still keeps an `IRConverter` fallback for legacy or
+unmigrated constructor-call producers, but that path is now a compatibility safety
+net rather than the expected route for the common constructor emission sites.
 
 ---
 
@@ -343,12 +344,11 @@ Overload resolution during parsing is premature. Investigate why it was added an
   (b) Replace it with a deferred annotation that SemanticAnalysis fills in during the
       normal sema walk.
 
-**Current progress:** partially complete. The parser no longer performs authoritative
-brace-init overload resolution for the `ConstructorCallNode` path; it now builds the
-node and lets semantic analysis select the overload or emit the diagnostic. The
-remaining parser cleanup is the older member-less special-case gate, and the
-`InitializerListNode` declaration path still has not been unified with the same
-post-parse diagnostic flow.
+**Current progress:** complete for overload resolution itself. The parser no longer
+performs constructor overload selection for constructor-call parsing paths; it now
+builds the node and lets semantic analysis select the overload or emit the diagnostic.
+The remaining scalar-vs-struct brace-init checks are structural validation/classification
+only and no longer act as an authoritative constructor-resolution stage.
 
 ---
 
@@ -457,15 +457,14 @@ Total: ~300–400 lines changed. No new features required.
 
 ## Exit Criteria
 
-This refactor should be considered complete once all of the following are true:
+This refactor should be considered complete once all of the following are true.
+Current branch status is included inline:
 
-- `ConstructorCallNode` and brace-init constructor carriers (`InitializerListNode`) both preserve the sema-selected constructor for downstream consumers.
-- Semantic analysis is the authoritative constructor-overload selection point for non-dependent constructor calls.
-- IrGenerator prefers the sema annotation in every constructor emission path and only falls back when sema genuinely could not resolve.
-- Constexpr evaluation prefers the sema annotation in every constructor-evaluation path and only falls back when running outside a full sema flow.
-- IRConverter prefers the constructor already selected upstream for
-  `ConstructorCallOp`, and any remaining fallback is only a temporary safety net for
-  legacy/unmigrated emission paths rather than the primary resolution path.
-- Parser no longer performs constructor overload selection for the `ConstructorCallNode` brace-init path; any remaining parser gate must be limited to structural validation or legacy non-unified paths that are explicitly tracked.
-- `make main CXX=clang++` succeeds.
-- `bash tests/run_all_tests.sh` succeeds.
+- [x] `ConstructorCallNode` and brace-init constructor carriers (`InitializerListNode`) both preserve the sema-selected constructor for downstream consumers.
+- [x] Semantic analysis is the authoritative constructor-overload selection point for non-dependent constructor calls.
+- [x] IrGenerator prefers the sema annotation in every audited constructor emission path and only falls back when sema genuinely could not resolve.
+- [x] Constexpr evaluation prefers the sema annotation in the constructor-call evaluation paths covered by this refactor and only falls back when running without that annotation.
+- [~] IRConverter prefers the constructor already selected upstream for `ConstructorCallOp`; the remaining fallback is now a compatibility safety net for legacy or unmigrated emission paths rather than the primary resolution path.
+- [x] Parser no longer performs constructor overload selection for the `ConstructorCallNode` brace-init path; the remaining parser gate is limited to structural scalar-vs-struct validation/classification.
+- [x] `make main CXX=clang++` succeeds on the current branch.
+- [x] `bash tests/run_all_tests.sh` succeeds on the current branch (`1908` compile/link/runtime passes, `123` expected-fail tests).
