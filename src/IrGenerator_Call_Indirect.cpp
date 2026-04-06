@@ -378,6 +378,141 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		object_expr = &object_node.as<ExpressionNode>();
 	}
 
+	auto normalizeResolvedStructType = [&](TypeSpecifierNode candidate_type) -> std::optional<TypeSpecifierNode> {
+		if (!candidate_type.type_index().is_valid()) {
+			return std::nullopt;
+		}
+		const TypeInfo* type_info = tryGetTypeInfo(candidate_type.type_index());
+		if (!type_info || !type_info->isStruct()) {
+			return std::nullopt;
+		}
+		candidate_type.set_type_index(type_info->type_index_.withCategory(TypeCategory::Struct));
+		candidate_type.set_size_in_bits(type_info->sizeInBits());
+		return candidate_type;
+	};
+
+	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
+		if (receiver_node.is<ExpressionNode>()) {
+			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
+
+			if (std::holds_alternative<IdentifierNode>(receiver_expr)) {
+				const IdentifierNode& identifier = std::get<IdentifierNode>(receiver_expr);
+				if (std::optional<ASTNode> symbol = lookupSymbol(identifier.name()); symbol.has_value()) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+						if (auto resolved_decl_type = normalizeResolvedStructType(decl->type_node().as<TypeSpecifierNode>()); resolved_decl_type.has_value()) {
+							return resolved_decl_type;
+						}
+					}
+				}
+			}
+
+			if (const auto* cast = std::get_if<StaticCastNode>(&receiver_expr)) {
+				if (cast->target_type().is<TypeSpecifierNode>()) {
+					if (auto resolved_cast_type = normalizeResolvedStructType(cast->target_type().as<TypeSpecifierNode>()); resolved_cast_type.has_value()) {
+						return resolved_cast_type;
+					}
+				}
+			}
+		}
+
+		if (!parser_) {
+			return std::nullopt;
+		}
+		auto deduced_type = parser_->get_expression_type(receiver_node);
+		if (!deduced_type.has_value()) {
+			return std::nullopt;
+		}
+		return normalizeResolvedStructType(*deduced_type);
+	};
+
+	if (object_expr && std::holds_alternative<TernaryOperatorNode>(*object_expr)) {
+		const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(*object_expr);
+		if (ternary.condition().is<ExpressionNode>() &&
+			ternary.true_expr().is<ExpressionNode>() &&
+			ternary.false_expr().is<ExpressionNode>()) {
+			static size_t member_call_ternary_counter = 0;
+			StringHandle true_label = StringTable::createStringHandle(StringBuilder().append("member_call_true_").append(member_call_ternary_counter));
+			StringHandle false_label = StringTable::createStringHandle(StringBuilder().append("member_call_false_").append(member_call_ternary_counter));
+			StringHandle end_label = StringTable::createStringHandle(StringBuilder().append("member_call_end_").append(member_call_ternary_counter));
+			member_call_ternary_counter++;
+
+			auto cloneCallArguments = [&]() {
+				ChunkedVector<ASTNode> args_copy;
+				callExprNode.arguments().visit([&](ASTNode argument) {
+					args_copy.push_back(argument);
+				});
+				return args_copy;
+			};
+
+			auto makeBranchCall = [&](const ASTNode& receiver_node) {
+				CallExprNode branch_call = makeResolvedMemberCallExpr(
+					receiver_node,
+					member_func_decl,
+					cloneCallArguments(),
+					callExprNode.called_from());
+				copyCallMetadata(branch_call, callExprNode, CallMetadataCopyOptions{});
+				return branch_call;
+			};
+
+			ExprResult condition_result = visitExpressionNode(ternary.condition().as<ExpressionNode>());
+			condition_result = applyConditionBoolConversion(condition_result, ternary.condition(), ternary.get_token());
+
+			CondBranchOp cond_branch;
+			cond_branch.label_true = true_label;
+			cond_branch.label_false = false_label;
+			cond_branch.condition = toTypedValue(condition_result);
+			ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternary.get_token()));
+
+			std::optional<ExprResult> merged_result_shape;
+			std::optional<TempVar> merged_result_var;
+
+			auto emitBranchCall = [&](StringHandle label, const ASTNode& receiver_node) {
+				ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = label}, ternary.get_token()));
+
+				CallExprNode branch_call = makeBranchCall(receiver_node);
+				ExprResult branch_result = generateMemberFunctionCallIr(branch_call, context, &branch_call);
+
+				if (!merged_result_shape.has_value()) {
+					merged_result_shape = branch_result;
+				}
+
+				if (branch_result.category() != TypeCategory::Void) {
+					if (!merged_result_var.has_value()) {
+						merged_result_var = var_counter.next();
+					}
+					SizeInBits merged_size = branch_result.storage == ValueStorage::ContainsAddress
+											 ? SizeInBits{POINTER_SIZE_BITS}
+											 : branch_result.size_in_bits;
+
+					AssignmentOp assign_op;
+					assign_op.result = *merged_result_var;
+					assign_op.lhs = makeTypedValue(branch_result.typeEnum(), merged_size, *merged_result_var);
+					assign_op.rhs = makeTypedValue(branch_result.typeEnum(), merged_size, toIrValue(branch_result.value));
+					assign_op.is_pointer_store = false;
+					assign_op.dereference_rhs_references = false;
+					ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_op), ternary.get_token()));
+				}
+
+				ir_.addInstruction(IrInstruction(IrOpcode::Branch, BranchOp{.target_label = end_label}, ternary.get_token()));
+			};
+
+			emitBranchCall(true_label, ternary.true_expr());
+			emitBranchCall(false_label, ternary.false_expr());
+			ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternary.get_token()));
+
+			if (!merged_result_shape.has_value() || merged_result_shape->category() == TypeCategory::Void) {
+				return makeExprResult(nativeTypeIndex(TypeCategory::Void), SizeInBits{0}, IrOperand{0ULL}, PointerDepth{}, ValueStorage::ContainsData);
+			}
+
+			return makeExprResult(
+				merged_result_shape->type_index,
+				merged_result_shape->size_in_bits,
+				IrOperand{*merged_result_var},
+				merged_result_shape->pointer_depth,
+				merged_result_shape->storage);
+		}
+	}
+
 	if (object_expr && std::holds_alternative<IdentifierNode>(*object_expr)) {
 		const IdentifierNode& object_ident = std::get<IdentifierNode>(*object_expr);
 		object_name = object_ident.name();
@@ -587,20 +722,18 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 
 		(void)resolved_member_object_type;
+	} else if (object_expr && std::holds_alternative<TernaryOperatorNode>(*object_expr)) {
+		const TernaryOperatorNode& ternary = std::get<TernaryOperatorNode>(*object_expr);
+		if (auto true_type = resolveStructTypeFromReceiverNode(ternary.true_expr()); true_type.has_value()) {
+			object_type = *true_type;
+		} else if (auto false_type = resolveStructTypeFromReceiverNode(ternary.false_expr()); false_type.has_value()) {
+			object_type = *false_type;
+		}
 	}
 
 	if (object_expr && !object_type.type_index().is_valid() && parser_) {
-		if (auto deduced_object_type = parser_->get_expression_type(object_node); deduced_object_type.has_value()) {
-			TypeSpecifierNode normalized_object_type = *deduced_object_type;
-			if (normalized_object_type.type_index().is_valid()) {
-				if (const TypeInfo* type_info = tryGetTypeInfo(normalized_object_type.type_index())) {
-					if (type_info->isStruct()) {
-						normalized_object_type.set_type_index(type_info->type_index_.withCategory(TypeCategory::Struct));
-						normalized_object_type.set_size_in_bits(type_info->sizeInBits());
-						object_type = normalized_object_type;
-					}
-				}
-			}
+		if (auto deduced_object_type = resolveStructTypeFromReceiverNode(object_node); deduced_object_type.has_value()) {
+			object_type = *deduced_object_type;
 		}
 	}
 
@@ -748,6 +881,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		}
 		return makeExprResult(nativeTypeIndex(ret_type), ret_size, IrOperand{evalResultScalarToRaw(eval_result)}, PointerDepth{}, ValueStorage::ContainsData);
 	}
+
 	auto getParamDecl = [](const ASTNode& param_node) -> const DeclarationNode* {
 		if (param_node.is<DeclarationNode>()) {
 			return &param_node.as<DeclarationNode>();
