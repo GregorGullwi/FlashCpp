@@ -1314,16 +1314,33 @@ bool Parser::looks_like_function_parameters() {
 			auto type_iter = getTypesByNameMap().find(id_handle);
 			if (type_iter != getTypesByNameMap().end()) {
 				// Before deciding it's a function parameter type, check if '::' follows.
-				// If so, this is a qualified-name expression (e.g., Color::Green, Ns::val)
-				// used as a direct-initialization argument, NOT a parameter type name.
-				// For enum types in particular, `EnumType::Enumerator` is always a value.
-				// Exception: class/struct types with '::' may still be nested types used as
-				// parameter types (e.g., MyClass::NestedType x), so only skip for enum types.
+				// Qualified-id expressions such as `Factory::make(7)` or `Color::Green`
+				// are direct-initialization arguments, not parameter declarations.
 				advance();  // consume the identifier
-				if (peek() == "::"_tok && type_iter->second && type_iter->second->getEnumInfo()) {
-					// Qualified enum value access (e.g., Color::Green) = direct init argument
-					restore_token_position(saved);
-					return false;
+				if (peek() == "::"_tok) {
+					if (type_iter->second && type_iter->second->getEnumInfo()) {
+						// Qualified enum value access (e.g., Color::Green) = direct init argument
+						restore_token_position(saved);
+						return false;
+					}
+
+					while (peek() == "::"_tok) {
+						advance(); // consume '::'
+						if (!peek().is_identifier()) {
+							break;
+						}
+						advance(); // consume the qualified-name component
+						if (peek() == "<"_tok) {
+							skip_template_arguments();
+						}
+					}
+
+					if (peek() == "("_tok) {
+						// `KnownType::name(...)` is a qualified call expression used as a
+						// direct-initializer argument, not a function parameter list.
+						restore_token_position(saved);
+						return false;
+					}
 				}
 				// It's a known type = function parameters
 				restore_token_position(saved);
