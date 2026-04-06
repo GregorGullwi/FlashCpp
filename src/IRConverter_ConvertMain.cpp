@@ -1998,7 +1998,10 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 
 	for (const auto& instruction : it->second) {
 			// Look for TempVar operands in the instruction
-		func_stack_space.shadow_stack_space |= (0x20 * !(instruction.getOpcode() != IrOpcode::FunctionCall && instruction.getOpcode() != IrOpcode::ConstructorCall));
+		func_stack_space.shadow_stack_space |=
+			(0x20 * (instruction.getOpcode() == IrOpcode::FunctionCall ||
+					 instruction.getOpcode() == IrOpcode::ConstructorCall ||
+					 instruction.getOpcode() == IrOpcode::IndirectCall));
 
 			// Pre-reserve the catch funclet return slot on Windows: the funclet needs
 			// a fixed-size slot (16 bytes) above the normal locals so that
@@ -14139,11 +14142,6 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 	const size_t max_float_regs = is_coff_format ? 4 : 8;
 	const size_t shadow_space = is_coff_format ? 32 : 0;
 
-	if (op.usesReturnSlot()) {
-		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
-		emitLeaFromFrame(return_slot_reg, result_offset);
-	}
-
 		// First pass: spill overflow arguments into the caller's outgoing area.
 	size_t int_reg_index = op.usesReturnSlot() ? 1 : 0;
 	size_t float_reg_index = 0;
@@ -14271,6 +14269,13 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		}
 
 		if (!use_register) {
+			if (!is_coff_format) {
+				if (is_float_arg) {
+					float_reg_index++;
+				} else {
+					int_reg_index += intRegSlotsNeeded(arg);
+				}
+			}
 			continue;
 		}
 
@@ -14334,6 +14339,13 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 					SizedStackSlot{arg_offset, arg.size_in_bits.value, isSignedType(arg_type)});
 			}
 		}
+	}
+
+		// Load the hidden return slot after argument setup so temporary register traffic in
+		// the spill/register passes cannot overwrite the ABI-mandated first parameter.
+	if (op.usesReturnSlot()) {
+		X64Register return_slot_reg = getIntParamReg<TWriterClass>(0);
+		emitLeaFromFrame(return_slot_reg, result_offset);
 	}
 
 		// Load the call target after argument setup so temporary register traffic in the
