@@ -120,6 +120,13 @@ private:
 		ExpressionContext context,
 		const Token& source_token);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	const ConstructorDeclarationNode* resolveCodegenConstructorFromTypedArgs(
+		const StructTypeInfo& target_struct_info,
+		const std::vector<TypedValue>& args) const;
+	void finalizeConstructorCallOp(
+		ConstructorCallOp& ctor_op,
+		const StructTypeInfo& target_struct_info,
+		const Token& source_token) const;
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
 	void fillInConstructorDefaultArguments(

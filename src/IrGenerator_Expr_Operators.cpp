@@ -252,6 +252,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	if (initializers.empty()) {
 		fillInDefaultConstructorArguments(ctor_op, *struct_info);
 	}
+	finalizeConstructorCallOp(ctor_op, *struct_info, Token());
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
 	// Emit member stores for each initializer
@@ -618,6 +619,76 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 		ctor_op,
 		default_ctor->function_decl.as<ConstructorDeclarationNode>(),
 		ctor_op.arguments.size());
+}
+
+const ConstructorDeclarationNode* AstToIr::resolveCodegenConstructorFromTypedArgs(
+	const StructTypeInfo& target_struct_info,
+	const std::vector<TypedValue>& args) const {
+	if (args.size() == 1) {
+		const TypedValue& arg = args[0];
+		const bool arg_is_same_struct =
+			isIrStructType(arg.effectiveIrType()) &&
+			arg.type_index.is_valid() &&
+			target_struct_info.isOwnTypeIndex(arg.type_index);
+		const bool arg_is_ref_or_pointer = arg.is_reference() || arg.pointer_depth.is_pointer();
+		if (arg_is_same_struct && arg_is_ref_or_pointer) {
+			const bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
+			if (const StructMemberFunction* same_type_ctor =
+					target_struct_info.findPreferredSameTypeConstructor(prefer_move_ctor);
+				same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+				return &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+			}
+		}
+	}
+
+	std::vector<TypeSpecifierNode> arg_types;
+	arg_types.reserve(args.size());
+	for (const TypedValue& arg : args) {
+		const SizeInBits arg_size_bits = arg.size_in_bits;
+		TypeSpecifierNode ts = isIrStructType(arg.effectiveIrType())
+								   ? TypeSpecifierNode(arg.type_index.withCategory(arg.typeEnum()), arg_size_bits, Token{}, CVQualifier::None, ReferenceQualifier::None)
+								   : TypeSpecifierNode(arg.typeEnum(), TypeQualifier::None, arg_size_bits, Token{}, CVQualifier::None);
+		if (arg.pointer_depth.is_pointer()) {
+			for (int i = 0; i < arg.pointer_depth.value; ++i) {
+				ts.add_pointer_level();
+			}
+		}
+		ts.set_reference_qualifier(arg.ref_qualifier);
+		ts.set_cv_qualifier(arg.cv_qualifier);
+		arg_types.push_back(std::move(ts));
+	}
+
+	auto resolution = resolve_constructor_overload(target_struct_info, arg_types, false);
+	if (resolution.is_ambiguous) {
+		throw CompileError("Ambiguous constructor call");
+	}
+	if (resolution.selected_overload) {
+		return resolution.selected_overload;
+	}
+
+	auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, args.size(), false);
+	if (arity_resolution.is_ambiguous) {
+		throw CompileError("Ambiguous constructor call");
+	}
+	return arity_resolution.selected_overload;
+}
+
+void AstToIr::finalizeConstructorCallOp(
+	ConstructorCallOp& ctor_op,
+	const StructTypeInfo& target_struct_info,
+	const Token& source_token) const {
+	(void)source_token;
+	if (!ctor_op.resolved_constructor) {
+		ctor_op.resolved_constructor =
+			resolveCodegenConstructorFromTypedArgs(target_struct_info, ctor_op.arguments);
+	}
+	if (!ctor_op.resolved_constructor) {
+		throw InternalError(std::string(StringBuilder()
+											.append("ConstructorCallOp missing resolved constructor for '")
+											.append(StringTable::getStringView(target_struct_info.name))
+											.append("'")
+											.commit()));
+	}
 }
 
 void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<CachedParamInfo>& cached_params, size_t arg_idx) {

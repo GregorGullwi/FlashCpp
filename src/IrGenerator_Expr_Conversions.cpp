@@ -2603,6 +2603,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	if (selected_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
 		fillInConstructorDefaultArguments(ctor_op, selected_ctor, ctor_op.arguments.size());
 	}
+	finalizeConstructorCallOp(ctor_op, *target_struct_info, source_token);
 
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), source_token));
 	setTempVarMetadata(result_var, TempVarMetadata::makeRVOEligiblePRValue());
