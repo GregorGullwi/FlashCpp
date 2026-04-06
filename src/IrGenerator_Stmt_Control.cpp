@@ -1038,8 +1038,6 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 			if (sema_normalized_current_function_) {
 				throw InternalError("Range-for struct iterator missing pre-resolved operator*() in sema-normalized body");
 			}
-		}
-		if (!dereference_func) {
 			throw InternalError("Range-for struct iterator missing operator*() during lowering");
 		}
 		ChunkedVector<ASTNode> dereference_args;
