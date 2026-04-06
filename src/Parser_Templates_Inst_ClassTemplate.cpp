@@ -1775,11 +1775,27 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 									TemplateTypeArg va;
 									va.is_value = true;
 									va.value = bool_literal->value() ? 1 : 0;
+									va.type_index = nativeTypeIndex(TypeCategory::Bool);
 									resolved_args.push_back(va);
+									resolved = true;
 								} else {
-									// Unresolvable expression argument - cannot safely instantiate
-									FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
-									resolution_failed = true;
+									ASTNode substituted_expr = substituteTemplateParameters(
+										arg_info.node,
+										template_params,
+										template_args);
+									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
+									if (evaluated_value.has_value()) {
+										TemplateTypeArg va;
+										va.is_value = true;
+										va.value = evaluated_value->value;
+										va.type_index = nativeTypeIndex(evaluated_value->type);
+										resolved_args.push_back(va);
+										resolved = true;
+									} else {
+										// Unresolvable expression argument - cannot safely instantiate
+										FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
+										resolution_failed = true;
+									}
 								}
 							}
 						}
