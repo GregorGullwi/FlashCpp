@@ -1473,9 +1473,14 @@ private:	 // Resume private methods
 				// Preprocessed line numbers can be misleading when a header is included multiple
 				// times (even if guarded) or when forward declarations are created during template
 				// reparsing.  Source line numbers within the same file are always correctly ordered.
+				// When source line lookup fails (returns 0, e.g. no line_map in unit tests),
+				// fall back to comparing preprocessed line numbers to preserve Phase 1 checking.
 				size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
 				size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
-				if (decl_src_line > cutoff_src_line) {
+				bool violation = (decl_src_line > 0 && cutoff_src_line > 0)
+					? decl_src_line > cutoff_src_line
+					: decl_tok.line() > phase1_cutoff_line_;
+				if (violation) {
 					phase1_violation_token_ = token;
 				}
 			}
