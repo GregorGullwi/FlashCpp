@@ -2242,7 +2242,7 @@ typename IrToObjConverter<TWriterClass>::StackSpaceSize IrToObjConverter<TWriter
 						temp_var_sizes_[StringTable::getOrInternStringHandle(call_op->result.name())] = call_op->return_size_in_bits.value;
 						handled_by_typed_payload = true;
 					}
-						// Try IndirectCallOp (function pointer calls)
+					// Try IndirectCallOp (function pointer calls)
 					else if (const IndirectCallOp* indirect_call_op = std::any_cast<IndirectCallOp>(&instruction.getTypedPayload())) {
 						int result_size = indirect_call_op->return_size_in_bits.value;
 						if (result_size == 0) {
