@@ -312,8 +312,67 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Perform template parameter substitution (same as eager path)
 	// Substitute return type
 	const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
+	auto resolve_owner_type_alias = [&](const TypeSpecifierNode& original_type_spec, TypeIndex& type_index) {
+		if (type_index.is_valid()) {
+			return;
+		}
+		if (original_type_spec.type() != TypeCategory::UserDefined &&
+			original_type_spec.type() != TypeCategory::TypeAlias &&
+			original_type_spec.type() != TypeCategory::Template) {
+			return;
+		}
+		std::string_view type_name = original_type_spec.token().value();
+		if (type_name.empty()) {
+			return;
+		}
+		auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
+		if (!owner_symbol.has_value() || !owner_symbol->is<StructDeclarationNode>()) {
+			return;
+		}
+		const StructDeclarationNode& owner_decl = owner_symbol->as<StructDeclarationNode>();
+		for (const auto& type_alias : owner_decl.type_aliases()) {
+			if (StringTable::getStringView(type_alias.alias_name) != type_name ||
+				!type_alias.type_node.is<TypeSpecifierNode>()) {
+				continue;
+			}
+			TypeIndex substituted_alias = substitute_template_parameter(
+				type_alias.type_node.as<TypeSpecifierNode>(),
+				lazy_info.template_params,
+				lazy_info.template_args);
+			if (substituted_alias.category() != TypeCategory::UserDefined || substituted_alias.is_valid()) {
+				type_index = substituted_alias.withCategory(substituted_alias.category());
+			}
+			return;
+		}
+	};
+	auto normalize_substituted_type_spec = [](TypeSpecifierNode& type_spec) {
+		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+		if (resolved_alias.type_index.is_valid()) {
+			type_spec.set_type_index(resolved_alias.type_index.withCategory(resolved_alias.typeEnum()));
+			type_spec.set_category(resolved_alias.typeEnum());
+		}
+		type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+		if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+			resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+			type_spec.set_reference_qualifier(resolved_alias.reference_qualifier);
+		}
+		if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
+			type_spec.set_function_signature(*resolved_alias.function_signature);
+		}
+		if (!resolved_alias.array_dimensions.empty()) {
+			std::vector<size_t> array_dimensions = type_spec.array_dimensions();
+			array_dimensions.insert(array_dimensions.end(),
+									resolved_alias.array_dimensions.begin(),
+									resolved_alias.array_dimensions.end());
+			type_spec.set_array_dimensions(array_dimensions);
+		}
+		if (const int resolved_size_bits = getTypeSpecSizeBits(type_spec); resolved_size_bits > 0) {
+			type_spec.set_size_in_bits(resolved_size_bits);
+		}
+	};
 	TypeIndex return_type_index = substitute_template_parameter(
 		return_type_spec, lazy_info.template_params, lazy_info.template_args);
+	resolve_owner_type_alias(return_type_spec, return_type_index);
 
 	// Resolve self-referential types: when a member function's return type or parameter type
 	// refers to the template class itself (e.g., W& in W<T>::operator+=), the type_index
@@ -360,6 +419,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 				substituted_return_type.set_function_signature(*arg->function_signature);
 		}
 	}
+	normalize_substituted_type_spec(substituted_return_type);
 
 	auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 
@@ -450,6 +510,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			// Substitute parameter type
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, lazy_info.template_params, lazy_info.template_args);
+			resolve_owner_type_alias(param_type_spec, param_type_index);
 
 			// Resolve self-referential class types (same as return type)
 			resolve_self_type(param_type_index);
@@ -480,6 +541,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 						substituted_param_type.set_function_signature(*arg->function_signature);
 				}
 			}
+			normalize_substituted_type_spec(substituted_param_type);
 
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
