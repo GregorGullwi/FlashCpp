@@ -1764,6 +1764,17 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		return;
 	stats_.statements_visited++;
 
+	auto normalizeCondition = [&](const ASTNode& condition_node, bool needs_contextual_bool) {
+		if (condition_node.is<VariableDeclarationNode>()) {
+			normalizeStatement(condition_node, ctx);
+			return;
+		}
+		if (needs_contextual_bool) {
+			tryAnnotateContextualBool(condition_node);
+		}
+		normalizeExpression(condition_node, ctx);
+	};
+
 	if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		if (block.is_synthetic_decl_list()) {
@@ -1826,6 +1837,14 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			normalizeExpression(*init, ctx);
 		}
+	} else if (node.is<StructuredBindingNode>()) {
+		const auto& binding = node.as<StructuredBindingNode>();
+		normalizeExpression(binding.initializer(), ctx);
+	} else if (node.is<ThrowStatementNode>()) {
+		const auto& throw_stmt = node.as<ThrowStatementNode>();
+		if (throw_stmt.expression().has_value()) {
+			normalizeExpression(*throw_stmt.expression(), ctx);
+		}
 	} else if (node.is<IfStatementNode>()) {
 		const auto& stmt = node.as<IfStatementNode>();
 		// C++17 [stmt.if]/2: variables declared in the init-statement go out of
@@ -1834,9 +1853,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		if (stmt.has_init()) {
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
-		// C++20 [stmt.select]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		normalizeCondition(stmt.get_condition(), true);
 		normalizeStatement(stmt.get_then_statement(), ctx);
 		if (stmt.has_else()) {
 			normalizeStatement(stmt.get_else_statement().value(), ctx);
@@ -1862,20 +1879,31 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		popScope();
 	} else if (node.is<WhileStatementNode>()) {
 		const auto& stmt = node.as<WhileStatementNode>();
-		// C++20 [stmt.while]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		const bool has_condition_decl = stmt.get_condition().is<VariableDeclarationNode>();
+		if (has_condition_decl) {
+			pushScope();
+		}
+		normalizeCondition(stmt.get_condition(), true);
 		normalizeStatement(stmt.get_body_statement(), ctx);
+		if (has_condition_decl) {
+			popScope();
+		}
 	} else if (node.is<DoWhileStatementNode>()) {
 		const auto& stmt = node.as<DoWhileStatementNode>();
 		normalizeStatement(stmt.get_body_statement(), ctx);
 		// C++20 [stmt.do]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		normalizeCondition(stmt.get_condition(), true);
 	} else if (node.is<SwitchStatementNode>()) {
 		const auto& stmt = node.as<SwitchStatementNode>();
-		normalizeExpression(stmt.get_condition(), ctx);
+		const bool has_condition_decl = stmt.get_condition().is<VariableDeclarationNode>();
+		if (has_condition_decl) {
+			pushScope();
+		}
+		normalizeCondition(stmt.get_condition(), false);
 		normalizeStatement(stmt.get_body(), ctx);
+		if (has_condition_decl) {
+			popScope();
+		}
 	} else if (node.is<RangedForStatementNode>()) {
 		const auto& stmt = node.as<RangedForStatementNode>();
 		pushScope();
