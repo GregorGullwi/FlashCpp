@@ -4,6 +4,65 @@
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
 
+namespace {
+
+int computeTypeSizeBits(TypeIndex type_index) {
+	int size_in_bits = get_type_size_bits(type_index.category());
+	if (size_in_bits != 0) {
+		return size_in_bits;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	if (!type_info) {
+		return 0;
+	}
+
+	size_in_bits = type_info->sizeInBits().value;
+	if (size_in_bits != 0 || !type_info->isStruct()) {
+		return size_in_bits;
+	}
+
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	return struct_info ? struct_info->sizeInBits().value : 0;
+}
+
+// Rebuild a concrete type node from resolved alias metadata before re-running substitution.
+TypeSpecifierNode buildTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
+	TypeSpecifierNode resolved_type(
+		resolved_alias.type_index,
+		computeTypeSizeBits(resolved_alias.type_index),
+		token,
+		CVQualifier::None,
+		resolved_alias.reference_qualifier);
+	for (size_t i = 0; i < resolved_alias.pointer_depth; ++i) {
+		resolved_type.add_pointer_level(CVQualifier::None);
+	}
+	if (resolved_alias.isArray()) {
+		resolved_type.set_array_dimensions(resolved_alias.array_dimensions);
+	}
+	if (resolved_alias.function_signature.has_value()) {
+		resolved_type.set_function_signature(*resolved_alias.function_signature);
+	}
+	return resolved_type;
+}
+
+// Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
+void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+	target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
+	target.add_cv_qualifier(source.cv_qualifier());
+	if (source.reference_qualifier() != ReferenceQualifier::None) {
+		target.set_reference_qualifier(source.reference_qualifier());
+	}
+	if (source.is_array()) {
+		target.set_array_dimensions(source.array_dimensions());
+	}
+	if (source.has_function_signature() && !target.has_function_signature()) {
+		target.set_function_signature(source.function_signature());
+	}
+}
+
+} // namespace
+
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
 		return expr;
@@ -1077,58 +1136,15 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Substituting in type");
 	FLASH_LOG_FORMAT(Templates, Debug, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
 
-	auto buildTypeFromResolvedAlias = [&](const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
-		int size_in_bits = get_type_size_bits(resolved_alias.type_index.category());
-		if (size_in_bits == 0) {
-			if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_alias.type_index)) {
-				size_in_bits = resolved_type_info->sizeInBits().value;
-				if (size_in_bits == 0 && resolved_type_info->isStruct()) {
-					if (const StructTypeInfo* resolved_struct_info = resolved_type_info->getStructInfo()) {
-						size_in_bits = resolved_struct_info->sizeInBits().value;
-					}
-				}
-			}
-		}
-
-		TypeSpecifierNode resolved_type(
-			resolved_alias.type_index,
-			size_in_bits,
-			token,
-			CVQualifier::None,
-			resolved_alias.reference_qualifier);
-		for (size_t i = 0; i < resolved_alias.pointer_depth; ++i) {
-			resolved_type.add_pointer_level(CVQualifier::None);
-		}
-		if (resolved_alias.isArray()) {
-			resolved_type.set_array_dimensions(resolved_alias.array_dimensions);
-		}
-		if (resolved_alias.function_signature.has_value()) {
-			resolved_type.set_function_signature(*resolved_alias.function_signature);
-		}
-		return resolved_type;
-	};
-
 	if (type.type_index().is_valid()) {
-		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-			if (type_info->isTypeAlias()) {
-				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
-					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-				if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
-					TypeSpecifierNode resolved_type = buildTypeFromResolvedAlias(resolved_alias, type.token());
-					TypeSpecifierNode substituted_alias = substituteInType(resolved_type);
-					substituted_alias.add_pointer_levels(static_cast<int>(type.pointer_depth()));
-					substituted_alias.add_cv_qualifier(type.cv_qualifier());
-					if (type.reference_qualifier() != ReferenceQualifier::None) {
-						substituted_alias.set_reference_qualifier(type.reference_qualifier());
-					}
-					if (type.is_array()) {
-						substituted_alias.set_array_dimensions(type.array_dimensions());
-					}
-					if (type.has_function_signature() && !substituted_alias.has_function_signature()) {
-						substituted_alias.set_function_signature(type.function_signature());
-					}
-					return substituted_alias;
-				}
+		const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+		if (type_info && type_info->isTypeAlias()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+			if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
+				TypeSpecifierNode substituted_alias = substituteInType(buildTypeFromResolvedAlias(resolved_alias, type.token()));
+				applyOuterTypeModifiers(substituted_alias, type);
+				return substituted_alias;
 			}
 		}
 	}
