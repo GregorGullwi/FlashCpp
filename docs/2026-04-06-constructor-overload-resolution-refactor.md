@@ -26,8 +26,9 @@ Status on `copilot/refactor-unifying-constructor-overload-selection` after the s
 - **Done:** `ConstructorCallOp` now carries the constructor selected earlier in the pipeline, and more default/same-type constructor emission paths now stamp that annotation before lowering.
 - **Done:** the CI regression from missing `ConstructorCallOp` annotations was fixed by restoring an `IRConverter` safety-net fallback when the propagated constructor is absent.
 - **Remaining:** the parser still keeps a member-less/non-aggregate brace-init guard outside the unified sema-owned constructor path.
+- **Done:** `new`/placement-`new`, delegating constructors, and explicit base-initializer constructor forwarding now also resolve and stamp `ConstructorCallOp.resolved_constructor` from AST/sema-aware argument types before lowering.
 - **Remaining:** some constructor-selection fallbacks still exist in codegen by design for unresolved/dependent cases and should only be reached when sema did not annotate a constructor.
-- **Remaining:** some IR emission sites (`new`, delegating constructors, explicit base/member constructor forwarding) still do not always populate `ConstructorCallOp.resolved_constructor`, so `IRConverter` is not yet purely annotation-driven.
+- **Remaining:** `IRConverter` still keeps a constructor-overload safety net for legacy/unmigrated `ConstructorCallOp` producers, so the pipeline is not yet purely annotation-driven end-to-end.
 
 This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
 
@@ -324,11 +325,12 @@ emitted argument list uniquely identifies the constructor after Step 3, and remo
 redundant `resolve_constructor_overload` calls at lines 4951 and 4957.
 
 **Current progress:** partially complete. `ConstructorCallOp` now carries the
-selected constructor declaration in more paths, including the default/same-type cases
-that were breaking CI, but the branch still needs an `IRConverter` fallback for
-constructor overload resolution when older IR emission sites fail to populate that
-annotation. This keeps tests passing while the remaining constructor-emission paths
-are migrated.
+selected constructor declaration across the main direct-init, converting-init,
+same-type, default-constructor, `new`, delegating-constructor, and explicit
+base-initializer forwarding paths. The branch still keeps an `IRConverter`
+fallback for legacy/unmigrated constructor-call producers, but that path is now a
+compatibility safety net rather than the expected route for the common constructor
+emission sites.
 
 ---
 
