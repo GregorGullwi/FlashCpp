@@ -4901,7 +4901,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	};
 
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
-	if (!actual_ctor) {
+	if (!actual_ctor && num_params != 0) {
 		throw InternalError(std::string(StringBuilder()
 											.append("ConstructorCallOp reached IRConverter without resolved constructor for '")
 											.append(struct_name)
@@ -4911,20 +4911,22 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 		// Extract parameter types for constructor argument lowering.
 	std::vector<TypeSpecifierNode> parameter_types;
-	const auto& ctor_params = actual_ctor->parameter_nodes();
-	for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
-		if (ctor_params[i].is<DeclarationNode>()) {
-			const auto& param_decl = ctor_params[i].as<DeclarationNode>();
-			if (param_decl.type_node().is<TypeSpecifierNode>()) {
-				auto param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
-				parameter_types.push_back(param_type_spec);
-				continue;
+	if (actual_ctor) {
+		const auto& ctor_params = actual_ctor->parameter_nodes();
+		for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
+			if (ctor_params[i].is<DeclarationNode>()) {
+				const auto& param_decl = ctor_params[i].as<DeclarationNode>();
+				if (param_decl.type_node().is<TypeSpecifierNode>()) {
+					auto param_type_spec = param_decl.type_node().as<TypeSpecifierNode>();
+					parameter_types.push_back(param_type_spec);
+					continue;
+				}
 			}
+				// Fallback: if we can't get the parameter type from the selected constructor,
+				// reconstruct it from the already-lowered TypedValue.
+			const TypedValue& arg = ctor_op.arguments[i];
+			parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 		}
-			// Fallback: if we can't get the parameter type from the selected constructor,
-			// reconstruct it from the already-lowered TypedValue.
-		const TypedValue& arg = ctor_op.arguments[i];
-		parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 	}
 
 		// Process constructor parameters: first handle stack overflow args, then register args

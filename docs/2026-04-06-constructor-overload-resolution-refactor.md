@@ -9,7 +9,7 @@
 
 Constructor overload resolution originally happened independently at **four distinct pipeline stages** rather than once in SemanticAnalysis.  
 That older design forced downstream stages to re-run `resolve_constructor_overload` from scratch using their own locally-built argument-type lists, which created duplicate logic, mismatched resolution paths, and made it hard to add proper overload diagnostics.  
-On the current branch, the sema-selected constructor is already propagated through the main AST and IR carriers; the remaining work is mostly about documenting the compatibility fallbacks that still exist by design.
+On the current branch, the sema-selected constructor is already propagated through the main AST and IR carriers; the remaining work is now mostly about the still-separate unresolved/template-dependent paths rather than any late constructor-overload compatibility fallback.
 
 ---
 
@@ -24,13 +24,12 @@ Status on `copilot/refactor-unify-constructor-overloads` after the semantic-anal
 - **Done:** several IrGenerator and ConstExprEvaluator paths now consume the sema annotation first and only fall back when it is absent.
 - **Done:** parser-time brace-init constructor overload selection was removed from the `ConstructorCallNode` path for user-defined constructors; semantic analysis now reports those no-match / ambiguity diagnostics after parsing instead of during parsing.
 - **Done:** `ConstructorCallOp` now carries the constructor selected earlier in the pipeline, and more default/same-type constructor emission paths now stamp that annotation before lowering.
-- **Done:** the CI regression from missing `ConstructorCallOp` annotations was fixed by restoring an `IRConverter` safety-net fallback when the propagated constructor is absent.
+- **Done:** the remaining `ConstructorCallOp` producers were tightened so late IR conversion no longer re-runs constructor overload resolution.
 - **Done:** `new`/placement-`new`, delegating constructors, and explicit base-initializer constructor forwarding now also resolve and stamp `ConstructorCallOp.resolved_constructor` from AST/sema-aware argument types before lowering.
 - **Done:** the parser no longer calls `resolve_constructor_overload` for constructor-call parsing paths; the remaining scalar-vs-struct brace-init gate is now just structural classification, not overload selection.
 - **Done:** semantic analysis is now the authoritative constructor-overload selection point for non-dependent `ConstructorCallNode` and `InitializerListNode` flows.
 - **Done:** audited IrGenerator and ConstExprEvaluator constructor paths now check sema annotations first and only fall back when the annotation is absent.
-- **Remaining by design:** constructor-selection fallbacks still exist in codegen and constexpr evaluation for unresolved/template-dependent cases and for late compatibility recovery.
-- **Remaining by design:** `IRConverter` still keeps a constructor-overload safety net for legacy or unmigrated `ConstructorCallOp` producers, so the pipeline is not yet purely annotation-driven end-to-end.
+- **Remaining by design:** constructor-selection fallbacks still exist in codegen and constexpr evaluation for unresolved/template-dependent cases.
 
 This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
 
@@ -87,7 +86,7 @@ Parser           → produces ConstructorCallNode  (no resolution)
 SemanticAnalysis → resolves overload, stores ConstructorDeclarationNode* on node
 IrGenerator      → reads node.resolved_constructor(), emits ConstructorCallOp
 ConstExprEval    → reads node.resolved_constructor(), evaluates
-IRConverter      → reads ConstructorCallOp.resolved_ctor_name (set by IrGenerator from annotation)
+IRConverter      → reads ConstructorCallOp.resolved_constructor (set upstream) and only treats synthesized zero-arg implicit default constructors as metadata-free
 ```
 
 ---
