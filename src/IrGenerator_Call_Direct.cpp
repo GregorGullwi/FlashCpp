@@ -482,18 +482,14 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				.result = ret_var,
 				.function_pointer = StringTable::getOrInternStringHandle(func_name_view),
 				.arguments = std::move(arguments)};
-			if (func_type.has_function_signature() && needs_type_index(func_type.function_signature().returnType())) {
+			if (func_type.has_function_signature()) {
 				populateIndirectCallReturnInfo(op, func_type.function_signature());
 			}
 			ir_.addInstruction(IrOpcode::IndirectCall, std::move(op), callExprNode.called_from());
 
 				// Return the result variable with the return type from the function signature
 			if (func_type.has_function_signature()) {
-				const auto& sig = func_type.function_signature();
-				if (needs_type_index(sig.returnType())) {
-					return buildIndirectCallReturnResult(sig, ret_var);
-				}
-				return makeExprResult(nativeTypeIndex(sig.returnType()), SizeInBits{64}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
+				return buildIndirectCallReturnResult(func_type.function_signature(), ret_var);
 			} else {
 					// For auto types or missing signature, default to int
 				return makeExprResult(nativeTypeIndex(TypeCategory::Int), SizeInBits{32}, IrOperand{ret_var}, PointerDepth{}, ValueStorage::ContainsData);
