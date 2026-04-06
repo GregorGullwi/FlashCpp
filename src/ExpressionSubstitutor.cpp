@@ -3,6 +3,7 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
+#include <limits>
 
 namespace {
 
@@ -56,22 +57,27 @@ TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo
 		ReferenceQualifier::None);
 }
 
-std::vector<size_t> combineArrayDimensions(const std::vector<size_t>& outer_dimensions, const std::vector<size_t>& inner_dimensions) {
-	if (outer_dimensions.empty()) {
-		return inner_dimensions;
+int checkedPointerDepthToInt(size_t pointer_depth) {
+	if (pointer_depth > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw InternalError("Pointer depth overflow while rebuilding resolved alias type");
 	}
-	if (inner_dimensions.empty()) {
-		return outer_dimensions;
-	}
+	return static_cast<int>(pointer_depth);
+}
 
-	std::vector<size_t> combined_dimensions = outer_dimensions;
-	combined_dimensions.insert(combined_dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
-	return combined_dimensions;
+std::vector<size_t> combineArrayDimensions(std::vector<size_t> outer_dimensions, const std::vector<size_t>& inner_dimensions) {
+	outer_dimensions.reserve(outer_dimensions.size() + inner_dimensions.size());
+	outer_dimensions.insert(outer_dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
+	return outer_dimensions;
 }
 
 void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
-	target.add_cv_qualifier(resolved_alias.cv_qualifier);
-	target.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+	if (resolved_alias.cv_qualifier != CVQualifier::None) {
+		target.add_cv_qualifier(resolved_alias.cv_qualifier);
+	}
+	target.add_pointer_levels(checkedPointerDepthToInt(resolved_alias.pointer_depth));
+	// Alias-added lvalue references must win during reference collapsing, while
+	// alias-added rvalue references only apply if the substituted target was not
+	// already a reference.
 	if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
 		target.set_reference_qualifier(ReferenceQualifier::LValueReference);
 	} else if (resolved_alias.reference_qualifier == ReferenceQualifier::RValueReference &&
