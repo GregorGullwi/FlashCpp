@@ -12717,7 +12717,9 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 		// the same reason. Unions stay load-by-value here so existing scalar-style union
 		// member reads and copies keep their current behavior.
 	bool keep_member_address = false;
-	if (isIrStructType(op.result.effectiveIrType()) && !op.is_reference() && op.result.type_index.is_valid()) {
+	bool is_addressable_struct_member =
+		isIrStructType(op.result.effectiveIrType()) && !op.is_reference() && op.result.type_index.is_valid();
+	if (is_addressable_struct_member) {
 		if (const TypeInfo* result_type_info = tryGetTypeInfo(op.result.type_index)) {
 			if (const StructTypeInfo* result_struct = result_type_info->getStructInfo()) {
 				keep_member_address = !result_struct->is_union;
