@@ -3,6 +3,114 @@
 #include "Parser.h"
 #include "TemplateInstantiationHelper.h"
 #include "Log.h"
+#include <limits>
+
+namespace {
+
+int computeTypeSizeInBits(TypeIndex type_index) {
+	int size_in_bits = get_type_size_bits(type_index.category());
+	if (size_in_bits != 0) {
+		return size_in_bits;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type_index);
+	if (!type_info) {
+		return 0;
+	}
+
+	size_in_bits = type_info->sizeInBits().value;
+	if (size_in_bits != 0 || !type_info->isStruct()) {
+		return size_in_bits;
+	}
+
+	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	return struct_info ? struct_info->sizeInBits().value : 0;
+}
+
+std::optional<std::string_view> tryResolveCanonicalTypeName(
+	const TypeSpecifierNode& type,
+	std::string_view type_name,
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map) {
+	if (!type.type_index().is_valid()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+	if (!type_info) {
+		return std::nullopt;
+	}
+
+	std::string_view canonical_type_name = StringTable::getStringView(type_info->name());
+	if (canonical_type_name.empty() || canonical_type_name == type_name || !param_map.contains(canonical_type_name)) {
+		return std::nullopt;
+	}
+
+	return canonical_type_name;
+}
+
+TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
+	return TypeSpecifierNode(
+		resolved_alias.type_index,
+		computeTypeSizeInBits(resolved_alias.type_index),
+		token,
+		CVQualifier::None,
+		ReferenceQualifier::None);
+}
+
+int checkedPointerDepthToInt(size_t pointer_depth) {
+	if (pointer_depth > static_cast<size_t>(std::numeric_limits<int>::max())) {
+		throw InternalError("Pointer depth overflow while rebuilding resolved alias type");
+	}
+	return static_cast<int>(pointer_depth);
+}
+
+std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimensions, const std::vector<size_t>& suffix_dimensions) {
+	prefix_dimensions.reserve(prefix_dimensions.size() + suffix_dimensions.size());
+	prefix_dimensions.insert(prefix_dimensions.end(), suffix_dimensions.begin(), suffix_dimensions.end());
+	return prefix_dimensions;
+}
+
+void appendArrayDimensions(TypeSpecifierNode& target, std::vector<size_t> prefix_dimensions) {
+	if (prefix_dimensions.empty()) {
+		return;
+	}
+	target.set_array_dimensions(concatenateArrayDimensions(std::move(prefix_dimensions), target.array_dimensions()));
+}
+
+void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
+	if (resolved_alias.cv_qualifier != CVQualifier::None) {
+		target.add_cv_qualifier(resolved_alias.cv_qualifier);
+	}
+	target.add_pointer_levels(checkedPointerDepthToInt(resolved_alias.pointer_depth));
+	// Alias-added lvalue references must win during reference collapsing, while
+	// alias-added rvalue references only apply if the substituted target was not
+	// already a reference.
+	if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
+		target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	} else if (resolved_alias.reference_qualifier == ReferenceQualifier::RValueReference &&
+			   target.reference_qualifier() == ReferenceQualifier::None) {
+		target.set_reference_qualifier(ReferenceQualifier::RValueReference);
+	}
+	appendArrayDimensions(target, resolved_alias.array_dimensions);
+	if (resolved_alias.function_signature.has_value() && !target.has_function_signature()) {
+		target.set_function_signature(*resolved_alias.function_signature);
+	}
+}
+
+// Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
+void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode& source) {
+	target.add_pointer_levels(static_cast<int>(source.pointer_depth()));
+	target.add_cv_qualifier(source.cv_qualifier());
+	if (source.reference_qualifier() != ReferenceQualifier::None) {
+		target.set_reference_qualifier(source.reference_qualifier());
+	}
+	appendArrayDimensions(target, source.array_dimensions());
+	if (source.has_function_signature() && !target.has_function_signature()) {
+		target.set_function_signature(source.function_signature());
+	}
+}
+
+} // namespace
 
 ASTNode ExpressionSubstitutor::substitute(const ASTNode& expr) {
 	if (!expr.has_value()) {
@@ -1077,6 +1185,20 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Substituting in type");
 	FLASH_LOG_FORMAT(Templates, Debug, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
 
+	if (type.type_index().is_valid()) {
+		const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+		if (type_info && type_info->isTypeAlias()) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+			if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
+				TypeSpecifierNode substituted_alias = substituteInType(buildTerminalTypeFromResolvedAlias(resolved_alias, type.token()));
+				applyResolvedAliasModifiers(substituted_alias, resolved_alias);
+				applyOuterTypeModifiers(substituted_alias, type);
+				return substituted_alias;
+			}
+		}
+	}
+
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
 	if (type.category() == TypeCategory::Template || isPlaceholderAutoType(type.category()) || type.category() == TypeCategory::UserDefined || type.category() == TypeCategory::TypeAlias) {
@@ -1091,6 +1213,13 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 		// Look up this template parameter in our substitution map
 		auto it = param_map_.find(type_name);
+		if (it == param_map_.end()) {
+			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, type_name, param_map_)) {
+				FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", type_name, " -> ", *canonical_type_name);
+				type_name = *canonical_type_name;
+				it = param_map_.find(type_name);
+			}
+		}
 		if (it != param_map_.end()) {
 			const TemplateTypeArg& subst = it->second;
 			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name,
