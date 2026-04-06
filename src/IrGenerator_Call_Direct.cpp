@@ -956,9 +956,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return;
 		}
 		std::string_view parent = resolved_target->parent_struct_name();
+		// Decl-only member-like calls still need the legacy lookup/remap path; sema only
+		// becomes authoritative here once the call node already carries a concrete callee.
 		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
 			return;
 		}
+		// Qualified/precomputed member calls still rely on the legacy remapping path for
+		// template-instantiation-sensitive owner recovery.
 		if (!parent.empty() && (has_precomputed_mangled || callExprNode.has_qualified_name())) {
 			return;
 		}
