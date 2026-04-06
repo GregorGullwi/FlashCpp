@@ -626,6 +626,18 @@ void AstToIr::finalizeConstructorCallOp(
 	const StructTypeInfo& target_struct_info,
 	const Token& source_token) const {
 	(void)source_token;
+	if (target_struct_info.own_type_index_.has_value()) {
+		ctor_op.target_type_index = *target_struct_info.own_type_index_;
+	} else if (ctor_op.resolved_constructor && ctor_op.resolved_constructor->owning_type_index().is_valid()) {
+		ctor_op.target_type_index = ctor_op.resolved_constructor->owning_type_index();
+	}
+	if (!ctor_op.target_type_index.is_valid()) {
+		throw InternalError(std::string(StringBuilder()
+											.append("ConstructorCallOp missing target type index for '")
+											.append(StringTable::getStringView(target_struct_info.name))
+											.append("'")
+											.commit()));
+	}
 	const bool is_metadata_free_implicit_default_ctor =
 		ctor_op.arguments.empty() &&
 		target_struct_info.findDefaultConstructor() == nullptr &&

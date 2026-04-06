@@ -4808,40 +4808,38 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	}
 
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
-	const TypeInfo* actual_ctor_owner_type_info = nullptr;
-	if (actual_ctor) {
-		const TypeIndex ctor_owner_type_index = actual_ctor->owning_type_index();
-		if (ctor_owner_type_index.is_valid()) {
-			actual_ctor_owner_type_info = tryGetTypeInfo(ctor_owner_type_index);
+	auto resolveConstructorTargetTypeInfo = [&]() -> const TypeInfo* {
+		if (actual_ctor) {
+			const TypeIndex ctor_owner_type_index = actual_ctor->owning_type_index();
+			if (ctor_owner_type_index.is_valid()) {
+				if (const TypeInfo* type_info = tryGetTypeInfo(ctor_owner_type_index)) {
+					return type_info;
+				}
+			}
 		}
+		if (ctor_op.target_type_index.is_valid()) {
+			return tryGetTypeInfo(ctor_op.target_type_index);
+		}
+		return nullptr;
+	};
+	const TypeInfo* actual_ctor_owner_type_info = resolveConstructorTargetTypeInfo();
+	if (!actual_ctor_owner_type_info) {
+		throw InternalError(std::string(StringBuilder()
+											.append("ConstructorCallOp missing target type info for '")
+											.append(struct_name)
+											.append("'")
+											.commit()));
 	}
+	const std::string_view resolved_struct_name = StringTable::getStringView(actual_ctor_owner_type_info->name());
 
 	if (std::holds_alternative<TempVar>(ctor_op.object)) {
 		const TempVar temp_var = std::get<TempVar>(ctor_op.object);
 
 			// Get struct size for proper stack allocation
-		int struct_size_bits = 64;  // Default to 8 bytes
-		if (actual_ctor_owner_type_info) {
-			struct_size_bits = actual_ctor_owner_type_info->sizeInBits().value;
-			FLASH_LOG_FORMAT(Codegen, Debug,
-							 "Constructor for {} used resolved ctor type_info with size {} bits",
-							 struct_name, struct_size_bits);
-		} else {
-			auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-			if (struct_type_it != getTypesByNameMap().end()) {
-				const TypeInfo* type_info = struct_type_it->second;
-				if (type_info) {
-					struct_size_bits = type_info->sizeInBits().value;
-					FLASH_LOG_FORMAT(Codegen, Debug,
-									 "Constructor for {} found type_info with size {} bits",
-									 struct_name, struct_size_bits);
-				}
-			} else {
-				FLASH_LOG_FORMAT(Codegen, Debug,
-								 "Constructor for {} NOT found in getTypesByNameMap()",
-								 struct_name);
-			}
-		}
+		int struct_size_bits = actual_ctor_owner_type_info->sizeInBits().value;
+		FLASH_LOG_FORMAT(Codegen, Debug,
+						 "Constructor for {} used resolved ctor type_info with size {} bits",
+						 resolved_struct_name, struct_size_bits);
 
 			// TempVars can be either stack-allocated or heap-allocated
 			// Use is_heap_allocated flag to distinguish:
@@ -4861,23 +4859,10 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 			// If this is an array element constructor call, adjust offset for the specific element
 		if (ctor_op.array_index.has_value()) {
 				// Look up struct size to calculate element offset
-			if (actual_ctor_owner_type_info) {
-				size_t element_size = toSizeT(actual_ctor_owner_type_info->sizeInBytes());
-				size_t index = ctor_op.array_index.value();
-					// Adjust offset: base_offset + (index * element_size)
-				object_offset += static_cast<int>(index * element_size);
-			} else {
-				auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-				if (struct_type_it != getTypesByNameMap().end()) {
-					const TypeInfo* type_info = struct_type_it->second;
-					if (type_info) {
-						size_t element_size = toSizeT(type_info->sizeInBytes());
-						size_t index = ctor_op.array_index.value();
-							// Adjust offset: base_offset + (index * element_size)
-						object_offset += static_cast<int>(index * element_size);
-					}
-				}
-			}
+			size_t element_size = toSizeT(actual_ctor_owner_type_info->sizeInBytes());
+			size_t index = ctor_op.array_index.value();
+				// Adjust offset: base_offset + (index * element_size)
+			object_offset += static_cast<int>(index * element_size);
 		}
 	}
 
@@ -5183,38 +5168,15 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// For nested classes like "Outer::Inner", function_name="Inner" and class_name="Outer::Inner"
 	std::string function_name;
 	std::string class_name;
-	size_t last_colon_pos = struct_name.rfind("::");
+	size_t last_colon_pos = resolved_struct_name.rfind("::");
 	if (last_colon_pos != std::string::npos) {
 			// Nested class: "Outer::Inner" -> function="Inner", class="Outer::Inner" (full name)
-		function_name = struct_name.substr(last_colon_pos + 2);
-		class_name = struct_name;  // Keep full name for proper constructor detection
+		function_name = std::string(resolved_struct_name.substr(last_colon_pos + 2));
+		class_name = std::string(resolved_struct_name);  // Keep full name for proper constructor detection
 	} else {
 			// Regular class: function_name = class_name = struct_name
-		function_name = struct_name;
-		class_name = struct_name;
-		if (actual_ctor_owner_type_info) {
-			class_name = std::string(StringTable::getStringView(actual_ctor_owner_type_info->name()));
-		} else {
-				// Check if the struct's constructors are registered under a namespace-qualified name.
-				// This happens when a struct is defined inside a namespace (e.g., std::my_type)
-				// but the ctor_op.struct_name only has the unqualified name (e.g., "my_type").
-			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-			if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
-				const StructTypeInfo* si = type_it->second->getStructInfo();
-				if (si && !si->member_functions.empty()) {
-					for (const auto& mf : si->member_functions) {
-						if (mf.is_constructor && mf.function_decl.is<ConstructorDeclarationNode>()) {
-							std::string_view ctor_struct = StringTable::getStringView(
-								mf.function_decl.as<ConstructorDeclarationNode>().struct_name());
-							if (!ctor_struct.empty() && ctor_struct.find("::") != std::string_view::npos) {
-								class_name = std::string(ctor_struct);
-								break;
-							}
-						}
-					}
-				}
-			}
-		}
+		function_name = std::string(resolved_struct_name);
+		class_name = std::string(resolved_struct_name);
 	}
 
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};

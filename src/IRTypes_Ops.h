@@ -678,6 +678,7 @@ struct DereferenceStoreOp {
 // Constructor call (invoke constructor on object)
 struct ConstructorCallOp {
 	StringHandle struct_name;						  // Pure StringHandle
+	TypeIndex target_type_index{};				  // Authoritative constructed type identity
 	std::variant<StringHandle, TempVar> object;	// Object instance ('this' or temp)
 	std::vector<TypedValue> arguments;			   // Constructor arguments
 	const ConstructorDeclarationNode* resolved_constructor = nullptr;

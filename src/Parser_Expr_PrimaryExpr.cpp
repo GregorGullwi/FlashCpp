@@ -2062,6 +2062,28 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::error("Expected ')' after function call arguments", current_token_);
 				}
 
+				if (!template_args.has_value()) {
+					std::string_view qualified_name = buildQualifiedNameFromHandle(qual_id.namespace_handle(), qual_id.name());
+					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
+					auto type_it = getTypesByNameMap().find(qualified_handle);
+					if (type_it == getTypesByNameMap().end()) {
+						type_it = getTypesByNameMap().find(qual_id.name_handle());
+					}
+					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
+						const TypeInfo& type_info = *type_it->second;
+						const StructTypeInfo* struct_info = type_info.getStructInfo();
+						const SizeInBits type_size = struct_info ? struct_info->sizeInBits() : SizeInBits{};
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(
+							type_info.type_index_.withCategory(TypeCategory::Struct),
+							type_size,
+							final_identifier,
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), final_identifier));
+						return ParseResult::success(*result);
+					}
+				}
+
 			// If not found OR if it's a template (not an instantiated function), try template instantiation
 			// Also try if explicit template arguments were provided (to handle overload resolution)
 				if (((!identifierType.has_value() || identifierType->is<TemplateFunctionDeclarationNode>()) ||
