@@ -247,7 +247,6 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 
 	// Emit constructor call (default ctor to allocate the struct)
 	ConstructorCallOp ctor_op;
-	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
 	// Keep any callable default-constructor annotation on the temporary object even
 	// when aggregate-style member stores will finish its initialization afterwards.

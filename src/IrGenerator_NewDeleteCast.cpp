@@ -107,7 +107,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 										// If struct has a constructor, call it with initializer list elements
 									if (struct_info->hasAnyConstructor()) {
 										ConstructorCallOp ctor_op;
-										ctor_op.struct_name = type_info->name();
 										ctor_op.object = element_ptr;
 										ctor_op.is_heap_allocated = true;
 										if (init_list.initializers().empty()) {
@@ -171,13 +170,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				// Check if struct type needs a cookie (has destructor)
 			bool needs_ctor_loop = false;
 			const StructTypeInfo* array_struct_info = nullptr;
-			StringHandle array_struct_name_handle{};
 			if (type_cat == TypeCategory::Struct) {
 				TypeIndex type_index = type_spec.type_index();
 				if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 					if (type_info->struct_info_ && type_info->struct_info_->hasAnyConstructor()) {
 						array_struct_info = type_info->struct_info_.get();
-						array_struct_name_handle = type_info->name();
 						needs_ctor_loop = true;
 						op.needs_cookie = type_info->struct_info_->hasDestructor();
 					}
@@ -217,7 +214,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 								if (init.is<InitializerListNode>() && struct_info->hasAnyConstructor()) {
 									const InitializerListNode& init_list = init.as<InitializerListNode>();
 									ConstructorCallOp ctor_op;
-									ctor_op.struct_name = type_info->name();
 									ctor_op.object = element_ptr;
 									ctor_op.is_heap_allocated = true;
 									if (init_list.initializers().empty()) {
@@ -314,7 +310,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 
 					// Call default constructor
 				ConstructorCallOp ctor_op;
-				ctor_op.struct_name = array_struct_name_handle;
 				ctor_op.object = elem_ptr;
 				ctor_op.is_heap_allocated = true;
 				fillInDefaultConstructorArguments(ctor_op, *array_struct_info);
@@ -363,7 +358,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					if (type_info->struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the placement address
 						ConstructorCallOp ctor_op;
-						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
 						const auto& ctor_args = newExpr.constructor_args();
@@ -407,7 +401,6 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					if (type_info->struct_info_->hasAnyConstructor()) {
 							// Generate constructor call on the newly allocated object
 						ConstructorCallOp ctor_op;
-						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
 						const auto& ctor_args = newExpr.constructor_args();

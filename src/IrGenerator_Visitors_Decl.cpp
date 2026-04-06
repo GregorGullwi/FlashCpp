@@ -1657,9 +1657,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 												.commit()));
 		}
 
-			// Build constructor call: StructName::StructName(this, args...)
+		// Build constructor call: StructName::StructName(this, args...)
 		ConstructorCallOp ctor_op;
-		ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
 		const ConstructorDeclarationNode* resolved_ctor =
 			resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
@@ -1715,9 +1714,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				}
 				const StructTypeInfo* base_struct_info = base_type_info->getStructInfo();
 
-					// Build constructor call: Base::Base(this, args...)
+				// Build constructor call: Base::Base(this, args...)
 				ConstructorCallOp ctor_op;
-				ctor_op.struct_name = base_type_info->name();
 				ctor_op.object = StringTable::getOrInternStringHandle("this");
 					// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 				assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
@@ -1835,11 +1833,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 							continue;  // Skip if base has no constructors
 						}
 
-							// Build constructor call: Base::Base(this, other)
-							// For copy constructors, pass 'other' as the copy source (cast to base class reference)
-							// For move constructors, pass 'other' as the move source
+						// Build constructor call: Base::Base(this, other)
+						// For copy constructors, pass 'other' as the copy source (cast to base class reference)
+						// For move constructors, pass 'other' as the move source
 						ConstructorCallOp ctor_op;
-						ctor_op.struct_name = base_type_info->name();
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
 						if (const StructMemberFunction* base_same_type_ctor =
 								base_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
@@ -1887,7 +1884,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ir_.addInstruction(IrInstruction(IrOpcode::AddressOfMember, std::move(addr_member_op), node.name_token()));
 
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = member_type_info->name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
 								if (const StructMemberFunction* member_same_type_ctor =
 										member_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
@@ -2213,7 +2209,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 									// Call the nested struct's default constructor instead of zero-initializing
 								const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = member_type_info.name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
 									// No arguments for default constructor
 									// Use base_class_offset to specify the member's offset within the parent struct
@@ -2476,7 +2471,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								// Call the nested struct's default constructor instead of zero-initializing
 							const TypeInfo& member_type_info = getTypeInfo(member.type_index);
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = member_type_info.name();
 							ctor_op.object = StringTable::getOrInternStringHandle("this");
 								// No arguments for default constructor
 								// Use base_class_offset to specify the member's offset within the parent struct
@@ -2902,7 +2896,6 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 
 	// Build ConstructorCallOp
 	ConstructorCallOp ctor_op;
-	ctor_op.struct_name = constructor_name;
 	ctor_op.object = ret_var;  // The temporary variable that will hold the result
 
 	// Find the matching constructor to get parameter types for reference handling
@@ -3113,7 +3106,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	if (!struct_info) {
 		throw InternalError(std::string(StringBuilder()
 											.append("Internal error: struct info not found for constructor call type '")
-											.append(StringTable::getStringView(ctor_op.struct_name))
+											.append(StringTable::getStringView(constructor_name))
 											.append("'")
 											.append(formatTokenLocationSuffix(constructorCallNode.called_from()))
 											.commit()));

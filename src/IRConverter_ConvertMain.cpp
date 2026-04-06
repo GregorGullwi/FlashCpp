@@ -4762,12 +4762,10 @@ bool IrToObjConverter<TWriterClass>::emitSameTypeCopyOrMoveConstructorCall(TypeI
 
 template <class TWriterClass>
 void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& instruction) {
-		// Constructor call format: ConstructorCallOp {struct_name, object, arguments}
+		// Constructor call format: ConstructorCallOp {target_type_index, object, arguments}
 	const ConstructorCallOp& ctor_op = instruction.getTypedPayload<ConstructorCallOp>();
 
 	flushAllDirtyRegisters();
-
-	std::string_view struct_name = StringTable::getStringView(ctor_op.struct_name);
 
 		// Get the object's stack offset
 	int object_offset = 0;
@@ -4826,7 +4824,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	};
 	const TypeInfo* actual_ctor_owner_type_info = resolveConstructorTargetTypeInfo();
 	if (!actual_ctor_owner_type_info) {
-		throw InternalError("ConstructorCallOp missing target type info for '" + std::string(struct_name) + "'");
+		throw InternalError("ConstructorCallOp missing target type info");
 	}
 	const std::string_view resolved_struct_name = StringTable::getStringView(actual_ctor_owner_type_info->name());
 
@@ -4870,7 +4868,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 	FLASH_LOG_FORMAT(Codegen, Debug,
 					 "Constructor call for {}: object_is_pointer={}, object_offset={}, base_class_offset={}",
-					 struct_name, object_is_pointer, object_offset, ctor_op.base_class_offset);
+					 resolved_struct_name, object_is_pointer, object_offset, ctor_op.base_class_offset);
 
 	if (object_is_pointer) {
 			// For pointers (this, heap-allocated): reload the pointer value (not its address)
@@ -4911,7 +4909,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	if (!actual_ctor && num_params != 0) {
 		throw InternalError(std::string(StringBuilder()
 											.append("ConstructorCallOp reached IRConverter without resolved constructor for '")
-											.append(struct_name)
+											.append(resolved_struct_name)
 											.append("'")
 											.commit()));
 	}
@@ -5164,17 +5162,15 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// Generate the call instruction
 		// For constructors, the function name is the last component of the class name
 		// For nested classes like "Outer::Inner", function_name="Inner" and class_name="Outer::Inner"
-	std::string function_name;
-	std::string class_name;
+	std::string_view function_name;
+	std::string_view class_name = resolved_struct_name;
 	size_t last_colon_pos = resolved_struct_name.rfind("::");
 	if (last_colon_pos != std::string::npos) {
 			// Nested class: "Outer::Inner" -> function="Inner", class="Outer::Inner" (full name)
-		function_name = std::string(resolved_struct_name.substr(last_colon_pos + 2));
-		class_name = std::string(resolved_struct_name);  // Keep full name for proper constructor detection
+		function_name = resolved_struct_name.substr(last_colon_pos + 2);
 	} else {
 			// Regular class: function_name = class_name = struct_name
-		function_name = std::string(resolved_struct_name);
-		class_name = std::string(resolved_struct_name);
+		function_name = resolved_struct_name;
 	}
 
 	std::array<uint8_t, 5> callInst = {0xE8, 0, 0, 0, 0};
@@ -5183,7 +5179,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		// Build FunctionSignature for proper overload resolution
 	TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
-	sig.class_name = class_name;
+	sig.class_name = std::string(class_name);
 
 		// Generate the correct mangled name for this specific constructor overload
 	auto mangled_name = writer.generateMangledName(function_name, sig);

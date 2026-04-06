@@ -1472,7 +1472,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// Generate constructor call with parameters from initializer list
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
 								ctor_op.resolved_constructor = matching_ctor;
 
@@ -2191,9 +2190,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (is_aggregate && num_args <= type_info->struct_info_->members.size()) {
 								FLASH_LOG(Codegen, Debug, "Using aggregate parenthesized init for ", type_info->name());
 								used_aggregate_paren_init = true;
-									// Emit default constructor call first (zero-initializes the object)
+								// Emit default constructor call first (zero-initializes the object)
 								ConstructorCallOp default_ctor_op;
-								default_ctor_op.struct_name = type_info->name();
 								default_ctor_op.object = decl.identifier_token().handle();
 								fillInDefaultConstructorArguments(default_ctor_op, *type_info->struct_info_);
 								finalizeConstructorCallOp(default_ctor_op, *type_info->struct_info_, decl.identifier_token());
@@ -2244,7 +2242,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 							// Create constructor call with the declared variable as the object
 							ConstructorCallOp ctor_op;
-							ctor_op.struct_name = type_info->name();
 							ctor_op.object = decl.identifier_token().handle();
 							ctor_op.resolved_constructor = matching_ctor;
 
@@ -2446,7 +2443,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 						const ConstructorDeclarationNode* selected_ctor = sema_selected_converting_ctor;
 						ConstructorCallOp ctor_op;
-						ctor_op.struct_name = type_info->name();
 						ctor_op.object = decl.identifier_token().handle();
 
 							// Add initializer as constructor parameter
@@ -2628,7 +2624,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									// Generate constructor call for each array element
 								for (size_t i = 0; i < ctor_array_count; i++) {
 									ConstructorCallOp ctor_op;
-									ctor_op.struct_name = type_info->name();
 										// For arrays, we need to specify the element to construct
 									ctor_op.object = decl.identifier_token().handle();
 									ctor_op.array_index = i;	 // Mark this as an array element constructor call
@@ -2642,9 +2637,8 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 								}
 							} else {
-									// Single object (non-array) - generate single constructor call
+								// Single object (non-array) - generate single constructor call
 								ConstructorCallOp ctor_op;
-								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
 
 								if (default_ctor && default_ctor->function_decl.is<ConstructorDeclarationNode>()) {
