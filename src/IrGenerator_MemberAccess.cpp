@@ -1075,9 +1075,6 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				TempVar ptr_result = var_counter.next();
 
 				CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
-				if (!call_op.return_size_in_bits.is_set()) {
-					call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
-				}
 				call_op.function_name = mangled_name;
 
 				// Add 'this' pointer as first argument
