@@ -110,6 +110,29 @@ void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const Func
 		context_->isLLP64());
 }
 
+static TypeIndex getCallReturnTypeIndex(const TypeSpecifierNode& return_type) {
+	if (return_type.type_index().is_valid()) {
+		return return_type.type_index().withCategory(return_type.type());
+	}
+
+	TypeIndex native = nativeTypeIndex(return_type.type());
+	return native.is_valid()
+		? native.withCategory(return_type.type())
+		: TypeIndex{}.withCategory(return_type.type());
+}
+
+void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type) {
+	const TypeSpecifierNode normalized_return_type = normalizeCallReturnType(return_type);
+	call_op.return_type_index = getCallReturnTypeIndex(normalized_return_type);
+	call_op.return_size_in_bits = SizeInBits{
+		(normalized_return_type.pointer_depth() > 0 ||
+		 normalized_return_type.is_reference() ||
+		 normalized_return_type.is_rvalue_reference())
+			? 64
+			: static_cast<int>(normalized_return_type.size_in_bits())};
+	populateReferenceReturnInfo(call_op, normalized_return_type);
+}
+
 ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const {
 	return makeExprResult(
 		getFunctionSignatureReturnTypeIndex(signature),
@@ -1843,13 +1866,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		best_return_type = &decl_node.type_node().as<TypeSpecifierNode>();
 	}
 	const auto& return_type = *best_return_type;
-	call_op.return_type_index = return_type.type_index();
-		// For pointers and references, use 64-bit size (pointer size on x64)
-		// References are represented as addresses at the IR level
-	call_op.return_size_in_bits = SizeInBits{(return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-												 ? 64
-												 : static_cast<int>(return_type.size_in_bits())};
-	populateReferenceReturnInfo(call_op, return_type);
+	populateCallReturnInfo(call_op, return_type);
 	call_op.is_member_function = false;
 	if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 		call_op.is_member_function = true;

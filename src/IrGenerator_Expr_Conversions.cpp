@@ -528,18 +528,12 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 							// Generate the call
 						TempVar ret_var = var_counter.next();
 
-							// Create CallOp
+						// Create CallOp
 						CallOp call_op;
 						call_op.result = ret_var;
-						call_op.return_type_index = return_type.type_index();
-							// For pointer return types, use 64-bit size (pointer size on x64)
-						if (return_type.pointer_depth() > 0) {
-							call_op.return_size_in_bits = SizeInBits{64};
-						} else {
-							call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
-							if (!call_op.return_size_in_bits.is_set()) {
-								call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
-							}
+						populateCallReturnInfo(call_op, return_type);
+						if (!call_op.return_size_in_bits.is_set()) {
+							call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 						}
 						call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 						call_op.is_variadic = false;
@@ -1671,8 +1665,7 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 	CallOp call_op;
 	call_op.result = ret_var;
 	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = return_type.type_index();
-	call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
+	populateCallReturnInfo(call_op, return_type);
 	if (!call_op.return_size_in_bits.is_set()) {
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
 			return_type_info && return_type_info->struct_info_) {

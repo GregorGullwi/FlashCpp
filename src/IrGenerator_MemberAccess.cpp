@@ -1076,8 +1076,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 
 				CallOp call_op;
 				call_op.result = ptr_result;
-				call_op.return_type_index = return_type.type_index();
-				call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
+				populateCallReturnInfo(call_op, return_type);
 				if (!call_op.return_size_in_bits.is_set()) {
 					call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 				}
