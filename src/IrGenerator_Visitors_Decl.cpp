@@ -1650,9 +1650,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 		if (!enclosing_struct_info) {
 			throw InternalError(std::string(StringBuilder()
-												.append("Delegating constructor missing struct info for '")
+												.append("Internal error: struct info not found in type map for delegating constructor '")
 												.append(struct_name_for_ctor)
 												.append("'")
+												.append(formatTokenLocationSuffix(node.name_token()))
 												.commit()));
 		}
 
@@ -1725,9 +1726,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				if (base_init) {
 					if (!base_struct_info) {
 						throw InternalError(std::string(StringBuilder()
-													.append("Base initializer missing struct info for '")
+													.append("Internal error: struct info not found for base class '")
 													.append(StringTable::getStringView(base_type_info->name()))
 													.append("'")
+													.append(formatTokenLocationSuffix(node.name_token()))
 													.commit()));
 					}
 					const ConstructorDeclarationNode* resolved_ctor =
@@ -3110,9 +3112,10 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// Add the constructor call instruction (use ConstructorCall opcode)
 	if (!struct_info) {
 		throw InternalError(std::string(StringBuilder()
-											.append("Constructor call missing struct info for '")
+											.append("Internal error: struct info not found for constructor call type '")
 											.append(StringTable::getStringView(ctor_op.struct_name))
 											.append("'")
+											.append(formatTokenLocationSuffix(constructorCallNode.called_from()))
 											.commit()));
 	}
 	finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());

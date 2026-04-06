@@ -5,6 +5,13 @@
 // Forward-declare to avoid pulling SemanticAnalysis.h into every TU that includes AstToIr.h
 class SemanticAnalysis;
 
+inline std::string formatTokenLocationSuffix(const Token& token) {
+	if (token.line() == 0) {
+		return {};
+	}
+	return " at " + std::to_string(token.line()) + ":" + std::to_string(token.column());
+}
+
 class AstToIr {
 public:
 	AstToIr() = delete;	// Require valid references

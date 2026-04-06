@@ -45,6 +45,17 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 	return false;
 }
 
+[[noreturn]] void reportNoMatchingConstructor(StringHandle struct_name, std::string_view init_kind, const Token& token) {
+	throw CompileError(std::string(StringBuilder()
+									   .append("No matching constructor for ")
+									   .append(init_kind)
+									   .append(" of '")
+									   .append(StringTable::getStringView(struct_name))
+									   .append("'")
+									   .append(formatTokenLocationSuffix(token))
+									   .commit()));
+}
+
 bool isDirectObjectPrvalueBase(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return false;
@@ -350,15 +361,6 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_info.struct_name = type_info_ref.name();
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
-	};
-	auto throwNoMatchingConstructor = [](StringHandle struct_name, std::string_view init_kind) -> void {
-		throw CompileError(std::string(StringBuilder()
-										   .append("No matching constructor for ")
-										   .append(init_kind)
-										   .append(" of '")
-										   .append(StringTable::getStringView(struct_name))
-										   .append("'")
-										   .commit()));
 	};
 
 		// Check if this is a global variable (declared at global scope)
@@ -2228,8 +2230,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 
 						if (!used_aggregate_paren_init) {
-							if (!matching_ctor && num_args > 0) {
-								throwNoMatchingConstructor(type_info->name(), "direct initialization");
+							const bool allowImplicitDefault =
+								!matching_ctor &&
+								num_args == 0 &&
+								type_info->struct_info_->findDefaultConstructor() == nullptr &&
+								!type_info->struct_info_->hasAnyConstructor() &&
+								type_info->struct_info_->needs_default_constructor &&
+								!type_info->struct_info_->isDefaultConstructorDeleted();
+							if (!matching_ctor && !allowImplicitDefault) {
+								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
 							}
 							prepare_nested_template_ctor(*type_info, matching_ctor);
 
@@ -2557,7 +2566,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 						ctor_op.resolved_constructor = selected_ctor;
 						if (is_converting_ctor && !selected_ctor) {
-							throwNoMatchingConstructor(type_info->name(), "copy initialization");
+							reportNoMatchingConstructor(type_info->name(), "copy initialization", decl.identifier_token());
 						}
 						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
