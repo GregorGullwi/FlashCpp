@@ -1421,7 +1421,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								// did not annotate the brace-init path.
 								if (!has_matching_constructor) {
 									if (const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor()) {
-										if (resolved_ctor->struct_name() == struct_info.name) {
+										if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_index)) {
 											has_matching_constructor = true;
 											matching_ctor = resolved_ctor;
 											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
@@ -2084,7 +2084,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Find the matching constructor to get parameter types for reference handling
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
 						if (const ConstructorDeclarationNode* resolved_ctor = direct_ctor->resolved_constructor()) {
-							if (resolved_ctor->struct_name() == type_info->name()) {
+							if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_node.type_index())) {
 								matching_ctor = resolved_ctor;
 							}
 						}
