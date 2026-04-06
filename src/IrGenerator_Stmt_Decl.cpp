@@ -351,6 +351,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 		deferred_info.function_node = ASTNode(ctor);
 		deferred_member_functions_.push_back(std::move(deferred_info));
 	};
+	auto throwNoMatchingConstructor = [](StringHandle struct_name, std::string_view init_kind) -> void {
+		throw CompileError(std::string(StringBuilder()
+										   .append("No matching constructor for ")
+										   .append(init_kind)
+										   .append(" of '")
+										   .append(StringTable::getStringView(struct_name))
+										   .append("'")
+										   .commit()));
+	};
 
 		// Check if this is a global variable (declared at global scope)
 	bool is_global = (symbol_table.get_current_scope_type() == ScopeType::Global);
@@ -2219,6 +2228,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 
 						if (!used_aggregate_paren_init) {
+							if (!matching_ctor && num_args > 0) {
+								throwNoMatchingConstructor(type_info->name(), "direct initialization");
+							}
 							prepare_nested_template_ctor(*type_info, matching_ctor);
 
 							// Create constructor call with the declared variable as the object
@@ -2544,6 +2556,9 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 						ctor_op.resolved_constructor = selected_ctor;
+						if (is_converting_ctor && !selected_ctor) {
+							throwNoMatchingConstructor(type_info->name(), "copy initialization");
+						}
 						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));

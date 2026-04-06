@@ -1648,19 +1648,22 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 			struct_type_it != getTypesByNameMap().end()) {
 			enclosing_struct_info = struct_type_it->second->getStructInfo();
 		}
+		if (!enclosing_struct_info) {
+			throw InternalError(std::string(StringBuilder()
+												.append("Delegating constructor missing struct info for '")
+												.append(struct_name_for_ctor)
+												.append("'")
+												.commit()));
+		}
 
 			// Build constructor call: StructName::StructName(this, args...)
 		ConstructorCallOp ctor_op;
 		ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
-		const ConstructorDeclarationNode* resolved_ctor = nullptr;
-		if (enclosing_struct_info) {
-			resolved_ctor = resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
-		}
+		const ConstructorDeclarationNode* resolved_ctor =
+			resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
 		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
-		if (enclosing_struct_info) {
-			finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
-		}
+		finalizeConstructorCallOp(ctor_op, *enclosing_struct_info, node.name_token());
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 
@@ -1720,14 +1723,17 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				ctor_op.base_class_offset = static_cast<int>(base.offset);
 
 				if (base_init) {
-					const ConstructorDeclarationNode* resolved_ctor = nullptr;
-					if (base_struct_info) {
-						resolved_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
+					if (!base_struct_info) {
+						throw InternalError(std::string(StringBuilder()
+													.append("Base initializer missing struct info for '")
+													.append(StringTable::getStringView(base_type_info->name()))
+													.append("'")
+													.commit()));
 					}
+					const ConstructorDeclarationNode* resolved_ctor =
+						resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
 					appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
-					if (base_struct_info) {
-						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
-					}
+					finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
 						// If there's an explicit initializer, generate the constructor call
 					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				}
@@ -3102,9 +3108,14 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	}
 
 	// Add the constructor call instruction (use ConstructorCall opcode)
-	if (struct_info) {
-		finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
+	if (!struct_info) {
+		throw InternalError(std::string(StringBuilder()
+											.append("Constructor call missing struct info for '")
+											.append(StringTable::getStringView(ctor_op.struct_name))
+											.append("'")
+											.commit()));
 	}
+	finalizeConstructorCallOp(ctor_op, *struct_info, constructorCallNode.called_from());
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), constructorCallNode.called_from()));
 
 	// Mark the result as a prvalue eligible for RVO (C++17 mandatory copy elision)
