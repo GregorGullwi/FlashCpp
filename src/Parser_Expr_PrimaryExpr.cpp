@@ -1410,11 +1410,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Also check for type aliases and enums.  Per C++20 [expr.type.conv],
 			// T(expr) is a valid functional cast / explicit type conversion for any
 			// simple-type-specifier T, including typedef names and enum names.
-			// Struct types go through the normal constructor call path below.
+			// Class-type aliases must still go through the constructor-call path.
 			const TypeInfo* alias_info = lookupTypeInCurrentContext(identifier_token.handle());
-			if (alias_info && !alias_info->isStruct() &&
-				(alias_info->isTypeAlias() || alias_info->isEnum())) {
-				return parse_functional_cast(id_name, identifier_token);
+			if (alias_info && (alias_info->isTypeAlias() || alias_info->isEnum())) {
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
+				const TypeCategory resolved_type = resolved_alias.typeEnum();
+				if (!is_struct_type(resolved_type) && resolved_type != TypeCategory::UserDefined) {
+					return parse_functional_cast(id_name, identifier_token);
+				}
 			}
 		}
 
@@ -2344,29 +2348,37 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		// ENHANCED: In TemplateTypeArg context, also check for ',' or '>' or '<' because type aliases
 		// and template class names are commonly used as template arguments in <type_traits>
 		if (!identifierType && !found_as_type_alias && !peek().is_eof()) {
-			std::string_view peek = peek_info().value();
+			std::string_view peek_value = peek_info().value();
 			// Check getTypesByNameMap() if identifier is followed by :: (qualified name), ( (constructor call), or { (brace init)
-			bool should_check_types = (peek == "::" || peek == "(" || peek == "{");
+			bool should_check_types = (peek_value == "::" || peek_value == "(" || peek_value == "{");
 
 			// In template argument context, also check for various tokens that indicate a type context.
 			// Type aliases and template class names are commonly used as template arguments
 			// (e.g., first_t<false_type, ...>, __or_<is_reference<T>, is_function<T>>, declval<_Tp&>())
 			// The '&' and '&&' handle reference type declarators like T& or T&&
 			if (!should_check_types && context == ExpressionContext::TemplateTypeArg) {
-				should_check_types = (peek == "," || peek == ">" || peek == ">>" || peek == "<" ||
-									  peek == "&" || peek == "&&");
+				should_check_types = (peek_value == "," || peek_value == ">" || peek_value == ">>" || peek_value == "<" ||
+									  peek_value == "&" || peek_value == "&&");
 			}
 
 			if (should_check_types) {
 				StringHandle identifier_handle = identifier_token.handle();
-				auto type_it = getTypesByNameMap().find(identifier_handle);
-				if (type_it != getTypesByNameMap().end()) {
+				const TypeInfo* contextual_type_info = lookupTypeInCurrentContext(identifier_handle);
+				if (contextual_type_info) {
 					FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in getTypesByNameMap() (peek='{}', context={})",
-									 identifier_token.value(), peek, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
+									 identifier_token.value(), peek_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
 					found_as_type_alias = true;
 					// Mark that we found it as a type so it can be used for type references
 					// The actual type info will be retrieved later when needed
 				} else {
+					auto type_it = getTypesByNameMap().find(identifier_handle);
+					if (type_it != getTypesByNameMap().end()) {
+						FLASH_LOG_FORMAT(Parser, Debug, "Identifier '{}' found as type alias in getTypesByNameMap() (peek='{}', context={})",
+										 identifier_token.value(), peek_value, context == ExpressionContext::TemplateTypeArg ? "TemplateTypeArg" : "other");
+						found_as_type_alias = true;
+						// Mark that we found it as a type so it can be used for type references
+						// The actual type info will be retrieved later when needed
+					} else {
 					// Try namespace-qualified lookup: if we're inside a namespace, the type alias
 					// might be registered with a qualified name (e.g., "std::size_t")
 					NamespaceHandle current_namespace = gSymbolTable.get_current_namespace_handle();
@@ -2459,6 +2471,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								}
 							}
 						}
+					}
 					}
 				}
 			}
@@ -3649,9 +3662,42 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Identifier already consumed at line 1621
 			// Skip this check for lambda variables - they should be handled by postfix operator parsing
 			if (!is_lambda_variable && consume("("_tok)) {
+				auto tryResolveConstructorCallType = [&]() -> std::optional<std::pair<TypeIndex, SizeInBits>> {
+					const TypeInfo* type_info = lookupTypeInCurrentContext(identifier_token.handle());
+					if (!type_info) {
+						auto type_it = getTypesByNameMap().find(identifier_token.handle());
+						if (type_it != getTypesByNameMap().end()) {
+							type_info = type_it->second;
+						}
+					}
+					if (!type_info) {
+						return std::nullopt;
+					}
+
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+						type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+					const TypeCategory ctor_type = resolved_alias.typeEnum();
+					if (!resolved_alias.type_index.is_valid() ||
+						!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
+						resolved_alias.pointer_depth != 0 ||
+						resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+						resolved_alias.function_signature.has_value() ||
+						resolved_alias.isArray()) {
+						return std::nullopt;
+					}
+
+					SizeInBits type_size{};
+					if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(resolved_alias.type_index)) {
+						type_size = struct_info->sizeInBits();
+					} else if (resolved_alias.terminal_type_info) {
+						type_size = resolved_alias.terminal_type_info->sizeInBits();
+					}
+
+					return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
+				};
+
 				// First, check if this is a type name (constructor call)
-				auto type_it = getTypesByNameMap().find(identifier_token.handle());
-				if (type_it != getTypesByNameMap().end()) {
+				if (auto resolved_ctor_type = tryResolveConstructorCallType()) {
 					// This is a constructor call: TypeName(args)
 					// Parse constructor arguments
 					ChunkedVector<ASTNode> args;
@@ -3679,10 +3725,8 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					}
 
 					// Create TypeSpecifierNode for the constructor call
-					TypeIndex type_index = type_it->second->type_index_;
-					const SizeInBits type_size{getStructTypeSizeBits(type_index)};
 					auto type_spec_node = emplace_node<TypeSpecifierNode>(
-						type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+						resolved_ctor_type->first, resolved_ctor_type->second, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 
 					result = emplace_node<ExpressionNode>(
 						ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
@@ -5070,8 +5114,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 
 				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+				const TypeCategory ctor_type = resolved_alias.typeEnum();
 				if (!resolved_alias.type_index.is_valid() ||
-					!is_struct_type(resolved_alias.typeEnum()) ||
+					!(is_struct_type(ctor_type) || ctor_type == TypeCategory::UserDefined) ||
 					resolved_alias.pointer_depth != 0 ||
 					resolved_alias.reference_qualifier != ReferenceQualifier::None ||
 					resolved_alias.function_signature.has_value() ||
@@ -5086,7 +5131,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					type_size = resolved_alias.terminal_type_info->sizeInBits();
 				}
 
-				return std::pair{resolved_alias.type_index.withCategory(TypeCategory::Struct), type_size};
+				return std::pair{resolved_alias.type_index.withCategory(ctor_type), type_size};
 			};
 
 			if (found_as_type_alias && !identifierType && peek() == "("_tok) {
@@ -5155,14 +5200,14 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (is_aggregate) {
 						// For aggregates, use parse_brace_initializer which creates proper InitializerListNode
 						const SizeInBits type_size = resolved_ctor_type->second;
-						auto type_spec = TypeSpecifierNode(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+						auto type_spec = TypeSpecifierNode(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						ParseResult init_result = parse_brace_initializer(type_spec);
 						if (init_result.is_error()) {
 							return init_result;
 						}
 						// Wrap the result in a ConstructorCallNode so codegen knows the target type
 						if (init_result.node().has_value() && init_result.node()->is<InitializerListNode>()) {
-							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+							auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 							// Convert InitializerListNode initializers to ConstructorCallNode args
 							const InitializerListNode& init_list = init_result.node()->as<InitializerListNode>();
 							ChunkedVector<ASTNode> args;
@@ -5199,7 +5244,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 						}
 
 						const SizeInBits type_size = resolved_ctor_type->second;
-						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index.withCategory(TypeCategory::Struct), type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
+						auto type_spec_node = emplace_node<TypeSpecifierNode>(type_index, type_size, identifier_token, CVQualifier::None, ReferenceQualifier::None);
 						result = emplace_node<ExpressionNode>(ConstructorCallNode(type_spec_node, std::move(args), identifier_token));
 						return ParseResult::success(*result);
 					}

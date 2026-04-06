@@ -1,22 +1,21 @@
 template <typename T>
-struct RangeBox {
-	const T* first;
-	const T* last;
+struct PairBox {
+	T left;
+	T right;
 
-	RangeBox(const T* begin, const T* end)
-		: first(begin), last(end) {
+	PairBox(T lhs, T rhs)
+		: left(lhs), right(rhs) {
 	}
 
 	int size() const {
-		return static_cast<int>(last - first);
+		return static_cast<int>(left + right);
 	}
 };
 
-using IntRangeBox = RangeBox<int>;
+using IntPairBox = PairBox<int>;
 
 int main() {
-	int values[3] = {4, 5, 6};
-	IntRangeBox full(values, values + 3);
-	IntRangeBox tail(values + 1, values + 3);
-	return (full.size() == 3 && tail.size() == 2) ? 0 : 1;
+	IntPairBox first(19, 23);
+	IntPairBox second(20, 22);
+	return (first.size() == 42 && second.size() == 42) ? 0 : 1;
 }
