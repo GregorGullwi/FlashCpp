@@ -1793,7 +1793,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										resolved = true;
 									} else {
 										// Unresolvable expression argument - cannot safely instantiate
-										FLASH_LOG(Templates, Warning, "Could not resolve expression arg for deferred base '", base_tpl_name, "' - skipping");
+										FLASH_LOG(Templates, Warning,
+												  "Could not resolve expression arg for deferred base '",
+												  base_tpl_name,
+												  "' after substitution/evaluation (node type=",
+												  arg_info.node.type_name(),
+												  ") - skipping");
 										resolution_failed = true;
 									}
 								}

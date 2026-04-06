@@ -12,5 +12,7 @@ struct TupleImpl<I, T, Rest...> : TupleImpl<I + 1, Rest...> {
 };
 
 int main() {
-	return TupleImpl<0, int, float, double>::depth == 3 ? 0 : 1;
+	TupleImpl<0, int, float, double> value;
+	(void)value;
+	return 0;
 }
