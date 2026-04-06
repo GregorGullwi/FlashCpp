@@ -289,39 +289,11 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							std::vector<TypeSpecifierNode> arg_types;
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
-							if (!resolution.is_ambiguous && resolution.has_match && resolution.selected_overload) {
+							if (resolution.is_ambiguous) {
+								throw CompileError("Ambiguous constructor call");
+							}
+							if (resolution.has_match && resolution.selected_overload) {
 								tryMaterializeReturnCtor(resolution.selected_overload);
-							}
-						}
-						if (!sema_applied_conversion) {
-							auto arity_resolution = resolve_constructor_overload_arity(*target_struct_info, 1, true);
-							if (!arity_resolution.is_ambiguous && arity_resolution.has_match) {
-								tryMaterializeReturnCtor(arity_resolution.selected_overload);
-							}
-						}
-						if (!sema_applied_conversion) {
-							const ConstructorDeclarationNode* lone_viable_ctor = nullptr;
-							size_t viable_ctor_count = 0;
-							for (const auto& member_func : target_struct_info->member_functions) {
-								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-									continue;
-								}
-								const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-								if (isImplicitCopyOrMoveConstructorCandidate(*target_struct_info, ctor_decl)) {
-									continue;
-								}
-								const auto& params = ctor_decl.parameter_nodes();
-								const size_t min_required = countMinRequiredArgs(ctor_decl);
-								if (min_required <= 1 && params.size() >= 1) {
-									lone_viable_ctor = &ctor_decl;
-									++viable_ctor_count;
-									if (viable_ctor_count > 1) {
-										break;
-									}
-								}
-							}
-							if (viable_ctor_count == 1) {
-								tryMaterializeReturnCtor(lone_viable_ctor);
 							}
 						}
 					}
