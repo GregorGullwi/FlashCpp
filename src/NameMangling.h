@@ -162,6 +162,41 @@ inline TypeSpecifierNode normalizeTypeSpecifierForMangling(TypeSpecifierNode typ
 	return type_node;
 }
 
+inline TemplateTypeArg normalizeTemplateTypeArgForMangling(TemplateTypeArg arg) {
+	if (!arg.type_index.is_valid()) {
+		return arg;
+	}
+
+	const auto raw_category = static_cast<uint8_t>(arg.category());
+	constexpr auto max_valid_category = static_cast<uint8_t>(TypeCategory::Template);
+	const bool category_out_of_range = raw_category > max_valid_category;
+
+	const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(arg.type_index);
+	if (alias_info.type_index.is_valid()) {
+		const TypeCategory resolved_category = alias_info.typeEnum();
+		const bool should_use_resolved_category =
+			category_out_of_range ||
+			arg.category() == TypeCategory::Invalid ||
+			arg.category() == TypeCategory::TypeAlias ||
+			(arg.category() == TypeCategory::UserDefined && resolved_category != TypeCategory::UserDefined) ||
+			(arg.category() == TypeCategory::Template && resolved_category != TypeCategory::Template);
+		if (should_use_resolved_category) {
+			arg.type_index = alias_info.type_index.withCategory(resolved_category);
+		}
+		if (!arg.function_signature.has_value() && alias_info.function_signature.has_value()) {
+			arg.function_signature = alias_info.function_signature;
+		}
+	}
+
+	if ((category_out_of_range || arg.category() == TypeCategory::Invalid) && arg.type_index.is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(arg.type_index)) {
+			arg.type_index = arg.type_index.withCategory(type_info->typeEnum());
+		}
+	}
+
+	return arg;
+}
+
 // Generate MSVC type code for mangling
 // Works with both std::string and StringBuilder
 template <typename OutputType>
@@ -700,7 +735,8 @@ inline void appendItaniumTypeTemplateArgs(
 		return;
 
 	output += 'I';  // Start template args
-	for (const auto& arg : type_args) {
+	for (auto arg : type_args) {
+		arg = normalizeTemplateTypeArgForMangling(arg);
 		if (arg.is_value) {
 			// Non-type template argument (value)
 			output += 'L';
