@@ -250,7 +250,7 @@ int AstToIr::calculateIdentifierSizeBits(const TypeSpecifierNode& type_node, boo
 			// be resolved before codegen reaches identifier lowering.
 		if (size_bits == 0) {
 			requireResolvedCodegenType(type_node.type(), "identifier size calculation");
-			const int fallback_size = get_type_size_bits(type_node.category());
+			const int fallback_size = getTypeSpecSizeBits(type_node);
 			FLASH_LOG(Codegen, Warning, "Parser returned size_bits=0 for identifier '", identifier_name,
 					  "' (type=", static_cast<int>(type_node.type()), ") - using fallback calculation (fallback_size=",
 					  fallback_size, ")");

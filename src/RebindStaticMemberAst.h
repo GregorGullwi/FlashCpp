@@ -359,6 +359,7 @@ std::optional<ASTNode> tryRebindNonExpressionNode(
 			std::move(rebound_initializer),
 			var_decl.storage_class());
 		auto& rebound_var_ref = rebound_var.as<VariableDeclarationNode>();
+		rebound_var_ref.set_is_thread_local(var_decl.is_thread_local());
 		rebound_var_ref.set_is_constexpr(var_decl.is_constexpr());
 		rebound_var_ref.set_is_constinit(var_decl.is_constinit());
 		if (var_decl.has_outer_template_bindings()) {

@@ -1205,6 +1205,9 @@ FlashCpp::DeclarationSpecifiers Parser::parse_declaration_specifiers() {
 		} else if (kw == "extern") {
 			specs.storage_class = StorageClass::Extern;
 			advance();
+		} else if (kw == "thread_local" || kw == "__thread") {
+			specs.is_thread_local = true;
+			advance();
 		} else if (kw == "register") {
 			specs.storage_class = StorageClass::Register;
 			advance();

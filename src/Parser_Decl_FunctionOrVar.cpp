@@ -137,7 +137,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 	// parse_type_and_name may return a StructuredBindingNode instead of a DeclarationNode
 	if (type_and_name_result.node().has_value() && type_and_name_result.node()->is<StructuredBindingNode>()) {
 		// Validate: structured bindings cannot have storage class specifiers
-		if (specs.storage_class != StorageClass::None) {
+		if (specs.storage_class != StorageClass::None || specs.is_thread_local) {
 			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 		if (is_constexpr) {
@@ -875,6 +875,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 			type_and_name_result.node().value(),
 			std::nullopt,
 			specs.storage_class);
+		global_decl_node.set_is_thread_local(specs.is_thread_local);
 		global_decl_node.set_is_constexpr(is_constexpr);
 		global_decl_node.set_is_constinit(is_constinit);
 
@@ -1043,6 +1044,7 @@ ParseResult Parser::parse_declaration_or_function_definition() {
 					next_decl_node,
 					std::nullopt,
 					specs.storage_class);
+				next_var_decl.set_is_thread_local(specs.is_thread_local);
 				next_var_decl.set_is_constexpr(is_constexpr);
 				next_var_decl.set_is_constinit(is_constinit);
 

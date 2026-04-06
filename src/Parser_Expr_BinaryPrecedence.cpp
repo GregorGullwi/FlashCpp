@@ -273,6 +273,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 		if (peek() == "..."_tok) {
 			break;
 		}
+		if ((is_comma || is_operator) &&
+			isFoldOperatorToken(peek_info().value()) &&
+			peek_info(1).type() == Token::Type::Punctuator &&
+			peek_info(1).value() == "...") {
+			break;
+		}
 
 		// Skip ternary operator '?' - it's handled separately below
 		if (is_operator && peek() == "?"_tok) {
@@ -763,6 +769,16 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 	}
 
 	return result;
+}
+
+bool Parser::isFoldOperatorToken(std::string_view op) {
+	return op == "," || op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+		   op == "^" || op == "&" || op == "|" || op == "=" || op == "<" ||
+		   op == ">" || op == "<<" || op == ">>" || op == "+=" || op == "-=" ||
+		   op == "*=" || op == "/=" || op == "%=" || op == "^=" || op == "&=" ||
+		   op == "|=" || op == "<<=" || op == ">>=" || op == "==" || op == "!=" ||
+		   op == "<=" || op == ">=" || op == "&&" || op == "||" ||
+		   op == ".*" || op == "->*";
 }
 
 std::optional<TypedNumeric> get_numeric_literal_type(std::string_view text) {

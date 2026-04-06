@@ -6189,7 +6189,13 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		SaveHandle fold_check_pos = save_token_position();
 		bool is_fold = false;
 		auto is_fold_operator = [this]() {
-			return peek().is_operator() || peek() == ","_tok;
+			if (peek() == ","_tok) {
+				return true;
+			}
+			if (!peek().is_operator()) {
+				return false;
+			}
+			return isFoldOperatorToken(peek_info().value());
 		};
 
 		// Pattern 1: Unary left fold: (... op pack)
@@ -6323,15 +6329,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			}
 		}
 
-		// Pattern 3: Binary left fold: (init op ... op pack)
-		// This is tricky because init can be a complex expression
-		// For now, we'll handle simple cases where init is a literal or identifier
+		// Pattern 3: folds with a complex init expression, e.g. (expr op ...) or
+		// (expr op ... op pack). Use full expression parsing so member calls like
+		// (__m.unlock(), ...) are handled before the comma/ellipsis fold marker.
 		if (!is_fold) {
 			restore_token_position(fold_check_pos);
 
-			// Try to parse as a simple expression
+			// Try to parse the full init expression up to the fold operator.
 			SaveHandle init_pos = save_token_position();
-			ParseResult init_result = parse_primary_expression(ExpressionContext::Normal);
+			ParseResult init_result = parse_expression(MIN_PRECEDENCE, ExpressionContext::Normal);
 
 			if (!init_result.is_error() && init_result.node().has_value()) {
 				if (is_fold_operator()) {

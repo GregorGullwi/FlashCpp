@@ -2574,6 +2574,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 	// Combine with pre-struct specifiers passed from the caller
 	bool has_inline = pre_is_inline;
 	bool has_constexpr = pre_is_constexpr;
+	bool has_thread_local = false;
 	[[maybe_unused]] bool has_static = false;
 	while (peek().is_keyword()) {
 		std::string_view kw = peek_info().value();
@@ -2585,6 +2586,9 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			advance();
 		} else if (kw == "static") {
 			has_static = true;
+			advance();
+		} else if (kw == "thread_local" || kw == "__thread") {
+			has_thread_local = true;
 			advance();
 		} else if (kw == "const") {
 			advance();
@@ -2646,6 +2650,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			auto var_decl_node = emplace_node<VariableDeclarationNode>(var_decl, init_expr);
 
 			// Apply constexpr specifier from pre-struct or post-struct keywords
+			var_decl_node.as<VariableDeclarationNode>().set_is_thread_local(has_thread_local);
 			if (has_constexpr) {
 				var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
 			}

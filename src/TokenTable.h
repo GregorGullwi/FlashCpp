@@ -156,6 +156,7 @@ inline constexpr TokenSpelling all_fixed_tokens[] = {
 	{"signed", tok::KW_signed},
 	{"static_assert", tok::KW_static_assert},
 	{"this", tok::KW_this},
+	{"__thread", tok::KW_thread_local},
 	{"thread_local", tok::KW_thread_local},
 	{"true", tok::KW_true},
 	{"typeid", tok::KW_typeid},
