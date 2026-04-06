@@ -548,6 +548,45 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 	}
 
+	if (size_t last_colon = template_name.rfind("::"); last_colon != std::string_view::npos) {
+		std::vector<StringHandle> namespace_components;
+		std::string_view namespace_path = template_name.substr(0, last_colon);
+		size_t component_start = 0;
+		while (component_start < namespace_path.size()) {
+			size_t separator = namespace_path.find("::", component_start);
+			std::string_view component = separator == std::string_view::npos
+											 ? namespace_path.substr(component_start)
+											 : namespace_path.substr(component_start, separator - component_start);
+			namespace_components.push_back(StringTable::getOrInternStringHandle(component));
+			component_start = separator == std::string_view::npos ? namespace_path.size() : separator + 2;
+		}
+
+		auto resolve_relative_namespace = [&](NamespaceHandle start) -> NamespaceHandle {
+			NamespaceHandle current = start;
+			for (StringHandle component : namespace_components) {
+				current = gNamespaceRegistry.lookupNamespace(current, component);
+				if (!current.isValid()) {
+					return current;
+				}
+			}
+			return current;
+		};
+
+		StringHandle identifier_handle = StringTable::getOrInternStringHandle(template_name.substr(last_colon + 2));
+		for (NamespaceHandle probe = gSymbolTable.get_current_namespace_handle(); probe.isValid();
+			 probe = gNamespaceRegistry.getParent(probe)) {
+			NamespaceHandle resolved_namespace = resolve_relative_namespace(probe);
+			if (resolved_namespace.isValid()) {
+				template_name = StringTable::getStringView(
+					gNamespaceRegistry.buildQualifiedIdentifier(resolved_namespace, identifier_handle));
+				break;
+			}
+			if (probe.isGlobal()) {
+				break;
+			}
+		}
+	}
+
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
 	{

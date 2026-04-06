@@ -118,6 +118,7 @@ ParseResult Parser::parse_member_template_alias(StructDeclarationNode& struct_no
 	StringHandle qualified_name = StringTable::getOrInternStringHandle(
 		StringBuilder().append(struct_node.name()).append("::").append(alias_name));
 	gTemplateRegistry.register_alias_template(qualified_name, alias_node);
+	gTemplateRegistry.register_alias_template(alias_name_token.handle(), alias_node);
 
 	FLASH_LOG_FORMAT(Parser, Info, "Registered member template alias: {}", StringTable::getStringView(qualified_name));
 
