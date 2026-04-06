@@ -67,20 +67,44 @@ bool isDirectObjectPrvalueBase(const ASTNode& node) {
 					  expr);
 }
 
-bool requiresSemaOwnedOverloadArgTypeInNormalizedBody(const ASTNode& arg) {
+bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 	if (!arg.is<ExpressionNode>()) {
 		return false;
 	}
 
+	return std::holds_alternative<MemberAccessNode>(arg.as<ExpressionNode>());
+}
+
+std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
+	if (!arg.is<ExpressionNode>()) {
+		return "non-expression";
+	}
+
 	const ExpressionNode& expr = arg.as<ExpressionNode>();
-	return std::visit([](const auto& inner) -> bool {
+	return std::visit([](const auto& inner) -> std::string_view {
 		using T = std::decay_t<decltype(inner)>;
 		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			return inner.binding() == IdentifierBinding::EnumConstant;
+			return "IdentifierNode";
+		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+			return "MemberAccessNode";
+		} else if constexpr (std::is_same_v<T, StaticCastNode>) {
+			return "StaticCastNode";
+		} else if constexpr (std::is_same_v<T, ConstCastNode>) {
+			return "ConstCastNode";
+		} else if constexpr (std::is_same_v<T, ReinterpretCastNode>) {
+			return "ReinterpretCastNode";
+		} else if constexpr (std::is_same_v<T, DynamicCastNode>) {
+			return "DynamicCastNode";
+		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+			return "ConstructorCallNode";
+		} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+			return "InitializerListConstructionNode";
+		} else if constexpr (std::is_same_v<T, CallExprNode>) {
+			return "CallExprNode";
 		} else if constexpr (std::is_same_v<T, StringLiteralNode>) {
-			return true;
+			return "StringLiteralNode";
 		}
-		return false;
+		return "other-expression";
 	},
 					  expr);
 }
@@ -88,14 +112,14 @@ bool requiresSemaOwnedOverloadArgTypeInNormalizedBody(const ASTNode& arg) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
-	auto tryParserFallback = [&]() -> std::optional<TypeSpecifierNode> {
+	auto tryParserFallback = [&](const ASTNode& fallback_arg) -> std::optional<TypeSpecifierNode> {
 		if (!parser_) {
 			return std::nullopt;
 		}
 
-		auto parser_type = parser_->get_expression_type(arg);
+		auto parser_type = parser_->get_expression_type(fallback_arg);
 		if (parser_type.has_value()) {
-			adjust_argument_type_for_overload_resolution(arg, *parser_type);
+			adjust_argument_type_for_overload_resolution(fallback_arg, *parser_type);
 		}
 		return parser_type;
 	};
@@ -104,103 +128,136 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
 			return sema_type;
 		}
+		if (sema_normalized_current_function_ &&
+			arg.is<ExpressionNode>() &&
+			!allowsLegacyOverloadArgFallbackInNormalizedBody(arg)) {
+			throw InternalError(std::string(StringBuilder()
+				.append("Missing sema-owned overload-resolution argument type in sema-normalized body for ")
+				.append(describeOverloadArgExprShape(arg))
+				.commit()));
+		}
 	}
-	const bool require_sema_owned_arg_type =
-		sema_ && sema_normalized_current_function_ &&
-		requiresSemaOwnedOverloadArgTypeInNormalizedBody(arg);
 
 	if (!arg.is<ExpressionNode>()) {
-		return tryParserFallback();
+		return tryParserFallback(arg);
 	}
 
-	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	std::function<std::optional<TypeSpecifierNode>(const ASTNode&)> buildLegacyType =
+		[&](const ASTNode& legacy_arg) -> std::optional<TypeSpecifierNode> {
+		if (!legacy_arg.is<ExpressionNode>()) {
+			return tryParserFallback(legacy_arg);
+		}
 
-	auto legacy_type = std::visit([this](const auto& inner) -> std::optional<TypeSpecifierNode> {
-		using T = std::decay_t<decltype(inner)>;
+		const ExpressionNode& expr = legacy_arg.as<ExpressionNode>();
+		return std::visit([&](const auto& inner) -> std::optional<TypeSpecifierNode> {
+			using T = std::decay_t<decltype(inner)>;
 
-		if constexpr (std::is_same_v<T, IdentifierNode>) {
-			const DeclarationNode* decl = lookupDeclaration(inner.name());
-			if (!decl || !decl->type_node().is<TypeSpecifierNode>()) {
-				return std::nullopt;
-			}
-			TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
-			if (inner.binding() != IdentifierBinding::EnumConstant) {
-				type.set_reference_qualifier(ReferenceQualifier::LValueReference);
-			}
-			return type;
-		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-			const StructTypeInfo* struct_info = nullptr;
-			const StructMember* member = nullptr;
-			if (!resolveMemberAccessType(inner, struct_info, member) || !member) {
-				return std::nullopt;
-			}
-
-			TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8, Token{}, CVQualifier::None);
-			member_type.set_type_index(member->type_index);
-			if (member->pointer_depth > 0) {
-				member_type.add_pointer_levels(member->pointer_depth);
-			}
-
-			if (member->reference_qualifier != ReferenceQualifier::None) {
-				member_type.set_reference_qualifier(member->reference_qualifier);
-				return member_type;
-			}
-
-			auto object_type_opt = buildCodegenOverloadResolutionArgType(inner.object());
-			if (object_type_opt.has_value()) {
-				if (object_type_opt->is_rvalue_reference()) {
-					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
-				} else if (object_type_opt->is_lvalue_reference()) {
-					member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
-				} else if (isDirectObjectPrvalueBase(inner.object())) {
-					member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+			if constexpr (std::is_same_v<T, IdentifierNode>) {
+				const DeclarationNode* decl = lookupDeclaration(inner.name());
+				if (!decl || !decl->type_node().is<TypeSpecifierNode>()) {
+					return std::nullopt;
 				}
-			}
+				TypeSpecifierNode type = decl->type_node().as<TypeSpecifierNode>();
+				if (inner.binding() != IdentifierBinding::EnumConstant) {
+					type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+				}
+				return type;
+			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				auto object_type_opt = buildLegacyType(inner.object());
+				if (!object_type_opt.has_value()) {
+					return std::nullopt;
+				}
 
-			return member_type;
-		} else if constexpr (std::is_same_v<T, StaticCastNode> ||
-							 std::is_same_v<T, ConstCastNode> ||
-							 std::is_same_v<T, ReinterpretCastNode> ||
-							 std::is_same_v<T, DynamicCastNode>) {
-			const ASTNode& target_type_node = inner.target_type();
-			if (target_type_node.is<TypeSpecifierNode>()) {
-				return target_type_node.as<TypeSpecifierNode>();
+				TypeSpecifierNode base_type = *object_type_opt;
+				base_type.set_reference_qualifier(ReferenceQualifier::None);
+				if (base_type.pointer_levels().size() > 0) {
+					base_type.remove_pointer_level();
+				}
+				if (!isIrStructType(toIrType(base_type.type()))) {
+					return std::nullopt;
+				}
+				size_t struct_type_index = base_type.type_index().index();
+				if (struct_type_index >= getTypeInfoCount()) {
+					return std::nullopt;
+				}
+				const TypeInfo& struct_type_info = getTypeInfo(TypeIndex{struct_type_index});
+				const StructTypeInfo* struct_info = struct_type_info.getStructInfo();
+				if (!struct_info) {
+					return std::nullopt;
+				}
+
+				const StructMember* member = nullptr;
+				StringHandle member_name_handle = StringTable::getOrInternStringHandle(inner.member_name());
+				for (const auto& candidate : struct_info->members) {
+					if (candidate.getName() == member_name_handle) {
+						member = &candidate;
+						break;
+					}
+				}
+				if (!member) {
+					return std::nullopt;
+				}
+
+				TypeSpecifierNode member_type(member->memberType(), TypeQualifier::None, member->size * 8, Token{}, CVQualifier::None);
+				member_type.set_type_index(member->type_index);
+				if (member->pointer_depth > 0) {
+					member_type.add_pointer_levels(member->pointer_depth);
+				}
+
+				if (member->reference_qualifier != ReferenceQualifier::None) {
+					member_type.set_reference_qualifier(member->reference_qualifier);
+					return member_type;
+				}
+
+				if (object_type_opt->is_rvalue_reference()) {
+						member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+					} else if (object_type_opt->is_lvalue_reference()) {
+						member_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
+					} else if (isDirectObjectPrvalueBase(inner.object())) {
+						member_type.set_reference_qualifier(ReferenceQualifier::RValueReference);
+				}
+
+				return member_type;
+			} else if constexpr (std::is_same_v<T, StaticCastNode> ||
+								 std::is_same_v<T, ConstCastNode> ||
+								 std::is_same_v<T, ReinterpretCastNode> ||
+								 std::is_same_v<T, DynamicCastNode>) {
+				const ASTNode& target_type_node = inner.target_type();
+				if (target_type_node.is<TypeSpecifierNode>()) {
+					return target_type_node.as<TypeSpecifierNode>();
+				}
+				return std::nullopt;
+			} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
+				const ASTNode& type_node = inner.type_node();
+				if (type_node.is<TypeSpecifierNode>()) {
+					return type_node.as<TypeSpecifierNode>();
+				}
+				return std::nullopt;
+			} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
+				const ASTNode& target_type_node = inner.target_type();
+				if (target_type_node.is<TypeSpecifierNode>()) {
+					return target_type_node.as<TypeSpecifierNode>();
+				}
+				return std::nullopt;
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				const DeclarationNode& decl = inner.callee().declaration();
+				const ASTNode& return_type_node = decl.type_node();
+				if (return_type_node.is<TypeSpecifierNode>()) {
+					return return_type_node.as<TypeSpecifierNode>();
+				}
+				return std::nullopt;
+			} else {
+				return std::nullopt;
 			}
-			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, ConstructorCallNode>) {
-			const ASTNode& type_node = inner.type_node();
-			if (type_node.is<TypeSpecifierNode>()) {
-				return type_node.as<TypeSpecifierNode>();
-			}
-			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, InitializerListConstructionNode>) {
-			const ASTNode& target_type_node = inner.target_type();
-			if (target_type_node.is<TypeSpecifierNode>()) {
-				return target_type_node.as<TypeSpecifierNode>();
-			}
-			return std::nullopt;
-		} else if constexpr (std::is_same_v<T, CallExprNode>) {
-			const DeclarationNode& decl = inner.callee().declaration();
-			const ASTNode& return_type_node = decl.type_node();
-			if (return_type_node.is<TypeSpecifierNode>()) {
-				return return_type_node.as<TypeSpecifierNode>();
-			}
-			return std::nullopt;
-		} else {
-			return std::nullopt;
-		}
-	},
-							 expr);
+		},
+						  expr);
+	};
+
+	auto legacy_type = buildLegacyType(arg);
 	if (legacy_type.has_value()) {
-		if (require_sema_owned_arg_type) {
-			throw InternalError("Missing sema-owned overload-resolution argument type in sema-normalized body (legacy type available)");
-		}
 		return legacy_type;
 	}
-	if (require_sema_owned_arg_type) {
-		throw InternalError("Missing sema-owned overload-resolution argument type in sema-normalized body (no fallback type available)");
-	}
-	return tryParserFallback();
+	return tryParserFallback(arg);
 }
 
 std::optional<bool> AstToIr::getSameTypeConstructorPreference(const ASTNode& init_node, const TypeSpecifierNode& target_type) const {
