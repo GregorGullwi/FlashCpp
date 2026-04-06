@@ -2509,23 +2509,27 @@ const CallArgReferenceBindingInfo* SemanticAnalysis::getCallExprRefBinding(const
 bool SemanticAnalysis::tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
 												  ResolvedMemberAccessInfo& out_info) {
 	const CanonicalTypeId object_type_id = inferExpressionType(member_access.object());
-	if (!object_type_id) {
-		return false;
-	}
-
-	const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-	if (object_desc.category() != TypeCategory::Struct &&
-		object_desc.category() != TypeCategory::UserDefined) {
-		return false;
-	}
-
 	const TypeInfo* object_type_info = nullptr;
-	if (object_desc.category() == TypeCategory::UserDefined) {
-		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
-		object_type_info = alias_info.terminal_type_info;
-	}
-	if (!object_type_info) {
-		object_type_info = tryGetTypeInfo(object_desc.type_index);
+	if (object_type_id) {
+		const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
+		if (object_desc.category() != TypeCategory::Struct &&
+			object_desc.category() != TypeCategory::UserDefined) {
+			return false;
+		}
+
+		if (object_desc.category() == TypeCategory::UserDefined) {
+			const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
+			object_type_info = alias_info.terminal_type_info;
+		}
+		if (!object_type_info) {
+			object_type_info = tryGetTypeInfo(object_desc.type_index);
+		}
+	} else if (member_access.object().is<ExpressionNode>()) {
+		const ExpressionNode& object_expr = member_access.object().as<ExpressionNode>();
+		if (const auto* ident = std::get_if<IdentifierNode>(&object_expr);
+			ident && ident->name() == "this"sv && !member_context_stack_.empty()) {
+			object_type_info = tryGetTypeInfo(member_context_stack_.back());
+		}
 	}
 	if (!object_type_info) {
 		return false;
