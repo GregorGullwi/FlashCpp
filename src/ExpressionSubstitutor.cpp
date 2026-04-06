@@ -6,7 +6,7 @@
 
 namespace {
 
-int computeTypeSizeBits(TypeIndex type_index) {
+int computeTypeSizeInBits(TypeIndex type_index) {
 	int size_in_bits = get_type_size_bits(type_index.category());
 	if (size_in_bits != 0) {
 		return size_in_bits;
@@ -26,11 +26,32 @@ int computeTypeSizeBits(TypeIndex type_index) {
 	return struct_info ? struct_info->sizeInBits().value : 0;
 }
 
+std::optional<std::string_view> tryResolveCanonicalTypeName(
+	const TypeSpecifierNode& type,
+	std::string_view type_name,
+	const std::unordered_map<std::string_view, TemplateTypeArg>& param_map) {
+	if (!type.type_index().is_valid()) {
+		return std::nullopt;
+	}
+
+	const TypeInfo* type_info = tryGetTypeInfo(type.type_index());
+	if (!type_info) {
+		return std::nullopt;
+	}
+
+	std::string_view canonical_type_name = StringTable::getStringView(type_info->name());
+	if (canonical_type_name.empty() || canonical_type_name == type_name || !param_map.contains(canonical_type_name)) {
+		return std::nullopt;
+	}
+
+	return canonical_type_name;
+}
+
 // Rebuild a concrete type node from resolved alias metadata before re-running substitution.
 TypeSpecifierNode buildTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
 	TypeSpecifierNode resolved_type(
 		resolved_alias.type_index,
-		computeTypeSizeBits(resolved_alias.type_index),
+		computeTypeSizeInBits(resolved_alias.type_index),
 		token,
 		CVQualifier::None,
 		resolved_alias.reference_qualifier);
@@ -1163,16 +1184,11 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 		// Look up this template parameter in our substitution map
 		auto it = param_map_.find(type_name);
-		if (it == param_map_.end() && type.type_index().is_valid()) {
-			if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
-				std::string_view canonical_type_name = StringTable::getStringView(type_info->name());
-				if (!canonical_type_name.empty() && canonical_type_name != type_name) {
-					it = param_map_.find(canonical_type_name);
-					if (it != param_map_.end()) {
-						FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", type_name, " -> ", canonical_type_name);
-						type_name = canonical_type_name;
-					}
-				}
+		if (it == param_map_.end()) {
+			if (std::optional<std::string_view> canonical_type_name = tryResolveCanonicalTypeName(type, type_name, param_map_)) {
+				FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", type_name, " -> ", *canonical_type_name);
+				type_name = *canonical_type_name;
+				it = param_map_.find(type_name);
 			}
 		}
 		if (it != param_map_.end()) {
