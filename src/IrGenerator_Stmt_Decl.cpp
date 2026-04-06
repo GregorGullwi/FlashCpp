@@ -3064,12 +3064,13 @@ void AstToIr::visitStructuredBindingNode(const ASTNode& ast_node) {
 						// Generate call to get<N>(hidden_var)
 					TempVar result_temp = var_counter.next();
 
-					CallOp call_op;
-					call_op.result = result_temp;
-					call_op.return_type_index = nativeTypeIndex(element_type);
-					call_op.return_size_in_bits = SizeInBits{element_size};
-					call_op.function_name = get_mangled_name;
-					call_op.is_member_function = false;
+					CallOp call_op = createCallOp(
+						result_temp,
+						get_mangled_name,
+						nativeTypeIndex(element_type).withCategory(element_type),
+						SizeInBits{element_size},
+						false,
+						false);
 
 						// Pass the hidden variable as argument
 					TypedValue arg;

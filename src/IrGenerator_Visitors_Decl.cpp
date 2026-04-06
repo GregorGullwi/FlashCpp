@@ -521,12 +521,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 								// Call member's operator<=>(this->member, other.member)
 							TempVar call_result = var_counter.next();
-							CallOp call_op;
-							call_op.function_name = member_spaceship_mangled;
-							call_op.is_member_function = true;
-							call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);
-							call_op.return_size_in_bits = SizeInBits{32};
-							call_op.result = call_result;
+							CallOp call_op = createCallOp(
+								call_result,
+								member_spaceship_mangled,
+								nativeTypeIndex(TypeCategory::Int).withCategory(TypeCategory::Int),
+								SizeInBits{32},
+								true,
+								false);
 
 							TypedValue lhs_arg;
 							lhs_arg.setType(TypeCategory::Struct);
@@ -754,12 +755,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		if (spaceship_mangled.isValid()) {
 				// Generate: call operator<=>(this, other) -> int result
 			TempVar call_result = var_counter.next();
-			CallOp call_op;
-			call_op.function_name = spaceship_mangled;
-			call_op.is_member_function = true;
-			call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);
-			call_op.return_size_in_bits = SizeInBits{32};
-			call_op.result = call_result;
+			CallOp call_op = createCallOp(
+				call_result,
+				spaceship_mangled,
+				nativeTypeIndex(TypeCategory::Int).withCategory(TypeCategory::Int),
+				SizeInBits{32},
+				true,
+				false);
 
 				// Pass 'this' as first arg
 			StringHandle this_handle = StringTable::getOrInternStringHandle("this");
@@ -852,12 +854,13 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(rhs_load), func_decl.identifier_token()));
 
 						TempVar call_result = var_counter.next();
-						CallOp call_op;
-						call_op.function_name = member_equal_mangled;
-						call_op.is_member_function = true;
-						call_op.return_type_index = nativeTypeIndex(TypeCategory::Bool);
-						call_op.return_size_in_bits = SizeInBits{8};
-						call_op.result = call_result;
+						CallOp call_op = createCallOp(
+							call_result,
+							member_equal_mangled,
+							nativeTypeIndex(TypeCategory::Bool).withCategory(TypeCategory::Bool),
+							SizeInBits{8},
+							true,
+							false);
 
 						TypedValue lhs_arg;
 						lhs_arg.setType(TypeCategory::Struct);

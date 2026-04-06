@@ -529,15 +529,11 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 						TempVar ret_var = var_counter.next();
 
 						// Create CallOp
-						CallOp call_op;
-						call_op.result = ret_var;
-						populateCallReturnInfo(call_op, return_type);
+						CallOp call_op = createCallOp(ret_var, StringHandle{}, return_type, true, false);
 						if (!call_op.return_size_in_bits.is_set()) {
 							call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 						}
 						call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
-						call_op.is_variadic = false;
-						call_op.is_member_function = true;  // This is a member function call
 
 							// Add 'this' pointer as first argument
 						call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
@@ -1662,17 +1658,13 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 		member_func.is_const());
 
 	TempVar ret_var = var_counter.next();
-	CallOp call_op;
-	call_op.result = ret_var;
-	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	populateCallReturnInfo(call_op, return_type);
+	CallOp call_op = createCallOp(ret_var, StringTable::getOrInternStringHandle(mangled_name), return_type, true, false);
 	if (!call_op.return_size_in_bits.is_set()) {
 		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
 			return_type_info && return_type_info->struct_info_) {
 			call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_info->struct_info_->sizeInBits().value)};
 		}
 	}
-	call_op.is_member_function = true;
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
 	// Small structs (≤ ABI threshold) return in registers and need no return_slot.

@@ -135,6 +135,38 @@ void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& r
 	populateReferenceReturnInfo(call_op, normalized_return_type);
 }
 
+CallOp AstToIr::createCallOp(
+	TempVar result,
+	StringHandle function_name,
+	const TypeSpecifierNode& return_type,
+	bool is_member_function,
+	bool is_variadic) {
+	CallOp call_op;
+	call_op.result = result;
+	call_op.function_name = function_name;
+	call_op.is_member_function = is_member_function;
+	call_op.is_variadic = is_variadic;
+	populateCallReturnInfo(call_op, return_type);
+	return call_op;
+}
+
+CallOp AstToIr::createCallOp(
+	TempVar result,
+	StringHandle function_name,
+	TypeIndex return_type_index,
+	SizeInBits return_size_in_bits,
+	bool is_member_function,
+	bool is_variadic) {
+	CallOp call_op;
+	call_op.result = result;
+	call_op.function_name = function_name;
+	call_op.return_type_index = return_type_index;
+	call_op.return_size_in_bits = return_size_in_bits;
+	call_op.is_member_function = is_member_function;
+	call_op.is_variadic = is_variadic;
+	return call_op;
+}
+
 ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const {
 	return makeExprResult(
 		getFunctionSignatureReturnTypeIndex(signature),
@@ -610,11 +642,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 				setTempVarMetadata(ret_var, TempVarMetadata::makePRValue());
 
 					// Build the call operands
-				CallOp call_op;
-				call_op.result = ret_var;
-				call_op.return_type_index = nativeTypeIndex(TypeCategory::Int);	// Default, will be refined
-				call_op.return_size_in_bits = SizeInBits{32};
-				call_op.is_variadic = false;
+				CallOp call_op = createCallOp(
+					ret_var,
+					StringHandle{},
+					nativeTypeIndex(TypeCategory::Int).withCategory(TypeCategory::Int),
+					SizeInBits{32},
+					false,
+					false);
 
 					// Add the object (self) as the first argument (this pointer)
 				call_op.args.push_back(makeTypedValue(TypeCategory::Struct, SizeInBits{64}, IrValue(StringTable::getOrInternStringHandle(func_name_view))));
@@ -1846,9 +1880,13 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	});
 
 		// Create CallOp structure
-	CallOp call_op;
-	call_op.result = ret_var;
-	call_op.function_name = StringTable::getOrInternStringHandle(function_name);
+	CallOp call_op = createCallOp(
+		ret_var,
+		StringTable::getOrInternStringHandle(function_name),
+		TypeIndex{},
+		SizeInBits{},
+		false,
+		false);
 
 		// Check if this is an indirect call (function pointer/reference)
 	call_op.is_indirect_call = callExprNode.callee().is_indirect();
@@ -1869,7 +1907,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	}
 	const auto& return_type = *best_return_type;
 	populateCallReturnInfo(call_op, return_type);
-	call_op.is_member_function = false;
 	if (matched_func_decl && matched_func_decl->is_member_function() && !matched_func_decl->is_static()) {
 		call_op.is_member_function = true;
 		TypeCategory this_type = TypeCategory::Struct;

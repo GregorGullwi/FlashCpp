@@ -98,6 +98,8 @@ private:
 	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
 	TypeIndex getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const;
 	int getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const;
+	CallOp createCallOp(TempVar result, StringHandle function_name, const TypeSpecifierNode& return_type, bool is_member_function, bool is_variadic);
+	CallOp createCallOp(TempVar result, StringHandle function_name, TypeIndex return_type_index, SizeInBits return_size_in_bits, bool is_member_function, bool is_variadic);
 	void populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature);
 	ExprResult buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const;
