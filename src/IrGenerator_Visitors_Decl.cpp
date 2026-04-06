@@ -82,6 +82,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 		// Set current function return type and size for type checking in return statements
 	const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
 	current_function_returns_reference_ = ret_type_spec.is_reference();
+	current_function_returns_pointer_ = ret_type_spec.pointer_depth() > 0;
 	current_function_returns_function_pointer_ = ret_type_spec.is_function_pointer() || ret_type_spec.has_function_signature();
 
 	int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);

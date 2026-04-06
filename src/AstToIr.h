@@ -849,6 +849,7 @@ private:
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_{0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
 	bool current_function_returns_function_pointer_ = false;
+	bool current_function_returns_pointer_ = false;
 
 	TypeCategory currentFunctionReturnType() const {
 		return current_function_returns_function_pointer_ ? TypeCategory::FunctionPointer : current_function_return_type_index_.category();

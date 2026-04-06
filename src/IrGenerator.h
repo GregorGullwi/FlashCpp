@@ -94,6 +94,7 @@ struct LambdaInfo {
 	int return_size;
 
 	TypeCategory returnType() const { return return_type_index.category(); }
+	bool returns_pointer = false;
 	bool returns_reference = false;		// True if lambda returns a reference type (T& or T&&)
 	std::vector<std::tuple<TypeCategory, int, int, std::string>> parameters;	 // type, size, pointer_depth, name
 	std::vector<ASTNode> parameter_nodes;  // Actual parameter AST nodes for symbol table

@@ -250,6 +250,8 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				CVQualifier::None,
 				ReferenceQualifier::None);
 			const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
+			bool return_requires_ctor_resolution = false;
+			bool return_ctor_no_match = false;
 
 				// Check whether the semantic pass has already computed a cast annotation.
 				// When present for a non-struct conversion, apply it and skip the local policy.
@@ -265,10 +267,12 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 			if (!sema_applied_conversion &&
 				is_struct_type(return_category) &&
+				!current_function_returns_pointer_ &&
 				return_type_spec.type_index().is_valid() &&
 				(!is_struct_type(expr_category) || operands.type_index != return_type_spec.type_index())) {
 				if (const TypeInfo* target_type_info = tryGetTypeInfo(return_type_spec.type_index())) {
 					if (const StructTypeInfo* target_struct_info = target_type_info->getStructInfo()) {
+						return_requires_ctor_resolution = true;
 						auto tryMaterializeReturnCtor = [&](const ConstructorDeclarationNode* ctor) {
 							if (!ctor) {
 								return false;
@@ -294,7 +298,11 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							}
 							if (resolution.has_match && resolution.selected_overload) {
 								tryMaterializeReturnCtor(resolution.selected_overload);
+							} else if (!is_struct_type(expr_category)) {
+								return_ctor_no_match = true;
 							}
+						} else if (!is_struct_type(expr_category)) {
+							return_ctor_no_match = true;
 						}
 					}
 				}
@@ -372,6 +380,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				} else {
+					if (return_requires_ctor_resolution && return_ctor_no_match) {
+						throw CompileError("No matching constructor");
+					}
 						// Phase 15: sema should annotate standard arithmetic return conversions.
 						// Log a warning when sema missed it (inferExpressionType may fail for
 						// some expression contexts). Same-type size mismatches are not type

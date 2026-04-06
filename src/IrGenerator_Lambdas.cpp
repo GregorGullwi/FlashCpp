@@ -104,11 +104,13 @@ LambdaInfo AstToIr::collectLambdaForDeferredGeneration(const LambdaExpressionNod
 
 	info.return_type_index = nativeTypeIndex(TypeCategory::Void);
 	info.return_size = 0;
+	info.returns_pointer = false;
 	info.returns_reference = false;
 	if (lambda.return_type().has_value()) {
 		const auto& ret_type_node = lambda.return_type()->as<TypeSpecifierNode>();
 		info.return_type_index = ret_type_node.type_index();
 		info.return_size = ret_type_node.size_in_bits();
+		info.returns_pointer = ret_type_node.pointer_depth() > 0;
 		info.returns_reference = ret_type_node.is_reference();
 		if (info.returns_reference) {
 			info.return_size = 64;
@@ -683,6 +685,7 @@ void AstToIr::generateLambdaOperatorCallFunction(LambdaInfo& lambda_info) {
 	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
 	current_function_return_size_ = lambda_info.return_size;
+	current_function_returns_pointer_ = lambda_info.returns_pointer;
 	current_function_returns_reference_ = lambda_info.returns_reference;
 	current_function_returns_function_pointer_ = (lambda_info.return_type_index.category() == TypeCategory::FunctionPointer);
 
@@ -826,6 +829,7 @@ void AstToIr::generateLambdaInvokeFunction(LambdaInfo& lambda_info) {
 	// This is critical for lambdas returning other lambdas or structs
 	current_function_return_type_index_ = lambda_info.return_type_index;
 	current_function_return_size_ = lambda_info.return_size;
+	current_function_returns_pointer_ = lambda_info.returns_pointer;
 	current_function_returns_reference_ = lambda_info.returns_reference;
 	current_function_returns_function_pointer_ = (lambda_info.return_type_index.category() == TypeCategory::FunctionPointer);
 

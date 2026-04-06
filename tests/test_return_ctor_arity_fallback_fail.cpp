@@ -1,5 +1,5 @@
 struct S {
-	S(char*) {}
+	S(int&) {}
 };
 
 S f() {
