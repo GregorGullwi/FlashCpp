@@ -4922,8 +4922,9 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					continue;
 				}
 			}
-				// Fallback: if we can't get the parameter type from the selected constructor,
-				// reconstruct it from the already-lowered TypedValue.
+				// Recovery within the resolved-constructor path: if the parameter
+				// declaration does not carry a TypeSpecifierNode, reconstruct the type
+				// from the already-lowered TypedValue metadata.
 			const TypedValue& arg = ctor_op.arguments[i];
 			parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 		}

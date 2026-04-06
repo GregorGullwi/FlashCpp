@@ -249,6 +249,8 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
+	// Keep any callable default-constructor annotation on the temporary object even
+	// when aggregate-style member stores will finish its initialization afterwards.
 	fillInDefaultConstructorArguments(ctor_op, *struct_info);
 	finalizeConstructorCallOp(ctor_op, *struct_info, Token());
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
@@ -624,10 +626,11 @@ void AstToIr::finalizeConstructorCallOp(
 	const StructTypeInfo& target_struct_info,
 	const Token& source_token) const {
 	(void)source_token;
-	if (!ctor_op.resolved_constructor &&
-		!(ctor_op.arguments.empty() &&
-		  target_struct_info.findDefaultConstructor() == nullptr &&
-		  !target_struct_info.isDefaultConstructorDeleted())) {
+	const bool is_metadata_free_implicit_default_ctor =
+		ctor_op.arguments.empty() &&
+		target_struct_info.findDefaultConstructor() == nullptr &&
+		!target_struct_info.isDefaultConstructorDeleted();
+	if (!ctor_op.resolved_constructor && !is_metadata_free_implicit_default_ctor) {
 		throw InternalError(std::string(StringBuilder()
 											.append("ConstructorCallOp missing resolved constructor for '")
 											.append(StringTable::getStringView(target_struct_info.name))

@@ -463,7 +463,7 @@ Current branch status is included inline:
 - [x] Semantic analysis is the authoritative constructor-overload selection point for non-dependent constructor calls.
 - [x] IrGenerator prefers the sema annotation in every audited constructor emission path and only falls back when sema genuinely could not resolve.
 - [x] Constexpr evaluation prefers the sema annotation in the constructor-call evaluation paths covered by this refactor and only falls back when running without that annotation.
-- [ ] IRConverter prefers the constructor already selected upstream for `ConstructorCallOp` without needing any compatibility fallback; on the current branch that fallback is no longer the primary path, but it is still retained for legacy or unmigrated emission sites.
+- [x] IRConverter prefers the constructor already selected upstream for `ConstructorCallOp` without needing any compatibility fallback; zero-arg metadata-free calls are limited to the synthesized implicit-default-constructor shape.
 - [x] Parser no longer performs constructor overload selection for the `ConstructorCallNode` brace-init path; the remaining parser gate is limited to structural scalar-vs-struct validation/classification.
 - [x] `make main CXX=clang++` succeeds on the current branch.
 - [x] `bash tests/run_all_tests.sh` succeeds on the current branch (`1908` compile/link/runtime passes, `123` expected-fail tests).
