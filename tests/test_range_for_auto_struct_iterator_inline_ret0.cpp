@@ -18,19 +18,16 @@ struct IntIter {
 struct Container {
 	int data[3];
 
-	IntIter begin();
-	IntIter end();
+	IntIter begin() {
+		IntIter it{&data[0]};
+		return it;
+	}
+
+	IntIter end() {
+		IntIter it{&data[3]};
+		return it;
+	}
 };
-
-IntIter Container::begin() {
-	IntIter it{&data[0]};
-	return it;
-}
-
-IntIter Container::end() {
-	IntIter it{&data[3]};
-	return it;
-}
 
 int main() {
 	Container c{{10, 20, 30}};
