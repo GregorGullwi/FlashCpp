@@ -47,24 +47,43 @@ std::optional<std::string_view> tryResolveCanonicalTypeName(
 	return canonical_type_name;
 }
 
-// Rebuild a concrete type node from resolved alias metadata before re-running substitution.
-TypeSpecifierNode buildTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
-	TypeSpecifierNode resolved_type(
+TypeSpecifierNode buildTerminalTypeFromResolvedAlias(const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
+	return TypeSpecifierNode(
 		resolved_alias.type_index,
 		computeTypeSizeInBits(resolved_alias.type_index),
 		token,
 		CVQualifier::None,
-		resolved_alias.reference_qualifier);
-	for (size_t i = 0; i < resolved_alias.pointer_depth; ++i) {
-		resolved_type.add_pointer_level(CVQualifier::None);
+		ReferenceQualifier::None);
+}
+
+std::vector<size_t> combineArrayDimensions(const std::vector<size_t>& outer_dimensions, const std::vector<size_t>& inner_dimensions) {
+	if (outer_dimensions.empty()) {
+		return inner_dimensions;
+	}
+	if (inner_dimensions.empty()) {
+		return outer_dimensions;
+	}
+
+	std::vector<size_t> combined_dimensions = outer_dimensions;
+	combined_dimensions.insert(combined_dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
+	return combined_dimensions;
+}
+
+void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
+	target.add_cv_qualifier(resolved_alias.cv_qualifier);
+	target.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+	if (resolved_alias.reference_qualifier == ReferenceQualifier::LValueReference) {
+		target.set_reference_qualifier(ReferenceQualifier::LValueReference);
+	} else if (resolved_alias.reference_qualifier == ReferenceQualifier::RValueReference &&
+			   target.reference_qualifier() == ReferenceQualifier::None) {
+		target.set_reference_qualifier(ReferenceQualifier::RValueReference);
 	}
 	if (resolved_alias.isArray()) {
-		resolved_type.set_array_dimensions(resolved_alias.array_dimensions);
+		target.set_array_dimensions(combineArrayDimensions(resolved_alias.array_dimensions, target.array_dimensions()));
 	}
-	if (resolved_alias.function_signature.has_value()) {
-		resolved_type.set_function_signature(*resolved_alias.function_signature);
+	if (resolved_alias.function_signature.has_value() && !target.has_function_signature()) {
+		target.set_function_signature(*resolved_alias.function_signature);
 	}
-	return resolved_type;
 }
 
 // Reapply modifiers that were written on the outer alias spelling after the alias target is substituted.
@@ -75,7 +94,7 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 		target.set_reference_qualifier(source.reference_qualifier());
 	}
 	if (source.is_array()) {
-		target.set_array_dimensions(source.array_dimensions());
+		target.set_array_dimensions(combineArrayDimensions(source.array_dimensions(), target.array_dimensions()));
 	}
 	if (source.has_function_signature() && !target.has_function_signature()) {
 		target.set_function_signature(source.function_signature());
@@ -1163,7 +1182,8 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
 			if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
-				TypeSpecifierNode substituted_alias = substituteInType(buildTypeFromResolvedAlias(resolved_alias, type.token()));
+				TypeSpecifierNode substituted_alias = substituteInType(buildTerminalTypeFromResolvedAlias(resolved_alias, type.token()));
+				applyResolvedAliasModifiers(substituted_alias, resolved_alias);
 				applyOuterTypeModifiers(substituted_alias, type);
 				return substituted_alias;
 			}

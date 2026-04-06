@@ -1426,6 +1426,7 @@ inline void TypeInfo::setAliasTypeSpecifier(const TypeSpecifierNode& type_spec) 
 
 struct ResolvedAliasTypeInfo {
 	TypeIndex type_index{};
+	CVQualifier cv_qualifier = CVQualifier::None;
 	size_t pointer_depth = 0;
 	ReferenceQualifier reference_qualifier = ReferenceQualifier::None;
 	std::optional<FunctionSignature> function_signature;
@@ -1464,6 +1465,7 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 		resolved.terminal_type_info = type_info;
 		if (type_info->isTypeAlias()) {
 			if (const TypeSpecifierNode* alias_type_spec = type_info->aliasTypeSpecifier()) {
+				resolved.cv_qualifier |= alias_type_spec->cv_qualifier();
 				resolved.pointer_depth += alias_type_spec->pointer_depth();
 				if (alias_type_spec->reference_qualifier() == ReferenceQualifier::LValueReference) {
 					resolved.reference_qualifier = ReferenceQualifier::LValueReference;
