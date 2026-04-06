@@ -5,6 +5,13 @@
 // Forward-declare to avoid pulling SemanticAnalysis.h into every TU that includes AstToIr.h
 class SemanticAnalysis;
 
+inline std::string formatTokenLocationSuffix(const Token& token) {
+	if (token.line() == 0) {
+		return {};
+	}
+	return " at " + std::to_string(token.line()) + ":" + std::to_string(token.column());
+}
+
 class AstToIr {
 public:
 	AstToIr() = delete;	// Require valid references
@@ -120,6 +127,10 @@ private:
 		ExpressionContext context,
 		const Token& source_token);
 	void fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, const StructTypeInfo& struct_info);
+	void finalizeConstructorCallOp(
+		ConstructorCallOp& ctor_op,
+		const StructTypeInfo& target_struct_info,
+		const Token& source_token) const;
 	// Fill trailing default arguments for a constructor overload that has already
 	// been selected, starting after the explicitly provided arguments.
 	void fillInConstructorDefaultArguments(

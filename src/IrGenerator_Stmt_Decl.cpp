@@ -45,6 +45,17 @@ bool isExprResultPRValue(const ExprResult& expr_result) {
 	return false;
 }
 
+[[noreturn]] void reportNoMatchingConstructor(StringHandle struct_name, std::string_view init_kind, const Token& token) {
+	throw CompileError(std::string(StringBuilder()
+									   .append("No matching constructor for ")
+									   .append(init_kind)
+									   .append(" of '")
+									   .append(StringTable::getStringView(struct_name))
+									   .append("'")
+									   .append(formatTokenLocationSuffix(token))
+									   .commit()));
+}
+
 bool isDirectObjectPrvalueBase(const ASTNode& node) {
 	if (!node.is<ExpressionNode>()) {
 		return false;
@@ -1504,6 +1515,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								if (matching_ctor) {
 									fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 								}
+								finalizeConstructorCallOp(ctor_op, struct_info, decl.identifier_token());
 
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							} else {
@@ -2184,6 +2196,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								default_ctor_op.struct_name = type_info->name();
 								default_ctor_op.object = decl.identifier_token().handle();
 								fillInDefaultConstructorArguments(default_ctor_op, *type_info->struct_info_);
+								finalizeConstructorCallOp(default_ctor_op, *type_info->struct_info_, decl.identifier_token());
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(default_ctor_op), decl.identifier_token()));
 
 									// Then emit member stores for each argument
@@ -2217,6 +2230,16 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						}
 
 						if (!used_aggregate_paren_init) {
+							const bool allowImplicitDefault =
+								!matching_ctor &&
+								num_args == 0 &&
+								type_info->struct_info_->findDefaultConstructor() == nullptr &&
+								!type_info->struct_info_->hasAnyConstructor() &&
+								type_info->struct_info_->needs_default_constructor &&
+								!type_info->struct_info_->isDefaultConstructorDeleted();
+							if (!matching_ctor && !allowImplicitDefault) {
+								reportNoMatchingConstructor(type_info->name(), "direct initialization", decl.identifier_token());
+							}
 							prepare_nested_template_ctor(*type_info, matching_ctor);
 
 							// Create constructor call with the declared variable as the object
@@ -2254,6 +2277,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							if (matching_ctor) {
 								fillInConstructorDefaultArguments(ctor_op, *matching_ctor, ctor_op.arguments.size());
 							}
+							finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
 							ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
@@ -2541,6 +2565,10 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 						ctor_op.resolved_constructor = selected_ctor;
+						if (is_converting_ctor && !selected_ctor) {
+							reportNoMatchingConstructor(type_info->name(), "copy initialization", decl.identifier_token());
+						}
+						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
@@ -2609,6 +2637,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 										fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 									}
+									finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 								}
@@ -2622,6 +2651,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									const auto& ctor_node = default_ctor->function_decl.as<ConstructorDeclarationNode>();
 									fillInConstructorDefaultArguments(ctor_op, ctor_node, 0);
 								}
+								finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, decl.identifier_token());
 
 								ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 							}

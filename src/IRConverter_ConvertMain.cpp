@@ -4900,54 +4900,17 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 		return ts;
 	};
 
-	const auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
-	if (!actual_ctor && struct_type_it != getTypesByNameMap().end()) {
-		const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
-		if (struct_info) {
-			if (num_params == 1 && !ctor_op.arguments.empty()) {
-				const TypedValue& arg = ctor_op.arguments[0];
-				bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
-										   arg.type_index == struct_type_it->second->type_index_);
-				bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == SizeInBits{64});
-
-				if (arg_is_same_struct && arg_is_ref_or_pointer) {
-					bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
-					const StructMemberFunction* same_type_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move_ctor);
-					if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-						actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
-						FLASH_LOG_FORMAT(Codegen, Debug,
-										 "Constructor call for {}: recovered same-type {} constructor in IRConverter fallback",
-										 struct_name,
-										 prefer_move_ctor ? "move" : "copy");
-					}
-				}
-			}
-
-			if (!actual_ctor) {
-				std::vector<TypeSpecifierNode> arg_types;
-				arg_types.reserve(num_params);
-				for (const auto& arg : ctor_op.arguments) {
-					arg_types.push_back(buildTypeSpecFromTypedValue(arg));
-				}
-
-				auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
-				if (resolution.has_match && resolution.selected_overload) {
-					actual_ctor = resolution.selected_overload;
-				}
-
-				if (!actual_ctor) {
-					auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_params, false);
-					actual_ctor = arity_resolution.selected_overload;
-				}
-			}
-		}
+	if (!actual_ctor && num_params != 0) {
+		throw InternalError(std::string(StringBuilder()
+											.append("ConstructorCallOp reached IRConverter without resolved constructor for '")
+											.append(struct_name)
+											.append("'")
+											.commit()));
 	}
 
 		// Extract parameter types for constructor argument lowering.
 	std::vector<TypeSpecifierNode> parameter_types;
-
-		// If we found the actual constructor, use its parameter types directly
 	if (actual_ctor) {
 		const auto& ctor_params = actual_ctor->parameter_nodes();
 		for (size_t i = 0; i < num_params && i < ctor_params.size(); ++i) {
@@ -4959,102 +4922,13 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					continue;
 				}
 			}
-				// Fallback: if we can't get the param type, build from the TypedValue
+				// Recovery within the resolved-constructor path: if the parameter
+				// declaration does not carry a TypeSpecifierNode, reconstruct the type
+				// from the already-lowered TypedValue metadata.
 			const TypedValue& arg = ctor_op.arguments[i];
 			parameter_types.push_back(buildTypeSpecFromTypedValue(arg));
 		}
-	} else {
-			// Fallback to old logic: infer from argument types
-		for (size_t i = 0; i < num_params; ++i) {
-			const TypedValue& arg = ctor_op.arguments[i];
-			TypeCategory paramType = arg.typeEnum();
-			const SizeInBits param_size = arg.size_in_bits;
-			TypeIndex arg_type_index = arg.type_index;
-			bool arg_is_reference = arg.is_reference();	// Check if marked as reference
-			int arg_pointer_depth = arg.pointer_depth.value;
-			CVQualifier arg_cv_qualifier = arg.cv_qualifier;
-
-				// Build TypeSpecifierNode for this parameter
-				// For pointers, use the base type size, not the pointer size (64 bits)
-			SizeInBits actual_size = param_size;
-			if (arg_pointer_depth > 0) {
-					// This is a pointer - set size to pointee type size
-					// For basic types, use get_type_size_bits
-				const SizeInBits basic_size{get_type_size_bits(paramType)};
-				if (basic_size.is_set()) {
-					actual_size = basic_size;
-				}
-					// For struct types, keep the size as-is (basic_size will be 0)
-			}
-
-			TypeSpecifierNode param_type(paramType, TypeQualifier::None, actual_size, Token{}, arg_cv_qualifier);
-
-				// Add pointer levels
-			for (int p = 0; p < arg_pointer_depth; ++p) {
-				param_type.add_pointer_level(CVQualifier::None);
-			}
-
-				// If the argument is marked as a reference, set it as such
-			if (arg_is_reference) {
-				param_type.set_reference_qualifier(arg.ref_qualifier);
-			}
-
-				// For copy/move constructors: if parameter is the same struct type, it should be a reference
-				// Copy constructor: Type(Type& other) or Type(const Type& other) -> paramType == Struct and same as struct_name
-				// We detect this by checking if paramType is Struct and num_params == 1 AND the type_index matches
-			bool is_same_struct_type = false;
-			if (struct_type_it != getTypesByNameMap().end() && arg_type_index.is_valid()) {
-				is_same_struct_type = (arg_type_index == struct_type_it->second->type_index_);
-			}
-
-			if (num_params == 1 && paramType == TypeCategory::Struct && is_same_struct_type && !arg_is_reference) {
-					// This is likely a copy constructor, but arg_is_reference wasn't set
-					// Determine the actual CV qualifier from the constructor signature
-				auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
-				if (type_it != getTypesByNameMap().end()) {
-					TypeIndex struct_type_index = type_it->second->type_index_;
-					const StructTypeInfo* struct_info = type_it->second->getStructInfo();
-
-						// Default to const reference (standard implicit copy constructor)
-					CVQualifier copy_ctor_cv = CVQualifier::Const;
-
-						// Check if there's an explicit copy constructor with a different signature
-					if (struct_info) {
-						const StructMemberFunction* copy_ctor = struct_info->findCopyConstructor();
-						if (copy_ctor && copy_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-							const auto& ctor_node = copy_ctor->function_decl.as<ConstructorDeclarationNode>();
-							const auto& params = ctor_node.parameter_nodes();
-								// findCopyConstructor() can return ctors with trailing defaults
-								// (e.g. Foo(const Foo&, int=0)), so use !params.empty().
-							if (!params.empty() && params[0].is<DeclarationNode>()) {
-								const auto& param_decl = params[0].as<DeclarationNode>();
-								if (param_decl.type_node().is<TypeSpecifierNode>()) {
-									auto ctor_param_type = param_decl.type_node().as<TypeSpecifierNode>();
-									copy_ctor_cv = ctor_param_type.cv_qualifier();
-								}
-							}
-						}
-					}
-
-					param_type = TypeSpecifierNode(struct_type_index.withCategory(paramType), actual_size, Token{}, copy_ctor_cv, ReferenceQualifier::None);
-					param_type.set_reference_qualifier(ReferenceQualifier::LValueReference);	 // set_reference(false) creates an lvalue reference (not rvalue)
-				}
-			} else if (paramType == TypeCategory::Struct && arg_type_index.is_valid()) {
-					// Not a copy constructor, but still a struct parameter - set the type_index
-				param_type = TypeSpecifierNode(arg_type_index.withCategory(paramType), actual_size, Token{}, arg_cv_qualifier, ReferenceQualifier::None);
-					// Add pointer levels (rebuild after creating with type_index)
-				for (int p = 0; p < arg_pointer_depth; ++p) {
-					param_type.add_pointer_level(CVQualifier::None);
-				}
-					// Also preserve the reference flag if it was set
-				if (arg_is_reference) {
-					param_type.set_reference_qualifier(arg.ref_qualifier);
-				}
-			}
-
-			parameter_types.push_back(param_type);
-		}  // End of fallback for loop
-	}  // End of if (actual_ctor) else block
+	}
 
 		// Process constructor parameters: first handle stack overflow args, then register args
 	const size_t max_int_regs = getMaxIntParamRegs<TWriterClass>();

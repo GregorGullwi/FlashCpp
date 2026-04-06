@@ -1517,6 +1517,7 @@ void AstToIr::generateTrivialDefaultConstructors() {
 						call_op.object = StringTable::getOrInternStringHandle("this");
 						// No arguments for default constructor
 						fillInDefaultConstructorArguments(call_op, *base_struct_info);
+						finalizeConstructorCallOp(call_op, *base_struct_info, Token());
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(call_op), Token()));
 					}
 				}

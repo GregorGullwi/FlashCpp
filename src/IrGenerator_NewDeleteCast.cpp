@@ -117,6 +117,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 												resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 											appendConstructorCallArguments(ctor_op, resolved_ctor, init_list.initializers(), Token());
 										}
+										finalizeConstructorCallOp(ctor_op, *struct_info, Token());
 
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 									}
@@ -226,6 +227,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 											resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 										appendConstructorCallArguments(ctor_op, resolved_ctor, init_list.initializers(), Token());
 									}
+									finalizeConstructorCallOp(ctor_op, *struct_info, Token());
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 								}
@@ -316,6 +318,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				ctor_op.object = elem_ptr;
 				ctor_op.is_heap_allocated = true;
 				fillInDefaultConstructorArguments(ctor_op, *array_struct_info);
+				finalizeConstructorCallOp(ctor_op, *array_struct_info, Token());
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
@@ -371,6 +374,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
 						}
+						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, Token());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}
@@ -414,6 +418,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
 						}
+						finalizeConstructorCallOp(ctor_op, *type_info->struct_info_, Token());
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}
