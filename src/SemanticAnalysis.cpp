@@ -2199,6 +2199,17 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 			// do not recurse into child expressions here.
 		},
 				   expr);
+
+		const void* key = static_cast<const void*>(&expr);
+		auto existing_slot = getSlot(key);
+		if (!existing_slot.has_value() || !existing_slot->has_type()) {
+			if (const CanonicalTypeId inferred_type_id = inferExpressionType(node)) {
+				SemanticSlot slot = existing_slot.value_or(SemanticSlot{});
+				slot.type_id = inferred_type_id;
+				slot.value_category = inferExpressionValueCategory(node);
+				setSlot(key, slot);
+			}
+		}
 	}
 
 	return {};
@@ -2624,18 +2635,32 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// Return empty type; will be resolved when function is instantiated.
 				(void)e;
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
+				auto try_parser_member_type = [&]() -> CanonicalTypeId {
+					if (auto parser_type = parser_.get_expression_type(node); parser_type.has_value()) {
+						return canonicalizeType(*parser_type);
+					}
+					return {};
+				};
 				const CanonicalTypeId object_type_id = inferExpressionType(e.object());
 				if (!object_type_id) {
-					return {};
+					return try_parser_member_type();
 				}
 				const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
-				if (object_desc.category() != TypeCategory::Struct) {
-					return {};
+				if (object_desc.category() != TypeCategory::Struct &&
+					object_desc.category() != TypeCategory::UserDefined) {
+					return try_parser_member_type();
 				}
-				const TypeInfo* object_type_info = tryGetTypeInfo(object_desc.type_index);
+				const TypeInfo* object_type_info = nullptr;
+				if (object_desc.category() == TypeCategory::UserDefined) {
+					const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
+					object_type_info = alias_info.terminal_type_info;
+				}
+				if (!object_type_info) {
+					object_type_info = tryGetTypeInfo(object_desc.type_index);
+				}
 				const StructTypeInfo* struct_info = object_type_info ? object_type_info->getStructInfo() : nullptr;
 				if (!struct_info) {
-					return {};
+					return try_parser_member_type();
 				}
 				// MemberAccessNode stores the parser token directly, so the identifier handle
 				// must already be interned at tokenization time. If this ever fails,
@@ -2644,13 +2669,17 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!member_name.isValid()) {
 					throw InternalError("Member token handle was not interned for '" + std::string(e.member_name()) + "'");
 				}
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(object_type_info->type_index_, member_name)) {
+					return type_context_.intern(canonicalTypeDescFromStructMember(
+						*member_result.member, object_desc.base_cv));
+				}
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
 						continue;
 					}
 					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
 				}
-				return {};
+				return try_parser_member_type();
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
 				if (!member_pointer_type_id) {

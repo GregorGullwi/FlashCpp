@@ -61,15 +61,16 @@ Remove `buildCodegenOverloadResolutionArgType(...)` as a codegen-owned type reco
 1. Extend semantic normalization so it records the normalized type/category for the expression shapes currently reconstructed in codegen.
 2. Add a sema accessor for overload-resolution argument typing, not just general expression typing.
 3. Replace `buildCodegenOverloadResolutionArgType(...)` call sites with that sema-owned query before falling back to legacy codegen reconstruction.
-4. Remove codegen-side recursive type guessing for identifiers, member accesses, casts, and nested calls.
-5. Once sema value-category coverage is correct for the remaining expression surface, turn missing normalized-body argument typing into `InternalError` and delete the legacy fallback.
+4. **Done for the sema-owned expression families already covered here**: sema-normalized bodies now hard-fail for missing overload-resolution argument typing on string literals, enum constants, casts, constructor/initializer-list expressions, and nested call expressions instead of silently rebuilding them in codegen.
+5. **Work left / exit criteria**: extend that hard-fail boundary to the remaining expression surface (notably member access and arithmetic/composite expressions), delete the remaining legacy fallback for non-normalized bodies, and then remove `buildCodegenOverloadResolutionArgType(...)` entirely instead of keeping it as a shim.
 6. **Resolved risk — enum constant value category**: overload-resolution argument typing now preserves unqualified enum constants (enumerators) as `PRValue` by excluding `IdentifierBinding::EnumConstant` from the generic identifier-lvalue rule. Regression test: `tests/test_ctor_enum_prvalue_ret0.cpp`.
 7. **Resolved risk — string literal value category**: sema-owned argument typing now preserves string literals as lvalues, matching C++20 [lex.string]/15 and the legacy overload-resolution helper. Regression test: `tests/test_ctor_string_literal_lvalue_ret0.cpp`.
 
 **Done when**
 
+- sema-normalized bodies fail loudly for the full overload-resolution argument surface instead of rebuilding those types inside codegen,
 - constructor/copy/move-sensitive codegen decisions no longer depend on ad-hoc declaration lookups or recursive AST-shape type recovery,
-- `buildCodegenOverloadResolutionArgType(...)` is either deleted or reduced to a temporary shim used only for non-normalized bodies,
+- `buildCodegenOverloadResolutionArgType(...)` is deleted or reduced to a temporary shim used only for non-normalized bodies and then removed,
 - widening sema-first queries no longer depends on a hand-maintained whitelist of expression shapes.
 
 **Read/query first**
