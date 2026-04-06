@@ -1949,6 +1949,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 		return {};
 	stats_.expressions_visited++;
 
+	if (node.is<InitializerListNode>()) {
+		for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
+			normalizeExpression(initializer, ctx);
+		}
+		return {};
+	}
+
 	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
 
 	if (node.is<ExpressionNode>()) {
@@ -4287,6 +4294,23 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return false;
 	};
 
+	auto searchTypeMembers = [&](const TypeInfo* type_info) -> bool {
+		if (!type_info) {
+			return false;
+		}
+		if (searchStructMembers(type_info->getStructInfo())) {
+			return true;
+		}
+		if (type_info->isTemplateInstantiation()) {
+			auto pattern_it = getTypesByNameMap().find(type_info->baseTemplateName());
+			if (pattern_it != getTypesByNameMap().end() &&
+				searchStructMembers(pattern_it->second->getStructInfo())) {
+				return true;
+			}
+		}
+		return false;
+	};
+
 	auto searchMemberContextHierarchy = [&]() -> bool {
 		if (member_context_stack_.empty()) {
 			return false;
@@ -4297,17 +4321,17 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			return false;
 		}
 
-		const StructTypeInfo* current_struct = current_type_info->getStructInfo();
-		if (!current_struct) {
+		if (!current_type_info->getStructInfo()) {
 			return false;
 		}
 
 		std::unordered_set<const StructTypeInfo*> visited;
-		auto searchHierarchy = [&](auto&& recurse, const StructTypeInfo* struct_info) -> bool {
+		auto searchHierarchy = [&](auto&& recurse, const TypeInfo* type_info) -> bool {
+			const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 			if (!struct_info || !visited.insert(struct_info).second) {
 				return false;
 			}
-			if (searchStructMembers(struct_info)) {
+			if (searchTypeMembers(type_info)) {
 				return true;
 			}
 			for (const auto& base_spec : struct_info->base_classes) {
@@ -4318,14 +4342,14 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 				if (!base_type_info) {
 					continue;
 				}
-				if (recurse(recurse, base_type_info->getStructInfo())) {
+				if (recurse(recurse, base_type_info)) {
 					return true;
 				}
 			}
 			return false;
 		};
 
-		return searchHierarchy(searchHierarchy, current_struct);
+		return searchHierarchy(searchHierarchy, current_type_info);
 	};
 
 	if (!call_info.qualified_name.isValid()) {
@@ -4339,9 +4363,20 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 
 	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
 	const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
+	if (!member_context_stack_.empty()) {
+		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
+			if ((current_type_info->isTemplateInstantiation() &&
+				 StringTable::getStringView(current_type_info->baseTemplateName()) == struct_name_sv) ||
+				StringTable::getStringView(current_type_info->name()) == struct_name_sv) {
+				if (searchTypeMembers(current_type_info)) {
+					return true;
+				}
+			}
+		}
+	}
 	auto struct_it = getTypesByNameMap().find(struct_name_handle);
 	if (struct_it != getTypesByNameMap().end() &&
-		searchStructMembers(struct_it->second->getStructInfo())) {
+		searchTypeMembers(struct_it->second)) {
 		return true;
 	}
 
@@ -4349,22 +4384,24 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		if (!ti)
 			continue;
 		const std::string_view registered_name = handle.view();
-		if (registered_name == struct_name_sv) {
-			if (searchStructMembers(ti->getStructInfo()))
+		if (registered_name == struct_name_sv ||
+			(ti->isTemplateInstantiation() &&
+			 StringTable::getStringView(ti->baseTemplateName()) == struct_name_sv)) {
+			if (searchTypeMembers(ti))
 				return true;
 		} else if (registered_name.size() > struct_name_sv.size() + 1) {
 			const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 			if (registered_name.substr(prefix_end) == struct_name_sv &&
 				(registered_name[prefix_end - 1] == ':' ||
 				 registered_name[prefix_end - 1] == '<')) {
-				if (searchStructMembers(ti->getStructInfo()))
+				if (searchTypeMembers(ti))
 					return true;
 			}
 		}
 		if (registered_name.size() > struct_name_sv.size() &&
 			registered_name[struct_name_sv.size()] == '<' &&
 			registered_name.starts_with(struct_name_sv)) {
-			if (searchStructMembers(ti->getStructInfo()))
+			if (searchTypeMembers(ti))
 				return true;
 		}
 	}
@@ -4406,11 +4443,14 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	for (const auto& overload : overloads) {
-		if (!overload.is<FunctionDeclarationNode>())
-			continue;
-		const auto& candidate = overload.as<FunctionDeclarationNode>();
-		if (&candidate.decl_node() == &decl) {
-			func_decl = &candidate;
+		const FunctionDeclarationNode* candidate = nullptr;
+		if (overload.is<FunctionDeclarationNode>()) {
+			candidate = &overload.as<FunctionDeclarationNode>();
+		} else if (overload.is<TemplateFunctionDeclarationNode>()) {
+			candidate = &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+		}
+		if (candidate && &candidate->decl_node() == &decl) {
+			func_decl = candidate;
 			break;
 		}
 	}
@@ -4418,19 +4458,32 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (!func_decl) {
 		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
 			for (const auto& overload : overloads) {
-				if (!overload.is<FunctionDeclarationNode>())
-					continue;
-				const auto& candidate = overload.as<FunctionDeclarationNode>();
-				if (arguments.size() == candidate.parameter_nodes().size())
-					return &candidate;
+				if (overload.is<FunctionDeclarationNode>()) {
+					const auto& candidate = overload.as<FunctionDeclarationNode>();
+					if (arguments.size() == candidate.parameter_nodes().size())
+						return &candidate;
+				} else if (overload.is<TemplateFunctionDeclarationNode>()) {
+					const auto& candidate = overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+					if (arguments.size() == candidate.parameter_nodes().size())
+						return &candidate;
+				}
 			}
 			return nullptr;
 		};
-		if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>()) {
-			func_decl = &overloads[0].as<FunctionDeclarationNode>();
+		if (overloads.size() == 1) {
+			if (overloads[0].is<FunctionDeclarationNode>()) {
+				func_decl = &overloads[0].as<FunctionDeclarationNode>();
+			} else if (overloads[0].is<TemplateFunctionDeclarationNode>()) {
+				func_decl = &overloads[0].as<TemplateFunctionDeclarationNode>().function_decl_node();
+			}
 		} else {
 			func_decl = find_by_arg_count();
 		}
+	}
+
+	if (!func_decl &&
+		tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+		return func_decl;
 	}
 
 	return func_decl;
