@@ -1777,13 +1777,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				return_type,
 				false,
 				false);
-			int actual_return_size = call_op.return_size_in_bits.value;
-			if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
-				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
-				}
-			}
-			call_op.return_size_in_bits = SizeInBits{actual_return_size};
 
 			bool needs_hidden_return = needsHiddenReturnParam(return_type.type(), return_type.pointer_depth(), return_type.is_reference(), call_op.return_size_in_bits.value, context_->isLLP64());
 			if (needs_hidden_return) {
@@ -1816,8 +1809,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 				call_op.args.push_back(toTypedValue(rhsExprResult));
 			}
 
+			// Capture return metadata before the move invalidates call_op.
+			SizeInBits return_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-			return makeExprResult(return_type.type_index(), SizeInBits{actual_return_size}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(return_type.type_index(), return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		else if (overload_result.has_match) {
@@ -1909,32 +1904,23 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
+			// Resolve actual return type - defaulted operator<=> has 'auto' return type
+			// that is deduced to int (returning -1/0/1).
+			// Must resolve this before createCallOp so populateCallReturnInfo sees the real type.
+			TypeSpecifierNode resolved_return_type_spec = return_type;
+			if (isPlaceholderAutoType(return_type.category()) && op == "<=>") {
+				resolved_return_type_spec = TypeSpecifierNode(TypeCategory::Int, TypeQualifier::None, SizeInBits{32}, return_type.token(), CVQualifier::None);
+			}
+
 			// Create the call operation
 			CallOp call_op = createCallOp(
 				result_var,
 				mangled_name,
-				return_type,
+				resolved_return_type_spec,
 				true,
 				false);
 
-			// Resolve actual return type - defaulted operator<=> has 'auto' return type
-			// that is deduced to int (returning -1/0/1)
-			TypeCategory resolved_return_type = return_type.type();
-			TypeCategory resolved_cat = return_type.category();
-			int actual_return_size = static_cast<int>(return_type.size_in_bits());
-			if (isPlaceholderAutoType(resolved_cat) && op == "<=>") {
-				resolved_return_type = TypeCategory::Int;
-				resolved_cat = TypeCategory::Int;
-				actual_return_size = 32;
-			}
-			if (actual_return_size == 0 && resolved_cat == TypeCategory::Struct && return_type.type_index().is_valid()) {
-				// Look up struct size from type info
-				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
-					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
-				}
-			}
-			call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
-			call_op.return_size_in_bits = SizeInBits{actual_return_size};
+			int actual_return_size = call_op.return_size_in_bits.value;
 
 			// Detect if returning struct by value (needs hidden return parameter for RVO)
 			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
@@ -1976,10 +1962,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 			fillInDefaultArguments(call_op, func_decl.parameter_nodes(), 1);
 
+			// Capture return metadata before the move invalidates call_op.
+			TypeIndex result_type_index = call_op.return_type_index;
+			SizeInBits result_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
 			// Return the result with resolved types
-			return makeExprResult(return_type.type_index().withCategory(resolved_return_type), SizeInBits{static_cast<int>(actual_return_size)}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(result_type_index, result_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 	}
 

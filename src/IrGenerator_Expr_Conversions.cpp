@@ -528,11 +528,9 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 							// Generate the call
 						TempVar ret_var = var_counter.next();
 
-						// Create CallOp
+						// Create CallOp — size resolution for struct/primitive types is handled
+						// inside populateCallReturnInfo, so no post-hoc fixup needed.
 						CallOp call_op = createCallOp(ret_var, StringHandle{}, return_type, true, false);
-						if (!call_op.return_size_in_bits.is_set()) {
-							call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
-						}
 						call_op.function_name = mangled_name;  // MangledName implicitly converts to StringHandle
 
 							// Add 'this' pointer as first argument
@@ -1659,12 +1657,6 @@ std::optional<ExprResult> AstToIr::generateUnaryIncDecOverloadCall(
 
 	TempVar ret_var = var_counter.next();
 	CallOp call_op = createCallOp(ret_var, mangled_name, return_type, true, false);
-	if (!call_op.return_size_in_bits.is_set()) {
-		if (const TypeInfo* return_type_info = tryGetTypeInfo(return_type.type_index());
-			return_type_info && return_type_info->struct_info_) {
-			call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type_info->struct_info_->sizeInBits().value)};
-		}
-	}
 
 	// Detect if returning struct by value (needs hidden return parameter for RVO).
 	// Small structs (≤ ABI threshold) return in registers and need no return_slot.

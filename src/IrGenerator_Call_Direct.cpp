@@ -130,8 +130,26 @@ void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& r
 		(normalized_return_type.pointer_depth() > 0 ||
 		 normalized_return_type.is_reference() ||
 		 normalized_return_type.is_rvalue_reference())
-			? 64
+			? POINTER_SIZE_BITS
 			: static_cast<int>(normalized_return_type.size_in_bits())};
+
+	// When TypeSpecifierNode reports size 0 for a non-void type, resolve it:
+	// structs via tryGetStructTypeInfo, primitives via get_type_size_bits.
+	if (!call_op.return_size_in_bits.is_set() && normalized_return_type.type() != TypeCategory::Void) {
+		const TypeCategory cat = normalized_return_type.category();
+		if (cat == TypeCategory::Struct && normalized_return_type.type_index().is_valid()) {
+			if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(normalized_return_type.type_index())) {
+				call_op.return_size_in_bits = SizeInBits{static_cast<int>(ret_struct->sizeInBits().value)};
+			}
+		}
+		if (!call_op.return_size_in_bits.is_set()) {
+			const int fallback_bits = get_type_size_bits(cat);
+			if (fallback_bits > 0) {
+				call_op.return_size_in_bits = SizeInBits{fallback_bits};
+			}
+		}
+	}
+
 	populateReferenceReturnInfo(call_op, normalized_return_type);
 }
 
