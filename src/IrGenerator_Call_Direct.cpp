@@ -972,8 +972,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			const bool current_struct_matches_parent =
 				current_struct_name_view == parent ||
 				extractBaseTemplateName(current_struct_name_view) == parent ||
-				(gTemplateRegistry.get_instantiation_pattern(current_struct_name_).has_value() &&
-				 gTemplateRegistry.get_instantiation_pattern(current_struct_name_).value() == parent_handle);
+				([&] { auto pat = gTemplateRegistry.get_instantiation_pattern(current_struct_name_); return pat.has_value() && pat.value() == parent_handle; }());
 			if (current_struct_matches_parent) {
 				if (const FunctionDeclarationNode* instantiated_member = findCurrentStructMemberInHierarchy()) {
 					matched_func_decl = instantiated_member;
