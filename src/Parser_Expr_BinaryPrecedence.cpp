@@ -254,6 +254,15 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 				  "' on line ", stalled_token.line(), " column ", stalled_token.column());
 		return ParseResult::error("Parser error: stalled while parsing binary expression", stalled_token);
 	};
+	auto isPotentialFoldOperator = [](std::string_view op) {
+		return op == "," || op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
+			   op == "^" || op == "&" || op == "|" || op == "=" || op == "<" ||
+			   op == ">" || op == "<<" || op == ">>" || op == "+=" || op == "-=" ||
+			   op == "*=" || op == "/=" || op == "%=" || op == "^=" || op == "&=" ||
+			   op == "|=" || op == "<<=" || op == ">>=" || op == "==" || op == "!=" ||
+			   op == "<=" || op == ">=" || op == "&&" || op == "||" ||
+			   op == ".*" || op == "->*";
+	};
 	while (true) {
 		// Safety check: ensure we have a token to examine
 		if (peek().is_eof()) {
@@ -271,6 +280,12 @@ ParseResult Parser::parse_expression(int precedence, ExpressionContext context) 
 
 		// Skip pack expansion operator '...' - it should be handled by the caller (e.g., function call argument parsing)
 		if (peek() == "..."_tok) {
+			break;
+		}
+		if ((is_comma || is_operator) &&
+			isPotentialFoldOperator(peek_info().value()) &&
+			peek_info(1).type() == Token::Type::Punctuator &&
+			peek_info(1).value() == "...") {
 			break;
 		}
 
