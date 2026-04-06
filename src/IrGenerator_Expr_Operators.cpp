@@ -576,6 +576,7 @@ void AstToIr::fillInConstructorDefaultArguments(
 	ConstructorCallOp& ctor_op,
 	const ConstructorDeclarationNode& ctor_node,
 	size_t explicit_arg_count) {
+	ctor_op.resolved_constructor = &ctor_node;
 	const auto& params = ctor_node.parameter_nodes();
 	for (size_t i = explicit_arg_count; i < params.size(); ++i) {
 		if (!params[i].is<DeclarationNode>()) {
@@ -612,6 +613,7 @@ void AstToIr::fillInDefaultConstructorArguments(ConstructorCallOp& ctor_op, cons
 		return;
 	}
 
+	ctor_op.resolved_constructor = &default_ctor->function_decl.as<ConstructorDeclarationNode>();
 	fillInConstructorDefaultArguments(
 		ctor_op,
 		default_ctor->function_decl.as<ConstructorDeclarationNode>(),

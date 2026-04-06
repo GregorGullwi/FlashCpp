@@ -2898,6 +2898,7 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 			matching_ctor = arity_resolution.selected_overload;
 		}
 	}
+	ctor_op.resolved_constructor = matching_ctor;
 	// Get constructor parameter types for reference handling
 	// But first check for aggregate initialization: if no matching constructor was found
 	// (excluding implicit copy/move), and the struct has public members, generate direct

@@ -2559,6 +2559,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = target_type_info->name();
 	ctor_op.object = result_var;
+	ctor_op.resolved_constructor = &selected_ctor;
 	ctor_op.use_return_slot = use_return_slot;
 
 	const auto& ctor_params = selected_ctor.parameter_nodes();

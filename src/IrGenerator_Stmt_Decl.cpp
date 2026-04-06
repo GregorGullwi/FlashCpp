@@ -1463,6 +1463,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = type_info->name();
 								ctor_op.object = decl.identifier_token().handle();
+								ctor_op.resolved_constructor = matching_ctor;
 
 								// Get constructor parameter types for reference handling
 								const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -2222,6 +2223,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							ConstructorCallOp ctor_op;
 							ctor_op.struct_name = type_info->name();
 							ctor_op.object = decl.identifier_token().handle();
+							ctor_op.resolved_constructor = matching_ctor;
 
 							// Get constructor parameter types for reference handling
 							const auto& ctor_params = matching_ctor ? matching_ctor->parameter_nodes() : std::vector<ASTNode>{};
@@ -2418,6 +2420,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 						}
 
+						const ConstructorDeclarationNode* emitted_ctor = sema_selected_converting_ctor;
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = decl.identifier_token().handle();
@@ -2531,11 +2534,13 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 								type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
 							if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 								const auto& matched_ctor = same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+								emitted_ctor = &matched_ctor;
 								if (matched_ctor.parameter_nodes().size() > ctor_op.arguments.size()) {
 									fillInConstructorDefaultArguments(ctor_op, matched_ctor, ctor_op.arguments.size());
 								}
 							}
 						}
+						ctor_op.resolved_constructor = emitted_ctor;
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), decl.identifier_token()));
 
