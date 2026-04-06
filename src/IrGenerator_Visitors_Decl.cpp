@@ -1816,6 +1816,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ConstructorCallOp ctor_op;
 						ctor_op.struct_name = base_type_info->name();
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
+						if (const StructMemberFunction* base_same_type_ctor =
+								base_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							ctor_op.resolved_constructor =
+								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+						}
 							// For multiple inheritance, the 'this' pointer must be adjusted to point to the base subobject
 						assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 						ctor_op.base_class_offset = static_cast<int>(base.offset);
@@ -1857,6 +1863,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ConstructorCallOp ctor_op;
 								ctor_op.struct_name = member_type_info->name();
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
+								if (const StructMemberFunction* member_same_type_ctor =
+										member_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+									member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+									ctor_op.resolved_constructor =
+										&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+								}
 								assert(member.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Member offset exceeds int range");
 								ctor_op.base_class_offset = static_cast<int>(member.offset);
 

@@ -4902,6 +4902,47 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 	const auto struct_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name));
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
+	if (!actual_ctor && struct_type_it != getTypesByNameMap().end()) {
+		const StructTypeInfo* struct_info = struct_type_it->second->getStructInfo();
+		if (struct_info) {
+			if (num_params == 1 && !ctor_op.arguments.empty()) {
+				const TypedValue& arg = ctor_op.arguments[0];
+				bool arg_is_same_struct = (isIrStructType(arg.effectiveIrType()) &&
+										   arg.type_index == struct_type_it->second->type_index_);
+				bool arg_is_ref_or_pointer = (arg.is_reference() || arg.size_in_bits == SizeInBits{64});
+
+				if (arg_is_same_struct && arg_is_ref_or_pointer) {
+					bool prefer_move_ctor = arg.ref_qualifier == ReferenceQualifier::RValueReference;
+					const StructMemberFunction* same_type_ctor = struct_info->findPreferredSameTypeConstructor(prefer_move_ctor);
+					if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+						actual_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+						FLASH_LOG_FORMAT(Codegen, Debug,
+										 "Constructor call for {}: recovered same-type {} constructor in IRConverter fallback",
+										 struct_name,
+										 prefer_move_ctor ? "move" : "copy");
+					}
+				}
+			}
+
+			if (!actual_ctor) {
+				std::vector<TypeSpecifierNode> arg_types;
+				arg_types.reserve(num_params);
+				for (const auto& arg : ctor_op.arguments) {
+					arg_types.push_back(buildTypeSpecFromTypedValue(arg));
+				}
+
+				auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
+				if (resolution.has_match && resolution.selected_overload) {
+					actual_ctor = resolution.selected_overload;
+				}
+
+				if (!actual_ctor) {
+					auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_params, false);
+					actual_ctor = arity_resolution.selected_overload;
+				}
+			}
+		}
+	}
 
 		// Extract parameter types for constructor argument lowering.
 	std::vector<TypeSpecifierNode> parameter_types;

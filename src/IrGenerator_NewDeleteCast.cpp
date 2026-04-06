@@ -110,6 +110,9 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 										ctor_op.struct_name = type_info->name();
 										ctor_op.object = element_ptr;
 										ctor_op.is_heap_allocated = true;
+										if (init_list.initializers().empty()) {
+											fillInDefaultConstructorArguments(ctor_op, *struct_info);
+										}
 
 											// Add each initializer as a constructor argument
 										for (const auto& elem_init : init_list.initializers()) {
@@ -225,6 +228,9 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 									ctor_op.struct_name = type_info->name();
 									ctor_op.object = element_ptr;
 									ctor_op.is_heap_allocated = true;
+									if (init_list.initializers().empty()) {
+										fillInDefaultConstructorArguments(ctor_op, *struct_info);
+									}
 
 									for (const auto& elem_init : init_list.initializers()) {
 											// Safety check: ensure elem_init is an ExpressionNode
@@ -326,6 +332,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 				ctor_op.struct_name = array_struct_name_handle;
 				ctor_op.object = elem_ptr;
 				ctor_op.is_heap_allocated = true;
+				fillInDefaultConstructorArguments(ctor_op, *array_struct_info);
 				ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
 					// i_var = i_var + 1  (write back to same TempVar slot)
@@ -373,6 +380,9 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
+						if (newExpr.constructor_args().empty()) {
+							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
+						}
 
 							// Add constructor arguments
 						const auto& ctor_args = newExpr.constructor_args();
@@ -416,6 +426,9 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
+						if (newExpr.constructor_args().empty()) {
+							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
+						}
 
 							// Add constructor arguments
 						const auto& ctor_args = newExpr.constructor_args();
