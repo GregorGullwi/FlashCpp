@@ -17,6 +17,7 @@ class DestructorDeclarationNode;
 class BlockNode;
 class NamespaceDeclarationNode;
 class ArraySubscriptNode;
+class MemberAccessNode;
 class BinaryOperatorNode;
 class UnaryOperatorNode;
 
@@ -24,6 +25,7 @@ class ConstructorCallNode;
 class InitializerListNode;
 class RangedForStatementNode;
 class VariableDeclarationNode;
+struct StructMember;
 struct StructTypeInfo;
 struct LambdaInfo;
 struct CallInfo;
@@ -105,6 +107,9 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
+	bool getResolvedMemberAccess(const MemberAccessNode& key,
+								 const StructTypeInfo*& out_struct_info,
+								 const StructMember*& out_member);
 	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
 
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
@@ -257,6 +262,12 @@ private:
 											 const DeclarationNode& decl,
 											 const ChunkedVector<ASTNode>& arguments,
 											 const FunctionDeclarationNode*& func_decl);
+	struct ResolvedMemberAccessInfo {
+		TypeIndex owner_type_index{};
+		size_t member_index = 0;
+	};
+	bool tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
+								   ResolvedMemberAccessInfo& out_info);
 
 	// Annotate constructor-call arguments with their parameter-type conversions.
 	void tryAnnotateConstructorCallArgConversions(const ConstructorCallNode& call_node);
@@ -323,6 +334,7 @@ private:
 	// Populated by tryResolveCallableOperator for struct-typed callable objects.
 	std::unordered_map<const void*, const FunctionDeclarationNode*> op_call_table_;
 	std::unordered_map<const void*, const FunctionDeclarationNode*> resolved_direct_call_table_;
+	std::unordered_map<const void*, ResolvedMemberAccessInfo> resolved_member_access_table_;
 	std::unordered_map<const void*, TypeSpecifierNode> overload_resolution_arg_types_;
 	std::unordered_map<const void*, std::vector<CallArgReferenceBindingInfo>> call_ref_bindings_;
 

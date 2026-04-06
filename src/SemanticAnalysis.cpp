@@ -2067,6 +2067,12 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 				}
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
+				ResolvedMemberAccessInfo member_info;
+				if (tryResolveMemberAccessInfo(e, member_info)) {
+					resolved_member_access_table_[static_cast<const void*>(&e)] = member_info;
+				} else {
+					resolved_member_access_table_.erase(static_cast<const void*>(&e));
+				}
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				normalizeExpression(e.object(), ctx);
 				normalizeExpression(e.member_pointer(), ctx);
@@ -2455,6 +2461,33 @@ const FunctionDeclarationNode* SemanticAnalysis::getResolvedDirectCall(const Cal
 	return getResolvedDirectCall(static_cast<const void*>(key));
 }
 
+bool SemanticAnalysis::getResolvedMemberAccess(const MemberAccessNode& key,
+											   const StructTypeInfo*& out_struct_info,
+											   const StructMember*& out_member) {
+	const void* cache_key = static_cast<const void*>(&key);
+	auto it = resolved_member_access_table_.find(cache_key);
+	if (it == resolved_member_access_table_.end()) {
+		ResolvedMemberAccessInfo member_info;
+		if (!tryResolveMemberAccessInfo(key, member_info)) {
+			return false;
+		}
+		it = resolved_member_access_table_.emplace(cache_key, member_info).first;
+	}
+
+	const TypeInfo* owner_type_info = tryGetTypeInfo(it->second.owner_type_index);
+	const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+	if (!owner_struct_info) {
+		throw InternalError("Resolved member access owner type no longer names a struct");
+	}
+	if (it->second.member_index >= owner_struct_info->members.size()) {
+		throw InternalError("Resolved member access index out of bounds");
+	}
+
+	out_struct_info = owner_struct_info;
+	out_member = &owner_struct_info->members[it->second.member_index];
+	return true;
+}
+
 const FunctionDeclarationNode* SemanticAnalysis::getResolvedOpSubscript(const ArraySubscriptNode* key) const {
 	auto it = op_subscript_table_.find(key);
 	return it != op_subscript_table_.end() ? it->second : nullptr;
@@ -2471,6 +2504,80 @@ const CallArgReferenceBindingInfo* SemanticAnalysis::getCallRefBinding(const voi
 
 const CallArgReferenceBindingInfo* SemanticAnalysis::getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const {
 	return getCallRefBinding(static_cast<const void*>(key), arg_index);
+}
+
+bool SemanticAnalysis::tryResolveMemberAccessInfo(const MemberAccessNode& member_access,
+												  ResolvedMemberAccessInfo& out_info) {
+	const CanonicalTypeId object_type_id = inferExpressionType(member_access.object());
+	if (!object_type_id) {
+		return false;
+	}
+
+	const CanonicalTypeDesc& object_desc = type_context_.get(object_type_id);
+	if (object_desc.category() != TypeCategory::Struct &&
+		object_desc.category() != TypeCategory::UserDefined) {
+		return false;
+	}
+
+	const TypeInfo* object_type_info = nullptr;
+	if (object_desc.category() == TypeCategory::UserDefined) {
+		const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
+		object_type_info = alias_info.terminal_type_info;
+	}
+	if (!object_type_info) {
+		object_type_info = tryGetTypeInfo(object_desc.type_index);
+	}
+	if (!object_type_info) {
+		return false;
+	}
+
+	const StructTypeInfo* struct_info = object_type_info->getStructInfo();
+	if (!struct_info) {
+		return false;
+	}
+
+	const StringHandle member_name = member_access.member_token().handle();
+	if (!member_name.isValid()) {
+		throw InternalError("Member token handle was not interned for '" + std::string(member_access.member_name()) + "'");
+	}
+
+	auto fillResolvedInfo = [&](const StructTypeInfo* owner_struct, const StructMember* member) -> bool {
+		if (!owner_struct || !member) {
+			return false;
+		}
+
+		const auto& members = owner_struct->members;
+		for (size_t member_index = 0; member_index < members.size(); ++member_index) {
+			if (&members[member_index] != member) {
+				continue;
+			}
+			if (!owner_struct->own_type_index_.has_value()) {
+				throw InternalError("Resolved member access owner struct is missing own_type_index_");
+			}
+			out_info.owner_type_index = *owner_struct->own_type_index_;
+			out_info.member_index = member_index;
+			return true;
+		}
+		throw InternalError("Resolved member access did not point at an owner member");
+	};
+
+	if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(object_type_info->type_index_, member_name)) {
+		return fillResolvedInfo(member_result.owner_struct, member_result.member);
+	}
+
+	for (size_t member_index = 0; member_index < struct_info->members.size(); ++member_index) {
+		if (struct_info->members[member_index].name != member_name) {
+			continue;
+		}
+		if (!struct_info->own_type_index_.has_value()) {
+			throw InternalError("Resolved member access struct is missing own_type_index_");
+		}
+		out_info.owner_type_index = *struct_info->own_type_index_;
+		out_info.member_index = member_index;
+		return true;
+	}
+
+	return false;
 }
 
 void SemanticAnalysis::setSlot(const void* key, const SemanticSlot& slot) {
@@ -2666,28 +2773,18 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!object_type_info) {
 					object_type_info = tryGetTypeInfo(object_desc.type_index);
 				}
-				const StructTypeInfo* struct_info = object_type_info ? object_type_info->getStructInfo() : nullptr;
-				if (!struct_info) {
+				ResolvedMemberAccessInfo member_info;
+				if (!object_type_info || !tryResolveMemberAccessInfo(e, member_info)) {
 					return try_parser_member_type();
 				}
-				// MemberAccessNode stores the parser token directly, so the identifier handle
-				// must already be interned at tokenization time. If this ever fails,
-				// fix token construction/parser plumbing instead of re-interning here.
-				const StringHandle member_name = e.member_token().handle();
-				if (!member_name.isValid()) {
-					throw InternalError("Member token handle was not interned for '" + std::string(e.member_name()) + "'");
+
+				const TypeInfo* owner_type_info = tryGetTypeInfo(member_info.owner_type_index);
+				const StructTypeInfo* owner_struct_info = owner_type_info ? owner_type_info->getStructInfo() : nullptr;
+				if (!owner_struct_info || member_info.member_index >= owner_struct_info->members.size()) {
+					return try_parser_member_type();
 				}
-				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(object_type_info->type_index_, member_name)) {
-					return type_context_.intern(canonicalTypeDescFromStructMember(
-						*member_result.member, object_desc.base_cv));
-				}
-				for (const auto& member : struct_info->members) {
-					if (member.name != member_name) {
-						continue;
-					}
-					return type_context_.intern(canonicalTypeDescFromStructMember(member, object_desc.base_cv));
-				}
-				return try_parser_member_type();
+				return type_context_.intern(canonicalTypeDescFromStructMember(
+					owner_struct_info->members[member_info.member_index], object_desc.base_cv));
 			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
 				CanonicalTypeId member_pointer_type_id = inferExpressionType(e.member_pointer());
 				if (!member_pointer_type_id) {
