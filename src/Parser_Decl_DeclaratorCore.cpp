@@ -1260,9 +1260,9 @@ bool Parser::looks_like_function_parameters() {
 	// If it starts with a type keyword, it's likely function parameters
 	// If it starts with a literal or identifier that's not a type, it's likely direct init
 
-		if (!peek().is_eof()) {
-			Token::Type token_type = peek_info().type();
-			std::string_view token_value = peek_info().value();
+	if (!peek().is_eof()) {
+		Token::Type token_type = peek_info().type();
+		std::string_view token_value = peek_info().value();
 			auto looks_like_qualified_direct_init_arg = [&]() -> bool {
 				SaveHandle qualified_saved = save_token_position();
 				auto restore_before_return = [&](bool result) {
