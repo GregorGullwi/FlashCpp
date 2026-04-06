@@ -2641,6 +2641,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				if (!struct_info) {
 					return {};
 				}
+				// MemberAccessNode stores the parser token directly, so the identifier handle
+				// should already be interned at tokenization time. If that ever stops being
+				// true, fix token construction/parser plumbing instead of re-interning here.
 				const StringHandle member_name = e.member_token().handle();
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
