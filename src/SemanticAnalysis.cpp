@@ -1253,12 +1253,6 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 	return normalizeRangedForLoopDecl(original_var_decl, *range_type, begin_return_type, dereference_func);
 }
 
-const FunctionDeclarationNode* SemanticAnalysis::resolveRangedForIteratorDereference(
-	const TypeSpecifierNode& iterator_type,
-	bool prefer_const) const {
-	return getRangeIteratorDereferenceFunctionForSema(iterator_type, prefer_const);
-}
-
 void SemanticAnalysis::resolveRemainingAutoReturns() {
 	auto& nodes = const_cast<std::vector<ASTNode>&>(parser_.get_nodes());
 	for (auto& node : nodes) {

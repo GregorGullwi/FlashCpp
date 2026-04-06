@@ -1033,14 +1033,10 @@ void AstToIr::visitRangedForBeginEnd(const RangedForStatementNode& node, ASTNode
 		init_expr = ASTNode::emplace_node<ExpressionNode>(
 			UnaryOperatorNode(Token(Token::Type::Operator, "*"sv, 0, 0, 0), cast_expr, true));
 	} else {
-		const bool prefer_const_deref = range_type.is_const() || node.resolved_begin_is_const();
 		const FunctionDeclarationNode* dereference_func = node.resolved_dereference_function();
 		if (!dereference_func) {
 			if (sema_normalized_current_function_) {
 				throw InternalError("Range-for struct iterator missing pre-resolved operator*() in sema-normalized body");
-			}
-			if (sema_) {
-				dereference_func = sema_->resolveRangedForIteratorDereference(begin_return_type, prefer_const_deref);
 			}
 		}
 		if (!dereference_func) {
