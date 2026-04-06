@@ -12711,9 +12711,12 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			// Note: allocateStackSlotForTempVar already updates the variables map
 	}
 
-		// For large members (> 8 bytes), we can't load the value into a register
-		// Instead, we compute and store the ADDRESS for later nested member access
-	if (member_size_bytes > 8) {
+		// Struct-typed members must preserve their address so nested member access keeps
+		// using the subobject as an aggregate base instead of loading raw bytes as though
+		// the struct were a scalar value. Large members already require address storage for
+		// the same reason.
+	bool keep_member_address = isIrStructType(op.result.effectiveIrType()) && !op.is_reference();
+	if (member_size_bytes > 8 || keep_member_address) {
 			// Allocate a register to compute the address
 		X64Register addr_reg = allocateRegisterWithSpilling();
 

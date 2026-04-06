@@ -3,20 +3,6 @@
 This file tracks currently open issues only. Fixed items are removed once they are
 validated.
 
-## Nested namespace-qualified template members can crash at runtime
-
-Code that instantiates a class template in one namespace and stores a value in a
-subobject whose type is a relative namespace-qualified class template (for
-example `detail::Holder<T>` inside `outer::Box<T>`) can currently compile and
-link successfully but crash at runtime with signal 11.
-
-Current repro: `tests/test_relative_namespace_template_instantiation_ret6.cpp`
-
-The recent parser/template-lookup fix correctly resolves the relative
-namespace-qualified template name during instantiation, but the generated code
-for the resulting object still appears to mishandle the instantiated subobject
-at runtime.
-
 ## Range-for with inline struct iterator member functions
 
 Range-for loops using struct iterators with inline member function definitions
