@@ -837,6 +837,26 @@ void StructTypeInfo::propagateAstProperties(StructMemberFunction& mf) {
 // refers to the base template pattern (e.g., Wrapper) that this struct was instantiated from,
 // since self-referential parameters like operator=(const Wrapper&) may not have the
 // instantiated type_index substituted.
+void StructTypeInfo::addConstructor(ASTNode constructor_decl, AccessSpecifier access) {
+	if (own_type_index_.has_value() && constructor_decl.is<ConstructorDeclarationNode>()) {
+		constructor_decl.as<ConstructorDeclarationNode>().set_owning_type_index(*own_type_index_);
+	}
+	auto& ctor = member_functions.emplace_back(getName(), constructor_decl, access, true, false);
+	propagateAstProperties(ctor);
+}
+
+void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
+	if (info) {
+		info->own_type_index_ = type_index_;
+		for (auto& member_func : info->member_functions) {
+			if (member_func.is_constructor && member_func.function_decl.is<ConstructorDeclarationNode>()) {
+				member_func.function_decl.as<ConstructorDeclarationNode>().set_owning_type_index(type_index_);
+			}
+		}
+	}
+	struct_info_ = std::move(info);
+}
+
 bool StructTypeInfo::isOwnTypeIndex(TypeIndex param_type_index) const {
 	if (!own_type_index_.has_value())
 		return false;
