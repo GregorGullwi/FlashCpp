@@ -3482,7 +3482,7 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 									  const StructTypeInfo*& out_struct_info,
 									  const StructMember*& out_member) const {
-	if (sema_ && sema_->getResolvedMemberAccess(member_access, out_struct_info, out_member)) {
+	if (sema_ && sema_->resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
 		return true;
 	}
 	if (sema_ && sema_normalized_current_function_) {

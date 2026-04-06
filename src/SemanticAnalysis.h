@@ -107,9 +107,9 @@ public:
 	const FunctionDeclarationNode* getResolvedOpCall(const CallExprNode* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const void* key) const;
 	const FunctionDeclarationNode* getResolvedDirectCall(const CallExprNode* key) const;
-	bool getResolvedMemberAccess(const MemberAccessNode& key,
-								 const StructTypeInfo*& out_struct_info,
-								 const StructMember*& out_member);
+	bool resolveOrGetMemberAccess(const MemberAccessNode& key,
+								  const StructTypeInfo*& out_struct_info,
+								  const StructMember*& out_member);
 	const CallArgReferenceBindingInfo* getCallRefBinding(const void* key, size_t arg_index) const;
 
 	const CallArgReferenceBindingInfo* getCallExprRefBinding(const CallExprNode* key, size_t arg_index) const;
