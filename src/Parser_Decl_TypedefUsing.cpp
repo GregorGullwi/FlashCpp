@@ -278,6 +278,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 						// Mark the type accordingly
 						FunctionSignature func_sig;
 						func_sig.return_type_index = type_spec.type_index();
+						func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+						func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 						func_sig.parameter_type_indices = std::move(param_types);
 
 						if (is_function_ptr) {
@@ -343,6 +345,8 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 					FunctionSignature func_sig;
 					func_sig.return_type_index = type_spec.type_index();
+					func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+					func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 					func_sig.parameter_type_indices = std::move(param_types);
 					type_spec.set_function_signature(func_sig);
 
@@ -2014,6 +2018,8 @@ ParseResult Parser::parse_typedef_declaration() {
 		// This is a simplified implementation that handles the common case
 		FunctionSignature sig;
 		sig.return_type_index = return_type_index;
+		sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+		sig.return_reference_qualifier = type_spec.reference_qualifier();
 		sig.linkage = Linkage::None;
 		fp_type.set_function_signature(sig);
 

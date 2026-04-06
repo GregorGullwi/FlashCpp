@@ -931,6 +931,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 									// Successfully parsed function reference/pointer type!
 									FunctionSignature func_sig;
 									func_sig.return_type_index = type_spec.type_index();
+									func_sig.return_pointer_depth = static_cast<int>(type_spec.pointer_depth());
+									func_sig.return_reference_qualifier = type_spec.reference_qualifier();
 									func_sig.parameter_type_indices = std::move(param_types);
 
 									if (is_function_ptr) {

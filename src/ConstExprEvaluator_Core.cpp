@@ -1727,6 +1727,8 @@ bool Evaluator::typesMatchIgnoringCvAndRef(const TypeSpecifierNode& lhs, const T
 		const FunctionSignature& rhs_sig = rhs.function_signature();
 		if (lhs_sig.returnType() != rhs_sig.returnType() ||
 			lhs_sig.return_type_index != rhs_sig.return_type_index ||
+			lhs_sig.return_pointer_depth != rhs_sig.return_pointer_depth ||
+			lhs_sig.return_reference_qualifier != rhs_sig.return_reference_qualifier ||
 			lhs_sig.parameter_type_indices.size() != rhs_sig.parameter_type_indices.size() ||
 			lhs_sig.linkage != rhs_sig.linkage ||
 			lhs_sig.class_name != rhs_sig.class_name ||

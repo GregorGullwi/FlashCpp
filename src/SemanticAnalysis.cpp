@@ -244,7 +244,9 @@ bool CanonicalTypeDesc::operator==(const CanonicalTypeDesc& other) const {
 		const auto& a = *function_signature;
 		const auto& b = *other.function_signature;
 		if (a.returnType() != b.returnType() ||
-			a.return_type_index != b.return_type_index)
+			a.return_type_index != b.return_type_index ||
+			a.return_pointer_depth != b.return_pointer_depth ||
+			a.return_reference_qualifier != b.return_reference_qualifier)
 			return false;
 		if (a.parameter_type_indices.size() != b.parameter_type_indices.size())
 			return false;
