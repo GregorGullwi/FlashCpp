@@ -1090,10 +1090,18 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 		if (auto deduced_type = deducePlaceholderReturnType(lambda_info.lambda_body, lambda_info.returnType());
 			deduced_type.has_value()) {
 			lambda_info.return_type_index = deduced_type->type_index().withCategory(deduced_type->type());
-			lambda_info.returns_reference =
-				deduced_type->is_reference() || deduced_type->is_rvalue_reference();
+			lambda_info.return_value_mode = ReturnValueMode::None;
+			if (deduced_type->pointer_depth() > 0) {
+				lambda_info.return_value_mode |= ReturnValueMode::Pointer;
+			}
+			if (deduced_type->is_reference() || deduced_type->is_rvalue_reference()) {
+				lambda_info.return_value_mode |= ReturnValueMode::Reference;
+			}
+			if (deduced_type->is_function_pointer() || deduced_type->has_function_signature()) {
+				lambda_info.return_value_mode |= ReturnValueMode::FunctionPointer;
+			}
 			int deduced_size = getTypeSpecSizeBits(*deduced_type);
-			lambda_info.return_size = lambda_info.returns_reference ? 64 : deduced_size;
+			lambda_info.return_size = lambda_info.returnsReference() ? 64 : deduced_size;
 		}
 	}
 
@@ -1105,7 +1113,7 @@ void SemanticAnalysis::normalizeInstantiatedLambdaBody(LambdaInfo& lambda_info) 
 			lambda_info.lambda_token,
 			CVQualifier::None,
 			ReferenceQualifier::None);
-		if (lambda_info.returns_reference) {
+		if (lambda_info.returnsReference()) {
 			lambda_return_type.set_reference_qualifier(ReferenceQualifier::LValueReference);
 			lambda_return_type.set_size_in_bits(64);
 		}

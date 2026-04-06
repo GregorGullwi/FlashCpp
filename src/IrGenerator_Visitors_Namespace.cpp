@@ -178,7 +178,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 		}
 
 			// Fast path: reference return of '*this' can directly return the this pointer
-		if (current_function_returns_reference_ && expr_opt->is<ExpressionNode>()) {
+		if (currentFunctionReturnsReference() && expr_opt->is<ExpressionNode>()) {
 			const auto& ret_expr = expr_opt->as<ExpressionNode>();
 			if (std::holds_alternative<UnaryOperatorNode>(ret_expr)) {
 				const auto& unary = std::get<UnaryOperatorNode>(ret_expr);
@@ -202,7 +202,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// For reference return types, use LValueAddress context to get the address instead of the value
 			// This ensures "return *this" returns the address (this pointer), not the dereferenced value
-		ExpressionContext return_context = current_function_returns_reference_
+		ExpressionContext return_context = currentFunctionReturnsReference()
 											   ? ExpressionContext::LValueAddress
 											   : ExpressionContext::Load;
 		ExprResult operands = visitExpressionNode(expr_opt->as<ExpressionNode>(), return_context);
@@ -231,7 +231,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 
 			// Convert to the function's return type if necessary
 			// Skip type conversion for reference returns - the expression already has the correct representation
-		if (!current_function_returns_reference_) {
+		if (!currentFunctionReturnsReference()) {
 			TypeCategory expr_type = operands.typeEnum();
 			TypeCategory expr_category = operands.category();
 			int expr_size = operands.size_in_bits.value;
@@ -250,6 +250,9 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 				CVQualifier::None,
 				ReferenceQualifier::None);
 			const bool use_return_slot_for_ctor = current_function_has_hidden_return_param_;
+			bool return_requires_ctor_resolution = false;
+			bool return_ctor_no_match = false;
+			std::string_view return_ctor_target_name;
 
 				// Check whether the semantic pass has already computed a cast annotation.
 				// When present for a non-struct conversion, apply it and skip the local policy.
@@ -265,10 +268,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			}
 			if (!sema_applied_conversion &&
 				is_struct_type(return_category) &&
+				!currentFunctionReturnsPointer() &&
 				return_type_spec.type_index().is_valid() &&
 				(!is_struct_type(expr_category) || operands.type_index != return_type_spec.type_index())) {
 				if (const TypeInfo* target_type_info = tryGetTypeInfo(return_type_spec.type_index())) {
 					if (const StructTypeInfo* target_struct_info = target_type_info->getStructInfo()) {
+						return_requires_ctor_resolution = true;
+						return_ctor_target_name = StringTable::getStringView(target_type_info->name());
 						auto tryMaterializeReturnCtor = [&](const ConstructorDeclarationNode* ctor) {
 							if (!ctor) {
 								return false;
@@ -289,40 +295,20 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 							std::vector<TypeSpecifierNode> arg_types;
 							arg_types.push_back(*arg_type_opt);
 							auto resolution = resolve_constructor_overload(*target_struct_info, arg_types, true);
-							if (!resolution.is_ambiguous && resolution.has_match && resolution.selected_overload) {
+							if (resolution.is_ambiguous) {
+								throw CompileError(std::string(StringBuilder()
+									.append("Ambiguous constructor call for '")
+									.append(return_ctor_target_name)
+									.append("'")
+									.commit()));
+							}
+							if (resolution.has_match && resolution.selected_overload) {
 								tryMaterializeReturnCtor(resolution.selected_overload);
+							} else if (!is_struct_type(expr_category)) {
+								return_ctor_no_match = true;
 							}
-						}
-						if (!sema_applied_conversion) {
-							auto arity_resolution = resolve_constructor_overload_arity(*target_struct_info, 1, true);
-							if (!arity_resolution.is_ambiguous && arity_resolution.has_match) {
-								tryMaterializeReturnCtor(arity_resolution.selected_overload);
-							}
-						}
-						if (!sema_applied_conversion) {
-							const ConstructorDeclarationNode* lone_viable_ctor = nullptr;
-							size_t viable_ctor_count = 0;
-							for (const auto& member_func : target_struct_info->member_functions) {
-								if (!member_func.is_constructor || !member_func.function_decl.is<ConstructorDeclarationNode>()) {
-									continue;
-								}
-								const auto& ctor_decl = member_func.function_decl.as<ConstructorDeclarationNode>();
-								if (isImplicitCopyOrMoveConstructorCandidate(*target_struct_info, ctor_decl)) {
-									continue;
-								}
-								const auto& params = ctor_decl.parameter_nodes();
-								const size_t min_required = countMinRequiredArgs(ctor_decl);
-								if (min_required <= 1 && params.size() >= 1) {
-									lone_viable_ctor = &ctor_decl;
-									++viable_ctor_count;
-									if (viable_ctor_count > 1) {
-										break;
-									}
-								}
-							}
-							if (viable_ctor_count == 1) {
-								tryMaterializeReturnCtor(lone_viable_ctor);
-							}
+						} else if (!is_struct_type(expr_category)) {
+							return_ctor_no_match = true;
 						}
 					}
 				}
@@ -400,6 +386,13 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 						operands = generateTypeConversion(operands, expr_type, return_type, node.return_token());
 					}
 				} else {
+					if (return_requires_ctor_resolution && return_ctor_no_match) {
+						throw CompileError(std::string(StringBuilder()
+							.append("No matching constructor for '")
+							.append(return_ctor_target_name)
+							.append("'")
+							.commit()));
+					}
 						// Phase 15: sema should annotate standard arithmetic return conversions.
 						// Log a warning when sema missed it (inferExpressionType may fail for
 						// some expression contexts). Same-type size mismatches are not type
@@ -417,7 +410,7 @@ void AstToIr::visitReturnStatementNode(const ReturnStatementNode& node) {
 			// For reference returns, prefer materializing the referred-to address in IR when we
 			// have direct member lvalue metadata. This avoids relying on backend reconstruction
 			// from a loaded member temp.
-		if (current_function_returns_reference_ &&
+		if (currentFunctionReturnsReference() &&
 			std::holds_alternative<TempVar>(operands.value)) {
 			TempVar return_temp = std::get<TempVar>(operands.value);
 			auto lv_info_opt = getTempVarLValueInfo(return_temp);

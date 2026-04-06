@@ -1627,7 +1627,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 								matched_lambda_info->lambda_token,
 								CVQualifier::None,
 								ReferenceQualifier::None);
-							if (matched_lambda_info->returns_reference) {
+							if (matched_lambda_info->returnsReference()) {
 								resolved_generic_return_type->set_reference_qualifier(ReferenceQualifier::LValueReference);
 								resolved_generic_return_type->set_size_in_bits(64);
 							}

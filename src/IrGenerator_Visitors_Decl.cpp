@@ -81,14 +81,22 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 
 		// Set current function return type and size for type checking in return statements
 	const TypeSpecifierNode& ret_type_spec = func_decl.type_node().as<TypeSpecifierNode>();
-	current_function_returns_reference_ = ret_type_spec.is_reference();
-	current_function_returns_function_pointer_ = ret_type_spec.is_function_pointer() || ret_type_spec.has_function_signature();
+	current_function_return_value_mode_ = ReturnValueMode::None;
+	if (ret_type_spec.pointer_depth() > 0) {
+		current_function_return_value_mode_ |= ReturnValueMode::Pointer;
+	}
+	if (ret_type_spec.is_reference()) {
+		current_function_return_value_mode_ |= ReturnValueMode::Reference;
+	}
+	if (ret_type_spec.is_function_pointer() || ret_type_spec.has_function_signature()) {
+		current_function_return_value_mode_ |= ReturnValueMode::FunctionPointer;
+	}
 
 	int actual_ret_size = getTypeSpecSizeBits(ret_type_spec);
 
 		// For pointer return types or reference return types, use 64-bit size (pointer size on x64)
 		// References are represented as pointers at the IR level
-	current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference() || current_function_returns_function_pointer_)
+	current_function_return_size_ = (ret_type_spec.pointer_depth() > 0 || ret_type_spec.is_reference() || currentFunctionReturnsFunctionPointer())
 										? 64
 										: actual_ret_size;
 
