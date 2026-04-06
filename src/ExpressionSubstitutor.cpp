@@ -64,10 +64,17 @@ int checkedPointerDepthToInt(size_t pointer_depth) {
 	return static_cast<int>(pointer_depth);
 }
 
-std::vector<size_t> combineArrayDimensions(std::vector<size_t> outer_dimensions, const std::vector<size_t>& inner_dimensions) {
-	outer_dimensions.reserve(outer_dimensions.size() + inner_dimensions.size());
-	outer_dimensions.insert(outer_dimensions.end(), inner_dimensions.begin(), inner_dimensions.end());
-	return outer_dimensions;
+std::vector<size_t> concatenateArrayDimensions(std::vector<size_t> prefix_dimensions, const std::vector<size_t>& suffix_dimensions) {
+	prefix_dimensions.reserve(prefix_dimensions.size() + suffix_dimensions.size());
+	prefix_dimensions.insert(prefix_dimensions.end(), suffix_dimensions.begin(), suffix_dimensions.end());
+	return prefix_dimensions;
+}
+
+void appendArrayDimensions(TypeSpecifierNode& target, std::vector<size_t> prefix_dimensions) {
+	if (prefix_dimensions.empty()) {
+		return;
+	}
+	target.set_array_dimensions(concatenateArrayDimensions(std::move(prefix_dimensions), target.array_dimensions()));
 }
 
 void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasTypeInfo& resolved_alias) {
@@ -84,9 +91,7 @@ void applyResolvedAliasModifiers(TypeSpecifierNode& target, const ResolvedAliasT
 			   target.reference_qualifier() == ReferenceQualifier::None) {
 		target.set_reference_qualifier(ReferenceQualifier::RValueReference);
 	}
-	if (resolved_alias.isArray()) {
-		target.set_array_dimensions(combineArrayDimensions(resolved_alias.array_dimensions, target.array_dimensions()));
-	}
+	appendArrayDimensions(target, resolved_alias.array_dimensions);
 	if (resolved_alias.function_signature.has_value() && !target.has_function_signature()) {
 		target.set_function_signature(*resolved_alias.function_signature);
 	}
@@ -99,9 +104,7 @@ void applyOuterTypeModifiers(TypeSpecifierNode& target, const TypeSpecifierNode&
 	if (source.reference_qualifier() != ReferenceQualifier::None) {
 		target.set_reference_qualifier(source.reference_qualifier());
 	}
-	if (source.is_array()) {
-		target.set_array_dimensions(combineArrayDimensions(source.array_dimensions(), target.array_dimensions()));
-	}
+	appendArrayDimensions(target, source.array_dimensions());
 	if (source.has_function_signature() && !target.has_function_signature()) {
 		target.set_function_signature(source.function_signature());
 	}
