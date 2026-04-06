@@ -4164,7 +4164,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		}
 
 		std::unordered_set<const StructTypeInfo*> visited;
-		auto searchHierarchy = [&](auto&& self, const StructTypeInfo* struct_info) -> bool {
+		auto searchHierarchy = [&](auto&& recurse, const StructTypeInfo* struct_info) -> bool {
 			if (!struct_info || !visited.insert(struct_info).second) {
 				return false;
 			}
@@ -4179,7 +4179,7 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 				if (!base_type_info) {
 					continue;
 				}
-				if (self(self, base_type_info->getStructInfo())) {
+				if (recurse(recurse, base_type_info->getStructInfo())) {
 					return true;
 				}
 			}
