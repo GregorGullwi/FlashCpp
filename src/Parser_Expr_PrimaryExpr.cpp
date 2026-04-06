@@ -2067,7 +2067,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					StringHandle qualified_handle = StringTable::getOrInternStringHandle(qualified_name);
 					auto type_it = getTypesByNameMap().find(qualified_handle);
 					if (type_it == getTypesByNameMap().end()) {
-						type_it = getTypesByNameMap().find(qual_id.name_handle());
+						type_it = getTypesByNameMap().find(qual_id.nameHandle());
 					}
 					if (type_it != getTypesByNameMap().end() && type_it->second->isStruct()) {
 						const TypeInfo& type_info = *type_it->second;
