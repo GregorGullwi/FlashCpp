@@ -309,18 +309,24 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		return std::nullopt;
 	}
 
+	// Look up the owner struct once for use in both return type and parameter alias resolution.
+	const StructDeclarationNode* owner_struct_decl = nullptr;
+	if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
+		owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+		owner_struct_decl = &owner_symbol->as<StructDeclarationNode>();
+	}
+
 	// Perform template parameter substitution (same as eager path)
 	// Substitute return type
 	const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
 	TypeIndex return_type_index = substitute_template_parameter(
 		return_type_spec, lazy_info.template_params, lazy_info.template_args);
-	if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
-		owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+	if (owner_struct_decl) {
 		return_type_index = resolveOwnerAliasTypeIndex(
 			[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 				return substitute_template_parameter(type_spec, params, args);
 			},
-			owner_symbol->as<StructDeclarationNode>(),
+			*owner_struct_decl,
 			return_type_spec,
 			lazy_info.template_params,
 			lazy_info.template_args,
@@ -443,6 +449,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 							if (elem.function_signature.has_value()) {
 								sub_type.set_function_signature(*elem.function_signature);
 							}
+							normalizeSubstitutedTypeSpec(sub_type);
 							StringBuilder name_builder;
 							name_builder.append(orig_name).append('_').append(pi);
 							Token elem_token(Token::Type::Identifier, name_builder.commit(),
@@ -463,13 +470,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			// Substitute parameter type
 			TypeIndex param_type_index = substitute_template_parameter(
 				param_type_spec, lazy_info.template_params, lazy_info.template_args);
-			if (auto owner_symbol = lookup_symbol(lazy_info.identity.template_owner_name);
-				owner_symbol.has_value() && owner_symbol->is<StructDeclarationNode>()) {
+			if (owner_struct_decl) {
 				param_type_index = resolveOwnerAliasTypeIndex(
 					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
 						return substitute_template_parameter(type_spec, params, args);
 					},
-					owner_symbol->as<StructDeclarationNode>(),
+					*owner_struct_decl,
 					param_type_spec,
 					lazy_info.template_params,
 					lazy_info.template_args,
