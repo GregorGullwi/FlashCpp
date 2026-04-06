@@ -96,6 +96,10 @@ private:
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
 	void populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
+	TypeIndex getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const;
+	int getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const;
+	void populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature);
+	ExprResult buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const;
 
 	// Shared helper: build the ExprResult for a function call given its return type
 	// and the TempVar holding the raw call result.  Handles:
