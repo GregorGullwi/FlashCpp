@@ -249,9 +249,7 @@ std::optional<TypedValue> AstToIr::generateDefaultStructArg(const InitializerLis
 	ConstructorCallOp ctor_op;
 	ctor_op.struct_name = type_info.name();
 	ctor_op.object = temp;
-	if (initializers.empty()) {
-		fillInDefaultConstructorArguments(ctor_op, *struct_info);
-	}
+	fillInDefaultConstructorArguments(ctor_op, *struct_info);
 	finalizeConstructorCallOp(ctor_op, *struct_info, Token());
 	ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 
@@ -628,8 +626,7 @@ void AstToIr::finalizeConstructorCallOp(
 	(void)source_token;
 	if (!ctor_op.resolved_constructor &&
 		!(ctor_op.arguments.empty() &&
-		  !target_struct_info.hasAnyConstructor() &&
-		  target_struct_info.needs_default_constructor &&
+		  target_struct_info.findDefaultConstructor() == nullptr &&
 		  !target_struct_info.isDefaultConstructorDeleted())) {
 		throw InternalError(std::string(StringBuilder()
 											.append("ConstructorCallOp missing resolved constructor for '")
