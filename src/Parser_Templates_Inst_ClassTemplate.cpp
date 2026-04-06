@@ -715,18 +715,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	};
 
 	auto get_substituted_type_size_bytes = [&](TypeIndex substituted_type_index) -> size_t {
-		if (substituted_type_index.is_valid()) {
-			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(substituted_type_index)) {
+		ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(substituted_type_index);
+		TypeIndex size_type_index = resolved_alias.type_index.is_valid()
+										? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+										: substituted_type_index;
+		if (resolved_alias.pointer_depth > 0 ||
+			resolved_alias.reference_qualifier != ReferenceQualifier::None ||
+			size_type_index.category() == TypeCategory::FunctionPointer ||
+			size_type_index.category() == TypeCategory::MemberFunctionPointer ||
+			size_type_index.category() == TypeCategory::MemberObjectPointer) {
+			return 8;
+		}
+
+		if (size_type_index.is_valid()) {
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(size_type_index)) {
 				return toSizeT(struct_info->total_size);
 			}
-			if (const TypeInfo* type_info = tryGetTypeInfo(substituted_type_index)) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(size_type_index)) {
 				if (type_info->hasStoredSize()) {
 					return toSizeT(type_info->sizeInBytes());
 				}
 			}
 		}
 
-		return get_type_size_bits(substituted_type_index.category()) / 8;
+		return get_type_size_bits(size_type_index.category()) / 8;
 	};
 	auto get_substituted_type_size_bits = [&](TypeIndex substituted_type_index) -> int {
 		return static_cast<int>(get_substituted_type_size_bytes(substituted_type_index) * 8);
@@ -796,6 +808,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						if (elem.function_signature.has_value()) {
 							sub_type.set_function_signature(*elem.function_signature);
 						}
+						normalizeSubstitutedTypeSpec(sub_type);
 						StringBuilder name_builder;
 						name_builder.append(orig_name).append('_').append(pi);
 						Token elem_token(Token::Type::Identifier, name_builder.commit(),
@@ -838,6 +851,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 				}
 			}
+			normalizeSubstitutedTypeSpec(substituted_param_type);
 			auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 			auto substituted_param_decl = emplace_node<DeclarationNode>(
 				substituted_param_type_node, param_decl.identifier_token());
@@ -2798,6 +2812,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 					TypeIndex return_type_index = substitute_template_parameter(
 						orig_return_type, template_params, template_args_for_pattern);
+					return_type_index = resolveOwnerAliasTypeIndex(
+						[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+							return substitute_template_parameter(type_spec, params, args);
+						},
+						pattern_struct,
+						orig_return_type,
+						template_params,
+						template_args_for_pattern,
+						return_type_index);
 
 					TypeSpecifierNode substituted_return_type(
 						return_type_index.category(),
@@ -2810,6 +2833,20 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
 					}
 					substituted_return_type.set_reference_qualifier(orig_return_type.reference_qualifier());
+					if (orig_return_type.has_function_signature()) {
+						substituted_return_type.set_function_signature(orig_return_type.function_signature());
+					} else if (return_type_index.category() == TypeCategory::FunctionPointer ||
+							   return_type_index.category() == TypeCategory::MemberFunctionPointer) {
+						if (const auto* arg = findTemplateArgByName(
+								orig_return_type.token().value(),
+								template_params,
+								template_args_for_pattern)) {
+							if (arg->function_signature.has_value()) {
+								substituted_return_type.set_function_signature(*arg->function_signature);
+							}
+						}
+					}
+					normalizeSubstitutedTypeSpec(substituted_return_type);
 
 					auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 					auto [new_func_decl_node, new_func_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -5940,6 +5977,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(), template_params, template_args_to_use);
 				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
+				return_type_index = resolveOwnerAliasTypeIndex(
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					class_decl,
+					return_type_spec,
+					template_params,
+					template_args_to_use,
+					return_type_index);
+				if (return_type_index.is_valid() && return_type_index.category() != TypeCategory::UserDefined) {
+					return_type = return_type_index.category();
+				}
 
 				// First, check if the return type is a type alias defined in this template class
 				// (e.g., "operator value_type()" where "using value_type = T;")
@@ -5990,9 +6039,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						  get_substituted_type_size_bits(return_type_index.withCategory(return_type)),
 						  decl.identifier_token(),
 						  CVQualifier::None);
+				substituted_return_type.set_category(return_type);
+				if (return_type_index.is_valid()) {
+					substituted_return_type.set_type_index(return_type_index.withCategory(return_type));
+				}
 				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
-					substituted_return_type.set_type_index(return_type_index);
-
 					// Copy pointer levels and reference qualifiers from original
 					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
@@ -6012,6 +6063,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+				normalizeSubstitutedTypeSpec(substituted_return_type);
 
 				// Slice 2: fill canonical instantiated lookup name (conversion operator renaming)
 				lazy_info.identity.instantiated_lookup_name = computeInstantiatedLookupName(
@@ -6080,6 +6132,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						normalizeSubstitutedTypeSpec(substituted_param_type);
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -6162,6 +6215,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl.type_node(), template_params, template_args_to_use);
 				TypeIndex return_type_index = substitute_template_parameter(
 					return_type_spec, template_params, template_args_to_use);
+				return_type_index = resolveOwnerAliasTypeIndex(
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					class_decl,
+					return_type_spec,
+					template_params,
+					template_args_to_use,
+					return_type_index);
 
 				// Create substituted return type node
 				TypeSpecifierNode substituted_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
@@ -6172,9 +6234,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						  get_substituted_type_size_bits(return_type_index),
 						  decl.identifier_token(),
 						  CVQualifier::None);
+				substituted_return_type.set_category(return_type_index.category());
+				if (return_type_index.is_valid()) {
+					substituted_return_type.set_type_index(return_type_index.withCategory(return_type_index.category()));
+				}
 				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
-					substituted_return_type.set_type_index(return_type_index);
-
 					// Copy pointer levels and reference qualifiers from original
 					for (const auto& ptr_level : return_type_spec.pointer_levels()) {
 						substituted_return_type.add_pointer_level(ptr_level.cv_qualifier);
@@ -6194,6 +6258,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+				normalizeSubstitutedTypeSpec(substituted_return_type);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 				StringHandle effective_name = computeInstantiatedLookupName(
@@ -6252,6 +6317,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						normalizeSubstitutedTypeSpec(substituted_param_type);
 
 						auto substituted_param_type_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto substituted_param_decl = emplace_node<DeclarationNode>(
@@ -6417,6 +6483,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				const TypeSpecifierNode& return_type_spec = decl.type_node().as<TypeSpecifierNode>();
 				TypeCategory return_type = return_type_spec.type();
 				TypeIndex return_type_index = return_type_spec.type_index();
+				return_type_index = resolveOwnerAliasTypeIndex(
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					class_decl,
+					return_type_spec,
+					template_params,
+					template_args_to_use,
+					return_type_index);
+				if (return_type_index.is_valid() && return_type_index.category() != TypeCategory::UserDefined) {
+					return_type = return_type_index.category();
+				}
 
 				// First, check if the return type is a type alias defined in this template class
 				// (e.g., "operator value_type()" where "using value_type = T;")
@@ -6482,6 +6560,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+				normalizeSubstitutedTypeSpec(substituted_return_type);
 
 				auto substituted_return_node = emplace_node<TypeSpecifierNode>(substituted_return_type);
 				StringHandle effective_name = computeInstantiatedLookupName(
@@ -6538,6 +6617,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						normalizeSubstitutedTypeSpec(substituted_param_type);
 
 						auto substituted_param_node = emplace_node<TypeSpecifierNode>(substituted_param_type);
 						auto [param_decl_node, param_decl_ref] = emplace_node_ref<DeclarationNode>(
@@ -6764,6 +6844,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					decl_node.type_node(), template_params, template_args_to_use);
 				TypeIndex ret_type_index = substitute_template_parameter(
 					return_type_spec, template_params, template_args_to_use);
+				ret_type_index = resolveOwnerAliasTypeIndex(
+					[this](const TypeSpecifierNode& type_spec, const auto& params, const auto& args) {
+						return substitute_template_parameter(type_spec, params, args);
+					},
+					class_decl,
+					return_type_spec,
+					template_params,
+					template_args_to_use,
+					ret_type_index);
 
 				ASTNode new_return_type = substituted_return_type_node.is<TypeSpecifierNode>()
 					? substituted_return_type_node
@@ -6771,8 +6860,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						  ret_type_index.category(), return_type_spec.qualifier(),
 						  get_type_size_bits(ret_type_index.category()), return_type_spec.token(), return_type_spec.cv_qualifier());
 				auto& new_return_spec = new_return_type.as<TypeSpecifierNode>();
+				new_return_spec.set_category(ret_type_index.category());
+				if (ret_type_index.is_valid()) {
+					new_return_spec.set_type_index(ret_type_index.withCategory(ret_type_index.category()));
+				}
 				if (!substituted_return_type_node.is<TypeSpecifierNode>()) {
-					new_return_spec.set_type_index(ret_type_index);
 					for (const auto& pl : return_type_spec.pointer_levels())
 						new_return_spec.add_pointer_level(pl.cv_qualifier);
 					new_return_spec.set_reference_qualifier(return_type_spec.reference_qualifier());
@@ -6790,6 +6882,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 					}
 				}
+				normalizeSubstitutedTypeSpec(new_return_spec);
 
 				auto [new_decl_node, new_decl_ref] = emplace_node_ref<DeclarationNode>(
 					new_return_type, decl_node.identifier_token());
@@ -6835,6 +6928,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+						normalizeSubstitutedTypeSpec(new_param_spec);
 
 						auto new_param_decl = emplace_node<DeclarationNode>(
 							new_param_type_node, param_decl.identifier_token());

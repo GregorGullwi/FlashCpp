@@ -5,6 +5,69 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	const StructTypeInfo* struct_info,
 	bool set_qualified_name);
 
+inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
+	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
+	if (resolved_alias.type_index.is_valid()) {
+		type_spec.set_type_index(resolved_alias.type_index.withCategory(resolved_alias.typeEnum()));
+		type_spec.set_category(resolved_alias.typeEnum());
+	}
+	type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+	if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+		resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+		type_spec.set_reference_qualifier(resolved_alias.reference_qualifier);
+	}
+	if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
+		type_spec.set_function_signature(*resolved_alias.function_signature);
+	}
+	if (!resolved_alias.array_dimensions.empty()) {
+		std::vector<size_t> array_dimensions = type_spec.array_dimensions();
+		array_dimensions.insert(array_dimensions.end(),
+								resolved_alias.array_dimensions.begin(),
+								resolved_alias.array_dimensions.end());
+		type_spec.set_array_dimensions(array_dimensions);
+	}
+	if (const int resolved_size_bits = getTypeSpecSizeBits(type_spec); resolved_size_bits > 0) {
+		type_spec.set_size_in_bits(resolved_size_bits);
+	}
+}
+
+template <typename TSubstituteFn, typename TOwnerDecl, typename TParams, typename TArgs>
+TypeIndex resolveOwnerAliasTypeIndex(
+	TSubstituteFn&& substitute_fn,
+	const TOwnerDecl& owner_decl,
+	const TypeSpecifierNode& original_type_spec,
+	const TParams& tmpl_params,
+	const TArgs& tmpl_args,
+	TypeIndex current_type_index) {
+	if (current_type_index.is_valid()) {
+		return current_type_index.withCategory(current_type_index.category());
+	}
+	if (original_type_spec.type() != TypeCategory::UserDefined &&
+		original_type_spec.type() != TypeCategory::TypeAlias &&
+		original_type_spec.type() != TypeCategory::Template) {
+		return current_type_index;
+	}
+	std::string_view type_name = original_type_spec.token().value();
+	if (type_name.empty()) {
+		return current_type_index;
+	}
+	for (const auto& type_alias : owner_decl.type_aliases()) {
+		if (StringTable::getStringView(type_alias.alias_name) != type_name ||
+			!type_alias.type_node.template is<TypeSpecifierNode>()) {
+			continue;
+		}
+		TypeIndex substituted_alias = substitute_fn(
+			type_alias.type_node.template as<TypeSpecifierNode>(),
+			tmpl_params,
+			tmpl_args);
+		if (substituted_alias.category() != TypeCategory::UserDefined || substituted_alias.is_valid()) {
+			return substituted_alias.withCategory(substituted_alias.category());
+		}
+		break;
+	}
+	return current_type_index;
+}
+
 template <typename TDest, typename TSource>
 void appendLazyTemplateSequence(TDest& destination, const TSource& source) {
 	for (const auto& value : source) {
