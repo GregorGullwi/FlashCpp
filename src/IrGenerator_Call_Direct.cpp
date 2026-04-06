@@ -99,6 +99,8 @@ int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signatu
 	return get_type_size_bits(signature.returnType());
 }
 
+static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
+
 void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature) {
 	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
 	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
