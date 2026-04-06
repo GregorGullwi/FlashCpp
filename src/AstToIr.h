@@ -665,6 +665,10 @@ private:
 		auto arity_resolution = resolve_constructor_overload_arity(target_struct_info, num_args, false);
 		return arity_resolution.selected_overload;
 	}
+	// Materialize explicit constructor arguments for an already-selected constructor.
+	// resolved_ctor may be null, in which case arguments are lowered without parameter-
+	// type-guided conversions/reference binding. args must contain expression AST nodes.
+	// This also appends trailing default arguments when resolved_ctor provides them.
 	template <typename ArgRange>
 	void appendConstructorCallArguments(
 		ConstructorCallOp& ctor_op,
@@ -676,7 +680,7 @@ private:
 		size_t arg_index = 0;
 		for (const auto& arg : args) {
 			if (!arg.template is<ExpressionNode>()) {
-				throw InternalError("Constructor argument is not an expression");
+				throw InternalError(std::string("Constructor argument is not an expression at index ") + std::to_string(arg_index));
 			}
 
 			const TypeSpecifierNode* param_type = nullptr;
