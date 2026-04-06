@@ -590,6 +590,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// Early check: verify this is actually a class template before proceeding
 	// This prevents errors when function templates like 'declval' are passed to this function
 	{
+		if (gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for alias template '{}'", template_name);
+			return std::nullopt;
+		}
+
 		auto template_opt = gTemplateRegistry.lookupTemplate(template_name);
 		if (template_opt.has_value() && !template_opt->is<TemplateClassDeclarationNode>()) {
 			// This is not a class template (probably a function template) - skip silently

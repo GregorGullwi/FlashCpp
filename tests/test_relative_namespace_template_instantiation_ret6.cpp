@@ -11,7 +11,8 @@ namespace outer {
 		detail::Holder<T> holder;
 
 		explicit Box(T value)
-			: holder{value} {
+			: holder{} {
+			holder.value = value;
 		}
 
 		T get() const {
