@@ -962,7 +962,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// Phase 1 (sema-owned ordinary call resolution): consume the pre-resolved
 	// direct-call target stored by semantic analysis before attempting any
 	// duplicate symbol-table recovery work in codegen.
-	if (!matched_func_decl && sema_ && !has_precomputed_mangled && !callExprNode.has_qualified_name()) {
+	if (!matched_func_decl && sema_) {
 		consumeResolvedDirectCallTarget(sema_->getResolvedDirectCall(sema_call_key), "sema-resolved");
 	}
 
@@ -975,20 +975,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// The mangled name is sufficient for generating the call instruction
 	}
 
-	// Keep lookup recovery only for call shapes that the direct-call sema cache does not
-	// fully own yet:
-	// - no sema or no tracked normalized body,
-	// - precomputed mangled / qualified calls that bypass the ordinary-call cache,
-	// - static-member lowering that still rewrites through the direct-call path,
-	// - and explicit sema unresolved-call escape hatches.
+	// Keep lookup recovery only for bodies that sema never normalized, or for
+	// explicit escape hatches where sema recorded that it could not resolve the
+	// ordinary direct-call target yet.
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		has_precomputed_mangled || // namespace/qualified/static cache path
-		callExprNode.callee().is_static_member() || // member call rewritten through direct-call lowering
-		(callExprNode.callee().has_function_declaration() &&
-		 callExprNode.callee().function_declaration_or_null()->is_static()) || // static member metadata on full declaration
-		callExprNode.has_qualified_name() || // qualified lookup is not owned by resolved_direct_call_table_
 		sema_->hasUnresolvedCallArgs(sema_call_key); // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
