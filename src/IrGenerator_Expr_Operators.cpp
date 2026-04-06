@@ -1440,9 +1440,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
 						// Generate function call
-						CallOp call_op;
-						call_op.result = result_var;
-						call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+						CallOp call_op = createCallOp(
+							result_var,
+							mangled_name,
+							return_type,
+							true,
+							false);
 
 						// Pass 'this' pointer as first argument
 						TypedValue this_arg;
@@ -1454,9 +1457,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 
 						// Pass RHS value as second argument
 						call_op.args.push_back(toTypedValue(rhsExprResult));
-
-						call_op.return_type_index = return_type.type_index();
-						call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
 
 						ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
 
@@ -1771,12 +1771,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			TempVar result_var = var_counter.next();
-			CallOp call_op;
-			call_op.result = result_var;
-			call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-			call_op.is_member_function = false;
-			call_op.return_type_index = return_type.type_index();
-			int actual_return_size = static_cast<int>(return_type.size_in_bits());
+			CallOp call_op = createCallOp(
+				result_var,
+				StringTable::getOrInternStringHandle(mangled_name),
+				return_type,
+				false,
+				false);
+			int actual_return_size = call_op.return_size_in_bits.value;
 			if (actual_return_size == 0 && return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(return_type.type_index())) {
 					actual_return_size = static_cast<int>(ret_struct->sizeInBits().value);
@@ -1909,9 +1910,12 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			ir_.addInstruction(IrInstruction(IrOpcode::AddressOf, std::move(addr_op), binaryOperatorNode.get_token()));
 
 			// Create the call operation
-			CallOp call_op;
-			call_op.result = result_var;
-			call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
+			CallOp call_op = createCallOp(
+				result_var,
+				mangled_name,
+				return_type,
+				true,
+				false);
 
 			// Resolve actual return type - defaulted operator<=> has 'auto' return type
 			// that is deduced to int (returning -1/0/1)
@@ -1931,7 +1935,6 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 			call_op.return_type_index = return_type.type_index().withCategory(resolved_return_type);
 			call_op.return_size_in_bits = SizeInBits{actual_return_size};
-			call_op.is_member_function = true; // This is a member function call
 
 			// Detect if returning struct by value (needs hidden return parameter for RVO)
 			bool returns_struct_by_value = returnsStructByValue(return_type.type(), return_type.pointer_depth(), return_type.is_reference());
@@ -2105,13 +2108,13 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 						func_decl.is_const_member_function());
 
 					// Create the call operation
-					CallOp call_op;
-					call_op.result = result_var;
-					call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-					call_op.return_type_index = nativeTypeIndex(return_type);
-					call_op.return_size_in_bits = return_size;
-					call_op.is_member_function = true;
-					call_op.is_variadic = func_decl.is_variadic();
+					CallOp call_op = createCallOp(
+						result_var,
+						StringTable::getOrInternStringHandle(mangled_name),
+						nativeTypeIndex(return_type).withCategory(return_type),
+						return_size,
+						true,
+						func_decl.is_variadic());
 
 					// Determine if return slot is needed (same logic as generateFunctionCallIr)
 					bool returns_struct_by_value = returnsStructByValue(return_type, return_type_node.pointer_depth(), return_type_node.is_reference());

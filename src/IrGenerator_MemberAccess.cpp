@@ -1074,16 +1074,11 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				// Generate the call to operator->()
 				TempVar ptr_result = var_counter.next();
 
-				CallOp call_op;
-				call_op.result = ptr_result;
-				call_op.return_type_index = return_type.type_index();
-				call_op.return_size_in_bits = SizeInBits{static_cast<int>(return_type.size_in_bits())};
+				CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
 				if (!call_op.return_size_in_bits.is_set()) {
 					call_op.return_size_in_bits = SizeInBits{get_type_size_bits(return_type.category())};
 				}
 				call_op.function_name = mangled_name;
-				call_op.is_variadic = false;
-				call_op.is_member_function = true;
 
 				// Add 'this' pointer as first argument
 				call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
@@ -3733,13 +3728,13 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 
 	TempVar result_var = var_counter.next();
 
-	CallOp call_op;
-	call_op.result = result_var;
-	call_op.function_name = StringTable::getOrInternStringHandle(mangled_name);
-	call_op.return_type_index = target_type_index;
-	call_op.return_size_in_bits = SizeInBits{target_size_bits};
-	call_op.is_member_function = true;
-	call_op.is_variadic = false;
+	CallOp call_op = createCallOp(
+		result_var,
+		StringTable::getOrInternStringHandle(mangled_name),
+		target_type_index,
+		SizeInBits{target_size_bits},
+		true,
+		false);
 
 	// Determine the source object address and pass as 'this'
 	IrValue source_value = std::visit([](auto&& arg) -> IrValue {

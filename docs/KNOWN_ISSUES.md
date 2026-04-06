@@ -73,44 +73,6 @@ call that always has access to the argument type. When the argument type
 cannot be inferred, report an ambiguity diagnostic instead of falling back
 to looser matching.
 
-## Indirect calls through function pointers returning float/double store RAX instead of XMM0
-
-`populateIndirectCallReturnInfo` is only called when `needs_type_index(sig.returnType())`
-is true, which excludes primitive types (`Float`, `Double`, `Int`, etc.).
-For those return types the `IndirectCallOp` arrives at codegen with default
-fields: `return_type_index` has category `Invalid`, `return_size_in_bits` is 0,
-and `use_return_slot` is false.
-
-In `handleIndirectCall` (`src/IRConverter_ConvertMain.cpp`), the return-value
-storage path checks `isFloatingPointType(op.returnType())` to decide whether
-to store from XMM0 (float/double) or RAX (integer). Because `op.returnType()`
-resolves to `TypeCategory::Invalid` for primitive-returning indirect calls,
-the float branch is never taken. The return value is unconditionally stored
-from RAX, which is incorrect for float and double returns per both the Win64
-and SysV ABIs — the callee places float/double results in XMM0.
-
-This is a **pre-existing bug** that was not introduced by PR #1108; the old
-code also unconditionally stored RAX. The new codegen framework has the
-correct branching logic in place but the IR layer does not populate the
-metadata for non-aggregate return types.
-
-**Affected code:**
-- `AstToIr::populateIndirectCallReturnInfo` — `src/IrGenerator_Call_Direct.cpp`
-  (guarded by `needs_type_index`, skips primitive types)
-- All `IndirectCall` emission sites in `src/IrGenerator_Call_Indirect.cpp` and
-  `src/IrGenerator_Call_Direct.cpp` (same guard)
-- `handleIndirectCall` return-value storage — `src/IRConverter_ConvertMain.cpp`
-  (checks `op.returnType()` which is `Invalid` for primitives)
-
-**Possible fix:** Call `populateIndirectCallReturnInfo` (or an equivalent)
-for **all** return types, not just those where `needs_type_index` is true.
-This would populate `return_type_index` and `return_size_in_bits` for
-float/double/int returns so the codegen can correctly dispatch to XMM0 vs
-RAX storage. Alternatively, unconditionally set `return_type_index` to
-`nativeTypeIndex(sig.returnType()).withCategory(sig.returnType())` and
-`return_size_in_bits` to `get_type_size_bits(sig.returnType())` at all
-indirect-call emission sites.
-
 ## populateIndirectCallReturnInfo hardcodes pointer_depth=0 and is_reference=false
 
 `populateIndirectCallReturnInfo` (`src/IrGenerator_Call_Direct.cpp:102-111`)
