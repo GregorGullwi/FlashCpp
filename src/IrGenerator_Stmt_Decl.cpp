@@ -665,25 +665,31 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						// Fallback manual path: resolves the constructor and evaluates member initializers.
 						// Used when the constexpr evaluator cannot fully evaluate (e.g., non-constexpr constructors
 						// with compile-time-known arguments). Uses evalResultMemberToRaw for correct float/double handling.
-					const ConstructorDeclarationNode* matching_ctor = nullptr;
-					std::vector<TypeSpecifierNode> arg_types;
-					arg_types.reserve(ctor_call.arguments().size());
-					for (const auto& arg : ctor_call.arguments()) {
-						auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
-						if (!arg_type_opt.has_value()) {
-							arg_types.clear();
-							break;
-						}
-						arg_types.push_back(std::move(*arg_type_opt));
-					}
-					if (arg_types.size() == ctor_call.arguments().size()) {
-						auto resolution = resolve_constructor_overload(*si, arg_types, false);
-						if (resolution.is_ambiguous) {
-							throw CompileError("Ambiguous constructor call");
-						}
-						matching_ctor = resolution.selected_overload;
+					const ConstructorDeclarationNode* matching_ctor = ctor_call.resolved_constructor();
+					if (matching_ctor) {
+						FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(si->name));
 					}
 					if (!matching_ctor) {
+						std::vector<TypeSpecifierNode> arg_types;
+						arg_types.reserve(ctor_call.arguments().size());
+						for (const auto& arg : ctor_call.arguments()) {
+							auto arg_type_opt = buildCodegenOverloadResolutionArgType(arg);
+							if (!arg_type_opt.has_value()) {
+								arg_types.clear();
+								break;
+							}
+							arg_types.push_back(std::move(*arg_type_opt));
+						}
+						if (arg_types.size() == ctor_call.arguments().size()) {
+							auto resolution = resolve_constructor_overload(*si, arg_types, false);
+							if (resolution.is_ambiguous) {
+								throw CompileError("Ambiguous constructor call");
+							}
+							matching_ctor = resolution.selected_overload;
+						}
+					}
+					if (!matching_ctor) {
+						FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(si->name));
 						auto arity_resolution = resolve_constructor_overload_arity(*si, ctor_call.arguments().size(), true);
 						matching_ctor = arity_resolution.selected_overload;
 					}
@@ -1979,15 +1985,19 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							// Direct constructor call like S s(x) - process its arguments directly
 						FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
 							// Find the matching constructor to get parameter types for reference handling
-						const ConstructorDeclarationNode* matching_ctor = nullptr;
+						const ConstructorDeclarationNode* matching_ctor = direct_ctor->resolved_constructor();
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
 						if (type_info->struct_info_) {
+								if (matching_ctor) {
+									FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(type_info->name()));
+								}
+
 								// Special case: If we have exactly one argument of the same struct type, try copy constructor first
 								// This ensures copy constructors are preferred over converting constructors
 								// But only when the argument is actually of the same struct type
-							if (num_args == 1) {
+							if (!matching_ctor && num_args == 1) {
 									// Check if the argument is an identifier of the same struct type
 								ASTNode first_arg;
 								direct_ctor->arguments().visit([&](ASTNode arg) {
@@ -2054,6 +2064,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 									}
 
 									if (!matching_ctor) {
+										FLASH_LOG_FORMAT(Codegen, Debug, "Falling back to arity-based constructor resolution for {}", StringTable::getStringView(type_info->name()));
 										auto arity_resolution = resolve_constructor_overload_arity(*type_info->struct_info_, num_args, true);
 										matching_ctor = arity_resolution.selected_overload;
 									}

@@ -4372,6 +4372,7 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
 	if (!resolution.selected_overload)
 		return;
+	call_node.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
 	if (num_args > ctor_params.size())

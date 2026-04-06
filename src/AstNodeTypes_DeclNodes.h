@@ -5,6 +5,7 @@
 #include "VariantUtils.h"
 
 class TypeSpecifierNode;
+class ConstructorDeclarationNode;
 
 // Struct type information
 struct StructTypeInfo {
@@ -2315,8 +2316,10 @@ public:
 
 	const ASTNode& type_node() const { return type_node_; }
 	const auto& arguments() const { return arguments_; }
+	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
 
 	void add_argument(ASTNode argument) { arguments_.push_back(argument); }
+	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const { resolved_constructor_ = ctor; }
 
 	Token called_from() const { return called_from_; }
 
@@ -2324,4 +2327,5 @@ private:
 	ASTNode type_node_;	// TypeSpecifierNode representing the type being constructed
 	ChunkedVector<ASTNode> arguments_;
 	Token called_from_;
+	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
 };
