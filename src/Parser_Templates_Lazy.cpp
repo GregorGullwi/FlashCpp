@@ -500,10 +500,14 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 	// Get the function body - either from definition or by re-parsing from saved position
 	std::optional<ASTNode> body_to_substitute;
 
-	if (func_decl.get_definition().has_value()) {
-		// Use the already-parsed definition
-		body_to_substitute = func_decl.get_definition();
-	} else if (func_decl.has_template_body_position()) {
+	const bool has_saved_body_position = func_decl.has_template_body_position();
+	const bool has_parsed_body = func_decl.get_definition().has_value();
+	if (has_saved_body_position && has_parsed_body) {
+		FLASH_LOG(Templates, Debug,
+				  "Lazy member function has both parsed body and saved body position; reparsing with concrete template bindings");
+	}
+
+	if (has_saved_body_position) {
 		FLASH_LOG(Templates, Debug, "Lazy member function body: re-parsing from saved position");
 		// Re-parse the function body from saved position
 		// This is needed for member struct templates where body parsing is deferred
@@ -574,6 +578,9 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		// Restore original position
 		restore_lexer_position_only(current_pos);
 		discard_saved_token(current_pos);
+	} else if (has_parsed_body) {
+		// Use the already-parsed definition only when no deferred body position is available.
+		body_to_substitute = func_decl.get_definition();
 	}
 
 	// Substitute template parameters in the function body

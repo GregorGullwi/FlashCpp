@@ -792,8 +792,11 @@ TypeIndex Parser::substitute_template_parameter(
 	TypeCategory result_type = original_type.type();
 	TypeIndex result_type_index = original_type.type_index();
 
-	// Only substitute UserDefined types (which might be template parameters)
-	if (result_type == TypeCategory::UserDefined) {
+	// Substitute dependent placeholder types (which might be template parameters)
+	if (result_type == TypeCategory::UserDefined ||
+		result_type == TypeCategory::Struct ||
+		result_type == TypeCategory::TypeAlias ||
+		result_type == TypeCategory::Template) {
 		// First try to get the type name from the token (useful for type aliases parsed inside templates
 		// where the type_index might be 0/placeholder because the alias wasn't fully registered yet)
 		std::string_view type_name;

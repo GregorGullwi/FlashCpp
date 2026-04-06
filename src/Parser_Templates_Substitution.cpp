@@ -944,7 +944,10 @@ ASTNode Parser::substituteTemplateParameters(
 		};
 
 		// Check if this is a user-defined type that matches a template parameter
-		if (type_spec.category() == TypeCategory::UserDefined || type_spec.category() == TypeCategory::TypeAlias || type_spec.category() == TypeCategory::Template) {
+		if (type_spec.category() == TypeCategory::UserDefined ||
+			type_spec.category() == TypeCategory::Struct ||
+			type_spec.category() == TypeCategory::TypeAlias ||
+			type_spec.category() == TypeCategory::Template) {
 			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,
