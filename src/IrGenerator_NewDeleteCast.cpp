@@ -112,21 +112,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 										ctor_op.is_heap_allocated = true;
 										if (init_list.initializers().empty()) {
 											fillInDefaultConstructorArguments(ctor_op, *struct_info);
+										} else {
+											const ConstructorDeclarationNode* resolved_ctor =
+												resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
+											appendConstructorCallArguments(ctor_op, resolved_ctor, init_list.initializers(), Token());
 										}
-
-											// Add each initializer as a constructor argument
-										for (const auto& elem_init : init_list.initializers()) {
-												// Safety check: ensure elem_init is an ExpressionNode
-											if (!elem_init.is<ExpressionNode>()) {
-												FLASH_LOG(Codegen, Warning, "Element initializer is not an ExpressionNode, skipping");
-												continue;
-											}
-
-											ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-											TypedValue tv = toTypedValue(arg_operands);
-											ctor_op.arguments.push_back(std::move(tv));
-										}
-										ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 
 										ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 									}
@@ -231,20 +221,11 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 									ctor_op.is_heap_allocated = true;
 									if (init_list.initializers().empty()) {
 										fillInDefaultConstructorArguments(ctor_op, *struct_info);
+									} else {
+										const ConstructorDeclarationNode* resolved_ctor =
+											resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
+										appendConstructorCallArguments(ctor_op, resolved_ctor, init_list.initializers(), Token());
 									}
-
-									for (const auto& elem_init : init_list.initializers()) {
-											// Safety check: ensure elem_init is an ExpressionNode
-										if (!elem_init.is<ExpressionNode>()) {
-											FLASH_LOG(Codegen, Warning, "Element initializer in heap array is not an ExpressionNode, skipping");
-											continue;
-										}
-
-										ExprResult arg_operands = visitExpressionNode(elem_init.as<ExpressionNode>());
-										TypedValue tv = toTypedValue(arg_operands);
-										ctor_op.arguments.push_back(std::move(tv));
-									}
-									ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*struct_info, init_list.initializers());
 
 									ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 								}
@@ -382,18 +363,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (placement new provides address)
+						const auto& ctor_args = newExpr.constructor_args();
 						if (newExpr.constructor_args().empty()) {
 							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
+						} else {
+							const ConstructorDeclarationNode* resolved_ctor =
+								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
+							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
 						}
-
-							// Add constructor arguments
-						const auto& ctor_args = newExpr.constructor_args();
-						for (size_t i = 0; i < ctor_args.size(); ++i) {
-							ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-							TypedValue tv = toTypedValue(arg_operands);
-							ctor_op.arguments.push_back(std::move(tv));
-						}
-						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}
@@ -429,18 +406,14 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 						ctor_op.struct_name = type_info->name();
 						ctor_op.object = result_var;
 						ctor_op.is_heap_allocated = true;  // Object is at pointer location (new allocates and returns pointer)
+						const auto& ctor_args = newExpr.constructor_args();
 						if (newExpr.constructor_args().empty()) {
 							fillInDefaultConstructorArguments(ctor_op, *type_info->struct_info_);
+						} else {
+							const ConstructorDeclarationNode* resolved_ctor =
+								resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
+							appendConstructorCallArguments(ctor_op, resolved_ctor, ctor_args, Token());
 						}
-
-							// Add constructor arguments
-						const auto& ctor_args = newExpr.constructor_args();
-						for (size_t i = 0; i < ctor_args.size(); ++i) {
-							ExprResult arg_operands = visitExpressionNode(ctor_args[i].as<ExpressionNode>());
-							TypedValue tv = toTypedValue(arg_operands);
-							ctor_op.arguments.push_back(std::move(tv));
-						}
-						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*type_info->struct_info_, ctor_args);
 
 						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), Token()));
 					}

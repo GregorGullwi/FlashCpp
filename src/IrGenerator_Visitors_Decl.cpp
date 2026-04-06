@@ -1653,16 +1653,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		ConstructorCallOp ctor_op;
 		ctor_op.struct_name = StringTable::getOrInternStringHandle(struct_name_for_ctor);
 		ctor_op.object = StringTable::getOrInternStringHandle("this");
-
-			// Add constructor arguments from delegating initializer
-		for (const auto& arg : delegating_init.arguments) {
-			ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-			TypedValue tv = toTypedValue(arg_operands);
-			ctor_op.arguments.push_back(std::move(tv));
-		}
+		const ConstructorDeclarationNode* resolved_ctor = nullptr;
 		if (enclosing_struct_info) {
-			ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
+			resolved_ctor = resolveCodegenConstructorFromArgs(*enclosing_struct_info, delegating_init.arguments);
 		}
+		appendConstructorCallArguments(ctor_op, resolved_ctor, delegating_init.arguments, node.name_token());
 
 		ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 
@@ -1721,16 +1716,12 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				assert(base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 				ctor_op.base_class_offset = static_cast<int>(base.offset);
 
-					// Add constructor arguments from base initializer
 				if (base_init) {
-					for (const auto& arg : base_init->arguments) {
-						ExprResult arg_operands = visitExpressionNode(arg.as<ExpressionNode>());
-						TypedValue tv = toTypedValue(arg_operands);
-						ctor_op.arguments.push_back(std::move(tv));
-					}
+					const ConstructorDeclarationNode* resolved_ctor = nullptr;
 					if (base_struct_info) {
-						ctor_op.resolved_constructor = resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
+						resolved_ctor = resolveCodegenConstructorFromArgs(*base_struct_info, base_init->arguments);
 					}
+					appendConstructorCallArguments(ctor_op, resolved_ctor, base_init->arguments, node.name_token());
 						// If there's an explicit initializer, generate the constructor call
 					ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
 				}
