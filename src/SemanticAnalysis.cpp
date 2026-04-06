@@ -1,5 +1,3 @@
-#include <cassert>
-
 #include "SemanticAnalysis.h"
 #include "Parser.h"
 #include "CompileContext.h"
@@ -2644,10 +2642,12 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					return {};
 				}
 				// MemberAccessNode stores the parser token directly, so the identifier handle
-				// should already be interned at tokenization time. If that ever stops being
-				// true, fix token construction/parser plumbing instead of re-interning here.
+				// must already be interned at tokenization time. If this ever fails,
+				// fix token construction/parser plumbing instead of re-interning here.
 				const StringHandle member_name = e.member_token().handle();
-				assert(member_name.isValid());
+				if (!member_name.isValid()) {
+					throw InternalError("Member token handle was not interned for '" + std::string(e.member_name()) + "'");
+				}
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
 						continue;
