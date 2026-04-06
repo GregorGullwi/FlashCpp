@@ -1468,9 +1468,21 @@ private:	 // Resume private methods
 			// the template body opening brace (C++20 [temp.res]/9).
 		auto checkPhase1 = [&](const Token& decl_tok) {
 			if (phase1_cutoff_line_ > 0 && !phase1_violation_token_.has_value() &&
-				decl_tok.file_index() == phase1_cutoff_file_idx_ &&
-				decl_tok.line() > phase1_cutoff_line_) {
-				phase1_violation_token_ = token;
+				decl_tok.file_index() == phase1_cutoff_file_idx_) {
+				// Use source line numbers for the comparison, not preprocessed line numbers.
+				// Preprocessed line numbers can be misleading when a header is included multiple
+				// times (even if guarded) or when forward declarations are created during template
+				// reparsing.  Source line numbers within the same file are always correctly ordered.
+				// When source line lookup fails (returns 0, e.g. no line_map in unit tests),
+				// fall back to comparing preprocessed line numbers to preserve Phase 1 checking.
+				size_t decl_src_line = lexer_.getSourceLine(decl_tok.line());
+				size_t cutoff_src_line = lexer_.getSourceLine(phase1_cutoff_line_);
+				bool violation = (decl_src_line > 0 && cutoff_src_line > 0)
+					? decl_src_line > cutoff_src_line
+					: decl_tok.line() > phase1_cutoff_line_;
+				if (violation) {
+					phase1_violation_token_ = token;
+				}
 			}
 		};
 

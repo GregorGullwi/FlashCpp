@@ -1396,19 +1396,24 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 		advance();
 
 		// Check for functional-style cast: Type(expression)
-		// This is needed for patterns like bool(x), int(y), etc.
-		// Check if this identifier is a type name and followed by '('
-		// NOTE: Only treat BUILT-IN types as functional casts here.
-		// User-defined types with Type(args) syntax are constructor calls, not casts,
-		// and should be handled by the normal identifier/function call path below.
+		// This is needed for patterns like bool(x), int(y), size_t(-1), etc.
+		// Check if this identifier is a type name and followed by '(' or '{'
 		if (current_token_.value() == "(" || current_token_.value() == "{") {
 			std::string_view id_name = identifier_token.value();
 
-			// Only check for built-in type names (not user-defined types)
-			// User-defined Type(args) is a constructor call, not a functional cast
+			// Check for built-in type names first
 			auto type_info = get_builtin_type_info(id_name);
 			if (type_info.has_value()) {
-				// This is a built-in type followed by '(' or '{' - parse as built-in type construction
+				return parse_functional_cast(id_name, identifier_token);
+			}
+
+			// Also check for type aliases and enums.  Per C++20 [expr.type.conv],
+			// T(expr) is a valid functional cast / explicit type conversion for any
+			// simple-type-specifier T, including typedef names and enum names.
+			// Struct types go through the normal constructor call path below.
+			const TypeInfo* alias_info = lookupTypeInCurrentContext(identifier_token.handle());
+			if (alias_info && !alias_info->isStruct() &&
+				(alias_info->isTypeAlias() || alias_info->isEnum())) {
 				return parse_functional_cast(id_name, identifier_token);
 			}
 		}
@@ -3775,7 +3780,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				// Not a template function, or instantiation failed
 				// Create a forward declaration for the function (only if we haven't already found it)
 				// Skip if we already found this as a member function in the class context
-				if (!found_member_function_in_context && !identifierType.has_value()) {
+				// Skip if the identifier is a known type name — `TypeName(expr)` is a functional
+				// cast, not a function call, so we must not pollute the global scope with a
+				// bogus forward declaration that would confuse Phase 1 two-phase lookup.
+				if (!found_member_function_in_context && !identifierType.has_value() &&
+					!lookupTypeInCurrentContext(identifier_token.handle())) {
 					// We'll assume it returns int for now (this is a simplification)
 					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Int, TypeQualifier::None, 32, Token(), CVQualifier::None);
 					auto forward_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
