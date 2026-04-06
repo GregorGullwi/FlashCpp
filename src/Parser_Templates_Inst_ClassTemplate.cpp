@@ -1762,21 +1762,26 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 							if (!resolved) {
+								// Helper: build a non-type value TemplateTypeArg
+								auto makeValueArg = [](int64_t value, TypeCategory type) {
+									TemplateTypeArg va;
+									va.is_value = true;
+									va.value = value;
+									va.type_index = nativeTypeIndex(type);
+									return va;
+								};
+
 								// Non-type value argument - try to convert to TemplateTypeArg
 								if (std::holds_alternative<NumericLiteralNode>(expr)) {
-									TemplateTypeArg va;
-									va.is_value = true;
-									NumericLiteralValue nv = std::get<NumericLiteralNode>(expr).value();
-									va.value = std::holds_alternative<unsigned long long>(nv)
-												   ? static_cast<int64_t>(std::get<unsigned long long>(nv))
-												   : static_cast<int64_t>(std::get<double>(nv));
-									resolved_args.push_back(va);
+									const NumericLiteralNode& num_lit = std::get<NumericLiteralNode>(expr);
+									NumericLiteralValue nv = num_lit.value();
+									int64_t int_val = std::holds_alternative<unsigned long long>(nv)
+														   ? static_cast<int64_t>(std::get<unsigned long long>(nv))
+														   : static_cast<int64_t>(std::get<double>(nv));
+									resolved_args.push_back(makeValueArg(int_val, num_lit.type()));
+									resolved = true;
 								} else if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
-									TemplateTypeArg va;
-									va.is_value = true;
-									va.value = bool_literal->value() ? 1 : 0;
-									va.type_index = nativeTypeIndex(TypeCategory::Bool);
-									resolved_args.push_back(va);
+									resolved_args.push_back(makeValueArg(bool_literal->value() ? 1 : 0, TypeCategory::Bool));
 									resolved = true;
 								} else {
 									ASTNode substituted_expr = substituteTemplateParameters(
@@ -1785,11 +1790,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										template_args);
 									auto evaluated_value = try_evaluate_constant_expression(substituted_expr);
 									if (evaluated_value.has_value()) {
-										TemplateTypeArg va;
-										va.is_value = true;
-										va.value = evaluated_value->value;
-										va.type_index = nativeTypeIndex(evaluated_value->type);
-										resolved_args.push_back(va);
+										resolved_args.push_back(makeValueArg(evaluated_value->value, evaluated_value->type));
 										resolved = true;
 									} else {
 										// Unresolvable expression argument - cannot safely instantiate
