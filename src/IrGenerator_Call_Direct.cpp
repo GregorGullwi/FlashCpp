@@ -87,7 +87,7 @@ TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& 
 int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
 	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
 	return (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
-		? 64
+		? (context_->isLLP64() ? 64 : 32)
 		: getTypeSpecSizeBits(return_type);
 }
 
