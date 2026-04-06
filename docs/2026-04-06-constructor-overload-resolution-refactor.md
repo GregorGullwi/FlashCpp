@@ -69,6 +69,122 @@ IRConverter      → reads ConstructorCallOp.resolved_ctor_name (set by IrGenera
 
 ---
 
+## Comparison: Regular Polymorphic / Function Call Overload Resolution
+
+The same full constructor-centralization plan is **not directly necessary** for ordinary function calls, because normal call sites already keep substantially more resolved information on the AST and in sema side tables.
+
+### What is already better for regular calls
+
+1. **`CallExprNode` already stores a callee descriptor**  
+   `src/AstNodeTypes_DeclNodes.h` (`CalleeDescriptor`, `CallExprNode`) can already carry a resolved `FunctionDeclarationNode*` for free/member/static calls rather than just a raw declaration token.
+
+2. **Parser already resolves many non-constructor calls up front**  
+   `src/Parser_Expr_PrimaryExpr.cpp` calls `resolve_overload` for ordinary calls in multiple places (for example around the main direct-call path and later operator/member-call recovery paths). The chosen function can be baked into the emitted `CallExprNode`.
+
+3. **SemanticAnalysis already has call-resolution side tables**  
+   `src/SemanticAnalysis.cpp` maintains direct-call and `operator()` caches (for example `getResolvedDirectCall`, `op_call_table_`) and separately annotates call-argument conversions via `tryAnnotateCallArgConversions`.
+
+4. **IrGenerator generally consumes the already-resolved target**  
+   `src/IrGenerator_Call_Direct.cpp` primarily reads the callee info or sema-provided direct-call cache. Unlike constructors, normal direct calls do not broadly re-run overload resolution in IR conversion from erased IR types.
+
+5. **IR already distinguishes direct, indirect, and virtual dispatch**  
+   `CallOp` / `VirtualCallOp` carry more explicit dispatch information than constructor calls do today, so the late pipeline is already less ambiguous.
+
+### Why the exact same refactor is harder for regular calls
+
+A constructor call is always “pick one constructor for one class object creation”. Regular calls have more moving parts:
+
+- **ADL / hidden friends**: some candidates only exist after associated-namespace lookup
+- **member vs free vs static member vs indirect calls**: different dispatch kinds already encoded in `CalleeDescriptor`
+- **operator calls / functors**: `operator()` can resolve through separate sema tables
+- **templates / dependent calls**: some calls must stay deferred until instantiation
+- **virtual dispatch**: the declaration may be known statically, but the final implementation is runtime-selected
+- **function pointers / callable objects**: not every `f(x)` shape is an overload-set problem
+
+### Practical conclusion
+
+So the constructor plan **can inspire** a follow-up for regular calls, but the goal should be narrower:
+
+- keep parser/name-lookup machinery where it is for ADL-sensitive and dependent cases
+- let SemanticAnalysis **upgrade or confirm** the selected regular callee when possible
+- have codegen consume a single sema-authoritative result whenever available
+- preserve existing fallbacks for dependent/template/indirect/virtual cases
+
+If we do a regular-call follow-up, it should probably be framed as **“strengthen existing call-target caching and sema authority”**, not “move every bit of call resolution out of the parser”.
+
+---
+
+## Applicability to Regular Function Calls
+
+If we want a follow-up architecture pass for ordinary polymorphic/function calls, the analogous plan would look more like this:
+
+1. **Keep `CallExprNode` / `CalleeDescriptor` as the carrier**
+   - constructors need a new annotation slot because they currently carry nothing comparable
+   - ordinary calls already have a carrier, so a new side table may be optional
+
+2. **Make sema the authoritative post-parse confirmation step**
+   - parser may still build an initial target for normal calls
+   - sema should confirm/upgrade/store the chosen `FunctionDeclarationNode*` whenever the call is non-dependent and fully known
+
+3. **Teach codegen to trust sema first**
+   - for direct calls this is already partially true
+   - remaining fallback-only paths should be limited to genuinely unresolved cases
+
+4. **Do not try to remove parser participation blindly**
+   - ADL, hidden friends, explicit template arguments, callable objects, and dependent calls are tightly coupled to parsing/name lookup
+
+5. **Keep dispatch-kind-specific fallbacks**
+   - direct call
+   - indirect/function-pointer call
+   - member/static-member call
+   - virtual call
+   - `operator()` / functor call
+
+Estimated complexity is meaningfully higher than the constructor refactor because normal calls already support more dispatch modes and more partial-resolution states.
+
+---
+
+## Gemini PR Comment Follow-up
+
+Two review comments from Gemini were worth checking against the latest branch state:
+
+### 1. Type-alias lookup duplication
+
+This was a good suggestion, but it is already addressed on the branch now.  
+The alias-to-constructible-class lookup logic was consolidated into:
+
+- `src/Parser_Expr_PrimaryExpr.cpp`
+- helper: `tryResolveConstructibleClassAlias(...)`
+
+That helper is now reused by:
+
+- the early constructor-call path for `TypeName(args...)`
+- the later alias-based `Alias(args...)` path
+- the alias-based brace-init path
+
+So this particular refactor suggestion should be considered **done**.
+
+### 2. Parenthesized constructor argument parsing duplication
+
+This comment is still valid.
+
+There are still two near-identical loops in `src/Parser_Expr_PrimaryExpr.cpp` that parse comma-separated constructor arguments inside `(...)`:
+
+- the main constructor-call path around the direct `consume("(")` constructor branch
+- the alias-based constructor-call path added for `Alias(args...)`
+
+Those should be folded into a shared helper in a follow-up, ideally something like:
+
+```cpp
+Parser::parse_parenthesized_constructor_arguments(...)
+```
+
+or a more general helper shared with function-call argument parsing if the surrounding invariants can be aligned cleanly.
+
+This is only a maintainability cleanup, not a correctness blocker, but it would remove duplicated error handling and keep future parser fixes from drifting between the two paths.
+
+---
+
 ## Refactor Prompt for Follow-up PR
 
 ```
@@ -230,6 +346,53 @@ Add or verify regression tests for:
 
 5. Use FLASH_LOG_FORMAT(Codegen, Debug, ...) to log which constructor was resolved and
    from which source (sema annotation vs. fallback) to aid future debugging.
+```
+
+---
+
+## Possible Separate Prompt for Regular Function Calls
+
+Use this only as a later, separate cleanup once the constructor-specific refactor is done.
+
+```
+Task: Audit and strengthen regular function-call target resolution so SemanticAnalysis
+becomes the authoritative post-parse source of truth for non-dependent direct calls,
+without breaking parser-coupled ADL, hidden-friend, operator(), template, indirect, or
+virtual-call behavior.
+
+Repository: GregorGullwi/FlashCpp
+Suggested base: after the constructor-overload-centralization PR lands
+
+Goals:
+1. Inventory every place regular calls are resolved or re-resolved.
+2. Confirm where `CallExprNode` / `CalleeDescriptor` already carries a resolved
+   `FunctionDeclarationNode*`.
+3. Teach sema to upgrade/store the selected direct callee whenever the call is
+   non-dependent and fully known.
+4. Make IrGenerator prefer the sema-authoritative result and only fall back for
+   unresolved/dependent/indirect/virtual cases.
+5. Do not remove parser participation for ADL-sensitive and template-dependent call
+   formation unless you can prove behavior stays identical.
+
+Important complications to audit explicitly:
+- ADL and hidden friends
+- member vs static member vs free function calls
+- `operator()` resolution and callable objects
+- indirect/function-pointer calls
+- virtual dispatch (`VirtualCallOp`)
+- explicit template arguments and dependent calls
+
+Nice-to-have cleanup:
+- see whether direct-call fallback/remap logic in codegen can be reduced once sema-owned
+  call target caching is authoritative more often
+- evaluate whether the current global overload-resolution cache can be used more
+  consistently for ordinary calls
+
+Validation:
+- `make main CXX=clang++`
+- `bash tests/run_all_tests.sh`
+- targeted regression tests covering direct overloads, member overloads, ADL-only hidden
+  friends, callable objects, virtual calls, and function-pointer calls
 ```
 
 ---
