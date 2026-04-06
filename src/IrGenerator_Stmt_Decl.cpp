@@ -72,7 +72,24 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 		return false;
 	}
 
-	return std::holds_alternative<MemberAccessNode>(arg.as<ExpressionNode>());
+	const ExpressionNode& expr = arg.as<ExpressionNode>();
+	return std::visit([](const auto& inner) -> bool {
+		using T = std::decay_t<decltype(inner)>;
+		if constexpr (std::is_same_v<T, IdentifierNode>) {
+			return inner.binding() != IdentifierBinding::EnumConstant;
+		} else if constexpr (std::is_same_v<T, StringLiteralNode> ||
+							 std::is_same_v<T, StaticCastNode> ||
+							 std::is_same_v<T, ConstCastNode> ||
+							 std::is_same_v<T, ReinterpretCastNode> ||
+							 std::is_same_v<T, DynamicCastNode> ||
+							 std::is_same_v<T, ConstructorCallNode> ||
+							 std::is_same_v<T, InitializerListConstructionNode> ||
+							 std::is_same_v<T, CallExprNode>) {
+			return false;
+		}
+		return true;
+	},
+					  expr);
 }
 
 std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
@@ -142,8 +159,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		return tryParserFallback(arg);
 	}
 
-	std::function<std::optional<TypeSpecifierNode>(const ASTNode&)> buildLegacyType =
-		[&](const ASTNode& legacy_arg) -> std::optional<TypeSpecifierNode> {
+	auto buildLegacyType = [&](const auto& self, const ASTNode& legacy_arg) -> std::optional<TypeSpecifierNode> {
 		if (!legacy_arg.is<ExpressionNode>()) {
 			return tryParserFallback(legacy_arg);
 		}
@@ -163,7 +179,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 				}
 				return type;
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
-				auto object_type_opt = buildLegacyType(inner.object());
+				auto object_type_opt = self(self, inner.object());
 				if (!object_type_opt.has_value()) {
 					return std::nullopt;
 				}
@@ -253,7 +269,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 						  expr);
 	};
 
-	auto legacy_type = buildLegacyType(arg);
+	auto legacy_type = buildLegacyType(buildLegacyType, arg);
 	if (legacy_type.has_value()) {
 		return legacy_type;
 	}

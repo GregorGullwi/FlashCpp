@@ -2650,10 +2650,14 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 					object_desc.category() != TypeCategory::UserDefined) {
 					return try_parser_member_type();
 				}
-				const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
-				const TypeInfo* object_type_info = alias_info.terminal_type_info
-					? alias_info.terminal_type_info
-					: tryGetTypeInfo(object_desc.type_index);
+				const TypeInfo* object_type_info = nullptr;
+				if (object_desc.category() == TypeCategory::UserDefined) {
+					const ResolvedAliasTypeInfo alias_info = resolveAliasTypeInfo(object_desc.type_index);
+					object_type_info = alias_info.terminal_type_info;
+				}
+				if (!object_type_info) {
+					object_type_info = tryGetTypeInfo(object_desc.type_index);
+				}
 				const StructTypeInfo* struct_info = object_type_info ? object_type_info->getStructInfo() : nullptr;
 				if (!struct_info) {
 					return try_parser_member_type();
