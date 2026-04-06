@@ -145,6 +145,7 @@ struct StorageSpecifiers {
 	StorageClass storage_class = StorageClass::None;
 	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;
 	bool is_inline = false;
+	bool is_thread_local = false;
 	Linkage linkage = Linkage::None;
 	CallingConvention calling_convention = CallingConvention::Default;
 
@@ -161,6 +162,7 @@ struct StorageSpecifiers {
 struct DeclarationSpecifiers {
 	// Storage class specifier (static, extern, register, mutable)
 	StorageClass storage_class = StorageClass::None;
+	bool is_thread_local = false;
 
 	// Constexpr/consteval/constinit specifiers (mutually exclusive)
 	ConstexprSpecifier constexpr_spec = ConstexprSpecifier::None;

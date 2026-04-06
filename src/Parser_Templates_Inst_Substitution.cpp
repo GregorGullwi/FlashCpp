@@ -751,6 +751,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		new_initializer,
 		orig_var_decl.storage_class());
 	// Mark as constexpr to match the template pattern
+	instantiated_var_decl.as<VariableDeclarationNode>().set_is_thread_local(orig_var_decl.is_thread_local());
 	instantiated_var_decl.as<VariableDeclarationNode>().set_is_constexpr(true);
 	setOuterTemplateBindingsFromParams(instantiated_var_decl.as<VariableDeclarationNode>(), template_params, resolved_args);
 

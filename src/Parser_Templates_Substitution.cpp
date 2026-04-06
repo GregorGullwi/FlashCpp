@@ -1094,6 +1094,7 @@ ASTNode Parser::substituteTemplateParameters(
 		setOuterTemplateBindingsFromParams(new_var, template_params, template_args);
 
 		// Preserve constexpr/constinit flags
+		new_var.set_is_thread_local(var_decl.is_thread_local());
 		if (var_decl.is_constexpr())
 			new_var.set_is_constexpr(true);
 		if (var_decl.is_constinit())

@@ -239,8 +239,8 @@ enum class StorageClass {
 
 class VariableDeclarationNode {
 public:
-	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None)
-		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_constexpr_(false), is_constinit_(false) {}
+	explicit VariableDeclarationNode(ASTNode declaration_node, std::optional<ASTNode> initializer = std::nullopt, StorageClass storage_class = StorageClass::None, bool is_thread_local = false)
+		: declaration_node_(declaration_node), initializer_(initializer), storage_class_(storage_class), is_thread_local_(is_thread_local), is_constexpr_(false), is_constinit_(false) {}
 
 	DeclarationNode& declaration() { return declaration_node_.as<DeclarationNode>(); }
 	const DeclarationNode& declaration() const { return declaration_node_.as<DeclarationNode>(); }
@@ -248,7 +248,9 @@ public:
 	const ASTNode& declaration_node() const { return declaration_node_; }
 	const std::optional<ASTNode>& initializer() const { return initializer_; }
 	StorageClass storage_class() const { return storage_class_; }
+	bool is_thread_local() const { return is_thread_local_; }
 	void set_initializer(std::optional<ASTNode> initializer) { initializer_ = std::move(initializer); }
+	void set_is_thread_local(bool is_thread_local) { is_thread_local_ = is_thread_local; }
 
 	void set_is_constexpr(bool is_constexpr) { is_constexpr_ = is_constexpr; }
 	bool is_constexpr() const { return is_constexpr_; }
@@ -292,6 +294,7 @@ private:
 	ASTNode declaration_node_;
 	std::optional<ASTNode> initializer_;
 	StorageClass storage_class_;
+	bool is_thread_local_;
 	bool is_constexpr_;
 	bool is_constinit_;
 	InlineVector<StringHandle, 4> outer_template_param_names_;

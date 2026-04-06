@@ -587,7 +587,7 @@ ParseResult Parser::parse_variable_declaration() {
 		// Note: Structured bindings don't support storage class specifiers or constexpr/constinit
 
 		// Validate: structured bindings cannot have storage class specifiers
-		if (storage_class != StorageClass::None) {
+		if (storage_class != StorageClass::None || specs.is_thread_local) {
 			return ParseResult::error("Structured bindings cannot have storage class specifiers (static, extern, etc.)", current_token_);
 		}
 
@@ -626,6 +626,7 @@ ParseResult Parser::parse_variable_declaration() {
 			storage_class);
 
 		// Set constexpr/constinit flags
+		var_decl.set_is_thread_local(specs.is_thread_local);
 		var_decl.set_is_constexpr(is_constexpr);
 		var_decl.set_is_constinit(is_constinit);
 

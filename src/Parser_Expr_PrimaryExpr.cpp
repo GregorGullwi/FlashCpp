@@ -6195,14 +6195,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			if (!peek().is_operator()) {
 				return false;
 			}
-			const std::string_view op = peek_info().value();
-			return op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
-				   op == "^" || op == "&" || op == "|" || op == "=" || op == "<" ||
-				   op == ">" || op == "<<" || op == ">>" || op == "+=" || op == "-=" ||
-				   op == "*=" || op == "/=" || op == "%=" || op == "^=" || op == "&=" ||
-				   op == "|=" || op == "<<=" || op == ">>=" || op == "==" || op == "!=" ||
-				   op == "<=" || op == ">=" || op == "&&" || op == "||" ||
-				   op == ".*" || op == "->*";
+			return isFoldOperatorToken(peek_info().value());
 		};
 
 		// Pattern 1: Unary left fold: (... op pack)

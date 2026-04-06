@@ -980,6 +980,7 @@ private:	 // Resume private methods
 	std::optional<ASTNode> parse_copy_initialization(DeclarationNode& decl_node, TypeSpecifierNode& type_specifier);	 // Parse Type var = expr or Type var = {args}
 	ParseResult parse_extern_block(Linkage linkage);	 // Parse extern "C" { ... } block
 	ParseResult parse_brace_initializer(const TypeSpecifierNode& type_specifier);  // Add brace initializer parser
+	static bool isFoldOperatorToken(std::string_view op);
 	ParseResult parse_for_loop();  // Add this line
 	ParseResult parse_while_loop();	// Add while-loop parser
 	ParseResult parse_do_while_loop();  // Add do-while-loop parser

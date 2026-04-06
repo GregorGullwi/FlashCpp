@@ -933,6 +933,7 @@ ParseResult Parser::parse_template_declaration() {
 	} else if (is_variable_template) {
 		// Parse storage class specifiers manually (constexpr, inline, static, etc.)
 		bool is_constexpr = false;
+		bool is_thread_local = false;
 		StorageClass storage_class = StorageClass::None;
 
 		while (peek().is_keyword()) {
@@ -944,6 +945,9 @@ ParseResult Parser::parse_template_declaration() {
 				advance(); // consume but don't store for now
 			} else if (kw == "static"_tok) {
 				storage_class = StorageClass::Static;
+				advance();
+			} else if (kw == "thread_local"_tok || kw == "__thread"_tok) {
+				is_thread_local = true;
 				advance();
 			} else {
 				break; // Not a storage class specifier
@@ -1110,6 +1114,7 @@ ParseResult Parser::parse_template_declaration() {
 			storage_class);
 
 		// Set constexpr flag if present
+		var_decl_node.as<VariableDeclarationNode>().set_is_thread_local(is_thread_local);
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(is_constexpr);
 
 		// Create TemplateVariableDeclarationNode
