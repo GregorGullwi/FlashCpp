@@ -135,7 +135,7 @@ void AstToIr::populateCallReturnInfo(CallOp& call_op, const TypeSpecifierNode& r
 
 	// When TypeSpecifierNode reports size 0 for a non-void type, resolve it:
 	// structs via tryGetStructTypeInfo, primitives via get_type_size_bits.
-	if (!call_op.return_size_in_bits.is_set() && normalized_return_type.type() != TypeCategory::Void) {
+	if (!call_op.return_size_in_bits.is_set() && normalized_return_type.category() != TypeCategory::Void) {
 		const TypeCategory cat = normalized_return_type.category();
 		if (cat == TypeCategory::Struct && normalized_return_type.type_index().is_valid()) {
 			if (const StructTypeInfo* ret_struct = tryGetStructTypeInfo(normalized_return_type.type_index())) {

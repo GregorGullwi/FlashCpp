@@ -1810,9 +1810,10 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			}
 
 			// Capture return metadata before the move invalidates call_op.
+			TypeIndex result_type_index = call_op.return_type_index;
 			SizeInBits return_size = call_op.return_size_in_bits;
 			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), binaryOperatorNode.get_token()));
-			return makeExprResult(return_type.type_index(), return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+			return makeExprResult(result_type_index, return_size, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
 		}
 
 		else if (overload_result.has_match) {
