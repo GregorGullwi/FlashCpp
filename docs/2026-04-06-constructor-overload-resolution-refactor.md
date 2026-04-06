@@ -15,15 +15,16 @@ This creates duplicate logic, mismatched resolution paths, and makes it hard to 
 
 ## Current Branch Progress
 
-Status on `copilot/refactor-unifying-constructor-overload-selection` after the latest brace-init follow-up:
+Status on `copilot/refactor-unifying-constructor-overload-selection` after the semantic-analysis follow-up:
 
 - **Done:** `ConstructorCallNode` stores a sema-resolved constructor pointer.
 - **Done:** `InitializerListNode` now also stores a sema-resolved constructor pointer for brace-init constructor paths.
 - **Done:** `SemanticAnalysis::tryAnnotateConstructorCallArgConversions` stores the selected constructor on `ConstructorCallNode`.
 - **Done:** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` stores the selected constructor on `InitializerListNode`.
 - **Done:** several IrGenerator and ConstExprEvaluator paths now consume the sema annotation first and only fall back when it is absent.
-- **Remaining:** parser-time brace-init constructor resolution still exists in `src/Parser_Statements.cpp`.
+- **Done:** parser-time brace-init constructor overload selection was removed from the `ConstructorCallNode` path for user-defined constructors; semantic analysis now reports those no-match / ambiguity diagnostics after parsing instead of during parsing.
 - **Remaining:** `src/IRConverter_ConvertMain.cpp` still re-runs constructor overload resolution from lowered IR argument types.
+- **Remaining:** the parser still keeps a member-less/non-aggregate brace-init guard outside the unified sema-owned constructor path.
 - **Remaining:** some constructor-selection fallbacks still exist in codegen by design for unresolved/dependent cases and should only be reached when sema did not annotate a constructor.
 
 This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
@@ -334,8 +335,12 @@ Overload resolution during parsing is premature. Investigate why it was added an
   (b) Replace it with a deferred annotation that SemanticAnalysis fills in during the
       normal sema walk.
 
-**Current progress:** not started yet. The parser still performs brace-init constructor
-resolution as an early accept/reject gate.
+**Current progress:** partially complete. The parser no longer performs authoritative
+brace-init overload resolution for the `ConstructorCallNode` path; it now builds the
+node and lets semantic analysis select the overload or emit the diagnostic. The
+remaining parser cleanup is the older member-less special-case gate, and the
+`InitializerListNode` declaration path still has not been unified with the same
+post-parse diagnostic flow.
 
 ---
 
@@ -451,6 +456,6 @@ This refactor should be considered complete once all of the following are true:
 - IrGenerator prefers the sema annotation in every constructor emission path and only falls back when sema genuinely could not resolve.
 - Constexpr evaluation prefers the sema annotation in every constructor-evaluation path and only falls back when running outside a full sema flow.
 - IRConverter no longer calls `resolve_constructor_overload` for `ConstructorCallOp`.
-- Parser no longer performs constructor overload selection as part of normal brace-init parsing.
+- Parser no longer performs constructor overload selection for the `ConstructorCallNode` brace-init path; any remaining parser gate must be limited to structural validation or legacy non-unified paths that are explicitly tracked.
 - `make main CXX=clang++` succeeds.
 - `bash tests/run_all_tests.sh` succeeds.

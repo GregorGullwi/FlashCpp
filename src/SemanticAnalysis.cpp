@@ -4368,12 +4368,25 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	if (!struct_info || !struct_info->hasAnyConstructor())
 		return;
 
+	auto buildConstructorDiagnostic = [&](std::string_view prefix, size_t arg_count) {
+		return std::string(
+			StringBuilder()
+				.append(prefix)
+				.append(" for '")
+				.append(StringTable::getStringView(type_info->name()))
+				.append("' with ")
+				.append(arg_count)
+				.append(" argument(s)")
+				.commit());
+	};
+	const bool require_constructor_match =
+		struct_info->hasUserDefinedConstructor() &&
+		call_node.called_from().value() == std::string_view{"{"};
+
 	// Resolve the matching constructor via overload resolution.
 	const auto& arguments = call_node.arguments();
 	size_t num_args = 0;
 	arguments.visit([&](ASTNode) { num_args++; });
-	if (num_args == 0)
-		return;
 
 	std::vector<TypeSpecifierNode> arg_types;
 	std::vector<CanonicalTypeId> inferred_arg_type_ids;
@@ -4399,8 +4412,13 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
-	if (!resolution.selected_overload)
+	if (resolution.is_ambiguous && require_constructor_match)
+		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
+	if (!resolution.selected_overload) {
+		if (require_constructor_match)
+			throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
 		return;
+	}
 	call_node.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
