@@ -1407,6 +1407,15 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 
 								// SECOND: If no copy constructor matched, look for other constructors
 								if (!has_matching_constructor) {
+									if (const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor()) {
+										if (resolved_ctor->struct_name() == struct_info.name) {
+											has_matching_constructor = true;
+											matching_ctor = resolved_ctor;
+											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
+										}
+									}
+								}
+								if (!has_matching_constructor) {
 								// Try type-based constructor overload resolution first using the
 								// sema-backed expression typing helper. Legacy lookup fallback
 								// stays isolated behind buildCodegenOverloadResolutionArgType().

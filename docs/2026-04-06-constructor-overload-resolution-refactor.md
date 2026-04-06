@@ -13,6 +13,23 @@ This creates duplicate logic, mismatched resolution paths, and makes it hard to 
 
 ---
 
+## Current Branch Progress
+
+Status on `copilot/refactor-unifying-constructor-overload-selection` after the latest brace-init follow-up:
+
+- **Done:** `ConstructorCallNode` stores a sema-resolved constructor pointer.
+- **Done:** `InitializerListNode` now also stores a sema-resolved constructor pointer for brace-init constructor paths.
+- **Done:** `SemanticAnalysis::tryAnnotateConstructorCallArgConversions` stores the selected constructor on `ConstructorCallNode`.
+- **Done:** `SemanticAnalysis::tryAnnotateInitListConstructorArgs` stores the selected constructor on `InitializerListNode`.
+- **Done:** several IrGenerator and ConstExprEvaluator paths now consume the sema annotation first and only fall back when it is absent.
+- **Remaining:** parser-time brace-init constructor resolution still exists in `src/Parser_Statements.cpp`.
+- **Remaining:** `src/IRConverter_ConvertMain.cpp` still re-runs constructor overload resolution from lowered IR argument types.
+- **Remaining:** some constructor-selection fallbacks still exist in codegen by design for unresolved/dependent cases and should only be reached when sema did not annotate a constructor.
+
+This means the refactor is now past the “annotation plumbing” stage. The remaining work is primarily about eliminating the last non-sema authoritative resolution points rather than introducing new storage/caching mechanisms.
+
+---
+
 ## Current Architecture (Where Resolution Happens Today)
 
 ### 1. Parser – `src/Parser_Statements.cpp` (line 1671)
@@ -262,6 +279,12 @@ Pattern to apply at each call site:
 Preserve the existing fallback path (call resolve_constructor_overload / arity fallback)
 for cases where SemanticAnalysis could not resolve (template-dependent arguments, etc.).
 
+**Current progress:** direct constructor-call paths already follow this pattern, and the
+brace-init declaration path now also checks the `InitializerListNode` annotation before
+falling back to local overload resolution. Remaining cleanup in this step is mostly about
+auditing the last fallback-heavy constructor materialization sites and deleting now-dead
+code only after confirming all unresolved/template-dependent cases still behave correctly.
+
 Remove `buildCodegenOverloadResolutionArgType` once no call sites remain that need it
 for constructor resolution specifically. The function may still be needed for regular
 function-call overload resolution; check callers before deleting.
@@ -280,7 +303,7 @@ Replace the local `resolve_constructor_overload` call with:
       // fallback for constexpr contexts without full sema pass
       auto resolution = resolve_constructor_overload(*struct_info, arg_types, false);
       matching_ctor = resolution.selected_overload;
-  }
+   }
 
 ---
 
@@ -297,6 +320,9 @@ Audit the IRConverter path to confirm that ConstructorCallOp.struct_name + the a
 emitted argument list uniquely identifies the constructor after Step 3, and remove the
 redundant `resolve_constructor_overload` calls at lines 4951 and 4957.
 
+**Current progress:** not started yet. This is now one of the two main remaining
+authoritative-resolution gaps.
+
 ---
 
 ### Step 6 — Remove the Parser-level overload resolution call
@@ -307,6 +333,9 @@ Overload resolution during parsing is premature. Investigate why it was added an
   (a) Remove it if the resolution result is not used before SemanticAnalysis runs, or
   (b) Replace it with a deferred annotation that SemanticAnalysis fills in during the
       normal sema walk.
+
+**Current progress:** not started yet. The parser still performs brace-init constructor
+resolution as an early accept/reject gate.
 
 ---
 
@@ -410,3 +439,18 @@ Validation:
 | 7 – Tests | Small | Low |
 
 Total: ~300–400 lines changed. No new features required.
+
+---
+
+## Exit Criteria
+
+This refactor should be considered complete once all of the following are true:
+
+- `ConstructorCallNode` and brace-init constructor carriers (`InitializerListNode`) both preserve the sema-selected constructor for downstream consumers.
+- Semantic analysis is the authoritative constructor-overload selection point for non-dependent constructor calls.
+- IrGenerator prefers the sema annotation in every constructor emission path and only falls back when sema genuinely could not resolve.
+- Constexpr evaluation prefers the sema annotation in every constructor-evaluation path and only falls back when running outside a full sema flow.
+- IRConverter no longer calls `resolve_constructor_overload` for `ConstructorCallOp`.
+- Parser no longer performs constructor overload selection as part of normal brace-init parsing.
+- `make main CXX=clang++` succeeds.
+- `bash tests/run_all_tests.sh` succeeds.

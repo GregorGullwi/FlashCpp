@@ -101,10 +101,14 @@ public:
 		return false;
 	}
 
+	const ConstructorDeclarationNode* resolved_constructor() const { return resolved_constructor_; }
+	void set_resolved_constructor(const ConstructorDeclarationNode* ctor) const { resolved_constructor_ = ctor; }
+
 private:
 	std::vector<ASTNode> initializers_;
 	std::vector<bool> is_designated_;
 	std::vector<StringHandle> member_names_;
+	mutable const ConstructorDeclarationNode* resolved_constructor_ = nullptr;
 };
 
 class IfStatementNode {

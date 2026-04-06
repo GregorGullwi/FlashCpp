@@ -4515,6 +4515,8 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		return;
 	}
 
+	init_list.set_resolved_constructor(resolution.selected_overload);
+
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
 
 	for (size_t i = 0; i < initializers.size() && i < ctor_params.size(); ++i) {
