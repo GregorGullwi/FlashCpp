@@ -12711,11 +12711,19 @@ void IrToObjConverter<TWriterClass>::handleMemberAccess(const IrInstruction& ins
 			// Note: allocateStackSlotForTempVar already updates the variables map
 	}
 
-		// Struct-typed members must preserve their address so nested member access keeps
+		// Non-union struct members must preserve their address so nested member access keeps
 		// using the subobject as an aggregate base instead of loading raw bytes as though
 		// the struct were a scalar value. Large members already require address storage for
-		// the same reason.
-	bool keep_member_address = isIrStructType(op.result.effectiveIrType()) && !op.is_reference();
+		// the same reason. Unions stay load-by-value here so existing scalar-style union
+		// member reads and copies keep their current behavior.
+	bool keep_member_address = false;
+	if (isIrStructType(op.result.effectiveIrType()) && !op.is_reference() && op.result.type_index.is_valid()) {
+		if (const TypeInfo* result_type_info = tryGetTypeInfo(op.result.type_index)) {
+			if (const StructTypeInfo* result_struct = result_type_info->getStructInfo()) {
+				keep_member_address = !result_struct->is_union;
+			}
+		}
+	}
 	if (member_size_bytes > 8 || keep_member_address) {
 			// Allocate a register to compute the address
 		X64Register addr_reg = allocateRegisterWithSpilling();
