@@ -1077,6 +1077,62 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 	FLASH_LOG(Templates, Debug, "ExpressionSubstitutor: Substituting in type");
 	FLASH_LOG_FORMAT(Templates, Debug, "  Input type: base_type={}, type_index={}", (int)type.type(), type.type_index());
 
+	auto buildTypeFromResolvedAlias = [&](const ResolvedAliasTypeInfo& resolved_alias, const Token& token) {
+		int size_in_bits = get_type_size_bits(resolved_alias.type_index.category());
+		if (size_in_bits == 0) {
+			if (const TypeInfo* resolved_type_info = tryGetTypeInfo(resolved_alias.type_index)) {
+				size_in_bits = resolved_type_info->sizeInBits().value;
+				if (size_in_bits == 0 && resolved_type_info->isStruct()) {
+					if (const StructTypeInfo* resolved_struct_info = resolved_type_info->getStructInfo()) {
+						size_in_bits = resolved_struct_info->sizeInBits().value;
+					}
+				}
+			}
+		}
+
+		TypeSpecifierNode resolved_type(
+			resolved_alias.type_index,
+			size_in_bits,
+			token,
+			CVQualifier::None,
+			resolved_alias.reference_qualifier);
+		for (size_t i = 0; i < resolved_alias.pointer_depth; ++i) {
+			resolved_type.add_pointer_level(CVQualifier::None);
+		}
+		if (resolved_alias.isArray()) {
+			resolved_type.set_array_dimensions(resolved_alias.array_dimensions);
+		}
+		if (resolved_alias.function_signature.has_value()) {
+			resolved_type.set_function_signature(*resolved_alias.function_signature);
+		}
+		return resolved_type;
+	};
+
+	if (type.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
+			if (type_info->isTypeAlias()) {
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+					type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+				if (resolved_alias.type_index.is_valid() && resolved_alias.type_index != type.type_index()) {
+					TypeSpecifierNode resolved_type = buildTypeFromResolvedAlias(resolved_alias, type.token());
+					TypeSpecifierNode substituted_alias = substituteInType(resolved_type);
+					substituted_alias.add_pointer_levels(static_cast<int>(type.pointer_depth()));
+					substituted_alias.add_cv_qualifier(type.cv_qualifier());
+					if (type.reference_qualifier() != ReferenceQualifier::None) {
+						substituted_alias.set_reference_qualifier(type.reference_qualifier());
+					}
+					if (type.is_array()) {
+						substituted_alias.set_array_dimensions(type.array_dimensions());
+					}
+					if (type.has_function_signature() && !substituted_alias.has_function_signature()) {
+						substituted_alias.set_function_signature(type.function_signature());
+					}
+					return substituted_alias;
+				}
+			}
+		}
+	}
+
 	// First, check if this is a template parameter type that needs substitution
 	// Template parameters can show up as Type::Template, Type::Auto, or Type::UserDefined
 	if (type.category() == TypeCategory::Template || isPlaceholderAutoType(type.category()) || type.category() == TypeCategory::UserDefined || type.category() == TypeCategory::TypeAlias) {
@@ -1091,6 +1147,18 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 		// Look up this template parameter in our substitution map
 		auto it = param_map_.find(type_name);
+		if (it == param_map_.end() && type.type_index().is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(type.type_index())) {
+				std::string_view canonical_type_name = StringTable::getStringView(type_info->name());
+				if (!canonical_type_name.empty() && canonical_type_name != type_name) {
+					it = param_map_.find(canonical_type_name);
+					if (it != param_map_.end()) {
+						FLASH_LOG(Templates, Debug, "  Resolved type token via canonical type info name: ", type_name, " -> ", canonical_type_name);
+						type_name = canonical_type_name;
+					}
+				}
+			}
+		}
 		if (it != param_map_.end()) {
 			const TemplateTypeArg& subst = it->second;
 			FLASH_LOG(Templates, Debug, "  Substituting template parameter: ", type_name,
