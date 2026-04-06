@@ -1441,6 +1441,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 	// Build MemberLoadOp
 	MemberLoadOp member_load;
 	member_load.result.value = result_var;
+	member_load.result.type_index = member->type_index;
 	member_load.result.setType(member->type_index.category());
 	member_load.result.size_in_bits = SizeInBits{static_cast<int>(member->size * 8)}; // Convert bytes to bits
 
