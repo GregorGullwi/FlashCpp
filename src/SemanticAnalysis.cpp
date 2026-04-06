@@ -4368,12 +4368,22 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	if (!struct_info || !struct_info->hasAnyConstructor())
 		return;
 
+	auto buildConstructorDiagnostic = [&](std::string_view prefix, size_t arg_count) {
+		return std::string(
+			StringBuilder()
+				.append(prefix)
+				.append(" for '")
+				.append(StringTable::getStringView(type_info->name()))
+				.append("' with ")
+				.append(arg_count)
+				.append(" argument(s)")
+				.commit());
+	};
+
 	// Resolve the matching constructor via overload resolution.
 	const auto& arguments = call_node.arguments();
 	size_t num_args = 0;
 	arguments.visit([&](ASTNode) { num_args++; });
-	if (num_args == 0)
-		return;
 
 	std::vector<TypeSpecifierNode> arg_types;
 	std::vector<CanonicalTypeId> inferred_arg_type_ids;
@@ -4399,8 +4409,15 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
+	if (resolution.is_ambiguous)
+		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
 	if (!resolution.selected_overload)
+		throw CompileError(buildConstructorDiagnostic("No matching constructor", num_args));
+	if (num_args == 0)
+	{
+		call_node.set_resolved_constructor(resolution.selected_overload);
 		return;
+	}
 	call_node.set_resolved_constructor(resolution.selected_overload);
 
 	const auto& ctor_params = resolution.selected_overload->parameter_nodes();
@@ -4448,6 +4465,18 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	if (initializers.empty())
 		return;
 
+	auto buildBraceDiagnostic = [&](std::string_view prefix) {
+		return std::string(
+			StringBuilder()
+				.append(prefix)
+				.append(" for '")
+				.append(StringTable::getStringView(struct_info.getName()))
+				.append("' with ")
+				.append(initializers.size())
+				.append(" argument(s)")
+				.commit());
+	};
+
 	// Build argument types for overload resolution.
 	// Mirror the codegen path: call adjust_argument_type_for_overload_resolution
 	// so that lvalue arguments prefer reference overloads, and use skip_implicit=true
@@ -4471,6 +4500,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	if (resolution.is_ambiguous && struct_info.hasUserDefinedConstructor()) {
+		throw CompileError(buildBraceDiagnostic("Ambiguous constructor for brace initialization"));
+	}
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,
@@ -4511,6 +4543,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 								   std::string(StringTable::getStringView(ei->name)) +
 								   "' in constructor argument; use static_cast");
 			}
+		}
+		if (struct_info.hasUserDefinedConstructor()) {
+			throw CompileError(buildBraceDiagnostic("No matching constructor for brace initialization"));
 		}
 		return;
 	}
