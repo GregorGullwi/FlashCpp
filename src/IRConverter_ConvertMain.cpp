@@ -4809,6 +4809,11 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 
 	const ConstructorDeclarationNode* actual_ctor = ctor_op.resolved_constructor;
 	auto resolveConstructorTargetTypeInfo = [&]() -> const TypeInfo* {
+		if (ctor_op.target_type_index.is_valid()) {
+			if (const TypeInfo* type_info = tryGetTypeInfo(ctor_op.target_type_index)) {
+				return type_info;
+			}
+		}
 		if (actual_ctor) {
 			const TypeIndex ctor_owner_type_index = actual_ctor->owning_type_index();
 			if (ctor_owner_type_index.is_valid()) {
@@ -4816,9 +4821,6 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 					return type_info;
 				}
 			}
-		}
-		if (ctor_op.target_type_index.is_valid()) {
-			return tryGetTypeInfo(ctor_op.target_type_index);
 		}
 		return nullptr;
 	};
