@@ -1179,6 +1179,8 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_lambda
 	FunctionSignature sig;
 	if (auto deduced_return = deduce_lambda_return_type(lambda)) {
 		sig.return_type_index = deduced_return->type_index();
+		sig.return_pointer_depth = static_cast<int>(deduced_return->pointer_depth());
+		sig.return_reference_qualifier = deduced_return->reference_qualifier();
 	} else {
 		// No return statements found => void return type per C++20 §7.5.5.1
 		sig.return_type_index = nativeTypeIndex(TypeCategory::Void);
@@ -1205,6 +1207,8 @@ std::optional<TypeSpecifierNode> Parser::build_function_pointer_type_from_struct
 
 	FunctionSignature sig;
 	sig.return_type_index = sig_opt->return_type.type_index();
+	sig.return_pointer_depth = static_cast<int>(sig_opt->return_type.pointer_depth());
+	sig.return_reference_qualifier = sig_opt->return_type.reference_qualifier();
 	for (const auto& param_type : sig_opt->param_types) {
 		sig.parameter_type_indices.push_back(param_type.type_index());
 	}

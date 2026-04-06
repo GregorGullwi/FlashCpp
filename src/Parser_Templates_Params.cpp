@@ -1319,6 +1319,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						// Parser_Decl_DeclaratorCore.cpp which creates a fresh FunctionPointer node).
 						FunctionSignature func_sig;
 						func_sig.return_type_index = type_node.type_index();
+						func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
+						func_sig.return_reference_qualifier = type_node.reference_qualifier();
 						func_sig.parameter_type_indices = std::move(param_types);
 						func_sig.is_const = sig_is_const;
 						func_sig.is_volatile = sig_is_volatile;
@@ -1379,6 +1381,8 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 					// Successfully parsed bare function type
 					FunctionSignature func_sig;
 					func_sig.return_type_index = type_node.type_index();
+					func_sig.return_pointer_depth = static_cast<int>(type_node.pointer_depth());
+					func_sig.return_reference_qualifier = type_node.reference_qualifier();
 					func_sig.parameter_type_indices = std::move(func_param_types);
 					type_node.set_function_signature(func_sig);
 

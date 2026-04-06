@@ -146,6 +146,8 @@ struct hash<CanonicalTypeDesc> {
 			const auto& fs = *d.function_signature;
 			h = combine(h, static_cast<size_t>(fs.return_type_index.category()));
 			h = combine(h, fs.return_type_index.index());
+			h = combine(h, static_cast<size_t>(fs.return_pointer_depth));
+			h = combine(h, static_cast<size_t>(fs.return_reference_qualifier));
 			h = combine(h, fs.parameter_type_indices.size());
 			for (const TypeIndex& pt : fs.parameter_type_indices) {
 				h = combine(h, static_cast<size_t>(pt.category()));

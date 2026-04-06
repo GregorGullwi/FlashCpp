@@ -984,8 +984,12 @@ struct IndirectCallOp {
 	std::variant<StringHandle, TempVar> function_pointer;  // Function pointer variable
 	std::vector<TypedValue> arguments;   // Arguments with type information
 	SizeInBits return_size_in_bits{};
+	SizeInBits referenced_value_size_in_bits{};
 	TypeIndex return_type_index{};
+	PointerDepth return_pointer_depth = PointerDepth{};
 	bool use_return_slot = false;
+	bool returns_reference = false;
+	bool returns_rvalue_reference = false;
 
 	TypeCategory returnType() const { return return_type_index.category(); }
 	bool usesReturnSlot() const { return use_return_slot; }

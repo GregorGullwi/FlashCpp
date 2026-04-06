@@ -953,6 +953,8 @@ struct DeferredTemplateBaseClassSpecifier {
 // Function signature for function pointers
 struct FunctionSignature {
 	TypeIndex return_type_index{};
+	int return_pointer_depth = 0;
+	ReferenceQualifier return_reference_qualifier = ReferenceQualifier::None;
 	std::vector<TypeIndex> parameter_type_indices;
 	Linkage linkage = Linkage::None;			 // C vs C++ linkage
 	std::optional<std::string> class_name;	   // For member function pointers
@@ -961,6 +963,8 @@ struct FunctionSignature {
 
 	// Accessor helpers
 	TypeCategory returnType() const { return return_type_index.category(); }
+	bool returns_reference() const { return return_reference_qualifier != ReferenceQualifier::None; }
+	bool returns_rvalue_reference() const { return return_reference_qualifier == ReferenceQualifier::RValueReference; }
 };
 
 // Deferred static_assert information - stored during template definition, evaluated during instantiation

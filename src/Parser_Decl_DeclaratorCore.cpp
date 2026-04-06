@@ -903,6 +903,8 @@ ParseResult Parser::parse_declarator(TypeSpecifierNode& base_type, Linkage linka
 				TypeSpecifierNode function_ptr_type(TypeCategory::FunctionPointer, TypeQualifier::None, kFunctionPointerSizeBits, Token{}, CVQualifier::None);
 				FunctionSignature signature;
 				signature.return_type_index = base_type.type_index();
+				signature.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
+				signature.return_reference_qualifier = base_type.reference_qualifier();
 				signature.parameter_type_indices = return_param_types;
 				signature.linkage = linkage;
 				function_ptr_type.set_function_signature(signature);
@@ -1066,6 +1068,8 @@ ParseResult Parser::parse_postfix_declarator(TypeSpecifierNode& base_type,
 
 		FunctionSignature sig;
 		sig.return_type_index = return_type_index;
+		sig.return_pointer_depth = static_cast<int>(base_type.pointer_depth());
+		sig.return_reference_qualifier = base_type.reference_qualifier();
 		sig.parameter_type_indices = param_types;
 		sig.linkage = linkage;
 		fp_type.set_function_signature(sig);

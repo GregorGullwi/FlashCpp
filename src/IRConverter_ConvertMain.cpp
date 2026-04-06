@@ -14427,6 +14427,15 @@ void IrToObjConverter<TWriterClass>::handleIndirectCall(const IrInstruction& ins
 		}
 	}
 
+	if (op.returns_reference && op.return_type_index.category() != TypeCategory::Function) {
+		registerObjectReferenceCallResult(
+			result_offset,
+			TypeIndex{0, op.returnType()},
+			op.referenced_value_size_in_bits,
+			op.returns_reference,
+			op.returns_rvalue_reference);
+	}
+
 	regAlloc.reset();
 }
 

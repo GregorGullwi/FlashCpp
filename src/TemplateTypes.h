@@ -59,6 +59,8 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 	// Compare every field that contributes to function type identity in the AST signature model:
 	// return type, parameter types, linkage, member class name, and cv-qualification.
 	if (!equalTypeIndexIdentity(lhs.return_type_index, rhs.return_type_index) ||
+		lhs.return_pointer_depth != rhs.return_pointer_depth ||
+		lhs.return_reference_qualifier != rhs.return_reference_qualifier ||
 		lhs.parameter_type_indices.size() != rhs.parameter_type_indices.size() ||
 		lhs.linkage != rhs.linkage ||
 		lhs.class_name != rhs.class_name ||
@@ -76,6 +78,8 @@ inline bool equalFunctionSignatureIdentity(const FunctionSignature& lhs, const F
 
 inline size_t hashFunctionSignatureIdentity(const FunctionSignature& sig) {
 	size_t h = hashTypeIndexIdentity(sig.return_type_index);
+	h ^= std::hash<int>{}(sig.return_pointer_depth) + 0x9e3779b9 + (h << 6) + (h >> 2);
+	h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(sig.return_reference_qualifier)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	for (const auto& pt : sig.parameter_type_indices) {
 		h ^= hashTypeIndexIdentity(pt) + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}

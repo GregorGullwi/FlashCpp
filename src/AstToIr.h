@@ -96,6 +96,7 @@ private:
 	void fillInDefaultArguments(CallOp& call_op, const std::vector<ASTNode>& param_nodes, size_t arg_idx);
 	void populateReferenceReturnInfo(CallOp& call_op, const TypeSpecifierNode& return_type);
 	void populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpecifierNode& return_type);
+	TypeSpecifierNode buildFunctionSignatureReturnType(const FunctionSignature& signature) const;
 	TypeIndex getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const;
 	int getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const;
 	CallOp createCallOp(TempVar result, StringHandle function_name, const TypeSpecifierNode& return_type, bool is_member_function, bool is_variadic);

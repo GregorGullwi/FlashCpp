@@ -3,6 +3,8 @@
 #include "CallNodeHelpers.h"
 #include "SemanticAnalysis.h"
 
+static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
+
 // ── Shared consteval-materialization helpers ────────────────────────────────
 
 const TypeInfo* AstToIr::resolveToConcreteStructTypeInfo(TypeIndex type_idx) const {
@@ -48,6 +50,18 @@ void AstToIr::populateReferenceReturnInfo(VirtualCallOp& call_op, const TypeSpec
 												: call_op.result.size_in_bits;
 }
 
+TypeSpecifierNode AstToIr::buildFunctionSignatureReturnType(const FunctionSignature& signature) const {
+	TypeSpecifierNode return_type(
+		signature.return_type_index.withCategory(signature.returnType()),
+		SizeInBits{get_type_size_bits(signature.returnType())},
+		Token{},
+		CVQualifier::None,
+		signature.return_reference_qualifier);
+	return_type.add_pointer_levels(signature.return_pointer_depth);
+	return_type.set_size_in_bits(getTypeSpecSizeBits(return_type));
+	return normalizeCallReturnType(return_type);
+}
+
 TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& signature) const {
 	if (!needs_type_index(signature.returnType())) {
 		TypeIndex native = nativeTypeIndex(signature.returnType());
@@ -71,43 +85,26 @@ TypeIndex AstToIr::getFunctionSignatureReturnTypeIndex(const FunctionSignature& 
 }
 
 int AstToIr::getFunctionSignatureReturnSizeBits(const FunctionSignature& signature) const {
-	if (signature.returnType() == TypeCategory::Void) {
-		return 0;
-	}
-
-	if (!needs_type_index(signature.returnType())) {
-		return get_type_size_bits(signature.returnType());
-	}
-
-	if (signature.return_type_index.is_valid()) {
-		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(signature.return_type_index);
-		if (resolved_alias.terminal_type_info && resolved_alias.terminal_type_info->hasStoredSize()) {
-			return resolved_alias.terminal_type_info->sizeInBits().value;
-		}
-
-		const TypeIndex canonical_index = resolved_alias.type_index.is_valid()
-			? resolved_alias.type_index.withCategory(resolved_alias.type_index.category())
-			: signature.return_type_index.withCategory(signature.returnType());
-		if (!needs_type_index(canonical_index.category())) {
-			const int bits = get_type_size_bits(canonical_index.category());
-			if (bits > 0) {
-				return bits;
-			}
-		}
-	}
-
-	return get_type_size_bits(signature.returnType());
+	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
+	return (return_type.pointer_depth() > 0 || return_type.is_reference() || return_type.is_rvalue_reference())
+		? 64
+		: getTypeSpecSizeBits(return_type);
 }
 
-static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type);
-
 void AstToIr::populateIndirectCallReturnInfo(IndirectCallOp& call_op, const FunctionSignature& signature) {
+	const TypeSpecifierNode return_type = buildFunctionSignatureReturnType(signature);
 	call_op.return_type_index = getFunctionSignatureReturnTypeIndex(signature);
 	call_op.return_size_in_bits = SizeInBits{getFunctionSignatureReturnSizeBits(signature)};
+	call_op.return_pointer_depth = PointerDepth{signature.return_pointer_depth};
+	call_op.returns_reference = signature.returns_reference() && !return_type.has_function_signature();
+	call_op.returns_rvalue_reference = signature.returns_rvalue_reference();
+	call_op.referenced_value_size_in_bits = call_op.returns_reference
+												? SizeInBits{getTypeSpecSizeBits(return_type)}
+												: call_op.return_size_in_bits;
 	call_op.use_return_slot = needsHiddenReturnParam(
 		call_op.returnType(),
-		0,
-		false,
+		signature.return_pointer_depth,
+		signature.returns_reference(),
 		call_op.return_size_in_bits.value,
 		context_->isLLP64());
 }
@@ -168,12 +165,7 @@ CallOp AstToIr::createCallOp(
 }
 
 ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signature, TempVar ret_var) const {
-	return makeExprResult(
-		getFunctionSignatureReturnTypeIndex(signature),
-		SizeInBits{getFunctionSignatureReturnSizeBits(signature)},
-		IrOperand{ret_var},
-		PointerDepth{},
-		ValueStorage::ContainsData);
+	return buildCallReturnResult(buildFunctionSignatureReturnType(signature), ret_var, ExpressionContext::Normal, Token{});
 }
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {
