@@ -3482,6 +3482,17 @@ bool AstToIr::isVariableReference(std::string_view var_name) const {
 bool AstToIr::resolveMemberAccessType(const MemberAccessNode& member_access,
 									  const StructTypeInfo*& out_struct_info,
 									  const StructMember*& out_member) const {
+	if (sema_ && sema_->resolveOrGetMemberAccess(member_access, out_struct_info, out_member)) {
+		return true;
+	}
+	if (sema_ && sema_normalized_current_function_) {
+		throw InternalError(std::string(StringBuilder()
+			.append("Missing sema-owned member access resolution in sema-normalized body for member '")
+			.append(member_access.member_name())
+			.append("'")
+			.commit()));
+	}
+
 	// Get the base object expression
 	const ASTNode& base_node = member_access.object();
 	auto base_type_opt = buildCodegenOverloadResolutionArgType(base_node);
