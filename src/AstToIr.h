@@ -848,16 +848,18 @@ private:
 	StringHandle current_struct_name_;  // For tracking which struct we're currently visiting member functions for
 	int current_function_return_size_;   // Current function's return size in bits
 	TypeIndex current_function_return_type_index_{0, TypeCategory::Void};  // Type index for struct/class return types (TypeCategory embedded)
-	bool current_function_returns_function_pointer_ = false;
+	ReturnValueMode current_function_return_value_mode_ = ReturnValueMode::None;
 
 	TypeCategory currentFunctionReturnType() const {
-		return current_function_returns_function_pointer_ ? TypeCategory::FunctionPointer : current_function_return_type_index_.category();
+		return currentFunctionReturnsFunctionPointer() ? TypeCategory::FunctionPointer : current_function_return_type_index_.category();
 	}
 	TypeIndex currentFunctionReturnTypeIndex() const {
 		return current_function_return_type_index_;
 	}
 	bool current_function_has_hidden_return_param_ = false;	// True if function uses hidden return parameter
-	bool current_function_returns_reference_ = false;  // True if function returns a reference type (T& or T&&)
+	bool currentFunctionReturnsPointer() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::Pointer); }
+	bool currentFunctionReturnsReference() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::Reference); }  // True if function returns a reference type (T& or T&&)
+	bool currentFunctionReturnsFunctionPointer() const { return hasReturnValueMode(current_function_return_value_mode_, ReturnValueMode::FunctionPointer); }
 	bool in_return_statement_with_rvo_ = false;	// True when evaluating return expr that should use RVO
 
 	// Current namespace path stack (for proper name mangling of namespace-scoped functions)
