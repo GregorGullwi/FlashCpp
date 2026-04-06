@@ -1,3 +1,5 @@
+#include <cassert>
+
 #include "SemanticAnalysis.h"
 #include "Parser.h"
 #include "CompileContext.h"
@@ -2645,6 +2647,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				// should already be interned at tokenization time. If that ever stops being
 				// true, fix token construction/parser plumbing instead of re-interning here.
 				const StringHandle member_name = e.member_token().handle();
+				assert(member_name.isValid());
 				for (const auto& member : struct_info->members) {
 					if (member.name != member_name) {
 						continue;
