@@ -270,6 +270,8 @@ Started implementation of the low-risk **Option B** path:
 - taught late lazy/template materialization paths to register new roots there
 - added `SemanticAnalysis::normalizePendingSemanticRoots()` so the main pass can drain late roots incrementally
 - hooked codegen and constexpr-triggered lazy/template materialization paths to normalize pending roots before continuing
+- kept the active `SemanticAnalysis` reachable from parser-owned late constexpr evaluation contexts
+- taught `ExpressionSubstitutor` late template/lazy instantiation recovery paths to drain pending semantic roots before reusing the materialized AST/type state
 
 This does **not** finish the audit plan yet, but it establishes the first concrete sema handoff for:
 
@@ -277,6 +279,8 @@ This does **not** finish the audit plan yet, but it establishes the first concre
 - lazy static-member instantiation
 - constexpr-triggered function-template instantiation
 - constexpr-triggered variable-template instantiation
+- parser-owned constexpr evaluation during lazy static-member and deferred `static_assert` instantiation
+- `ExpressionSubstitutor`-triggered class/function/member-function/variable-template recovery paths
 
 Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
 

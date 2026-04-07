@@ -39,6 +39,8 @@ namespace ConstExpr {
 class Evaluator;
 }
 
+class SemanticAnalysis;
+
 // RAII helper to execute a cleanup function on scope exit
 // Usage: ScopeGuard guard([&]() { cleanup(); });
 template <typename Func>
@@ -334,6 +336,9 @@ public:
 		pending_semantic_roots_.clear();
 		pending_semantic_root_keys_.clear();
 	}
+	void setActiveSemanticAnalysis(SemanticAnalysis* sema);
+	SemanticAnalysis* getActiveSemanticAnalysis() const;
+	void normalizePendingSemanticRootsIfAvailable();
 	ASTNode get_inner_node(ASTNode node) const {
 		return node;
 	}
@@ -373,6 +378,7 @@ private:
 	std::vector<ASTNode> ast_nodes_;
 	std::vector<ASTNode> pending_semantic_roots_;
 	std::unordered_set<const void*> pending_semantic_root_keys_;
+	SemanticAnalysis* active_sema_ = nullptr;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
 

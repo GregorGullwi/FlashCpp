@@ -1020,6 +1020,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 			if (substituted_initializer.has_value() && substituted_initializer->is<ExpressionNode>()) {
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
 				// Provide struct context so the evaluator prefers same-struct member functions over globals.
 				eval_ctx.struct_info = struct_info;
 				// Provide template args so sizeof(T) etc. resolve correctly.
