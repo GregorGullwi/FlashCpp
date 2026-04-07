@@ -4641,12 +4641,26 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
 	});
-	if (arg_types.size() != num_args)
+	auto arity_fallback = [&]() -> const ConstructorDeclarationNode* {
+		auto arity_resolution = resolve_constructor_overload_arity(*struct_info, num_args, true);
+		if (!arity_resolution.is_ambiguous) {
+			return arity_resolution.selected_overload;
+		}
+		return nullptr;
+	};
+	if (arg_types.size() != num_args) {
+		if (const ConstructorDeclarationNode* fallback_ctor = arity_fallback()) {
+			call_node.set_resolved_constructor(fallback_ctor);
+		}
 		return;
+	}
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
+	if (!resolution.selected_overload) {
+		resolution.selected_overload = arity_fallback();
+	}
 	if (resolution.is_ambiguous && require_constructor_match)
 		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
 	if (!resolution.selected_overload) {
@@ -4722,8 +4736,24 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
 	}
+	auto arity_fallback = [&]() -> const ConstructorDeclarationNode* {
+		auto arity_res = resolve_constructor_overload_arity(struct_info, initializers.size(), true);
+		if (!arity_res.is_ambiguous) {
+			return arity_res.selected_overload;
+		}
+		return nullptr;
+	};
+	if (arg_types.size() != initializers.size()) {
+		if (const ConstructorDeclarationNode* fallback_ctor = arity_fallback()) {
+			init_list.set_resolved_constructor(fallback_ctor);
+		}
+		return;
+	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	if (!resolution.selected_overload) {
+		resolution.selected_overload = arity_fallback();
+	}
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,
