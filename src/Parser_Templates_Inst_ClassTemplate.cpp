@@ -1115,7 +1115,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		bool force_eager_instantiation) -> std::string_view {
 		auto result = try_instantiate_class_template(base_template_name, base_args, force_eager_instantiation);
 		if (result.has_value() && result->is<StructDeclarationNode>()) {
-			ast_nodes_.push_back(*result);
+			registerLateMaterializedTopLevelNode(*result);
 		}
 		std::string_view resolved_name = get_instantiated_class_name(base_template_name, base_args);
 		if ((!result.has_value() || !result->is<StructDeclarationNode>()) && !base_template_name.empty()) {
@@ -3804,7 +3804,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											  "', attempting instantiation with ", template_args_to_use.size(), " args");
 									auto instantiated = try_instantiate_class_template(type_name, template_args_to_use);
 									if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-										ast_nodes_.push_back(*instantiated);
+										registerLateMaterializedTopLevelNode(*instantiated);
 									}
 									std::string_view inst_name = get_instantiated_class_name(type_name, template_args_to_use);
 									auto inst_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));

@@ -83,7 +83,7 @@ std::string_view Parser::instantiate_and_register_base_template(
 		// If instantiation returned a struct node, add it to the AST so it gets visited during codegen
 		// and get the actual instantiated name from the struct (which includes default arguments)
 		if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-			ast_nodes_.push_back(*instantiated_base);
+			registerLateMaterializedTopLevelNode(*instantiated_base);
 			// Get the actual instantiated name from the struct node (includes default args)
 			StringHandle name_handle = instantiated_base->as<StructDeclarationNode>().name();
 			std::string_view instantiated_name = StringTable::getStringView(name_handle);
@@ -520,7 +520,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 		var_decl_node.as<VariableDeclarationNode>().set_is_constexpr(true);
 		setOuterTemplateBindingsFromParams(var_decl_node.as<VariableDeclarationNode>(), spec_params, converted_args);
 		gSymbolTable.insertGlobal(persistent_name, var_decl_node);
-		ast_nodes_.insert(ast_nodes_.begin(), var_decl_node);
+		registerLateMaterializedTopLevelNodeFront(var_decl_node);
 		return var_decl_node;
 	}
 
@@ -719,7 +719,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 							auto instantiated = try_instantiate_class_template(template_name_to_lookup, resolved_args);
 							if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 								// Add to AST so it gets codegen
-								ast_nodes_.push_back(*instantiated);
+								registerLateMaterializedTopLevelNode(*instantiated);
 
 								// Now update the qualified identifier to use the correct instantiated name
 								// Get the instantiated class name (e.g., "is_pointer_impl_intP")
@@ -766,7 +766,7 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 
 	// Add to AST at the beginning so it gets code-generated before functions that use it
 	// Insert after other global declarations but before function definitions
-	ast_nodes_.insert(ast_nodes_.begin(), instantiated_var_decl);
+	registerLateMaterializedTopLevelNodeFront(instantiated_var_decl);
 
 	return instantiated_var_decl;
 }
@@ -960,7 +960,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			struct_info->addConstructor(new_ctor_node, mem_func.access);
 
 			// Add to AST for code generation
-			ast_nodes_.push_back(new_ctor_node);
+			registerLateMaterializedTopLevelNode(new_ctor_node);
 		} else if (mem_func.is_destructor) {
 			// Handle destructor - create new node with correct struct name
 			const DestructorDeclarationNode& orig_dtor = mem_func.function_declaration.as<DestructorDeclarationNode>();
@@ -985,7 +985,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 
 			struct_info->addDestructor(new_dtor_node, mem_func.access, mem_func.is_virtual);
-			ast_nodes_.push_back(new_dtor_node);
+			registerLateMaterializedTopLevelNode(new_dtor_node);
 		} else {
 			FunctionDeclarationNode& orig_func = mem_func.function_declaration.as<FunctionDeclarationNode>();
 
@@ -1022,7 +1022,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			}
 
 			// Add to AST for code generation
-			ast_nodes_.push_back(new_func_node);
+			registerLateMaterializedTopLevelNode(new_func_node);
 		}
 	}
 

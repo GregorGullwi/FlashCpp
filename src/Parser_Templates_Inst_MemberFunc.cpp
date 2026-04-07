@@ -170,7 +170,7 @@ std::optional<ASTNode> Parser::try_instantiate_member_function_template_explicit
 					// Add the specialization to ast_nodes_ so it gets code generated
 					// We need to do this because the specialization was created during parsing
 					// but may not have been added to the top-level AST
-					ast_nodes_.push_back(spec_node);
+					registerLateMaterializedTopLevelNode(spec_node);
 					FLASH_LOG(Templates, Debug, "Added specialization to AST for code generation");
 				}
 			}
@@ -495,7 +495,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 		} else {
 			compute_and_set_mangled_name(new_func_ref);
 		}
-		ast_nodes_.push_back(new_func_node);
+		registerLateMaterializedTopLevelNode(new_func_node);
 		gTemplateRegistry.registerInstantiation(key, new_func_node);
 		return new_func_node;
 	}
@@ -628,7 +628,7 @@ std::optional<ASTNode> Parser::instantiate_member_function_template_core(
 	// template_scope RAII guard automatically removes temporary type infos
 
 	// Add the instantiated function to the AST
-	ast_nodes_.push_back(new_func_node);
+	registerLateMaterializedTopLevelNode(new_func_node);
 
 	// Update the saved position to include this new node so it doesn't get erased
 	saved_tokens_[current_pos].ast_nodes_size_ = ast_nodes_.size();

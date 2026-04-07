@@ -325,6 +325,14 @@ public:
 	}
 
 	const auto& get_nodes() { return ast_nodes_; }
+	std::vector<ASTNode> takePendingSemanticRoots() {
+		std::vector<ASTNode> pending_roots = std::move(pending_semantic_roots_);
+		pending_semantic_roots_.clear();
+		return pending_roots;
+	}
+	void clearPendingSemanticRoots() {
+		pending_semantic_roots_.clear();
+	}
 	ASTNode get_inner_node(ASTNode node) const {
 		return node;
 	}
@@ -362,6 +370,7 @@ private:
 	Token current_token_;
 	Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
 	std::vector<ASTNode> ast_nodes_;
+	std::vector<ASTNode> pending_semantic_roots_;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
 
@@ -910,6 +919,32 @@ private:
 		const FlashCpp::TemplateInstantiationKey& key);
 
 public:
+	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
+		ast_nodes_.push_back(node);
+		pending_semantic_roots_.push_back(node);
+	}
+	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
+		ast_nodes_.insert(ast_nodes_.begin(), node);
+		pending_semantic_roots_.push_back(node);
+	}
+	void registerLateMaterializedOwningStructRoot(StringHandle struct_name) {
+		if (!struct_name.isValid()) {
+			return;
+		}
+
+		auto symbol = gSymbolTable.lookup(struct_name);
+		if (!symbol.has_value()) {
+			std::string_view struct_name_view = StringTable::getStringView(struct_name);
+			if (size_t last_colon = struct_name_view.rfind("::"); last_colon != std::string_view::npos) {
+				symbol = gSymbolTable.lookup(
+					StringTable::getOrInternStringHandle(struct_name_view.substr(last_colon + 2)));
+			}
+		}
+
+		if (symbol.has_value() && symbol->is<StructDeclarationNode>()) {
+			pending_semantic_roots_.push_back(*symbol);
+		}
+	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand
 	bool instantiateLazyStaticMember(StringHandle instantiated_class_name, StringHandle member_name);  // NEW: Instantiate lazy static member on-demand
 private:

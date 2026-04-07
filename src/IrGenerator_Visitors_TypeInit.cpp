@@ -276,6 +276,7 @@ size_t AstToIr::generateDeferredMemberFunctions() {
 						auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(info.struct_name, member_handle, is_const_func);
 						if (lazy_info_opt.has_value()) {
 							auto new_func_node = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+							normalizePendingSemanticRoots();
 							if (new_func_node.has_value() && new_func_node->is<FunctionDeclarationNode>()) {
 								LazyMemberInstantiationRegistry::getInstance().markInstantiated(info.struct_name, member_handle, is_const_func);
 								visitFunctionDeclarationNode(new_func_node->as<FunctionDeclarationNode>());
@@ -438,6 +439,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 		// Enable on-demand template instantiation when static member initializers
 		// reference uninstantiated template members during constexpr evaluation
 		ctx.parser = parser_;
+		ctx.sema = sema_;
 		// Set struct_info so that sizeof(T) can be resolved from template arguments in struct name
 		ctx.struct_info = struct_info;
 		if (struct_info) {
@@ -475,6 +477,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 					if (parser_ && LazyMemberInstantiationRegistry::getInstance().needsInstantiationAny(struct_info->name, func_name_handle)) {
 						if (auto lazy_info = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfoAny(struct_info->name, func_name_handle)) {
 							parser_->instantiateLazyMemberFunction(*lazy_info);
+							normalizePendingSemanticRoots();
 							LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_info->name, func_name_handle, lazy_info->identity.is_const_method);
 						}
 					}
@@ -504,6 +507,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 						ConstExpr::EvaluationContext rebound_ctx(*global_symbol_table_);
 						rebound_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 						rebound_ctx.parser = parser_;
+						rebound_ctx.sema = sema_;
 						rebound_ctx.template_param_names = ctx.template_param_names;
 						rebound_ctx.template_args = ctx.template_args;
 						if (rebound_ctx.template_param_names.empty() && rebound_ctx.template_args.empty() && member_function_decl) {
@@ -774,6 +778,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 									ctx.storage_duration = ConstExpr::StorageDuration::Static;
 									ctx.parser = parser_;
+									ctx.sema = sema_;
 									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
 									if (eval_result.success()) {
 										float f = static_cast<float>(eval_result.as_double());
@@ -785,6 +790,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									ConstExpr::EvaluationContext ctx(*global_symbol_table_);
 									ctx.storage_duration = ConstExpr::StorageDuration::Static;
 									ctx.parser = parser_;
+									ctx.sema = sema_;
 									auto eval_result = ConstExpr::Evaluator::evaluate(leaf_expr, ctx);
 									if (eval_result.success()) {
 										double d = eval_result.as_double();
@@ -826,6 +832,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 											ConstExpr::EvaluationContext eval_ctx(*global_symbol_table_);
 											eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 											eval_ctx.parser = parser_;
+											eval_ctx.sema = sema_;
 											eval_ctx.struct_info = struct_info;
 											if (struct_info && struct_info->own_type_index_.has_value()) {
 												if (const TypeInfo* ti = tryGetTypeInfo(*struct_info->own_type_index_)) {
@@ -1109,6 +1116,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 									(!referenced_static_member->initializer.has_value()) &&
 									parser_ && struct_info != nullptr) {
 									parser_->instantiateLazyStaticMember(struct_info->name, member_name_handle);
+									normalizePendingSemanticRoots();
 									auto refreshed_lookup = struct_info->findStaticMemberRecursive(member_name_handle);
 									referenced_static_member = refreshed_lookup.first;
 									referenced_owner_struct = refreshed_lookup.second;
@@ -1197,6 +1205,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								bool resolved_via_lazy = false;
 								if (parser_) {
 									parser_->instantiateLazyStaticMember(struct_info->name, static_member.getName());
+									normalizePendingSemanticRoots();
 									// Re-lookup the member after lazy instantiation may have updated it
 									const StructStaticMember* updated = struct_info->findStaticMember(static_member.getName());
 									if (updated && updated->initializer.has_value()) {

@@ -19,6 +19,7 @@
 class SymbolTable;
 struct TypeInfo;
 class Parser;  // For template instantiation
+class SemanticAnalysis;
 
 /// @file ConstExprEvaluator.h
 /// @brief Constant expression evaluation for static_assert, constexpr variables, etc.
@@ -429,6 +430,7 @@ struct EvaluationContext {
 
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
+	SemanticAnalysis* sema = nullptr;
 
 	// Return type of the constexpr function currently being evaluated.
 	// Set by evaluate_function_call_with_bindings so that aggregate initializer

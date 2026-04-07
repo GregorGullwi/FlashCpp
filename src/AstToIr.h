@@ -30,6 +30,7 @@ public:
 	size_t generateDeferredMemberFunctions();
 
 	void generateCollectedTemplateInstantiations();
+	void normalizePendingSemanticRoots();
 
 	void reserveInstructions(size_t capacity) {
 		ir_.reserve(capacity);

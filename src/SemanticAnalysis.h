@@ -55,6 +55,7 @@ public:
 	// post-parse AST surface and reports forbidden surviving template-only
 	// expression nodes before semantic normalization begins.
 	void run();
+	size_t normalizePendingSemanticRoots();
 
 	// Access collected statistics after run().
 	const SemanticPassStats& stats() const { return stats_; }

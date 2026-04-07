@@ -2022,6 +2022,7 @@ bool AstToIr::isExpressionNoexcept(const ExpressionNode& expr) const {
 			ctx.global_symbols = global_symbol_table_;
 		}
 		ctx.parser = parser_;
+		ctx.sema = sema_;
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(*func_decl.noexcept_expression(), ctx);
 		return eval_result.success() && eval_result.as_bool();

@@ -350,6 +350,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				auto lazy_info_opt = LazyMemberInstantiationRegistry::getInstance().getLazyMemberInfo(type_info_ref.name(), ctor_name, false);
 				if (lazy_info_opt.has_value()) {
 					auto instantiated_ctor = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+					normalizePendingSemanticRoots();
 					if (instantiated_ctor.has_value() && instantiated_ctor->is<ConstructorDeclarationNode>()) {
 						ctor = &instantiated_ctor->as<ConstructorDeclarationNode>();
 						LazyMemberInstantiationRegistry::getInstance().markInstantiated(type_info_ref.name(), ctor_name, false);
@@ -582,6 +583,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				ctx.storage_duration = ConstExpr::StorageDuration::Static;
 			}
 			ctx.parser = parser_;
+			ctx.sema = sema_;
 			return ctx;
 		};
 		auto shouldRejectStaticStorageEvalFailure = [&](ConstExpr::EvalErrorType error_type) {
@@ -1175,6 +1177,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 				// parser_ is always non-null when IR generation is active; EvaluationContext
 				// stores it as a pointer and guards all uses with nullptr checks.
 			ctx.parser = parser_;
+			ctx.sema = sema_;
 			auto eval_result = ConstExpr::Evaluator::evaluate(init_node, ctx);
 
 			if (eval_result.success()) {

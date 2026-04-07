@@ -243,7 +243,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 		new_ctor_ref.set_definition(substituted_body);
 		pack_param_info_.resize(saved_ctor_pack_info);
 
-		ast_nodes_.push_back(new_ctor_node);
+		registerLateMaterializedTopLevelNode(new_ctor_node);
 		return new_ctor_node;
 	}
 
@@ -291,7 +291,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			converted_template_args);
 		new_dtor_ref.set_definition(substituted_body);
 
-		ast_nodes_.push_back(new_dtor_node);
+		registerLateMaterializedTopLevelNode(new_dtor_node);
 		return new_dtor_node;
 	}
 
@@ -691,7 +691,7 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 
 	// Add the instantiated function to the AST so it gets visited during codegen
 	// This is safe now that the StringBuilder bug is fixed
-	ast_nodes_.push_back(new_func_node);
+	registerLateMaterializedTopLevelNode(new_func_node);
 
 	// Also update the StructTypeInfo to replace the signature-only function with the full definition
 	// Find the struct in getTypesByNameMap()
@@ -1089,6 +1089,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 	// Mark as instantiated (remove from lazy registry)
 	LazyStaticMemberRegistry::getInstance().markInstantiated(instantiated_class_name, member_name);
+	registerLateMaterializedOwningStructRoot(instantiated_class_name);
 
 	FLASH_LOG(Templates, Debug, "Successfully instantiated lazy static member: ",
 			  instantiated_class_name, "::", member_name);

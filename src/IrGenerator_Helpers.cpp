@@ -1,5 +1,14 @@
 #include "Parser.h"
 #include "IrGenerator.h"
+#include "SemanticAnalysis.h"
+
+void AstToIr::normalizePendingSemanticRoots() {
+	if (!sema_) {
+		return;
+	}
+
+	sema_->normalizePendingSemanticRoots();
+}
 
 void AstToIr::exitScope() {
 	if (!scope_stack_.empty()) {

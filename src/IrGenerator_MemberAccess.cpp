@@ -3687,6 +3687,7 @@ std::optional<ExprResult> AstToIr::emitConversionOperatorCall(
 					source_type_info.name(), canonical_name, conv_is_const);
 				if (lazy_info_opt.has_value()) {
 					auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+					normalizePendingSemanticRoots();
 					LazyMemberInstantiationRegistry::getInstance().markInstantiated(
 						source_type_info.name(), canonical_name, conv_is_const);
 					// Queue the materialized body for deferred codegen (mirrors IrGenerator_Call_Direct).
