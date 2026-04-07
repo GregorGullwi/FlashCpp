@@ -862,8 +862,8 @@ size_t SemanticAnalysis::normalizePendingSemanticRoots() {
 			}
 
 			normalizeTopLevelNode(pending_root);
-			ASTNode mutable_root = pending_root;
-			resolveRemainingAutoReturnsInNode(mutable_root);
+			ASTNode root_handle_for_auto_return_resolution = pending_root;
+			resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
 			++normalized_root_count;
 		}
 	}

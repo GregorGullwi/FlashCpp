@@ -69,7 +69,7 @@ int normalize_shift_width(int width_bits) {
 	return (width_bits > 0 && width_bits <= kDefaultShiftWidthBits) ? width_bits : kDefaultShiftWidthBits;
 }
 
-void maybeNormalizePendingSemanticRoots(EvaluationContext& context) {
+void normalizePendingRootsIfSemaAvailableForMembers(EvaluationContext& context) {
 	if (context.sema != nullptr) {
 		context.sema->normalizePendingSemanticRoots();
 	}
@@ -1328,7 +1328,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 			context.struct_info->name, function_name_handle);
 		if (lazy_info_opt.has_value()) {
 			context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
-			maybeNormalizePendingSemanticRoots(context);
+			normalizePendingRootsIfSemaAvailableForMembers(context);
 			LazyMemberInstantiationRegistry::getInstance().markInstantiated(
 				context.struct_info->name, function_name_handle, lazy_info_opt->identity.is_const_method);
 		}
@@ -3439,7 +3439,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						bool did_lazy = context.parser->instantiateLazyStaticMember(
 							owner_struct->name, member_handle);
 						if (did_lazy) {
-							maybeNormalizePendingSemanticRoots(context);
+							normalizePendingRootsIfSemaAvailableForMembers(context);
 							// Re-lookup the static member after instantiation
 							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
 							if (relookup_result.first && relookup_result.first->initializer.has_value()) {

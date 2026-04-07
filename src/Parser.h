@@ -327,7 +327,6 @@ public:
 	const auto& get_nodes() { return ast_nodes_; }
 	std::vector<ASTNode> takePendingSemanticRoots() {
 		std::vector<ASTNode> pending_roots = std::move(pending_semantic_roots_);
-		pending_semantic_roots_.clear();
 		return pending_roots;
 	}
 	void clearPendingSemanticRoots() {
@@ -935,9 +934,9 @@ public:
 		auto symbol = gSymbolTable.lookup(struct_name);
 		if (!symbol.has_value()) {
 			std::string_view struct_name_view = StringTable::getStringView(struct_name);
-			if (size_t last_colon = struct_name_view.rfind("::"); last_colon != std::string_view::npos) {
+			if (size_t last_colon_pos = struct_name_view.rfind("::"); last_colon_pos != std::string_view::npos) {
 				symbol = gSymbolTable.lookup(
-					StringTable::getOrInternStringHandle(struct_name_view.substr(last_colon + 2)));
+					StringTable::getOrInternStringHandle(struct_name_view.substr(last_colon_pos + 2)));
 			}
 		}
 
