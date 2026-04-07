@@ -1397,107 +1397,94 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 							}
 
 							if (!has_matching_constructor && !use_direct_member_init && struct_info.hasAnyConstructor()) {
-								if (sema_normalized_current_function_) {
-									const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor();
-									if (!resolved_ctor) {
-										reportMissingSemaResolvedConstructor(struct_info.name, "brace initialization");
-									}
-									if (!resolvedConstructorMatchesTargetType(*resolved_ctor, type_index)) {
-										reportMismatchedSemaResolvedConstructor(struct_info.name, "brace initialization");
-									}
-									has_matching_constructor = true;
-									matching_ctor = resolved_ctor;
-									FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
-								} else {
-									// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
-									// This ensures copy constructors are preferred over converting constructors
-									if (num_initializers == 1) {
-										const ASTNode& init_expr = initializers[0];
-										if (init_expr.is<ExpressionNode>()) {
-											bool init_is_same_struct_type = false;
-											bool prefer_move_ctor = false;
-											if (auto same_type_ctor_preference = getSameTypeConstructorPreference(init_expr, type_node); same_type_ctor_preference.has_value()) {
-												init_is_same_struct_type = true;
-												prefer_move_ctor = *same_type_ctor_preference;
-											} else {
-												const auto& expr = init_expr.as<ExpressionNode>();
-												if (std::holds_alternative<IdentifierNode>(expr)) {
-													const auto& ident = std::get<IdentifierNode>(expr);
-													std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
-													if (init_symbol.has_value()) {
-														if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
-															const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
-															// Check if initializer is of the same struct type
-															if (init_type.category() == TypeCategory::Struct &&
-																init_type.type_index() == type_index) {
-																init_is_same_struct_type = true;
-															}
+								// FIRST: Try to find copy constructor if we have exactly one initializer of the same struct type
+								// This ensures copy constructors are preferred over converting constructors
+								if (num_initializers == 1) {
+									const ASTNode& init_expr = initializers[0];
+									if (init_expr.is<ExpressionNode>()) {
+										bool init_is_same_struct_type = false;
+										bool prefer_move_ctor = false;
+										if (auto same_type_ctor_preference = getSameTypeConstructorPreference(init_expr, type_node); same_type_ctor_preference.has_value()) {
+											init_is_same_struct_type = true;
+											prefer_move_ctor = *same_type_ctor_preference;
+										} else {
+											const auto& expr = init_expr.as<ExpressionNode>();
+											if (std::holds_alternative<IdentifierNode>(expr)) {
+												const auto& ident = std::get<IdentifierNode>(expr);
+												std::optional<ASTNode> init_symbol = symbol_table.lookup(ident.name());
+												if (init_symbol.has_value()) {
+													if (const DeclarationNode* init_decl = get_decl_from_symbol(*init_symbol)) {
+														const TypeSpecifierNode& init_type = init_decl->type_node().as<TypeSpecifierNode>();
+														// Check if initializer is of the same struct type
+														if (init_type.category() == TypeCategory::Struct &&
+															init_type.type_index() == type_index) {
+															init_is_same_struct_type = true;
 														}
 													}
 												}
 											}
-
-											if (init_is_same_struct_type) {
-												diagnoseDeletedSameTypeConstructorUsage(struct_info, prefer_move_ctor);
-												const StructMemberFunction* same_type_ctor =
-													struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
-												if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
-													has_matching_constructor = true;
-													matching_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
-													FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", struct_info.name);
-												}
-											}
 										}
-									}
 
-									// SECOND: If no copy constructor matched, prefer the sema annotation.
-									// Only fall back to local type-based/arity-based resolution when sema
-									// did not annotate the brace-init path.
-									if (!has_matching_constructor) {
-										if (const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor()) {
-											if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_index)) {
+										if (init_is_same_struct_type) {
+											diagnoseDeletedSameTypeConstructorUsage(struct_info, prefer_move_ctor);
+											const StructMemberFunction* same_type_ctor =
+												struct_info.findPreferredSameTypeConstructor(prefer_move_ctor, true);
+											if (same_type_ctor && same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 												has_matching_constructor = true;
-												matching_ctor = resolved_ctor;
-												FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
+												matching_ctor = &same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+												FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", struct_info.name);
 											}
 										}
 									}
-									if (!has_matching_constructor) {
-									// Try type-based constructor overload resolution first using the
-									// sema-backed expression typing helper. Legacy lookup fallback
-									// stays isolated behind buildCodegenOverloadResolutionArgType().
-										{
-											std::vector<TypeSpecifierNode> arg_types;
-											bool all_arg_types_known = true;
-											for (const auto& init_arg : initializers) {
-												auto arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
-												if (!arg_type_opt.has_value()) {
-													all_arg_types_known = false;
-													break;
-												}
-												arg_types.push_back(std::move(*arg_type_opt));
-											}
-											if (all_arg_types_known) {
-											// skip_implicit=true: avoid false ambiguity when an explicit
-											// copy/move ctor coexists with a compiler-generated implicit one
-											// having the same signature.
-												auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
-												if (resolution.is_ambiguous) {
-													throw CompileError("Ambiguous constructor call");
-												}
-												if (resolution.has_match) {
-													has_matching_constructor = true;
-													matching_ctor = resolution.selected_overload;
-												}
-											}
-										}
-									}
-									if (!has_matching_constructor) {
-										auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, true);
-										if (arity_resolution.has_match) {
+								}
+
+								// SECOND: If no copy constructor matched, prefer the sema annotation.
+								// Only fall back to local type-based/arity-based resolution when sema
+								// did not annotate the brace-init path.
+								if (!has_matching_constructor) {
+									if (const ConstructorDeclarationNode* resolved_ctor = init_list.resolved_constructor()) {
+										if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_index)) {
 											has_matching_constructor = true;
-											matching_ctor = arity_resolution.selected_overload;
+											matching_ctor = resolved_ctor;
+											FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved brace-init constructor for {}", StringTable::getStringView(struct_info.name));
 										}
+									}
+								}
+								if (!has_matching_constructor) {
+								// Try type-based constructor overload resolution first using the
+								// sema-backed expression typing helper. Legacy lookup fallback
+								// stays isolated behind buildCodegenOverloadResolutionArgType().
+									{
+										std::vector<TypeSpecifierNode> arg_types;
+										bool all_arg_types_known = true;
+										for (const auto& init_arg : initializers) {
+											auto arg_type_opt = buildCodegenOverloadResolutionArgType(init_arg);
+											if (!arg_type_opt.has_value()) {
+												all_arg_types_known = false;
+												break;
+											}
+											arg_types.push_back(std::move(*arg_type_opt));
+										}
+										if (all_arg_types_known) {
+										// skip_implicit=true: avoid false ambiguity when an explicit
+										// copy/move ctor coexists with a compiler-generated implicit one
+										// having the same signature.
+											auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+											if (resolution.is_ambiguous) {
+												throw CompileError("Ambiguous constructor call");
+											}
+											if (resolution.has_match) {
+												has_matching_constructor = true;
+												matching_ctor = resolution.selected_overload;
+											}
+										}
+									}
+								}
+								if (!has_matching_constructor) {
+									auto arity_resolution = resolve_constructor_overload_arity(struct_info, num_initializers, true);
+									if (arity_resolution.has_match) {
+										has_matching_constructor = true;
+										matching_ctor = arity_resolution.selected_overload;
 									}
 								}
 							}
@@ -2117,20 +2104,33 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 						FLASH_LOG(Codegen, Debug, "Processing direct constructor call for ", type_info->name());
 							// Find the matching constructor to get parameter types for reference handling
 						const ConstructorDeclarationNode* matching_ctor = nullptr;
+						bool ctor_constructs_target_type = false;
+						if (const ASTNode& ctor_type_node = direct_ctor->type_node();
+							ctor_type_node.has_value() && ctor_type_node.is<TypeSpecifierNode>()) {
+							const TypeSpecifierNode& ctor_type = ctor_type_node.as<TypeSpecifierNode>();
+							ctor_constructs_target_type =
+								ctor_type.category() == type_node.category() &&
+								ctor_type.type_index() == type_node.type_index();
+						}
+						const bool require_sema_resolved_ctor =
+							sema_normalized_current_function_ &&
+							ctor_constructs_target_type &&
+							type_info->struct_info_ &&
+							type_info->struct_info_->hasUserDefinedConstructor();
 						if (const ConstructorDeclarationNode* resolved_ctor = direct_ctor->resolved_constructor()) {
 							if (resolvedConstructorMatchesTargetType(*resolved_ctor, type_node.type_index())) {
 								matching_ctor = resolved_ctor;
-							} else if (sema_normalized_current_function_) {
+							} else if (require_sema_resolved_ctor) {
 								reportMismatchedSemaResolvedConstructor(type_info->name(), "direct constructor call");
 							}
-						} else if (sema_normalized_current_function_) {
+						} else if (require_sema_resolved_ctor) {
 							reportMissingSemaResolvedConstructor(type_info->name(), "direct constructor call");
 						}
 						size_t num_args = 0;
 						direct_ctor->arguments().visit([&](ASTNode) { num_args++; });
 
 						if (type_info->struct_info_) {
-							if (sema_normalized_current_function_) {
+							if (require_sema_resolved_ctor) {
 								if (matching_ctor) {
 									FLASH_LOG_FORMAT(Codegen, Debug, "Using sema-resolved constructor for {}", StringTable::getStringView(type_info->name()));
 								}
@@ -2160,7 +2160,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 												if (arg_symbol.has_value()) {
 													if (const DeclarationNode* arg_decl = get_decl_from_symbol(*arg_symbol)) {
 														const TypeSpecifierNode& arg_type = arg_decl->type_node().as<TypeSpecifierNode>();
-															// Check if argument is of the same struct type
+														// Check if argument is of the same struct type
 														if (arg_type.category() == TypeCategory::Struct &&
 															arg_type.type_index() == type_node.type_index()) {
 															arg_is_same_struct_type = true;
@@ -2171,15 +2171,14 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										}
 									}
 
-										// Only select same-type special members if argument is of the same struct type
-										if (arg_is_same_struct_type) {
-											diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
-											const StructMemberFunction* same_type_ctor_func =
-												type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
-											if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
-												matching_ctor = &same_type_ctor_func->function_decl.as<ConstructorDeclarationNode>();
-												FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info->name());
-											}
+									// Only select same-type special members if argument is of the same struct type
+									if (arg_is_same_struct_type) {
+										diagnoseDeletedSameTypeConstructorUsage(*type_info->struct_info_, prefer_move_ctor);
+										const StructMemberFunction* same_type_ctor_func =
+											type_info->struct_info_->findPreferredSameTypeConstructor(prefer_move_ctor, true);
+										if (same_type_ctor_func && same_type_ctor_func->function_decl.is<ConstructorDeclarationNode>()) {
+											matching_ctor = &same_type_ctor_func->function_decl.as<ConstructorDeclarationNode>();
+											FLASH_LOG(Codegen, Debug, "Matched ", prefer_move_ctor ? "move" : "copy", " constructor for ", type_info->name());
 										}
 									}
 								}
@@ -2211,6 +2210,7 @@ void AstToIr::visitVariableDeclarationNode(const ASTNode& ast_node) {
 										matching_ctor = arity_resolution.selected_overload;
 									}
 								}
+							}
 						}
 
 							// C++20 aggregate parenthesized initialization (P0960):
