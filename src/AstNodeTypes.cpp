@@ -1183,6 +1183,7 @@ void StructTypeInfo::recalculateLayout() {
 
 	alignment = max_alignment;
 	total_size = toSizeInBytes(alignTo(current_offset, alignment));
+	StructTypeInfo::enforceMinimumCompleteObjectSize(total_size, alignment);
 }
 
 // Finalize struct layout with base classes
@@ -1344,7 +1345,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	// Step 5: Pad to alignment
 	alignment = max_alignment;
 	total_size = toSizeInBytes((current_offset + alignment - 1) & ~(alignment - 1));
-	StructTypeInfo::enforceMinimumCompleteObjectSize(total_size);
+	StructTypeInfo::enforceMinimumCompleteObjectSize(total_size, alignment);
 
 	return true;
 }
