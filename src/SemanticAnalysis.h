@@ -319,6 +319,7 @@ private:
 	Parser& parser_;
 	CompileContext& context_;
 	SymbolTable& symbols_;
+	SemanticAnalysis* previous_active_sema_ = nullptr;
 	TypeContext type_context_;
 	CanonicalTypeId bool_type_id_{};	 // Cached canonical type for bool (interned once in constructor).
 	std::vector<ImplicitCastInfo> cast_info_table_;

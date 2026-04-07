@@ -282,6 +282,7 @@ static ConstExpr::EvaluationContext makeStaticMemberInitializerEvaluationContext
 	ConstExpr::EvaluationContext eval_ctx(symbol_table);
 	eval_ctx.storage_duration = ConstExpr::StorageDuration::Static;
 	eval_ctx.parser = parser;
+	eval_ctx.sema = parser ? parser->getActiveSemanticAnalysis() : nullptr;
 	eval_ctx.struct_info = struct_info;
 	if (struct_info && struct_info->own_type_index_.has_value()) {
 		eval_ctx.struct_type_index = *struct_info->own_type_index_;

@@ -497,8 +497,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						if (owner_template.has_value()) {
 							// Only class-template owners can be materialized here. Namespace-qualified
 							// calls like std::__atomic_impl::fn should skip this path entirely.
-							std::optional<ASTNode> instantiated_owner_node = parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
-							if (instantiated_owner_node.has_value()) {
+							if (parser_.try_instantiate_class_template(owner_name, current_inst_args, true).has_value()) {
 								normalizePendingSemanticRoots();
 							}
 							std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
@@ -1107,8 +1106,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (!inst_args.empty()) {
 		FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name,
 				  "' with ", inst_args.size(), " arguments");
-		std::optional<ASTNode> instantiated_namespace = parser_.try_instantiate_class_template(base_template_name, inst_args, true);
-		if (instantiated_namespace.has_value()) {
+		if (parser_.try_instantiate_class_template(base_template_name, inst_args, true).has_value()) {
 			parser_.normalizePendingSemanticRootsIfAvailable();
 		}
 

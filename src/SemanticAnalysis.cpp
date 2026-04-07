@@ -812,6 +812,7 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 	: parser_(parser), context_(context), symbols_(symbols) {
 	(void)context_;
 	(void)symbols_;
+	previous_active_sema_ = parser_.getActiveSemanticAnalysis();
 	parser_.setActiveSemanticAnalysis(this);
 
 	// Pre-intern the canonical bool type so tryAnnotateContextualBool avoids
@@ -823,7 +824,7 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 
 SemanticAnalysis::~SemanticAnalysis() {
 	if (parser_.getActiveSemanticAnalysis() == this) {
-		parser_.setActiveSemanticAnalysis(nullptr);
+		parser_.setActiveSemanticAnalysis(previous_active_sema_);
 	}
 }
 
