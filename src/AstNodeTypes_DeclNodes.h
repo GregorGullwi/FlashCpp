@@ -270,6 +270,12 @@ struct StructTypeInfo {
 	SizeInBits sizeInBits() const { return toBits(total_size); }
 	SizeInBytes sizeInBytes() const { return total_size; }
 
+	static void enforceMinimumCompleteObjectSize(SizeInBytes& size) {
+		if (toSizeT(size) == 0) {
+			size = SizeInBytes{1};
+		}
+	}
+
 	bool finalize() {
 		// Build vtable first (if struct has virtual functions)
 		if (!buildVTable()) {
@@ -297,9 +303,7 @@ struct StructTypeInfo {
 
 		// Pad struct to its alignment
 		total_size = toSizeInBytes((toSizeT(total_size) + alignment - 1) & ~(alignment - 1));
-		if (toSizeT(total_size) == 0) {
-			total_size = SizeInBytes{1};
-		}
+		enforceMinimumCompleteObjectSize(total_size);
 		return true;
 	}
 

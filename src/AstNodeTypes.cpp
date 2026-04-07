@@ -1344,9 +1344,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	// Step 5: Pad to alignment
 	alignment = max_alignment;
 	total_size = toSizeInBytes((current_offset + alignment - 1) & ~(alignment - 1));
-	if (toSizeT(total_size) == 0) {
-		total_size = SizeInBytes{1};
-	}
+	StructTypeInfo::enforceMinimumCompleteObjectSize(total_size);
 
 	return true;
 }

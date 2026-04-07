@@ -4,6 +4,17 @@ struct BraceCallable {
 	}
 } braceCallableEq = {}, braceCallableDirect{};
 
+struct StatefulCallable {
+	char offset;
+
+	long operator()(long value) const {
+		return value + offset;
+	}
+} statefulEq = {}, statefulDirect{};
+
 int main() {
-	return (braceCallableEq() + braceCallableDirect()) == 42 ? 0 : 1;
+	long total = braceCallableEq() + braceCallableDirect();
+	total += statefulEq(0L);
+	total += statefulDirect(0L);
+	return total == 42 ? 0 : 1;
 }
