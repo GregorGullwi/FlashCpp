@@ -132,6 +132,16 @@ TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	return type_node;
 }
 
+const FunctionDeclarationNode* getCallTargetFunctionCandidate(const ASTNode& overload) {
+	if (overload.is<FunctionDeclarationNode>()) {
+		return &overload.as<FunctionDeclarationNode>();
+	}
+	if (overload.is<TemplateFunctionDeclarationNode>()) {
+		return &overload.as<TemplateFunctionDeclarationNode>().function_decl_node();
+	}
+	return nullptr;
+}
+
 CanonicalTypeDesc canonicalTypeDescFromStructMember(const StructMember& member, CVQualifier object_cv) {
 	CanonicalTypeDesc desc;
 	desc.type_index = member.type_index.withCategory(member.memberType());
@@ -1764,6 +1774,17 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		return;
 	stats_.statements_visited++;
 
+	auto normalizeCondition = [&](const ASTNode& condition_node, bool needs_contextual_bool) {
+		if (condition_node.is<VariableDeclarationNode>()) {
+			normalizeStatement(condition_node, ctx);
+			return;
+		}
+		if (needs_contextual_bool) {
+			tryAnnotateContextualBool(condition_node);
+		}
+		normalizeExpression(condition_node, ctx);
+	};
+
 	if (node.is<BlockNode>()) {
 		const auto& block = node.as<BlockNode>();
 		if (block.is_synthetic_decl_list()) {
@@ -1826,6 +1847,14 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			normalizeExpression(*init, ctx);
 		}
+	} else if (node.is<StructuredBindingNode>()) {
+		const auto& binding = node.as<StructuredBindingNode>();
+		normalizeExpression(binding.initializer(), ctx);
+	} else if (node.is<ThrowStatementNode>()) {
+		const auto& throw_stmt = node.as<ThrowStatementNode>();
+		if (throw_stmt.expression().has_value()) {
+			normalizeExpression(*throw_stmt.expression(), ctx);
+		}
 	} else if (node.is<IfStatementNode>()) {
 		const auto& stmt = node.as<IfStatementNode>();
 		// C++17 [stmt.if]/2: variables declared in the init-statement go out of
@@ -1834,9 +1863,7 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		if (stmt.has_init()) {
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
-		// C++20 [stmt.select]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		normalizeCondition(stmt.get_condition(), true);
 		normalizeStatement(stmt.get_then_statement(), ctx);
 		if (stmt.has_else()) {
 			normalizeStatement(stmt.get_else_statement().value(), ctx);
@@ -1851,9 +1878,8 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			normalizeStatement(stmt.get_init_statement().value(), ctx);
 		}
 		if (stmt.has_condition()) {
-			// C++20 [stmt.for]: the condition is contextually converted to bool.
-			tryAnnotateContextualBool(stmt.get_condition().value());
-			normalizeExpression(stmt.get_condition().value(), ctx);
+			// `true` means the condition is contextually converted to bool.
+			normalizeCondition(stmt.get_condition().value(), true);
 		}
 		if (stmt.has_update()) {
 			normalizeExpression(stmt.get_update_expression().value(), ctx);
@@ -1862,20 +1888,31 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 		popScope();
 	} else if (node.is<WhileStatementNode>()) {
 		const auto& stmt = node.as<WhileStatementNode>();
-		// C++20 [stmt.while]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		const bool has_condition_decl = stmt.get_condition().is<VariableDeclarationNode>();
+		if (has_condition_decl) {
+			pushScope();
+		}
+		normalizeCondition(stmt.get_condition(), true);
 		normalizeStatement(stmt.get_body_statement(), ctx);
+		if (has_condition_decl) {
+			popScope();
+		}
 	} else if (node.is<DoWhileStatementNode>()) {
 		const auto& stmt = node.as<DoWhileStatementNode>();
 		normalizeStatement(stmt.get_body_statement(), ctx);
 		// C++20 [stmt.do]: the condition is contextually converted to bool.
-		tryAnnotateContextualBool(stmt.get_condition());
-		normalizeExpression(stmt.get_condition(), ctx);
+		normalizeCondition(stmt.get_condition(), true);
 	} else if (node.is<SwitchStatementNode>()) {
 		const auto& stmt = node.as<SwitchStatementNode>();
-		normalizeExpression(stmt.get_condition(), ctx);
+		const bool has_condition_decl = stmt.get_condition().is<VariableDeclarationNode>();
+		if (has_condition_decl) {
+			pushScope();
+		}
+		normalizeCondition(stmt.get_condition(), false);
 		normalizeStatement(stmt.get_body(), ctx);
+		if (has_condition_decl) {
+			popScope();
+		}
 	} else if (node.is<RangedForStatementNode>()) {
 		const auto& stmt = node.as<RangedForStatementNode>();
 		pushScope();
@@ -1948,6 +1985,13 @@ SemanticExprInfo SemanticAnalysis::normalizeExpression(const ASTNode& node, cons
 	if (!node.has_value())
 		return {};
 	stats_.expressions_visited++;
+
+	if (node.is<InitializerListNode>()) {
+		for (const auto& initializer : node.as<InitializerListNode>().initializers()) {
+			normalizeExpression(initializer, ctx);
+		}
+		return {};
+	}
 
 	// Walk children for counting; Phase 2 type annotation is done in tryAnnotateReturnConversion.
 
@@ -4287,6 +4331,23 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return false;
 	};
 
+	auto searchTypeMembers = [&](const TypeInfo* type_info) -> bool {
+		if (!type_info) {
+			return false;
+		}
+		if (searchStructMembers(type_info->getStructInfo())) {
+			return true;
+		}
+		if (type_info->isTemplateInstantiation()) {
+			auto pattern_it = getTypesByNameMap().find(type_info->baseTemplateName());
+			if (pattern_it != getTypesByNameMap().end() &&
+				searchStructMembers(pattern_it->second->getStructInfo())) {
+				return true;
+			}
+		}
+		return false;
+	};
+
 	auto searchMemberContextHierarchy = [&]() -> bool {
 		if (member_context_stack_.empty()) {
 			return false;
@@ -4297,17 +4358,17 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			return false;
 		}
 
-		const StructTypeInfo* current_struct = current_type_info->getStructInfo();
-		if (!current_struct) {
+		if (!current_type_info->getStructInfo()) {
 			return false;
 		}
 
 		std::unordered_set<const StructTypeInfo*> visited;
-		auto searchHierarchy = [&](auto&& recurse, const StructTypeInfo* struct_info) -> bool {
+		auto searchHierarchy = [&](auto&& recurse, const TypeInfo* type_info) -> bool {
+			const StructTypeInfo* struct_info = type_info ? type_info->getStructInfo() : nullptr;
 			if (!struct_info || !visited.insert(struct_info).second) {
 				return false;
 			}
-			if (searchStructMembers(struct_info)) {
+			if (searchTypeMembers(type_info)) {
 				return true;
 			}
 			for (const auto& base_spec : struct_info->base_classes) {
@@ -4318,14 +4379,14 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 				if (!base_type_info) {
 					continue;
 				}
-				if (recurse(recurse, base_type_info->getStructInfo())) {
+				if (recurse(recurse, base_type_info)) {
 					return true;
 				}
 			}
 			return false;
 		};
 
-		return searchHierarchy(searchHierarchy, current_struct);
+		return searchHierarchy(searchHierarchy, current_type_info);
 	};
 
 	if (!call_info.qualified_name.isValid()) {
@@ -4339,9 +4400,20 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 
 	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
 	const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
+	if (!member_context_stack_.empty()) {
+		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
+			if ((current_type_info->isTemplateInstantiation() &&
+				 StringTable::getStringView(current_type_info->baseTemplateName()) == struct_name_sv) ||
+				StringTable::getStringView(current_type_info->name()) == struct_name_sv) {
+				if (searchTypeMembers(current_type_info)) {
+					return true;
+				}
+			}
+		}
+	}
 	auto struct_it = getTypesByNameMap().find(struct_name_handle);
 	if (struct_it != getTypesByNameMap().end() &&
-		searchStructMembers(struct_it->second->getStructInfo())) {
+		searchTypeMembers(struct_it->second)) {
 		return true;
 	}
 
@@ -4349,22 +4421,24 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		if (!ti)
 			continue;
 		const std::string_view registered_name = handle.view();
-		if (registered_name == struct_name_sv) {
-			if (searchStructMembers(ti->getStructInfo()))
+		if (registered_name == struct_name_sv ||
+			(ti->isTemplateInstantiation() &&
+			 StringTable::getStringView(ti->baseTemplateName()) == struct_name_sv)) {
+			if (searchTypeMembers(ti))
 				return true;
 		} else if (registered_name.size() > struct_name_sv.size() + 1) {
 			const size_t prefix_end = registered_name.size() - struct_name_sv.size();
 			if (registered_name.substr(prefix_end) == struct_name_sv &&
 				(registered_name[prefix_end - 1] == ':' ||
 				 registered_name[prefix_end - 1] == '<')) {
-				if (searchStructMembers(ti->getStructInfo()))
+				if (searchTypeMembers(ti))
 					return true;
 			}
 		}
 		if (registered_name.size() > struct_name_sv.size() &&
 			registered_name[struct_name_sv.size()] == '<' &&
 			registered_name.starts_with(struct_name_sv)) {
-			if (searchStructMembers(ti->getStructInfo()))
+			if (searchTypeMembers(ti))
 				return true;
 		}
 	}
@@ -4406,11 +4480,9 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	}
 
 	for (const auto& overload : overloads) {
-		if (!overload.is<FunctionDeclarationNode>())
-			continue;
-		const auto& candidate = overload.as<FunctionDeclarationNode>();
-		if (&candidate.decl_node() == &decl) {
-			func_decl = &candidate;
+		const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload);
+		if (candidate && &candidate->decl_node() == &decl) {
+			func_decl = candidate;
 			break;
 		}
 	}
@@ -4418,19 +4490,24 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 	if (!func_decl) {
 		auto find_by_arg_count = [&]() -> const FunctionDeclarationNode* {
 			for (const auto& overload : overloads) {
-				if (!overload.is<FunctionDeclarationNode>())
-					continue;
-				const auto& candidate = overload.as<FunctionDeclarationNode>();
-				if (arguments.size() == candidate.parameter_nodes().size())
-					return &candidate;
+				if (const FunctionDeclarationNode* candidate = getCallTargetFunctionCandidate(overload)) {
+					if (arguments.size() == candidate->parameter_nodes().size()) {
+						return candidate;
+					}
+				}
 			}
 			return nullptr;
 		};
-		if (overloads.size() == 1 && overloads[0].is<FunctionDeclarationNode>()) {
-			func_decl = &overloads[0].as<FunctionDeclarationNode>();
+		if (overloads.size() == 1) {
+			func_decl = getCallTargetFunctionCandidate(overloads[0]);
 		} else {
 			func_decl = find_by_arg_count();
 		}
+	}
+
+	if (!func_decl &&
+		tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, func_decl)) {
+		return func_decl;
 	}
 
 	return func_decl;

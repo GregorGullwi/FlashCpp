@@ -1044,21 +1044,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		// The mangled name is sufficient for generating the call instruction
 	}
 
-	// Keep lookup recovery only for call shapes that the direct-call sema cache does not
-	// fully own yet:
-	// - no sema or no tracked normalized body,
-	// - precomputed mangled / qualified calls that still need template-era remapping,
-	// - static-member lowering paths that are still partly synthetic,
-	// - and explicit sema unresolved-call escape hatches.
+	// Keep lookup recovery only for bodies sema never normalized, explicit sema
+	// escape hatches, and the remaining qualified/static direct-call shapes that
+	// still lower through this path. Semantically normalized ordinary direct
+	// calls should no longer rely on a precomputed-mangled escape hatch.
+	const bool sema_recorded_unresolved_call =
+		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
+	const bool is_static_direct_call =
+		callExprNode.callee().is_static_member() ||
+		(callExprNode.callee().has_function_declaration() &&
+		 callExprNode.callee().function_declaration_or_null()->is_static());
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		has_precomputed_mangled || // namespace/qualified/static cache path
-		callExprNode.callee().is_static_member() || // member call rewritten through direct-call lowering
-		(callExprNode.callee().has_function_declaration() &&
-		 callExprNode.callee().function_declaration_or_null()->is_static()) || // static member metadata on full declaration
-		callExprNode.has_qualified_name() || // qualified lookup is not fully owned by resolved_direct_call_table_
-		sema_->hasUnresolvedCallArgs(sema_call_key); // sema recorded a known resolution gap
+		is_static_direct_call || // direct static-member path is still partly synthetic
+		callExprNode.has_qualified_name() || // qualified direct calls are not fully sema-owned yet
+		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
 	// callee selection instead of rescanning symbol tables and member hierarchies again.
