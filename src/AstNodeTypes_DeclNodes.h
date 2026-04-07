@@ -270,6 +270,10 @@ struct StructTypeInfo {
 	SizeInBits sizeInBits() const { return toBits(total_size); }
 	SizeInBytes sizeInBytes() const { return total_size; }
 
+	static size_t alignLayoutSize(size_t size, size_t alignment_value) {
+		return alignment_value == 0 ? size : ((size + alignment_value - 1) & ~(alignment_value - 1));
+	}
+
 	bool hasDependentOrIncompleteLayout() const {
 		if (has_deferred_base_classes) {
 			return true;
@@ -287,6 +291,14 @@ struct StructTypeInfo {
 	static void enforceMinimumCompleteObjectSize(SizeInBytes& size, size_t alignment) {
 		if (toSizeT(size) == 0) {
 			size = toSizeInBytes(std::max<size_t>(alignment, 1));
+		}
+	}
+
+	void finalizeLayoutSize(size_t raw_size, size_t final_alignment) {
+		alignment = final_alignment;
+		total_size = toSizeInBytes(alignLayoutSize(raw_size, alignment));
+		if (!hasDependentOrIncompleteLayout()) {
+			enforceMinimumCompleteObjectSize(total_size, alignment);
 		}
 	}
 
@@ -316,10 +328,7 @@ struct StructTypeInfo {
 		}
 
 		// Pad struct to its alignment
-		total_size = toSizeInBytes((toSizeT(total_size) + alignment - 1) & ~(alignment - 1));
-		if (!hasDependentOrIncompleteLayout()) {
-			enforceMinimumCompleteObjectSize(total_size, alignment);
-		}
+		finalizeLayoutSize(toSizeT(total_size), alignment);
 		return true;
 	}
 

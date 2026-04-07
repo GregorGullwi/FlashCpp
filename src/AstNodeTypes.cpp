@@ -6,7 +6,6 @@
 #include <sstream>
 #include <set>
 #include <unordered_set>
-#include <functional>
 #include <cstdlib>
 #include <cstring>
 
@@ -1039,10 +1038,6 @@ const StructMemberFunction* StructTypeInfo::findMoveAssignmentOperator(bool incl
 }
 
 void StructTypeInfo::recalculateLayout() {
-	auto alignTo = [](size_t value, size_t alignment_value) {
-		return alignment_value == 0 ? value : ((value + alignment_value - 1) & ~(alignment_value - 1));
-	};
-
 	std::vector<StructMember> old_members = std::move(members);
 	members.reserve(old_members.size());
 
@@ -1104,7 +1099,7 @@ void StructTypeInfo::recalculateLayout() {
 		}
 
 		size_t base_alignment = base_info->alignment;
-		current_offset = alignTo(current_offset, base_alignment);
+		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 		base.offset = current_offset;
 		current_offset += toSizeT(base_info->total_size);
 		max_alignment = std::max(max_alignment, base_alignment);
@@ -1171,7 +1166,7 @@ void StructTypeInfo::recalculateLayout() {
 		}
 
 		size_t base_alignment = base_info->alignment;
-		current_offset = alignTo(current_offset, base_alignment);
+		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 		vbase->offset = current_offset;
 		current_offset += toSizeT(base_info->total_size);
 		max_alignment = std::max(max_alignment, base_alignment);
@@ -1181,11 +1176,7 @@ void StructTypeInfo::recalculateLayout() {
 		max_alignment = std::max(max_alignment, custom_alignment);
 	}
 
-	alignment = max_alignment;
-	total_size = toSizeInBytes(alignTo(current_offset, alignment));
-	if (!hasDependentOrIncompleteLayout()) {
-		StructTypeInfo::enforceMinimumCompleteObjectSize(total_size, alignment);
-	}
+	finalizeLayoutSize(current_offset, max_alignment);
 }
 
 // Finalize struct layout with base classes
@@ -1284,7 +1275,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	std::set<TypeIndex> seen_virtual_bases;
 
 	// Helper function to collect virtual bases recursively
-	std::function<void(const StructTypeInfo*)> collectVirtualBases = [&](const StructTypeInfo* struct_info) {
+	auto collectVirtualBases = [&](auto&& self, const StructTypeInfo* struct_info) -> void {
 		if (!struct_info)
 			return;
 
@@ -1305,12 +1296,12 @@ bool StructTypeInfo::finalizeWithBases() {
 			if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
 				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
 				const StructTypeInfo* base_info = base_type.getStructInfo();
-				collectVirtualBases(base_info);
+				self(self, base_info);
 			}
 		}
 	};
 
-	collectVirtualBases(this);
+	collectVirtualBases(collectVirtualBases, this);
 
 	// Layout virtual bases
 	for (auto* vbase : all_virtual_bases) {
@@ -1345,11 +1336,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	}
 
 	// Step 5: Pad to alignment
-	alignment = max_alignment;
-	total_size = toSizeInBytes((current_offset + alignment - 1) & ~(alignment - 1));
-	if (!hasDependentOrIncompleteLayout()) {
-		StructTypeInfo::enforceMinimumCompleteObjectSize(total_size, alignment);
-	}
+	finalizeLayoutSize(current_offset, max_alignment);
 
 	return true;
 }
