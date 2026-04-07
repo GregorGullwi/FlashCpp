@@ -687,7 +687,8 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		FLASH_LOG_FORMAT(Templates, Warning, "InstantiationQueue: cycle detected for '{}'", template_name);
 		// Re-entering the same specialization while its outer instantiation is still
 		// materializing it can create duplicate partially-initialized TypeInfo slots.
-		// Let the outer instantiation finish and publish the completed specialization.
+		// Returning nullopt here tells the caller to keep using the in-flight outer
+		// instantiation, which will publish the completed specialization once it finishes.
 		return std::nullopt;
 	}
 
