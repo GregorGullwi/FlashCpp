@@ -1029,47 +1029,96 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		return nullptr;
 	};
 
+	auto getMemberReferenceQualifier = [](const StructMember& member) -> CVReferenceQualifier {
+		if (member.is_rvalue_reference()) {
+			return CVReferenceQualifier::RValueReference;
+		}
+		if (member.is_reference()) {
+			return CVReferenceQualifier::LValueReference;
+		}
+		return CVReferenceQualifier::None;
+	};
+
+	auto getOperatorArrowMangledName = [&](const FunctionDeclarationNode& func_decl,
+										   TypeIndex object_type_index) {
+		const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		std::string_view struct_name = StringTable::getStringView(getTypeInfo(object_type_index).name());
+		std::string_view operator_func_name = "operator->";
+		std::vector<TypeSpecifierNode> empty_params;
+		std::vector<std::string_view> empty_namespace;
+		return NameMangling::generateMangledName(
+			operator_func_name,
+			return_type,
+			empty_params,
+			false,
+			struct_name,
+			empty_namespace,
+			Linkage::CPlusPlus,
+			func_decl.is_const_member_function());
+	};
+
+	auto getStructObjectSizeBits = [&](TypeIndex object_type_index) -> int {
+		int size_bits = 0;
+		if (const TypeInfo* type_info = tryGetTypeInfo(object_type_index)) {
+			size_bits = type_info->sizeInBits().value;
+			if (size_bits == 0) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+					size_bits = struct_info->sizeInBits().value;
+				}
+			}
+		}
+		return size_bits == 0 ? 64 : size_bits;
+	};
+
 	// OPERATOR-> OVERLOAD RESOLUTION
 	// If this is arrow access (obj->member), check if the object has operator->() overload
 	if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 
 		const TypeSpecifierNode* type_node = nullptr;
+		const StructMember* member_object = nullptr;
+		size_t member_object_offset = 0;
 		if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
 			type_node = &decl->type_node().as<TypeSpecifierNode>();
+		} else if (current_struct_name_.isValid()) {
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
+				TypeIndex current_struct_type = current_struct_it->second->type_index_;
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier_handle)) {
+					if (member_result.member &&
+						is_struct_type(member_result.member->type_index.category()) &&
+						// Intentionally exclude raw pointer members here: built-in pointer
+						// arrow handling should dereference them later instead of trying to
+						// dispatch operator-> on the pointee's class type.
+						member_result.member->pointer_depth == 0) {
+						member_object = member_result.member;
+						member_object_offset = member_result.adjusted_offset;
+					}
+				}
+			}
 		}
 
+		TypeIndex operator_object_type = type_node
+			? type_node->type_index()
+			: (member_object ? member_object->type_index : TypeIndex{});
+
 		// Check if it's a struct with operator-> overload
-		if (type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
-			auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
+		if ((type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) ||
+			member_object) {
+			auto overload_result = findUnaryOperatorOverload(operator_object_type, OverloadableOperator::Arrow);
 
 			if (overload_result.has_match) {
 				// Found an overload! Call operator->() to get pointer, then access member
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}",
-								 type_node->type_index());
+								 operator_object_type);
 
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
-				// Get struct name for mangling
-				std::string_view struct_name = StringTable::getStringView(getTypeInfo(type_node->type_index()).name());
-
 				// Get the return type from the function declaration (should be a pointer)
 				const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
-				// Generate mangled name for operator->
-				std::string_view operator_func_name = "operator->";
-				std::vector<TypeSpecifierNode> empty_params;
-				std::vector<std::string_view> empty_namespace;
-				auto mangled_name = NameMangling::generateMangledName(
-					operator_func_name,
-					return_type,
-					empty_params,
-					false,
-					struct_name,
-					empty_namespace,
-					Linkage::CPlusPlus,
-					func_decl.is_const_member_function());
+				auto mangled_name = getOperatorArrowMangledName(func_decl, operator_object_type);
 
 				// Generate the call to operator->()
 				TempVar ptr_result = var_counter.next();
@@ -1078,7 +1127,36 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				call_op.function_name = mangled_name;
 
 				// Add 'this' pointer as first argument
-				call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
+				if (member_object) {
+					TempVar member_object_temp = var_counter.next();
+					MemberLoadOp member_load;
+					member_load.result.value = member_object_temp;
+					member_load.result.type_index = member_object->type_index;
+					member_load.result.setType(member_object->type_index.category());
+					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_object->size * 8)};
+					member_load.object = StringTable::getOrInternStringHandle("this"sv);
+					member_load.member_name = member_object->getName();
+					member_load.offset = static_cast<int>(member_object_offset);
+					member_load.ref_qualifier = getMemberReferenceQualifier(*member_object);
+					member_load.struct_type_info = nullptr;
+					member_load.is_pointer_to_member = true;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), memberAccessNode.member_token()));
+
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Member,
+						StringTable::getOrInternStringHandle("this"sv),
+						static_cast<int>(member_object_offset));
+					lvalue_info.member_name = member_object->getName();
+					lvalue_info.is_pointer_to_member = true;
+					setTempVarMetadata(member_object_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+					call_op.args.push_back(makeTypedValue(
+						member_object->type_index,
+						SizeInBits{static_cast<int>(member_object->size * 8)},
+						IrValue(member_object_temp)));
+				} else {
+					call_op.args.push_back(makeTypedValue(type_node->type_index(), SizeInBits{64}, IrValue(identifier_handle)));
+				}
 
 				// Add the function call instruction
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
@@ -1125,21 +1203,22 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (!base_type_index.isStructLike()) {
 				throw InternalError("nested member access on non-struct type");
 			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
-			}
 			// When the nested member access resolved a struct reference member (e.g. wp.p
 			// where p is Point&), the result TempVar holds a pointer to the referenced struct.
 			// Detect this via the LValue metadata and set is_pointer_dereference so the
 			// subsequent MemberAccess instruction dereferences through the pointer.
 			// Two cases:
-			//   - Load context: struct ref member returns Kind::Member with is_pointer_to_member=true
+			//   - Load context: struct ref member returns ValueStorage::ContainsAddress
 			//   - LValueAddress context: struct ref member returns Kind::Indirect (pointer loaded)
+			if (nested_result.storage == ValueStorage::ContainsAddress ||
+				(is_arrow && nested_result.pointer_depth.value > 0)) {
+				is_pointer_dereference = true;
+			}
 			if (!is_pointer_dereference && std::holds_alternative<TempVar>(nested_result.value)) {
 				TempVar nested_temp = std::get<TempVar>(nested_result.value);
 				auto nested_lv = getTempVarLValueInfo(nested_temp);
 				if (nested_lv.has_value() &&
-					(nested_lv->is_pointer_to_member || nested_lv->kind == LValueInfo::Kind::Indirect)) {
+					nested_lv->kind == LValueInfo::Kind::Indirect) {
 					is_pointer_dereference = true;
 				}
 			}
@@ -1245,6 +1324,34 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}
 		} else {
 			throw InternalError(std::string("member access on unsupported object expression type for member '") + std::string(memberAccessNode.member_token().value()) + "'" + (expr ? std::string(" (variant index ") + std::to_string(expr->index()) + ")" : " (no expression)"));
+		}
+	}
+
+	if (is_arrow && !is_pointer_dereference && base_type_index.is_valid()) {
+		auto overload_result = findUnaryOperatorOverload(base_type_index, OverloadableOperator::Arrow);
+		if (overload_result.has_match) {
+			const StructMemberFunction& member_func = *overload_result.member_overload;
+			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+			auto mangled_name = getOperatorArrowMangledName(func_decl, base_type_index);
+			int base_size_bits = getStructObjectSizeBits(base_type_index);
+
+			TempVar ptr_result = var_counter.next();
+			CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
+			call_op.function_name = mangled_name;
+			std::visit([&](auto&& base_value) {
+				call_op.args.push_back(makeTypedValue(
+					base_type_index,
+					SizeInBits{base_size_bits},
+					IrValue(base_value)));
+			}, base_object);
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+
+			if (return_type.pointer_depth() > 0) {
+				base_object = ptr_result;
+				base_type_index = return_type.type_index();
+				is_pointer_dereference = true;
+			}
 		}
 	}
 
