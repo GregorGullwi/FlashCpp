@@ -297,6 +297,9 @@ struct StructTypeInfo {
 
 		// Pad struct to its alignment
 		total_size = toSizeInBytes((toSizeT(total_size) + alignment - 1) & ~(alignment - 1));
+		if (toSizeT(total_size) == 0) {
+			total_size = SizeInBytes{1};
+		}
 		return true;
 	}
 

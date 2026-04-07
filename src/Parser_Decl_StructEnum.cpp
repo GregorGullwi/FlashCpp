@@ -2632,14 +2632,19 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			std::optional<ASTNode> init_expr;
 			if (peek() == "="_tok) {
 				advance(); // consume '='
-				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				ParseResult init_result;
+				if (peek() == "{"_tok) {
+					init_result = parse_brace_initializer(var_type_spec);
+				} else {
+					init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				}
 				if (init_result.is_error()) {
 					return init_result;
 				}
 				init_expr = init_result.node();
 			} else if (peek() == "{"_tok) {
 				// C++11 brace initialization: struct S { } s{};
-				auto init_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
+				auto init_result = parse_brace_initializer(var_type_spec);
 				if (init_result.is_error()) {
 					return init_result;
 				}
