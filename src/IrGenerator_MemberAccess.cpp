@@ -1035,24 +1035,43 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		StringHandle identifier_handle = StringTable::getOrInternStringHandle(ident->name());
 
 		const TypeSpecifierNode* type_node = nullptr;
+		const StructMember* member_object = nullptr;
+		size_t member_object_offset = 0;
 		if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
 			type_node = &decl->type_node().as<TypeSpecifierNode>();
+		} else if (const StructTypeInfo* current_struct = getCurrentStructContext()) {
+			TypeIndex current_struct_type = current_struct->own_type_index_.value_or(TypeIndex{});
+			if (current_struct_type.is_valid()) {
+				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier_handle)) {
+					if (member_result.member &&
+						is_struct_type(member_result.member->type_index.category()) &&
+						member_result.member->pointer_depth == 0) {
+						member_object = member_result.member;
+						member_object_offset = member_result.adjusted_offset;
+					}
+				}
+			}
 		}
 
+		TypeIndex operator_object_type = type_node
+			? type_node->type_index()
+			: (member_object ? member_object->type_index : TypeIndex{});
+
 		// Check if it's a struct with operator-> overload
-		if (type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) {
-			auto overload_result = findUnaryOperatorOverload(type_node->type_index(), OverloadableOperator::Arrow);
+		if ((type_node && type_node->category() == TypeCategory::Struct && type_node->pointer_depth() == 0) ||
+			member_object) {
+			auto overload_result = findUnaryOperatorOverload(operator_object_type, OverloadableOperator::Arrow);
 
 			if (overload_result.has_match) {
 				// Found an overload! Call operator->() to get pointer, then access member
 				FLASH_LOG_FORMAT(Codegen, Debug, "Resolving operator-> overload for type index {}",
-								 type_node->type_index());
+								 operator_object_type);
 
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
 				// Get struct name for mangling
-				std::string_view struct_name = StringTable::getStringView(getTypeInfo(type_node->type_index()).name());
+				std::string_view struct_name = StringTable::getStringView(getTypeInfo(operator_object_type).name());
 
 				// Get the return type from the function declaration (should be a pointer)
 				const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
@@ -1078,7 +1097,40 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				call_op.function_name = mangled_name;
 
 				// Add 'this' pointer as first argument
-				call_op.args.push_back(makeTypedValue(type_node->type(), SizeInBits{64}, IrValue(identifier_handle)));
+				if (member_object) {
+					TempVar member_object_temp = var_counter.next();
+					MemberLoadOp member_load;
+					member_load.result.value = member_object_temp;
+					member_load.result.type_index = member_object->type_index;
+					member_load.result.setType(member_object->type_index.category());
+					member_load.result.size_in_bits = SizeInBits{static_cast<int>(member_object->size * 8)};
+					member_load.object = StringTable::getOrInternStringHandle("this"sv);
+					member_load.member_name = member_object->getName();
+					member_load.offset = static_cast<int>(member_object_offset);
+					member_load.ref_qualifier = ((member_object->is_rvalue_reference()
+						? CVReferenceQualifier::RValueReference
+						: ((member_object->is_reference())
+							? CVReferenceQualifier::LValueReference
+							: CVReferenceQualifier::None)));
+					member_load.struct_type_info = nullptr;
+					member_load.is_pointer_to_member = true;
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), memberAccessNode.member_token()));
+
+					LValueInfo lvalue_info(
+						LValueInfo::Kind::Member,
+						StringTable::getOrInternStringHandle("this"sv),
+						static_cast<int>(member_object_offset));
+					lvalue_info.member_name = member_object->getName();
+					lvalue_info.is_pointer_to_member = true;
+					setTempVarMetadata(member_object_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
+
+					call_op.args.push_back(makeTypedValue(
+						member_object->type_index,
+						SizeInBits{static_cast<int>(member_object->size * 8)},
+						IrValue(member_object_temp)));
+				} else {
+					call_op.args.push_back(makeTypedValue(type_node->type_index(), SizeInBits{64}, IrValue(identifier_handle)));
+				}
 
 				// Add the function call instruction
 				ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
