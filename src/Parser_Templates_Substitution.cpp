@@ -307,6 +307,15 @@ ASTNode Parser::substituteTemplateParameters(
 				substituted_object,
 				member_access.member_token(),
 				member_access.is_arrow()));
+		} else if (const auto* pointer_to_member_access = std::get_if<PointerToMemberAccessNode>(&expr)) {
+			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
+			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
+			ASTNode substituted_member_pointer = substituteTemplateParameters(member_access.member_pointer(), template_params, template_args);
+			return emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+				substituted_object,
+				substituted_member_pointer,
+				member_access.operator_token(),
+				member_access.is_arrow()));
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
 			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
@@ -871,6 +880,15 @@ ASTNode Parser::substituteTemplateParameters(
 	} else if (node.is<CallExprNode>()) {
 		return substituteCallExprWithExpressionSubstitutor(node.as<CallExprNode>());
 
+	} else if (node.is<ConstructorCallNode>()) {
+		const ConstructorCallNode& constructor_call = node.as<ConstructorCallNode>();
+		ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
+		ChunkedVector<ASTNode> substituted_args;
+		for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
+			substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
+		}
+		return emplace_node<ConstructorCallNode>(substituted_type, std::move(substituted_args), constructor_call.called_from());
+
 	} else if (node.is<BinaryOperatorNode>()) {
 		// Handle binary operators
 		const BinaryOperatorNode& bin_op = node.as<BinaryOperatorNode>();
@@ -879,6 +897,16 @@ ASTNode Parser::substituteTemplateParameters(
 		ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
 
 		return emplace_node<BinaryOperatorNode>(bin_op.get_token(), substituted_left, substituted_right);
+
+	} else if (node.is<PointerToMemberAccessNode>()) {
+		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();
+		ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
+		ASTNode substituted_member_pointer = substituteTemplateParameters(member_access.member_pointer(), template_params, template_args);
+		return emplace_node<PointerToMemberAccessNode>(
+			substituted_object,
+			substituted_member_pointer,
+			member_access.operator_token(),
+			member_access.is_arrow());
 
 	} else if (node.is<DeclarationNode>()) {
 		// Handle declarations that might have template parameter types
@@ -954,7 +982,8 @@ ASTNode Parser::substituteTemplateParameters(
 		if (type_spec.category() == TypeCategory::UserDefined ||
 			type_spec.category() == TypeCategory::Struct ||
 			type_spec.category() == TypeCategory::TypeAlias ||
-			type_spec.category() == TypeCategory::Template) {
+			type_spec.category() == TypeCategory::Template ||
+			type_spec.category() == TypeCategory::Auto) {
 			TypeIndex substituted_type_index = substitute_template_parameter(
 				type_spec,
 				template_params,
@@ -1539,6 +1568,17 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			return emplace_node<ExpressionNode>(MemberAccessNode(new_object, ma.member_token(), ma.is_arrow()));
 		}
 
+		if (const auto* pointer_to_member_access = std::get_if<PointerToMemberAccessNode>(&expr_variant)) {
+			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
+			ASTNode new_object = replacePackIdentifierInExpr(member_access.object(), pack_name, element_index);
+			ASTNode new_member_pointer = replacePackIdentifierInExpr(member_access.member_pointer(), pack_name, element_index);
+			return emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+				new_object,
+				new_member_pointer,
+				member_access.operator_token(),
+				member_access.is_arrow()));
+		}
+
 		if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_variant)) {
 			const ArraySubscriptNode& sub = *array_subscript;
 			ASTNode new_array = replacePackIdentifierInExpr(sub.array_expr(), pack_name, element_index);
@@ -1647,6 +1687,9 @@ bool Parser::exprContainsIdentifier(const ASTNode& expr, std::string_view pack_n
 					   exprContainsIdentifier(node.false_expr(), pack_name);
 			} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
 				return exprContainsIdentifier(node.object(), pack_name);
+			} else if constexpr (std::is_same_v<T, PointerToMemberAccessNode>) {
+				return exprContainsIdentifier(node.object(), pack_name) ||
+					   exprContainsIdentifier(node.member_pointer(), pack_name);
 			} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 				return exprContainsIdentifier(node.array_expr(), pack_name) ||
 					   exprContainsIdentifier(node.index_expr(), pack_name);
