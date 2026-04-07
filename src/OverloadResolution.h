@@ -1307,12 +1307,20 @@ inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
 
 inline TypeCategory effectiveBinaryOperatorTypeFromSpec(const TypeSpecifierNode& spec) {
 	TypeCategory type = spec.category();
-	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
+	if (spec.type_index().is_valid()) {
 		if (const TypeInfo* ti = tryGetTypeInfo(spec.type_index())) {
-			type = ti->category();
+			const TypeCategory actual_type = ti->category();
+			const bool actual_type_is_usable =
+				actual_type != TypeCategory::Invalid && actual_type != TypeCategory::Void;
+			const bool should_replace_current_type =
+				type == TypeCategory::Invalid || type == TypeCategory::Void ||
+				(type == TypeCategory::Struct && actual_type == TypeCategory::Enum);
+			if (actual_type_is_usable && should_replace_current_type) {
+				type = actual_type;
+			}
 		}
 	}
-	if ((type == TypeCategory::Invalid || type == TypeCategory::Void) && spec.type_index().is_valid()) {
+	if (type == TypeCategory::Invalid || type == TypeCategory::Void) {
 		return TypeCategory::Struct;
 	}
 	return type;
