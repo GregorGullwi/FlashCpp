@@ -4224,6 +4224,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							matching_ctor->parameter_nodes(),
 							ctor_args,
 							ctor_param_bindings,
+							context,
 							"Invalid parameter node while materializing intermediate struct member for nested member access",
 							true);
 						if (!bind_result.success()) {
@@ -4402,6 +4403,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 		inner_params,
 		inner_ctor_args,
 		inner_param_bindings,
+		context,
 		"Invalid parameter node in inner constexpr constructor binding",
 		true);
 	if (!bind_result.success()) {
@@ -4587,6 +4589,7 @@ EvalResult Evaluator::evaluate_array_subscript_member_access(
 			params,
 			evaluated_ctor_args,
 			ctor_param_bindings,
+			context,
 			"Invalid parameter node in array element constructor binding",
 			true);
 		if (!bind_result.success()) {
