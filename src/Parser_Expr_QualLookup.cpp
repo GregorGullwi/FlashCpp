@@ -820,6 +820,21 @@ TypeIndex Parser::substitute_template_parameter(
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args);
 	};
+	auto instantiateAndNormalize =
+		[&](std::string_view template_name,
+			const std::vector<TemplateTypeArg>& concrete_args,
+			bool force_eager) -> std::optional<ASTNode> {
+		if (template_name.empty()) {
+			return std::nullopt;
+		}
+
+		auto instantiated = try_instantiate_class_template(template_name, concrete_args, force_eager);
+		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
+			registerLateMaterializedTopLevelNode(*instantiated);
+			normalizePendingSemanticRootsIfAvailable();
+		}
+		return instantiated;
+	};
 	auto tryResolveConcreteTemplatePlaceholder = [&]() -> bool {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (!placeholder_info || !placeholder_info->isTemplateInstantiation()) {
@@ -840,10 +855,14 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
-		auto instantiated = try_instantiate_class_template(base_template_name, concrete_args, /*force_eager=*/false);
-		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
-			registerLateMaterializedTopLevelNode(*instantiated);
-		} else if (!base_template_name.empty()) {
+		auto instantiated = instantiateAndNormalize(
+			base_template_name,
+			concrete_args,
+			/*force_eager=*/false);
+		const bool needsRegistryFallback =
+			(!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) &&
+			!base_template_name.empty();
+		if (needsRegistryFallback) {
 			instantiated = gTemplateRegistry.getInstantiation(
 				StringTable::getOrInternStringHandle(base_template_name),
 				concrete_args);
@@ -924,7 +943,10 @@ TypeIndex Parser::substitute_template_parameter(
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 				std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
-				try_instantiate_class_template(base_template_name, concrete_args);
+				instantiateAndNormalize(
+					base_template_name,
+					concrete_args,
+					/*force_eager=*/false);
 				const std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
 				if (const TypeInfo* instantiated_member_type = lookupQualifiedMemberType(instantiated_base)) {
 					assignResolvedType(*instantiated_member_type);
@@ -959,7 +981,10 @@ TypeIndex Parser::substitute_template_parameter(
 				FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
 						  "' is a dependent placeholder for template '", base_template_name, "' - instantiating with concrete args");
 
-				try_instantiate_class_template(base_template_name, template_args);
+				instantiateAndNormalize(
+					base_template_name,
+					template_args,
+					/*force_eager=*/false);
 				const std::string_view instantiated_name = get_instantiated_class_name(base_template_name, template_args);
 				if (const TypeInfo* resolved_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*resolved_type_info);
@@ -1042,7 +1067,10 @@ TypeIndex Parser::substitute_template_parameter(
 					}
 				}
 
-				try_instantiate_class_template(concrete_template_name, concrete_args);
+				instantiateAndNormalize(
+					concrete_template_name,
+					concrete_args,
+					/*force_eager=*/false);
 				const std::string_view instantiated_name = get_instantiated_class_name(concrete_template_name, concrete_args);
 				if (const TypeInfo* instantiated_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*instantiated_type_info);
