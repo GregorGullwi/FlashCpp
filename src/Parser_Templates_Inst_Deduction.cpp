@@ -939,12 +939,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					ts.token(),
 					CVQualifier::None,
 					ReferenceQualifier::None);
-				if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-					resolved_spec.copy_indirection_from(*alias_type_spec);
-					if (alias_type_spec->has_function_signature()) {
-						resolved_spec.set_function_signature(alias_type_spec->function_signature());
-					}
-				}
+				mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
@@ -2170,12 +2165,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				ts.token(),
 				CVQualifier::None,
 				ReferenceQualifier::None);
-			if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-				resolved_spec.copy_indirection_from(*alias_type_spec);
-				if (alias_type_spec->has_function_signature()) {
-					resolved_spec.set_function_signature(alias_type_spec->function_signature());
-				}
-			}
+			mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
 					  ", index=", resolved_info->type_index_);
