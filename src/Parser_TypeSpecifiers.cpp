@@ -69,11 +69,18 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
 	SizeInBits type_size{32};
+	TypeIndex cast_type_index{};
+	CVQualifier cast_cv = CVQualifier::None;
+	ReferenceQualifier cast_ref = ReferenceQualifier::None;
+	std::optional<FunctionSignature> cast_function_signature;
+	std::vector<size_t> cast_array_dimensions;
+	int cast_pointer_depth = 0;
 
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
 		cast_type = builtin_type_info->first;
 		type_size = SizeInBits{static_cast<int>(builtin_type_info->second)};
+		cast_type_index = nativeTypeIndex(cast_type);
 		// Handle special case for unsigned qualifier
 		if (type_name == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
@@ -81,19 +88,60 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	} else {
 		// User-defined type - look it up
 		StringHandle type_handle = StringTable::getOrInternStringHandle(type_name);
-		auto type_it = getTypesByNameMap().find(type_handle);
-		if (type_it != getTypesByNameMap().end()) {
-			const TypeInfo* type_info = type_it->second;
-			cast_type = type_info->typeEnum();
-			type_size = type_info->sizeInBits();
+		const TypeInfo* type_info = lookupTypeInCurrentContext(type_handle);
+		if (!type_info) {
+			auto type_it = getTypesByNameMap().find(type_handle);
+			if (type_it != getTypesByNameMap().end()) {
+				type_info = type_it->second;
+			}
+		}
+		if (type_info) {
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
+			cast_type = resolved_alias.typeEnum();
+			cast_type_index = resolved_alias.type_index.is_valid()
+								  ? resolved_alias.type_index.withCategory(cast_type)
+								  : type_info->registeredTypeIndex().withCategory(cast_type);
+			cast_cv = resolved_alias.cv_qualifier;
+			cast_ref = resolved_alias.reference_qualifier;
+			cast_function_signature = resolved_alias.function_signature;
+			cast_array_dimensions = resolved_alias.array_dimensions;
+			cast_pointer_depth = static_cast<int>(resolved_alias.pointer_depth);
+			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(cast_type_index)) {
+				type_size = struct_info->sizeInBits();
+			} else if (resolved_alias.terminal_type_info) {
+				type_size = resolved_alias.terminal_type_info->sizeInBits();
+			} else {
+				type_size = type_info->sizeInBits();
+			}
 			if (type_info->isStruct()) {
 				cast_type = TypeCategory::Struct;
 			}
 		}
 	}
 
+	const auto make_type_node = [&]() -> ASTNode {
+		TypeSpecifierNode type_spec(cast_type, qualifier, type_size, type_token, cast_cv);
+		if (cast_type_index.is_valid()) {
+			type_spec.set_type_index(cast_type_index);
+		}
+		if (cast_pointer_depth > 0) {
+			type_spec.add_pointer_levels(cast_pointer_depth);
+		}
+		if (cast_ref != ReferenceQualifier::None) {
+			type_spec.set_reference_qualifier(cast_ref);
+		}
+		if (cast_function_signature.has_value()) {
+			type_spec.set_function_signature(*cast_function_signature);
+		}
+		if (!cast_array_dimensions.empty()) {
+			type_spec.set_array_dimensions(cast_array_dimensions);
+		}
+		return emplace_node<TypeSpecifierNode>(type_spec);
+	};
+
 	auto make_constructor_call = [&](ChunkedVector<ASTNode>&& args, const Token& called_from_token) -> ParseResult {
-		auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
+		auto type_node = make_type_node();
 		auto result = emplace_node<ExpressionNode>(
 			ConstructorCallNode(type_node, std::move(args), called_from_token));
 		return ParseResult::success(result);
@@ -143,7 +191,7 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		return make_constructor_call(std::move(args), init_token);
 	}
 
-	auto type_node = emplace_node<TypeSpecifierNode>(cast_type, qualifier, type_size, type_token, CVQualifier::None);
+	auto type_node = make_type_node();
 
 	// Create a static cast node (functional cast behaves like static_cast)
 	auto result = emplace_node<ExpressionNode>(

@@ -1,5 +1,6 @@
-// Regression: scoped-enum binary diagnostics must not reject a valid overloaded
-// operator before overload resolution can use it.
+// Regression: mixed scoped/unscoped enum operator overloads must stay viable
+// through sema and functional-cast parsing, preserving the enum type metadata
+// that libstdc++'s atomic_wait helpers rely on.
 
 namespace std_like {
 enum class MemoryOrder : int {
