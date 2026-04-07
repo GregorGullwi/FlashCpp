@@ -310,6 +310,10 @@ The next obvious late-materialization gap is now narrower and sits beyond the co
 - pointer-to-member substitution now also walks into late-instantiated child expressions instead of leaving nested constructor calls stuck on parser placeholder types when `.*` / `->*` expressions materialize after the main sema pass
 - `substitute_template_parameter(...)` now also normalizes pending semantic roots when it has to instantiate concrete class templates while resolving dependent placeholder types, reducing one more parser-owned recovery surface near the late-instantiation boundary
 - the remaining follow-up should focus on the still-unmigrated fallback reductions around late alias/member lookup and other parser-owned recovery sites where late substitution still rebuilds AST instead of consuming fully sema-owned annotations
+- additional 2026-04-07 audit work narrowed one concrete remaining gap to dependent member class-template placeholders produced by `Parser::parse_type_specifier()` for names like `typename Holder<T>::template Box<T>::value_type` inside lazily instantiated member bodies
+- a reduced repro (`Holder<T>::template Box<T> box{42}; return box.value;`) shows the current failure is no longer the sema-root handoff itself: the late member body still reaches IR with `Holder$...::Box<1 args>` recorded only as a dependent placeholder, so codegen cannot find concrete `StructTypeInfo` for the local object
+- the attempted parser-side drain in `Parser_TypeSpecifiers.cpp` did not resolve that case; the remaining work is to carry enough template-instantiation metadata on those dependent member-template placeholders (or eagerly materialize/rebind them through the existing pending semantic-root path) so later substitution can resolve them onto the concrete instantiated nested/member template type before IR
+- because that investigation did not yet produce a validated fix, no additional code change was kept from this checkpoint; the progress here is the narrowed repro and root-cause direction for the next iteration
 
 ## Why this should simplify the code
 
