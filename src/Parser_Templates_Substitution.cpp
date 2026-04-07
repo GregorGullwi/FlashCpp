@@ -293,13 +293,20 @@ ASTNode Parser::substituteTemplateParameters(
 		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
 			const UnaryOperatorNode& unary_op = *unary_operator;
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
-			return emplace_node<ExpressionNode>(UnaryOperatorNode(unary_op.get_token(), substituted_operand, unary_op.is_prefix()));
+			return emplace_node<ExpressionNode>(UnaryOperatorNode(
+				unary_op.get_token(),
+				substituted_operand,
+				unary_op.is_prefix(),
+				unary_op.is_builtin_addressof()));
 		} else if (std::holds_alternative<CallExprNode>(expr)) {
 			return substituteCallExprWithExpressionSubstitutor(std::get<CallExprNode>(expr));
 		} else if (const auto* member_access_ptr = std::get_if<MemberAccessNode>(&expr)) {
 			const MemberAccessNode& member_access = *member_access_ptr;
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
-			return emplace_node<ExpressionNode>(MemberAccessNode(substituted_object, member_access.member_token()));
+			return emplace_node<ExpressionNode>(MemberAccessNode(
+				substituted_object,
+				member_access.member_token(),
+				member_access.is_arrow()));
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
 			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);

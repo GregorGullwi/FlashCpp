@@ -289,6 +289,8 @@ Progress since that initial checkpoint:
 - added `tests/test_late_member_body_class_template_paths_ret42.cpp` as a regression for late member-body class-template materialization via a local `Box<T>` declaration inside a lazily instantiated member body
 - fixed the adjacent functional-style constructor path so token-only concrete instantiated class names inside lazily instantiated member bodies are rebound to the registered instantiated type during substitution instead of reaching IR as stale placeholder type metadata
 - added `tests/test_late_member_body_class_template_functional_style_ret42.cpp` as a regression for `Box<T>(42)` inside a lazily instantiated member body
+- fixed `substituteTemplateParameters(...)` so late template body substitution preserves `MemberAccessNode::is_arrow()` and `UnaryOperatorNode::is_builtin_addressof()` instead of silently dropping those flags while rebuilding expression AST
+- added `tests/test_late_member_body_operator_arrow_ret42.cpp` as a regression for `ptr->value` inside a lazily instantiated template member body, covering the parser-owned substitution path that previously flattened `->` into `.`
 
 Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
 
@@ -296,7 +298,8 @@ The next obvious late-materialization gap is now narrower and sits beyond the co
 
 - declaration-style local class-template materialization now crosses the sema boundary correctly
 - functional-style calls like `Box<T>(2)` now also rebind their constructor-call type node onto the concrete instantiated class before sema/codegen consume it
-- the remaining follow-up should focus on other parser-owned dependent-type recovery surfaces and fallback reductions near this same late-materialization boundary
+- operator-arrow and builtin-addressof metadata now also survive late template body substitution instead of being lost while rebuilding expression nodes
+- the remaining follow-up should focus on other parser-owned dependent-type recovery surfaces and fallback reductions near this same late-materialization boundary where late substitution still rebuilds AST instead of consuming fully sema-owned annotations
 
 ## Why this should simplify the code
 
