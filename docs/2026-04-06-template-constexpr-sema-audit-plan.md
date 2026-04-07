@@ -290,7 +290,7 @@ Progress since that initial checkpoint:
 - fixed the adjacent functional-style constructor path so token-only concrete instantiated class names inside lazily instantiated member bodies are rebound to the registered instantiated type during substitution instead of reaching IR as stale placeholder type metadata
 - added `tests/test_late_member_body_class_template_functional_style_ret42.cpp` as a regression for `Box<T>(42)` inside a lazily instantiated member body
 - fixed `substituteTemplateParameters(...)` so late template body substitution preserves `MemberAccessNode::is_arrow()` and `UnaryOperatorNode::is_builtin_addressof()` instead of silently dropping those flags while rebuilding expression AST
-- added `tests/test_late_member_body_operator_arrow_ret42.cpp` as a regression for `ptr->value` inside a lazily instantiated template member body, covering the parser-owned substitution path that previously flattened `->` into `.`
+- added `tests/test_late_member_body_operator_arrow_ret42.cpp` as a regression for `forward(&inner)->value` inside a lazily instantiated template member body, covering the parser-owned substitution path that previously flattened `->` into `.`
 
 Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
 

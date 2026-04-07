@@ -2,25 +2,19 @@ struct Inner {
 	int value;
 };
 
-struct SmartPtr {
-	Inner* raw;
-
-	Inner* operator->() {
-		return raw;
-	}
-};
-
 template <typename T>
 struct Holder {
-	SmartPtr ptr;
+	Inner* forward(Inner* ptr) {
+		return ptr;
+	}
 
 	int run() {
-		return ptr->value;
+		Inner inner{42};
+		return forward(&inner)->value;
 	}
 };
 
 int main() {
-	Inner inner{42};
-	Holder<int> h{{&inner}};
+	Holder<int> h;
 	return h.run();
 }
