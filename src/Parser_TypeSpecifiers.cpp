@@ -1691,6 +1691,9 @@ ParseResult Parser::parse_type_specifier() {
 
 						auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == getTypesByNameMap().end()) {
+							// Keep any parsed member-template instantiation metadata alive until we
+							// create the placeholder below; that placeholder must remember the member
+							// template base (`Holder::Box`) rather than only the outer owner.
 							std::optional<StringHandle> dependent_member_template_base;
 							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args;
 
@@ -1814,6 +1817,9 @@ ParseResult Parser::parse_type_specifier() {
 							if (sep_pos != std::string_view::npos) {
 								StringHandle base_handle = StringTable::getOrInternStringHandle(qualified_type_name.substr(0, sep_pos));
 								auto base_type_it = getTypesByNameMap().find(base_handle);
+								// Keep the member-template metadata above when present; only fall back
+								// to the owner placeholder's metadata for non-template member placeholders
+								// such as `Owner<T>::value_type`.
 								if (!type_info.isTemplateInstantiation() &&
 									base_type_it != getTypesByNameMap().end() &&
 									base_type_it->second->isTemplateInstantiation()) {
