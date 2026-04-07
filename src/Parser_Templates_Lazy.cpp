@@ -174,13 +174,58 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			out.push_back(substituteInitExpr(arg));
 		};
 
+		auto resolveBaseInitializerName = [&](StringHandle base_name) {
+			for (size_t i = 0; i < lazy_info.template_params.size() && i < converted_template_args.size(); ++i) {
+				if (!lazy_info.template_params[i].is<TemplateParameterNode>()) {
+					continue;
+				}
+
+				const TemplateParameterNode& param = lazy_info.template_params[i].as<TemplateParameterNode>();
+				if (param.kind() != TemplateParameterKind::Type || param.nameHandle() != base_name) {
+					continue;
+				}
+
+				const TemplateTypeArg& concrete_arg = converted_template_args[i];
+				if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+					break;
+				}
+
+				const TypeInfo* base_type_info = tryGetTypeInfo(concrete_arg.type_index);
+				if (!base_type_info) {
+					break;
+				}
+
+				if (base_type_info->isTemplateInstantiation() &&
+					(!base_type_info->getStructInfo() || !base_type_info->getStructInfo()->total_size.is_set())) {
+					std::string_view base_template_name = StringTable::getStringView(base_type_info->baseTemplateName());
+					std::vector<TemplateTypeArg> concrete_base_args =
+						materializeTemplateArgs(*base_type_info, lazy_info.template_params, converted_template_args);
+					auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
+					if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
+						registerLateMaterializedTopLevelNode(*instantiated_base);
+					}
+					std::string_view instantiated_base_name =
+						get_instantiated_class_name(base_template_name, concrete_base_args);
+					auto instantiated_base_it =
+						getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
+					if (instantiated_base_it != getTypesByNameMap().end()) {
+						return instantiated_base_it->second->name();
+					}
+				}
+
+				return base_type_info->name();
+			}
+
+			return base_name;
+		};
+
 		for (const auto& init : ctor_decl.base_initializers()) {
 			std::vector<ASTNode> substituted_args;
 			substituted_args.reserve(init.arguments.size());
 			for (const auto& arg : init.arguments) {
 				substituteInitArg(arg, substituted_args);
 			}
-			new_ctor_ref.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
+			new_ctor_ref.add_base_initializer(resolveBaseInitializerName(init.getBaseClassName()), std::move(substituted_args));
 		}
 		if (ctor_decl.delegating_initializer().has_value()) {
 			std::vector<ASTNode> substituted_del_args;

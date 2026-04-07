@@ -1017,6 +1017,110 @@ bool isMatchingSameTypeAssignmentOperator(const StructTypeInfo& struct_info,
 									   : param_type.is_lvalue_reference();
 	return matches_reference && param_type.category() == TypeCategory::Struct && struct_info.isOwnTypeIndex(param_type.type_index());
 }
+
+const StructTypeInfo* getBaseStructInfo(const BaseClassSpecifier& base) {
+	if (const TypeInfo* base_type = tryGetTypeInfo(base.type_index)) {
+		return base_type->getStructInfo();
+	}
+	return nullptr;
+}
+
+struct LayoutBaseCollections {
+	std::vector<BaseClassSpecifier*> non_virtual_bases;
+	std::vector<BaseClassSpecifier*> virtual_bases;
+	bool non_virtual_base_has_vtable = false;
+};
+
+bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
+	if (struct_info.has_vtable) {
+		return true;
+	}
+
+	for (const auto& member_function : struct_info.member_functions) {
+		if (member_function.is_virtual || member_function.is_override) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) {
+	LayoutBaseCollections collections;
+	collections.non_virtual_bases.reserve(struct_info.base_classes.size());
+
+	std::unordered_map<TypeIndex, BaseClassSpecifier*> direct_virtual_bases;
+	for (auto& base : struct_info.base_classes) {
+		if (base.is_virtual) {
+			direct_virtual_bases.emplace(base.type_index, &base);
+			continue;
+		}
+
+		collections.non_virtual_bases.push_back(&base);
+		if (!collections.non_virtual_base_has_vtable) {
+			if (const StructTypeInfo* base_info = getBaseStructInfo(base); base_info && base_info->has_vtable) {
+				collections.non_virtual_base_has_vtable = true;
+			}
+		}
+	}
+
+	std::set<TypeIndex> seen_virtual_bases;
+	auto collectVirtualBases = [&](auto&& self, const StructTypeInfo* current_struct_info) -> void {
+		if (!current_struct_info) {
+			return;
+		}
+
+		for (const auto& base : current_struct_info->base_classes) {
+			if (base.is_virtual) {
+				if (seen_virtual_bases.insert(base.type_index).second) {
+					auto direct_base_it = direct_virtual_bases.find(base.type_index);
+					if (direct_base_it != direct_virtual_bases.end()) {
+						collections.virtual_bases.push_back(direct_base_it->second);
+					}
+				}
+				continue;
+			}
+
+			self(self, getBaseStructInfo(base));
+		}
+	};
+
+	collectVirtualBases(collectVirtualBases, &struct_info);
+	return collections;
+}
+
+void initializeBaseAwareLayout(bool has_virtual_members,
+							   bool non_virtual_base_has_vtable,
+							   size_t& current_offset,
+							   size_t& max_alignment) {
+	current_offset = 0;
+	max_alignment = 1;
+	if (has_virtual_members && !non_virtual_base_has_vtable) {
+		current_offset = sizeof(void*);
+		max_alignment = sizeof(void*);
+	}
+}
+
+void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
+						 size_t& current_offset,
+						 size_t& max_alignment) {
+	for (BaseClassSpecifier* base : bases) {
+		if (!base) {
+			continue;
+		}
+
+		const StructTypeInfo* base_info = getBaseStructInfo(*base);
+		if (!base_info) {
+			continue;
+		}
+
+		size_t base_alignment = base_info->alignment;
+		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
+		base->offset = current_offset;
+		current_offset += toSizeT(base_info->total_size);
+		max_alignment = std::max(max_alignment, base_alignment);
+	}
+}
 } // namespace
 
 const StructMemberFunction* StructTypeInfo::findCopyAssignmentOperator(bool include_implicit) const {
@@ -1049,61 +1153,13 @@ void StructTypeInfo::recalculateLayout() {
 	active_bitfield_bits_used = 0;
 	active_bitfield_type = TypeCategory::Invalid;
 
+	LayoutBaseCollections base_collections = collectLayoutBaseCollections(*this);
+	const bool has_virtual_members = structIntroducesVirtualMembers(*this);
+
 	size_t current_offset = 0;
 	size_t max_alignment = 1;
-
-	bool base_has_vtable = false;
-	bool has_virtual_members = has_vtable;
-	if (!has_virtual_members) {
-		for (const auto& member_function : member_functions) {
-			if (member_function.is_virtual || member_function.is_override) {
-				has_virtual_members = true;
-				break;
-			}
-		}
-	}
-
-	for (const auto& base : base_classes) {
-		if (base.is_virtual) {
-			continue;
-		}
-		if (base.type_index.index() >= gTypeInfo.size()) {
-			continue;
-		}
-
-		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-		if (base_info && base_info->has_vtable) {
-			base_has_vtable = true;
-			break;
-		}
-	}
-
-	if (has_virtual_members && !base_has_vtable) {
-		current_offset = sizeof(void*);
-		max_alignment = sizeof(void*);
-	}
-
-	for (auto& base : base_classes) {
-		if (base.is_virtual) {
-			continue;
-		}
-		if (base.type_index.index() >= gTypeInfo.size()) {
-			continue;
-		}
-
-		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-		if (!base_info) {
-			continue;
-		}
-
-		size_t base_alignment = base_info->alignment;
-		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		base.offset = current_offset;
-		current_offset += toSizeT(base_info->total_size);
-		max_alignment = std::max(max_alignment, base_alignment);
-	}
+	initializeBaseAwareLayout(has_virtual_members, base_collections.non_virtual_base_has_vtable, current_offset, max_alignment);
+	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	total_size = toSizeInBytes(current_offset);
 	alignment = max_alignment;
@@ -1122,55 +1178,7 @@ void StructTypeInfo::recalculateLayout() {
 	current_offset = toSizeT(total_size);
 	max_alignment = alignment;
 
-	std::vector<BaseClassSpecifier*> all_virtual_bases;
-	std::unordered_map<TypeIndex, BaseClassSpecifier*> direct_virtual_bases;
-	for (auto& base : base_classes) {
-		if (base.is_virtual) {
-			direct_virtual_bases.emplace(base.type_index, &base);
-		}
-	}
-	std::set<TypeIndex> seen_virtual_bases;
-	auto collectVirtualBases = [&](auto&& self, const StructTypeInfo* struct_info) -> void {
-		if (!struct_info) {
-			return;
-		}
-
-		for (auto& base : struct_info->base_classes) {
-			if (base.is_virtual && seen_virtual_bases.find(base.type_index) == seen_virtual_bases.end()) {
-				seen_virtual_bases.insert(base.type_index);
-				auto our_base_it = direct_virtual_bases.find(base.type_index);
-				if (our_base_it != direct_virtual_bases.end()) {
-					all_virtual_bases.push_back(our_base_it->second);
-				}
-			}
-
-			if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
-				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-				const StructTypeInfo* base_info = base_type.getStructInfo();
-				self(self, base_info);
-			}
-		}
-	};
-
-	collectVirtualBases(collectVirtualBases, this);
-
-	for (auto* vbase : all_virtual_bases) {
-		if (vbase->type_index.index() >= gTypeInfo.size()) {
-			continue;
-		}
-
-		const TypeInfo& base_type = gTypeInfo[vbase->type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-		if (!base_info) {
-			continue;
-		}
-
-		size_t base_alignment = base_info->alignment;
-		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
-		vbase->offset = current_offset;
-		current_offset += toSizeT(base_info->total_size);
-		max_alignment = std::max(max_alignment, base_alignment);
-	}
+	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
 
 	if (custom_alignment > 0) {
 		max_alignment = std::max(max_alignment, custom_alignment);
@@ -1190,63 +1198,13 @@ bool StructTypeInfo::finalizeWithBases() {
 	// Step 0.1: Build RTTI information (after vtable, before layout)
 	buildRTTI();
 
+	LayoutBaseCollections base_collections = collectLayoutBaseCollections(*this);
 	size_t current_offset = 0;
 	size_t max_alignment = 1;
-
-	// Step 0.5: Add vptr if this struct has virtual functions
-	// Note: If base class has vtable, we inherit its vptr (at offset 0 in base subobject)
-	// Only add vptr if we introduce virtual functions and have no polymorphic base
-	bool base_has_vtable = false;
-	for (const auto& base : base_classes) {
-		if (base.is_virtual)
-			continue; // Skip virtual bases for now
-		if (base.type_index.index() < gTypeInfo.size()) {
-			const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-			const StructTypeInfo* base_info = base_type.getStructInfo();
-			if (base_info && base_info->has_vtable) {
-				base_has_vtable = true;
-				break;
-			}
-		}
-	}
-
-	// If we have virtual functions but no polymorphic base, add vptr
-	if (has_vtable && !base_has_vtable) {
-		// vptr is at offset 0, size 8 (pointer size on x64)
-		current_offset = 8;
-		max_alignment = 8; // Pointer alignment
-	}
+	initializeBaseAwareLayout(has_vtable, base_collections.non_virtual_base_has_vtable, current_offset, max_alignment);
 
 	// Step 1: Layout non-virtual base class subobjects
-	for (auto& base : base_classes) {
-		if (base.is_virtual) {
-			continue; // Virtual bases are laid out at the end
-		}
-
-		if (base.type_index.index() >= gTypeInfo.size()) {
-			continue; // Invalid base class index
-		}
-
-		const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-
-		if (!base_info) {
-			continue; // Not a struct type
-		}
-
-		// Align to base class alignment
-		size_t base_alignment = base_info->alignment;
-		current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
-
-		// Store base class offset
-		base.offset = current_offset;
-
-		// Advance offset by base class size
-		current_offset += toSizeT(base_info->total_size);
-
-		// Track maximum alignment
-		max_alignment = std::max(max_alignment, base_alignment);
-	}
+	placeBaseSubobjects(base_collections.non_virtual_bases, current_offset, max_alignment);
 
 	// Step 2: Layout derived class members
 	for (auto& member : members) {
@@ -1270,69 +1228,11 @@ bool StructTypeInfo::finalizeWithBases() {
 	}
 
 	// Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
-	// Collect all unique virtual bases (including those from base classes)
-	std::vector<BaseClassSpecifier*> all_virtual_bases;
-	std::set<TypeIndex> seen_virtual_bases;
-
-	// Helper function to collect virtual bases recursively
-	auto collectVirtualBases = [&](auto&& self, const StructTypeInfo* struct_info) -> void {
-		if (!struct_info)
-			return;
-
-		// Check direct base classes
-		for (auto& base : struct_info->base_classes) {
-			if (base.is_virtual && seen_virtual_bases.find(base.type_index) == seen_virtual_bases.end()) {
-				seen_virtual_bases.insert(base.type_index);
-				// Find the corresponding base in our base_classes list
-				for (auto& our_base : base_classes) {
-					if (our_base.type_index == base.type_index && our_base.is_virtual) {
-						all_virtual_bases.push_back(&our_base);
-						break;
-					}
-				}
-			}
-
-			// Recursively collect from non-virtual bases
-			if (!base.is_virtual && base.type_index.index() < gTypeInfo.size()) {
-				const TypeInfo& base_type = gTypeInfo[base.type_index.index()];
-				const StructTypeInfo* base_info = base_type.getStructInfo();
-				self(self, base_info);
-			}
-		}
-	};
-
-	collectVirtualBases(collectVirtualBases, this);
-
-	// Layout virtual bases
-	for (auto* vbase : all_virtual_bases) {
-		if (vbase->type_index.index() >= gTypeInfo.size()) {
-			continue;
-		}
-
-		const TypeInfo& base_type = gTypeInfo[vbase->type_index.index()];
-		const StructTypeInfo* base_info = base_type.getStructInfo();
-
-		if (!base_info) {
-			continue;
-		}
-
-		// Align to base class alignment
-		size_t base_alignment = base_info->alignment;
-		current_offset = (current_offset + base_alignment - 1) & ~(base_alignment - 1);
-
-		// Store virtual base class offset
-		vbase->offset = current_offset;
-
-		// Advance offset by base class size
-		current_offset += toSizeT(base_info->total_size);
-
-		// Track maximum alignment
-		max_alignment = std::max(max_alignment, base_alignment);
-	}
+	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
 
 	// Step 4: Apply custom alignment if specified
 	if (custom_alignment > 0) {
-		max_alignment = custom_alignment;
+		max_alignment = std::max(max_alignment, custom_alignment);
 	}
 
 	// Step 5: Pad to alignment
