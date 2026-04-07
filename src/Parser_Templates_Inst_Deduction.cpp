@@ -1970,6 +1970,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		// Fast path: check alias registry for the exact dependent name
 		if (auto direct_alias = gTemplateRegistry.lookup_alias_template(std::string(type_name));
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
@@ -2000,6 +2001,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				  " base_part=", base_part, " member_part=", member_part,
 				  " template_args=", template_args.size());
 
+		// Substitute template parameter names with concrete argument strings
 		forEachNonPackTemplateParamArgBinding(
 			template_params,
 			template_args,
@@ -2017,7 +2019,12 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		auto type_it = getTypesByNameMap().find(resolved_handle);
 
 		if (type_it == getTypesByNameMap().end()) {
+			// Try instantiating the base template to register member aliases
+			// The base_part contains a mangled name like "enable_if_void_int"
+			// We need to find the actual template name, which could be "enable_if" not just "enable"
 			std::string_view base_template_name = extract_base_template_name(base_part);
+
+			// Only try to instantiate if we found a class template (not a function template)
 			if (!base_template_name.empty()) {
 				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
