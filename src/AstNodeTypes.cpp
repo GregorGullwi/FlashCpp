@@ -1,4 +1,5 @@
 #include "AstNodeTypes.h"
+#include "LazyMemberResolver.h"
 #include "StringBuilder.h"
 #include "NameMangling.h"
 #include "Log.h"
@@ -846,6 +847,9 @@ void StructTypeInfo::addConstructor(ASTNode constructor_decl, AccessSpecifier ac
 }
 
 void TypeInfo::setStructInfo(std::unique_ptr<StructTypeInfo> info) {
+	if (struct_info_) {
+		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(type_index_);
+	}
 	if (info) {
 		info->own_type_index_ = type_index_;
 		for (auto& member_func : info->member_functions) {

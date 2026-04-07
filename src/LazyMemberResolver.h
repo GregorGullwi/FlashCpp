@@ -16,14 +16,15 @@ namespace FlashCpp {
 struct MemberResolutionResult {
 	const StructMember* member;			// The resolved member (nullptr if not found)
 	const StructTypeInfo* owner_struct;	// The struct that owns the member
+	TypeIndex owner_type_index;			// Stable owner identity for cache invalidation
 	size_t adjusted_offset;				// Offset adjusted for inheritance
 	bool from_cache;					 // Whether this result came from cache
 
 	MemberResolutionResult()
-		: member(nullptr), owner_struct(nullptr), adjusted_offset(0), from_cache(false) {}
+		: member(nullptr), owner_struct(nullptr), owner_type_index(), adjusted_offset(0), from_cache(false) {}
 
-	MemberResolutionResult(const StructMember* m, const StructTypeInfo* owner, size_t offset, bool cached = false)
-		: member(m), owner_struct(owner), adjusted_offset(offset), from_cache(cached) {}
+	MemberResolutionResult(const StructMember* m, const StructTypeInfo* owner, TypeIndex owner_type, size_t offset, bool cached)
+		: member(m), owner_struct(owner), owner_type_index(owner_type), adjusted_offset(offset), from_cache(cached) {}
 
 	explicit operator bool() const { return member != nullptr; }
 };
@@ -105,6 +106,13 @@ public:
 		cache_hits_ = 0;
 		cache_misses_ = 0;
 		cycles_detected_ = 0;
+	}
+
+	void invalidateEntriesOwnedBy(TypeIndex owner_type_index) {
+		std::erase_if(cache_, [owner_type_index](const auto& entry) {
+			return entry.first.type_index == owner_type_index ||
+				   entry.second.owner_type_index == owner_type_index;
+		});
 	}
 
 	// Get cache statistics
@@ -224,6 +232,7 @@ private:
 					return MemberResolutionResult(
 						&member,
 						current_struct,
+						current_struct->own_type_index_.value_or(TypeIndex{}),
 						member.offset + current_offset,
 						false);
 				}

@@ -685,8 +685,11 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	auto in_progress_guard = FlashCpp::gInstantiationQueue.makeInProgressGuard(inst_key);
 	if (!in_progress_guard.isActive()) {
 		FLASH_LOG_FORMAT(Templates, Warning, "InstantiationQueue: cycle detected for '{}'", template_name);
-		// Don't fail - some recursive patterns are valid (e.g., CRTP)
-		// Proceed without in_progress tracking
+		// Re-entering the same specialization while its outer instantiation is still
+		// materializing it can create duplicate partially-initialized TypeInfo slots.
+		// Returning nullopt here tells the caller to keep using the in-flight outer
+		// instantiation, which will publish the completed specialization once it finishes.
+		return std::nullopt;
 	}
 
 	// Track whether this is a normal implicit instantiation or an explicit-instantiation
