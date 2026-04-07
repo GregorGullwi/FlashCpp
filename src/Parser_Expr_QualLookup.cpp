@@ -817,18 +817,6 @@ TypeIndex Parser::substitute_template_parameter(
 		current_type_index = resolved_info.registeredTypeIndex();
 		current_type = resolved_info.typeEnum();
 	};
-	auto getFullyQualifiedPlaceholderTemplateName = [&](const TypeInfo& placeholder_info) -> std::string_view {
-		std::string_view base_template_name = StringTable::getStringView(placeholder_info.baseTemplateName());
-		NamespaceHandle source_namespace = placeholder_info.sourceNamespace();
-		if (!source_namespace.isValid() || source_namespace.isGlobal()) {
-			return base_template_name;
-		}
-		std::string_view qualified_namespace = gNamespaceRegistry.getQualifiedName(source_namespace);
-		if (qualified_namespace.empty()) {
-			return base_template_name;
-		}
-		return StringBuilder().append(qualified_namespace).append("::").append(base_template_name).commit();
-	};
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args);
 	};
@@ -854,7 +842,8 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		const std::string_view placeholder_name = StringTable::getStringView(placeholder_info->name());
-		const std::string_view base_template_name = getFullyQualifiedPlaceholderTemplateName(*placeholder_info);
+		const std::string_view base_template_name = buildQualifiedNameFromHandle(
+			placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 		for (const ASTNode& template_param_node : template_params) {
 			if (!template_param_node.is<TemplateParameterNode>()) {
 				continue;
@@ -965,7 +954,8 @@ TypeIndex Parser::substitute_template_parameter(
 			substitution_applied = tryResolveConcreteTemplatePlaceholder();
 		} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 				   placeholder_info && placeholder_info->isTemplateInstantiation()) {
-			const std::string_view base_template_name = getFullyQualifiedPlaceholderTemplateName(*placeholder_info);
+			const std::string_view base_template_name = buildQualifiedNameFromHandle(
+				placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 				std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
@@ -1049,7 +1039,8 @@ TypeIndex Parser::substitute_template_parameter(
 	if (!substitution_applied) {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (placeholder_info && placeholder_info->isTemplateInstantiation()) {
-			const std::string_view base_template_name = getFullyQualifiedPlaceholderTemplateName(*placeholder_info);
+			const std::string_view base_template_name = buildQualifiedNameFromHandle(
+				placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				if (!template_params[i].is<TemplateParameterNode>()) {
 					continue;
