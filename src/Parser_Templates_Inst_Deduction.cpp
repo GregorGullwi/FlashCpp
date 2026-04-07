@@ -758,7 +758,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+					if (qualified_type_it != getTypesByNameMap().end() &&
+						qualified_type_it->second != nullptr &&
+						!qualified_type_it->second->is_incomplete_instantiation_) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
 						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
 						TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
@@ -836,8 +838,30 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
 			auto type_it = getTypesByNameMap().find(resolved_handle);
+			if (type_it != getTypesByNameMap().end() &&
+				type_it->second != nullptr &&
+				type_it->second->is_incomplete_instantiation_) {
+				type_it = getTypesByNameMap().end();
+			}
+			if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+				if (!base_template_name.empty()) {
+					try_instantiate_class_template(base_template_name, template_args);
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+					resolved_handle = build_resolved_handle(instantiated_base, member_part);
+					type_it = getTypesByNameMap().find(resolved_handle);
+					if (type_it != getTypesByNameMap().end() &&
+						type_it->second != nullptr &&
+						type_it->second->is_incomplete_instantiation_) {
+						type_it = getTypesByNameMap().end();
+					}
+				}
+			}
 			if (type_it == getTypesByNameMap().end()) {
-				std::string_view base_template_name = extract_base_template_name(base_part);
+				std::string_view base_template_name = extractBaseTemplateName(base_part);
+				if (base_template_name.empty()) {
+					base_template_name = extract_base_template_name(base_part);
+				}
 				if (!base_template_name.empty()) {
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -845,9 +869,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 						resolved_handle = build_resolved_handle(instantiated_base, member_part);
 						type_it = getTypesByNameMap().find(resolved_handle);
+						if (type_it != getTypesByNameMap().end() &&
+							type_it->second != nullptr &&
+							type_it->second->is_incomplete_instantiation_) {
+							type_it = getTypesByNameMap().end();
+						}
 						if (type_it == getTypesByNameMap().end()) {
 							StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
 							type_it = getTypesByNameMap().find(primary_handle);
+							if (type_it != getTypesByNameMap().end() &&
+								type_it->second != nullptr &&
+								type_it->second->is_incomplete_instantiation_) {
+								type_it = getTypesByNameMap().end();
+							}
 						}
 					}
 				}
@@ -961,12 +995,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
 				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
 				if (resolved_param_size_bits > 0) {
-					param_type_ref = TypeSpecifierNode(
-						param_type_ref.type_index().withCategory(param_type_ref.type()),
-						resolved_param_size_bits,
-						param_type_ref.token(),
-						param_type_ref.cv_qualifier(),
-						param_type_ref.reference_qualifier());
+					param_type_ref.set_size_in_bits(resolved_param_size_bits);
 				}
 				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types,
@@ -1948,7 +1977,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
 					StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-				if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+				if (qualified_type_it != getTypesByNameMap().end() &&
+					qualified_type_it->second != nullptr &&
+					!qualified_type_it->second->is_incomplete_instantiation_) {
 					const TypeInfo* resolved_info = qualified_type_it->second;
 					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
 					TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
@@ -2035,12 +2066,34 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=",
 				  StringTable::getStringView(resolved_handle));
 		auto type_it = getTypesByNameMap().find(resolved_handle);
+		if (type_it != getTypesByNameMap().end() &&
+			type_it->second != nullptr &&
+			type_it->second->is_incomplete_instantiation_) {
+			type_it = getTypesByNameMap().end();
+		}
+		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
+			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+			if (!base_template_name.empty()) {
+				try_instantiate_class_template(base_template_name, template_args);
+				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+				resolved_handle = build_resolved_handle(instantiated_base, member_part);
+				type_it = getTypesByNameMap().find(resolved_handle);
+				if (type_it != getTypesByNameMap().end() &&
+					type_it->second != nullptr &&
+					type_it->second->is_incomplete_instantiation_) {
+					type_it = getTypesByNameMap().end();
+				}
+			}
+		}
 
 		if (type_it == getTypesByNameMap().end()) {
 			// Try instantiating the base template to register member aliases
 			// The base_part contains a mangled name like "enable_if_void_int"
 			// We need to find the actual template name, which could be "enable_if" not just "enable"
-			std::string_view base_template_name = extract_base_template_name(base_part);
+			std::string_view base_template_name = extractBaseTemplateName(base_part);
+			if (base_template_name.empty()) {
+				base_template_name = extract_base_template_name(base_part);
+			}
 
 			// Only try to instantiate if we found a class template (not a function template)
 			if (!base_template_name.empty()) {
@@ -2051,10 +2104,20 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = getTypesByNameMap().find(resolved_handle);
+					if (type_it != getTypesByNameMap().end() &&
+						type_it->second != nullptr &&
+						type_it->second->is_incomplete_instantiation_) {
+						type_it = getTypesByNameMap().end();
+					}
 
 					if (type_it == getTypesByNameMap().end()) {
 						StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
 						type_it = getTypesByNameMap().find(primary_handle);
+						if (type_it != getTypesByNameMap().end() &&
+							type_it->second != nullptr &&
+							type_it->second->is_incomplete_instantiation_) {
+							type_it = getTypesByNameMap().end();
+						}
 					}
 					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
 							  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
