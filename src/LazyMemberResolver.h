@@ -23,7 +23,7 @@ struct MemberResolutionResult {
 	MemberResolutionResult()
 		: member(nullptr), owner_struct(nullptr), owner_type_index(), adjusted_offset(0), from_cache(false) {}
 
-	MemberResolutionResult(const StructMember* m, const StructTypeInfo* owner, TypeIndex owner_type, size_t offset, bool cached = false)
+	MemberResolutionResult(const StructMember* m, const StructTypeInfo* owner, TypeIndex owner_type, size_t offset, bool cached)
 		: member(m), owner_struct(owner), owner_type_index(owner_type), adjusted_offset(offset), from_cache(cached) {}
 
 	explicit operator bool() const { return member != nullptr; }
