@@ -40,6 +40,49 @@ static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
 	return ReferenceQualifier::RValueReference;
 }
 
+static void resetTypeIndirection(TypeSpecifierNode& type_spec) {
+	const TypeSpecifierNode empty_spec;
+	type_spec.copy_indirection_from(empty_spec);
+}
+
+static void mergeAliasAndUseSiteTypeSpec(
+	TypeSpecifierNode& resolved_spec,
+	const TypeSpecifierNode& use_site_spec,
+	const TypeSpecifierNode* alias_type_spec) {
+	resolved_spec.set_cv_qualifier(use_site_spec.cv_qualifier());
+	resetTypeIndirection(resolved_spec);
+	if (alias_type_spec) {
+		resolved_spec.add_cv_qualifier(alias_type_spec->cv_qualifier());
+		for (const auto& pointer_level : alias_type_spec->pointer_levels()) {
+			resolved_spec.add_pointer_level(pointer_level.cv_qualifier);
+		}
+		if (alias_type_spec->reference_qualifier() != ReferenceQualifier::None) {
+			resolved_spec.set_reference_qualifier(alias_type_spec->reference_qualifier());
+		}
+		if (alias_type_spec->is_array()) {
+			resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
+		}
+		if (alias_type_spec->has_function_signature()) {
+			resolved_spec.set_function_signature(alias_type_spec->function_signature());
+		}
+	}
+	for (const auto& pointer_level : use_site_spec.pointer_levels()) {
+		resolved_spec.add_pointer_level(pointer_level.cv_qualifier);
+	}
+	if (use_site_spec.reference_qualifier() != ReferenceQualifier::None || resolved_spec.reference_qualifier() != ReferenceQualifier::None) {
+		resolved_spec.set_reference_qualifier(
+			collapseTemplateArgumentReferenceQualifier(
+				resolved_spec.reference_qualifier(),
+				use_site_spec.reference_qualifier()));
+	}
+	if (use_site_spec.is_array()) {
+		resolved_spec.set_array_dimensions(use_site_spec.array_dimensions());
+	}
+	if (use_site_spec.has_function_signature()) {
+		resolved_spec.set_function_signature(use_site_spec.function_signature());
+	}
+}
+
 template <typename ParamContainer, typename ArgContainer>
 static void applyTemplateArgIndirection(
 	TypeSpecifierNode& substituted_type,
@@ -773,27 +816,9 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							resolved_type_index,
 							resolved_size_bits,
 							ts.token(),
-							ts.cv_qualifier(),
-							ts.reference_qualifier());
-						// Apply use-site (ts) indirection first, then selectively
-						// fill in missing fields from the alias so that alias-owned
-						// metadata (e.g. function_signature for function-pointer
-						// aliases) is not silently overwritten by an empty ts.
-						resolved_spec.copy_indirection_from(ts);
-						if (ts.reference_qualifier() != ReferenceQualifier::None) {
-							resolved_spec.set_reference_qualifier(ts.reference_qualifier());
-						}
-						if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-							if (resolved_spec.pointer_levels().empty() && !alias_type_spec->pointer_levels().empty()) {
-								resolved_spec.copy_pointer_levels_from(*alias_type_spec);
-							}
-							if (!resolved_spec.has_function_signature() && alias_type_spec->has_function_signature()) {
-								resolved_spec.set_function_signature(alias_type_spec->function_signature());
-							}
-							if (!resolved_spec.is_array() && alias_type_spec->is_array()) {
-								resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
-							}
-						}
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 						return;
 					}
@@ -857,11 +882,18 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					}
 				}
 			}
-			if (type_it == getTypesByNameMap().end()) {
-				std::string_view base_template_name = extractBaseTemplateName(base_part);
+			auto resolve_base_template_name = [&](std::string_view candidate) {
+				// Prefer the exact template-instantiation metadata when it is available.
+				// Fall back to the older underscore-based extractor for synthesized names
+				// that do not have a registered TypeInfo entry yet.
+				std::string_view base_template_name = extractBaseTemplateName(candidate);
 				if (base_template_name.empty()) {
-					base_template_name = extract_base_template_name(base_part);
+					base_template_name = extract_base_template_name(candidate);
 				}
+				return base_template_name;
+			};
+			if (type_it == getTypesByNameMap().end()) {
+				std::string_view base_template_name = resolve_base_template_name(base_part);
 				if (!base_template_name.empty()) {
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -903,9 +935,10 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					: resolved_info->registeredTypeIndex();
 				TypeSpecifierNode resolved_spec(
 					resolved_type_index,
-					TypeQualifier::None,
 					get_type_size_bits(resolved_type_index.category()),
-					Token(), CVQualifier::None);
+					ts.token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
 				if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
 					resolved_spec.copy_indirection_from(*alias_type_spec);
 					if (alias_type_spec->has_function_signature()) {
@@ -1992,27 +2025,9 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						resolved_type_index,
 						resolved_size_bits,
 						ts.token(),
-						ts.cv_qualifier(),
-						ts.reference_qualifier());
-					// Apply use-site (ts) indirection first, then selectively
-					// fill in missing fields from the alias so that alias-owned
-					// metadata (e.g. function_signature for function-pointer
-					// aliases) is not silently overwritten by an empty ts.
-					resolved_spec.copy_indirection_from(ts);
-					if (ts.reference_qualifier() != ReferenceQualifier::None) {
-						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
-					}
-					if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-						if (resolved_spec.pointer_levels().empty() && !alias_type_spec->pointer_levels().empty()) {
-							resolved_spec.copy_pointer_levels_from(*alias_type_spec);
-						}
-						if (!resolved_spec.has_function_signature() && alias_type_spec->has_function_signature()) {
-							resolved_spec.set_function_signature(alias_type_spec->function_signature());
-						}
-						if (!resolved_spec.is_array() && alias_type_spec->is_array()) {
-							resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
-						}
-					}
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 					type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 					return;
 				}
@@ -2086,14 +2101,21 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		}
 
+		auto resolve_base_template_name = [&](std::string_view candidate) {
+			// Prefer the exact template-instantiation metadata when it is available.
+			// Fall back to the older underscore-based extractor for synthesized names
+			// that do not have a registered TypeInfo entry yet.
+			std::string_view base_template_name = extractBaseTemplateName(candidate);
+			if (base_template_name.empty()) {
+				base_template_name = extract_base_template_name(candidate);
+			}
+			return base_template_name;
+		};
 		if (type_it == getTypesByNameMap().end()) {
 			// Try instantiating the base template to register member aliases
 			// The base_part contains a mangled name like "enable_if_void_int"
 			// We need to find the actual template name, which could be "enable_if" not just "enable"
-			std::string_view base_template_name = extractBaseTemplateName(base_part);
-			if (base_template_name.empty()) {
-				base_template_name = extract_base_template_name(base_part);
-			}
+			std::string_view base_template_name = resolve_base_template_name(base_part);
 
 			// Only try to instantiate if we found a class template (not a function template)
 			if (!base_template_name.empty()) {
@@ -2144,9 +2166,10 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				: resolved_info->registeredTypeIndex();
 			TypeSpecifierNode resolved_spec(
 				resolved_type_index,
-				TypeQualifier::None,
 				get_type_size_bits(resolved_type_index.category()),
-				Token(), CVQualifier::None);
+				ts.token(),
+				CVQualifier::None,
+				ReferenceQualifier::None);
 			if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
 				resolved_spec.copy_indirection_from(*alias_type_spec);
 				if (alias_type_spec->has_function_signature()) {
