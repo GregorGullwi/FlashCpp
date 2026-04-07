@@ -789,16 +789,16 @@ TypeIndex Parser::substitute_template_parameter(
 	const TypeSpecifierNode& original_type,
 	const InlineVector<ASTNode, 4>& template_params,
 	const InlineVector<TemplateTypeArg, 4>& template_args) {
-	TypeCategory result_type = original_type.type();
-	TypeIndex result_type_index = original_type.type_index();
+	TypeCategory current_type = original_type.type();
+	TypeIndex current_type_index = original_type.type_index();
 
 	const bool is_dependent_type =
-		result_type == TypeCategory::UserDefined ||
-		result_type == TypeCategory::Struct ||
-		result_type == TypeCategory::TypeAlias ||
-		result_type == TypeCategory::Template;
+		current_type == TypeCategory::UserDefined ||
+		current_type == TypeCategory::Struct ||
+		current_type == TypeCategory::TypeAlias ||
+		current_type == TypeCategory::Template;
 	if (!is_dependent_type) {
-		return result_type_index.withCategory(result_type);
+		return current_type_index.withCategory(current_type);
 	}
 
 	std::string_view type_name;
@@ -814,14 +814,14 @@ TypeIndex Parser::substitute_template_parameter(
 		return type_iterator != getTypesByNameMap().end() ? type_iterator->second : nullptr;
 	};
 	auto assignResolvedType = [&](const TypeInfo& resolved_info) {
-		result_type_index = resolved_info.registeredTypeIndex();
-		result_type = resolved_info.typeEnum();
+		current_type_index = resolved_info.registeredTypeIndex();
+		current_type = resolved_info.typeEnum();
 	};
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args);
 	};
 	auto tryResolveConcreteTemplatePlaceholder = [&]() -> bool {
-		const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
+		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (!placeholder_info || !placeholder_info->isTemplateInstantiation()) {
 			return false;
 		}
@@ -874,20 +874,20 @@ TypeIndex Parser::substitute_template_parameter(
 	};
 
 	const TypeInfo* token_type_info = lookupTypeInfoByName(type_name);
-	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(result_type_index)) {
+	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(current_type_index)) {
 		type_name = StringTable::getStringView(indexed_type_info->name());
-		FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", result_type_index,
+		FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", current_type_index,
 				  ", type_name='", type_name, "', underlying_type=", static_cast<int>(indexed_type_info->typeEnum()),
 				  ", underlying_type_index=", indexed_type_info->type_index_);
 	} else if (!type_name.empty()) {
 		if (token_type_info) {
 			assignResolvedType(*token_type_info);
 		}
-		FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
+		FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", current_type_index, " is placeholder)");
 	}
 
 	if (type_name.empty()) {
-		return result_type_index.withCategory(result_type);
+		return current_type_index.withCategory(current_type);
 	}
 
 	bool found_match = false;
@@ -898,8 +898,8 @@ TypeIndex Parser::substitute_template_parameter(
 			if (found_match || template_param.name() != type_name) {
 				return;
 			}
-			result_type = template_arg.typeEnum();
-			result_type_index = template_arg.type_index;
+			current_type = template_arg.typeEnum();
+			current_type_index = template_arg.type_index;
 			found_match = true;
 		});
 	if (found_match) {
@@ -919,7 +919,7 @@ TypeIndex Parser::substitute_template_parameter(
 		if (const TypeInfo* direct_member_type = lookupQualifiedMemberType(base_name)) {
 			assignResolvedType(*direct_member_type);
 			found_match = true;
-		} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
+		} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 				   placeholder_info && placeholder_info->isTemplateInstantiation()) {
 			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
@@ -964,18 +964,17 @@ TypeIndex Parser::substitute_template_parameter(
 				const std::string_view instantiated_name = get_instantiated_class_name(base_template_name, template_args);
 				if (const TypeInfo* resolved_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*resolved_type_info);
-					result_type_index = result_type_index.withCategory(result_type);
 					found_match = true;
-					FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", result_type_index, ")");
+					FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", current_type_index, ")");
 				}
 			});
 	}
 
 	if (!found_match) {
-		const TypeInfo* alias_info = tryGetTypeInfo(result_type_index);
+		const TypeInfo* alias_info = tryGetTypeInfo(current_type_index);
 		if (alias_info &&
 			alias_info->resolvedType() == TypeCategory::UserDefined &&
-			alias_info->type_index_ != result_type_index) {
+			alias_info->type_index_ != current_type_index) {
 			if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_info->type_index_)) {
 				const std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
 				for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -985,10 +984,10 @@ TypeIndex Parser::substitute_template_parameter(
 					const TemplateParameterNode& template_param = template_params[i].as<TemplateParameterNode>();
 					if (template_param.name() == alias_target_name) {
 						const TemplateTypeArg& template_arg = template_args[i];
-						result_type = template_arg.typeEnum();
-						result_type_index = template_arg.type_index;
+						current_type = template_arg.typeEnum();
+						current_type_index = template_arg.type_index;
 						FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name,
-								  "' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(result_type));
+								  "' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(current_type));
 						found_match = true;
 						break;
 					}
@@ -998,7 +997,7 @@ TypeIndex Parser::substitute_template_parameter(
 	}
 
 	if (!found_match) {
-		const TypeInfo* placeholder_info = tryGetTypeInfo(result_type_index);
+		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (placeholder_info && placeholder_info->isTemplateInstantiation()) {
 			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
@@ -1048,7 +1047,6 @@ TypeIndex Parser::substitute_template_parameter(
 				const std::string_view instantiated_name = get_instantiated_class_name(concrete_template_name, concrete_args);
 				if (const TypeInfo* instantiated_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*instantiated_type_info);
-					result_type_index = result_type_index.withCategory(result_type);
 					found_match = true;
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 									 base_template_name, instantiated_name, concrete_template_name);
@@ -1058,7 +1056,7 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 	}
 
-	return result_type_index.withCategory(result_type);
+	return current_type_index.withCategory(current_type);
 }
 
 // Lookup symbol with template parameter checking

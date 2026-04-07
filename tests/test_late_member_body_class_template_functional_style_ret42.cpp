@@ -9,12 +9,15 @@ struct Box {
 
 template <typename T>
 struct Holder {
-	T run() {
-		return Box<T>(42).get();
+	T run(T value) {
+		return Box<T>(value).get();
 	}
 };
 
 int main() {
-	Holder<int> h;
-	return h.run();
+	Holder<int> ints;
+	Holder<long long> longs;
+	Holder<char> chars;
+
+	return ints.run(20) + static_cast<int>(longs.run(20)) + static_cast<int>(chars.run(2));
 }
