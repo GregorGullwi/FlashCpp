@@ -105,6 +105,14 @@ const FunctionDeclarationNode* getRangeIteratorDereferenceFunctionForSema(const 
 	return fallback;
 }
 
+const ConstructorDeclarationNode* resolveUniqueArityConstructor(const StructTypeInfo& struct_info, size_t argument_count) {
+	auto arity_resolution = resolve_constructor_overload_arity(struct_info, argument_count, true);
+	if (!arity_resolution.is_ambiguous) {
+		return arity_resolution.selected_overload;
+	}
+	return nullptr;
+}
+
 TypeSpecifierNode materializeTypeSpecifier(const CanonicalTypeDesc& desc) {
 	TypeSpecifierNode type_node(desc.type_index.withCategory(desc.category()), 0, Token{}, CVQualifier::None, ReferenceQualifier::None);
 	type_node.set_cv_qualifier(desc.base_cv);
@@ -4641,12 +4649,19 @@ void SemanticAnalysis::tryAnnotateConstructorCallArgConversions(const Constructo
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
 	});
-	if (arg_types.size() != num_args)
+	if (arg_types.size() != num_args) {
+		if (const ConstructorDeclarationNode* unique_arity_ctor = resolveUniqueArityConstructor(*struct_info, num_args)) {
+			call_node.set_resolved_constructor(unique_arity_ctor);
+		}
 		return;
+	}
 
 	// skip_implicit=true: avoid false ambiguity between an explicit copy/move
 	// ctor and a compiler-generated implicit one with the same signature.
 	auto resolution = resolve_constructor_overload(*struct_info, arg_types, true);
+	if (!resolution.selected_overload) {
+		resolution.selected_overload = resolveUniqueArityConstructor(*struct_info, num_args);
+	}
 	if (resolution.is_ambiguous && require_constructor_match)
 		throw CompileError(buildConstructorDiagnostic("Ambiguous constructor call", num_args));
 	if (!resolution.selected_overload) {
@@ -4717,13 +4732,26 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		CanonicalTypeId inferred_arg_type_id{};
 		auto arg_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
 		if (!arg_type_opt.has_value()) {
-			return;
+			// Preserve the post-loop unique-arity recovery path for cases where sema
+			// cannot infer every overload-resolution argument type yet.
+			arg_types.clear();
+			inferred_arg_type_ids.clear();
+			break;
 		}
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
 	}
+	if (arg_types.size() != initializers.size()) {
+		if (const ConstructorDeclarationNode* unique_arity_ctor = resolveUniqueArityConstructor(struct_info, initializers.size())) {
+			init_list.set_resolved_constructor(unique_arity_ctor);
+		}
+		return;
+	}
 
 	auto resolution = resolve_constructor_overload(struct_info, arg_types, true);
+	if (!resolution.selected_overload) {
+		resolution.selected_overload = resolveUniqueArityConstructor(struct_info, initializers.size());
+	}
 	if (!resolution.selected_overload) {
 		// No constructor matched — restore the old scoped-enum diagnostic.
 		// If any argument is a scoped enum that couldn't be implicitly converted,
