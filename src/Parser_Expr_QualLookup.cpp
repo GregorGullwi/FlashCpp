@@ -810,8 +810,8 @@ TypeIndex Parser::substitute_template_parameter(
 		if (name.empty()) {
 			return nullptr;
 		}
-		auto type_iterator = getTypesByNameMap().find(StringTable::getOrInternStringHandle(name));
-		return type_iterator != getTypesByNameMap().end() ? type_iterator->second : nullptr;
+		auto found_type = getTypesByNameMap().find(StringTable::getOrInternStringHandle(name));
+		return found_type != getTypesByNameMap().end() ? found_type->second : nullptr;
 	};
 	auto assignResolvedType = [&](const TypeInfo& resolved_info) {
 		current_type_index = resolved_info.registeredTypeIndex();
@@ -890,25 +890,25 @@ TypeIndex Parser::substitute_template_parameter(
 		return current_type_index.withCategory(current_type);
 	}
 
-	bool found_match = false;
+	bool substitution_applied = false;
 	forEachNonPackTemplateParamArgBinding(
 		template_params,
 		template_args,
 		[&](const TemplateParameterNode& template_param, const TemplateTypeArg& template_arg, size_t) {
-			if (found_match || template_param.name() != type_name) {
+			if (substitution_applied || template_param.name() != type_name) {
 				return;
 			}
 			current_type = template_arg.typeEnum();
 			current_type_index = template_arg.type_index;
-			found_match = true;
+			substitution_applied = true;
 		});
-	if (found_match) {
+	if (substitution_applied) {
 		tryResolveConcreteTemplatePlaceholder();
 	} else if (type_name.find("::") == std::string_view::npos) {
-		found_match = tryResolveConcreteTemplatePlaceholder();
+		substitution_applied = tryResolveConcreteTemplatePlaceholder();
 	}
 
-	if (!found_match && type_name.find("::") != std::string_view::npos) {
+	if (!substitution_applied && type_name.find("::") != std::string_view::npos) {
 		const size_t separator_pos = type_name.rfind("::");
 		const std::string_view base_name = type_name.substr(0, separator_pos);
 		const std::string_view member_name = type_name.substr(separator_pos + 2);
@@ -918,7 +918,7 @@ TypeIndex Parser::substitute_template_parameter(
 
 		if (const TypeInfo* direct_member_type = lookupQualifiedMemberType(base_name)) {
 			assignResolvedType(*direct_member_type);
-			found_match = true;
+			substitution_applied = true;
 		} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 				   placeholder_info && placeholder_info->isTemplateInstantiation()) {
 			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
@@ -929,18 +929,18 @@ TypeIndex Parser::substitute_template_parameter(
 				const std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_args);
 				if (const TypeInfo* instantiated_member_type = lookupQualifiedMemberType(instantiated_base)) {
 					assignResolvedType(*instantiated_member_type);
-					found_match = true;
+					substitution_applied = true;
 				}
 			}
 		}
 	}
 
-	if (!found_match && type_name.find('_') != std::string_view::npos) {
+	if (!substitution_applied && type_name.find('_') != std::string_view::npos) {
 		forEachNonPackTemplateParamArgBinding(
 			template_params,
 			template_args,
 			[&](const TemplateParameterNode& template_param, const TemplateTypeArg&, size_t) {
-				if (found_match) {
+				if (substitution_applied) {
 					return;
 				}
 
@@ -964,13 +964,13 @@ TypeIndex Parser::substitute_template_parameter(
 				const std::string_view instantiated_name = get_instantiated_class_name(base_template_name, template_args);
 				if (const TypeInfo* resolved_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*resolved_type_info);
-					found_match = true;
+					substitution_applied = true;
 					FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", current_type_index, ")");
 				}
 			});
 	}
 
-	if (!found_match) {
+	if (!substitution_applied) {
 		const TypeInfo* alias_info = tryGetTypeInfo(current_type_index);
 		if (alias_info &&
 			alias_info->resolvedType() == TypeCategory::UserDefined &&
@@ -988,7 +988,7 @@ TypeIndex Parser::substitute_template_parameter(
 						current_type_index = template_arg.type_index;
 						FLASH_LOG(Templates, Debug, "Substituted type alias '", type_name,
 								  "' (which refers to template param '", alias_target_name, "') with type=", static_cast<int>(current_type));
-						found_match = true;
+						substitution_applied = true;
 						break;
 					}
 				}
@@ -996,7 +996,7 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 	}
 
-	if (!found_match) {
+	if (!substitution_applied) {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (placeholder_info && placeholder_info->isTemplateInstantiation()) {
 			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
@@ -1047,7 +1047,7 @@ TypeIndex Parser::substitute_template_parameter(
 				const std::string_view instantiated_name = get_instantiated_class_name(concrete_template_name, concrete_args);
 				if (const TypeInfo* instantiated_type_info = lookupTypeInfoByName(instantiated_name)) {
 					assignResolvedType(*instantiated_type_info);
-					found_match = true;
+					substitution_applied = true;
 					FLASH_LOG_FORMAT(Templates, Debug, "Resolved template-template placeholder '{}' -> '{}' via concrete template '{}'",
 									 base_template_name, instantiated_name, concrete_template_name);
 				}
