@@ -314,6 +314,9 @@ ASTNode Parser::substituteTemplateParameters(
 		// reparse_template_function_body via createBoundIdentifier / checkPhase1.
 		if (std::holds_alternative<IdentifierNode>(expr)) {
 			const IdentifierNode& id_node = std::get<IdentifierNode>(expr);
+			if (id_node.binding() == IdentifierBinding::Local) {
+				return emplace_node<ExpressionNode>(IdentifierNode(id_node.identifier_token()));
+			}
 			if (id_node.binding() == IdentifierBinding::Unresolved) {
 				IdentifierNode rebound = createBoundIdentifier(id_node.identifier_token());
 				IdentifierBinding new_binding = rebound.binding();

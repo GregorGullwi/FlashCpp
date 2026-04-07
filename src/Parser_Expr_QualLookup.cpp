@@ -842,7 +842,8 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		const std::string_view placeholder_name = StringTable::getStringView(placeholder_info->name());
-		const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+		const std::string_view base_template_name = buildQualifiedNameFromHandle(
+			placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 		for (const ASTNode& template_param_node : template_params) {
 			if (!template_param_node.is<TemplateParameterNode>()) {
 				continue;
@@ -930,16 +931,31 @@ TypeIndex Parser::substitute_template_parameter(
 		const size_t separator_pos = type_name.rfind("::");
 		const std::string_view base_name = type_name.substr(0, separator_pos);
 		const std::string_view member_name = type_name.substr(separator_pos + 2);
+		const TypeInfo* current_placeholder_info = tryGetTypeInfo(current_type_index);
 		auto lookupQualifiedMemberType = [&](std::string_view owner_name) -> const TypeInfo* {
 			return lookupTypeInfoByName(StringBuilder().append(owner_name).append("::").append(member_name).commit());
 		};
 
-		if (const TypeInfo* direct_member_type = lookupQualifiedMemberType(base_name)) {
+		const TypeInfo* direct_member_type = lookupQualifiedMemberType(base_name);
+		const bool is_unresolved_self_placeholder =
+			direct_member_type &&
+			direct_member_type == current_placeholder_info &&
+			direct_member_type->is_incomplete_instantiation_;
+		if (direct_member_type && !is_unresolved_self_placeholder) {
 			assignResolvedType(*direct_member_type);
 			substitution_applied = true;
+		} else if (is_unresolved_self_placeholder &&
+				   current_placeholder_info &&
+				   current_placeholder_info->isTemplateInstantiation() &&
+				   // Dependent member-template placeholders are encoded as `Name<k args>`;
+				   // checking for '<' is sufficient here because this branch only handles
+				   // those synthesized placeholder names, not raw source tokens.
+				   member_name.find('<') != std::string_view::npos) {
+			substitution_applied = tryResolveConcreteTemplatePlaceholder();
 		} else if (const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 				   placeholder_info && placeholder_info->isTemplateInstantiation()) {
-			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+			const std::string_view base_template_name = buildQualifiedNameFromHandle(
+				placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 				std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
@@ -1023,7 +1039,8 @@ TypeIndex Parser::substitute_template_parameter(
 	if (!substitution_applied) {
 		const TypeInfo* placeholder_info = tryGetTypeInfo(current_type_index);
 		if (placeholder_info && placeholder_info->isTemplateInstantiation()) {
-			const std::string_view base_template_name = StringTable::getStringView(placeholder_info->baseTemplateName());
+			const std::string_view base_template_name = buildQualifiedNameFromHandle(
+				placeholder_info->sourceNamespace(), StringTable::getStringView(placeholder_info->baseTemplateName()));
 			for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
 				if (!template_params[i].is<TemplateParameterNode>()) {
 					continue;
