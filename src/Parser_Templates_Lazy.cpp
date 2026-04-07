@@ -1111,7 +1111,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 
 	// Check if already at or past target phase
 	ClassInstantiationPhase current_phase = registry.getCurrentPhase(instantiated_name);
-	const ClassInstantiationPhase initial_phase = current_phase;
+	const ClassInstantiationPhase initialPhase = current_phase;
 	if (static_cast<uint8_t>(current_phase) >= static_cast<uint8_t>(target_phase)) {
 		return true;	 // Already done
 	}
@@ -1184,7 +1184,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 		FLASH_LOG(Templates, Debug, "Completed Full phase for: ", instantiated_name);
 	}
 
-	if (static_cast<uint8_t>(initial_phase) < static_cast<uint8_t>(target_phase)) {
+	if (static_cast<uint8_t>(initialPhase) < static_cast<uint8_t>(target_phase)) {
 		normalizePendingSemanticRootsIfAvailable();
 	}
 
