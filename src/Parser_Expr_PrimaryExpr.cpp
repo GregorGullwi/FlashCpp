@@ -4243,7 +4243,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								{
 									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
 									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
-										ast_nodes_.push_back(*instantiated_struct);
+										registerLateMaterializedTopLevelNode(*instantiated_struct);
 									}
 								}
 
@@ -4328,7 +4328,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 								{
 									auto instantiated_struct = try_instantiate_class_template(identifier_token.value(), *explicit_template_args);
 									if (instantiated_struct.has_value() && instantiated_struct->is<StructDeclarationNode>()) {
-										ast_nodes_.push_back(*instantiated_struct);
+										registerLateMaterializedTopLevelNode(*instantiated_struct);
 									}
 								}
 

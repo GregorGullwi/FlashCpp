@@ -111,7 +111,7 @@ ParseResult Parser::parse_template_declaration() {
 				if (instantiated.has_value()) {
 					// Success - the template is now explicitly instantiated
 					// Add the instantiated struct to the AST so its member functions get code-generated
-					ast_nodes_.push_back(*instantiated);
+					registerLateMaterializedTopLevelNode(*instantiated);
 					FLASH_LOG(Templates, Debug, "Successfully explicitly instantiated: ", name_token.value());
 				} else {
 					// Template not found or instantiation failed
