@@ -10,6 +10,8 @@
 #include "ParserTemplateClassShared.h"
 #include <cctype>
 
+static constexpr size_t kMaxAliasUnwrapIterations = 64;
+
 // Compute the canonical instantiated lookup name for a member function.
 // For conversion operators (operator with an identifier suffix, e.g. "operator value_type"),
 // the substituted return type gives the canonical name (e.g. "operator int").
@@ -897,51 +899,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 											 ConstructorDeclarationNode& new_ctor,
 											 const auto& tmpl_params,
 											 const auto& tmpl_args) {
-		auto resolveBaseInitializerName = [&](StringHandle base_name) {
-			for (size_t i = 0; i < tmpl_params.size() && i < tmpl_args.size(); ++i) {
-				if (!tmpl_params[i].template is<TemplateParameterNode>()) {
-					continue;
-				}
-
-				const TemplateParameterNode& param = tmpl_params[i].template as<TemplateParameterNode>();
-				if (param.kind() != TemplateParameterKind::Type || param.nameHandle() != base_name) {
-					continue;
-				}
-
-				const TemplateTypeArg& concrete_arg = tmpl_args[i];
-				if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
-					break;
-				}
-
-				const TypeInfo* base_type_info = tryGetTypeInfo(concrete_arg.type_index);
-				if (!base_type_info) {
-					break;
-				}
-
-				if (base_type_info->isTemplateInstantiation() &&
-					(!base_type_info->getStructInfo() || !base_type_info->getStructInfo()->total_size.is_set())) {
-					std::string_view base_template_name = StringTable::getStringView(base_type_info->baseTemplateName());
-					std::vector<TemplateTypeArg> concrete_base_args =
-						materializeTemplateArgs(*base_type_info, tmpl_params, tmpl_args);
-					auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
-					if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
-						registerLateMaterializedTopLevelNode(*instantiated_base);
-					}
-					std::string_view instantiated_base_name =
-						get_instantiated_class_name(base_template_name, concrete_base_args);
-					auto instantiated_base_it =
-						getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
-					if (instantiated_base_it != getTypesByNameMap().end()) {
-						return instantiated_base_it->second->name();
-					}
-				}
-
-				return base_type_info->name();
-			}
-
-			return base_name;
-		};
-
 		for (const auto& [name, expr] : orig_ctor.member_initializers()) {
 			new_ctor.add_member_initializer(name, substituteTemplateParameters(expr, tmpl_params, tmpl_args));
 		}
@@ -951,7 +908,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& arg : init.arguments) {
 				substituteInitArg(arg, substituted_args, tmpl_params, tmpl_args);
 			}
-			new_ctor.add_base_initializer(resolveBaseInitializerName(init.getBaseClassName()), std::move(substituted_args));
+			new_ctor.add_base_initializer(
+				resolveBaseInitializerNameForTemplateArgs(init.getBaseClassName(), tmpl_params, tmpl_args),
+				std::move(substituted_args));
 		}
 		if (orig_ctor.delegating_initializer().has_value()) {
 			const auto& del_init = *orig_ctor.delegating_initializer();
@@ -3619,8 +3578,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 		}
 
-		size_t max_alias_depth = 10;
-		while (concrete_type && !concrete_type->isStruct() && max_alias_depth-- > 0) {
+		// Deep alias chains show up in template-heavy code; keep enough headroom
+		// before stopping alias resolution.
+		size_t alias_unwrap_iterations_remaining = kMaxAliasUnwrapIterations;
+		while (concrete_type && !concrete_type->isStruct() && alias_unwrap_iterations_remaining-- > 0) {
 			const TypeInfo* underlying_type = tryGetTypeInfo(concrete_type->type_index_);
 			if (!underlying_type || underlying_type == concrete_type) {
 				break;

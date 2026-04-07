@@ -164,6 +164,9 @@ struct StructTypeInfo {
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
+		if (isZeroWidthBitfield(bitfield_width)) {
+			effective_alignment = 1;
+		}
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
@@ -182,7 +185,9 @@ struct StructTypeInfo {
 				total_size = toSizeInBytes(offset + member_size);
 			}
 		}
-		alignment = std::max(alignment, effective_alignment);
+		if (!isZeroWidthBitfield(bitfield_width)) {
+			alignment = std::max(alignment, effective_alignment);
+		}
 	}
 
 	// StringHandle overload for addMemberFunction - Phase 7A
@@ -274,13 +279,17 @@ struct StructTypeInfo {
 		return alignment_value == 0 ? size : ((size + alignment_value - 1) & ~(alignment_value - 1));
 	}
 
+	static bool isZeroWidthBitfield(const std::optional<size_t>& bitfield_width) {
+		return bitfield_width.has_value() && *bitfield_width == 0;
+	}
+
 	bool hasDependentOrIncompleteLayout() const {
 		if (has_deferred_base_classes) {
 			return true;
 		}
 
 		for (const auto& member : members) {
-			if (member.size == 0) {
+			if (member.size == 0 && !isZeroWidthBitfield(member.bitfield_width)) {
 				return true;
 			}
 		}

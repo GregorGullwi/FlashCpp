@@ -907,6 +907,54 @@ private:
 			node.set_outer_template_bindings(outer_template_param_names, filtered_template_args);
 		}
 	}
+	template <typename TemplateParamsContainer, typename TemplateArgsContainer>
+	StringHandle resolveBaseInitializerNameForTemplateArgs(
+		StringHandle base_name,
+		const TemplateParamsContainer& template_params,
+		const TemplateArgsContainer& template_args) {
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].template is<TemplateParameterNode>()) {
+				continue;
+			}
+
+			const TemplateParameterNode& param = template_params[i].template as<TemplateParameterNode>();
+			if (param.kind() != TemplateParameterKind::Type || param.nameHandle() != base_name) {
+				continue;
+			}
+
+			const TemplateTypeArg& concrete_arg = template_args[i];
+			if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+				break;
+			}
+
+			const TypeInfo* base_type_info = tryGetTypeInfo(concrete_arg.type_index);
+			if (!base_type_info) {
+				break;
+			}
+
+			if (base_type_info->isTemplateInstantiation() &&
+				(!base_type_info->getStructInfo() || !base_type_info->getStructInfo()->total_size.is_set())) {
+				std::string_view base_template_name = StringTable::getStringView(base_type_info->baseTemplateName());
+				std::vector<TemplateTypeArg> concrete_base_args =
+					materializeTemplateArgs(*base_type_info, template_params, template_args);
+				auto instantiated_base = try_instantiate_class_template(base_template_name, concrete_base_args);
+				if (instantiated_base.has_value() && instantiated_base->is<StructDeclarationNode>()) {
+					registerLateMaterializedTopLevelNode(*instantiated_base);
+				}
+				std::string_view instantiated_base_name =
+					get_instantiated_class_name(base_template_name, concrete_base_args);
+				auto instantiated_base_it =
+					getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
+				if (instantiated_base_it != getTypesByNameMap().end()) {
+					return instantiated_base_it->second->name();
+				}
+			}
+
+			return base_type_info->name();
+		}
+
+		return base_name;
+	}
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
 	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Instantiate variable template
