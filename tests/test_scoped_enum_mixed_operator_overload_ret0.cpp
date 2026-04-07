@@ -22,6 +22,10 @@ constexpr MemoryOrder operator|(MemoryOrder order, MemoryOrderModifier modifier)
 constexpr MemoryOrder operator&(MemoryOrder order, MemoryOrderModifier modifier) {
 	return MemoryOrder(int(order) & int(modifier));
 }
+
+constexpr MemoryOrder foldOrder(MemoryOrder order) {
+	return order == MemoryOrder::release ? MemoryOrder::acquire : order;
+}
 } // namespace std_like
 
 int main() {
@@ -30,11 +34,14 @@ int main() {
 	MemoryOrder base = MemoryOrder::acquire;
 	MemoryOrder combined = base | hle_release;
 	MemoryOrder extracted = combined & modifier_mask;
+	MemoryOrder nested = MemoryOrder(foldOrder(combined & mask) | MemoryOrderModifier(combined & modifier_mask));
 
 	if (int(combined) != (int(MemoryOrder::acquire) | int(hle_release)))
 		return 1;
 	if (int(extracted) != int(hle_release))
 		return 2;
+	if (int(nested) != (int(MemoryOrder::acquire) | int(hle_release)))
+		return 3;
 
 	return 0;
 }
