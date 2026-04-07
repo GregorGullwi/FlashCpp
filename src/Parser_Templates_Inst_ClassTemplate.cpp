@@ -2987,6 +2987,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Evaluate the substituted expression
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
 				eval_ctx.struct_node = &instantiated_struct_ref;
 
 				auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);
@@ -7743,6 +7744,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		// Evaluate the substituted expression
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		eval_ctx.struct_node = &instantiated_struct.as<StructDeclarationNode>();
 
 		auto eval_result = ConstExpr::Evaluator::evaluate(substituted_expr, eval_ctx);

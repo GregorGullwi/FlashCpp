@@ -1127,6 +1127,7 @@ ASTNode Parser::substituteTemplateParameters(
 		if (if_stmt.is_constexpr()) {
 			ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 			eval_ctx.parser = this;
+			eval_ctx.sema = getActiveSemanticAnalysis();
 			auto eval_result = ConstExpr::Evaluator::evaluate(substituted_condition, eval_ctx);
 			if (eval_result.success()) {
 				bool condition_value = eval_result.as_int() != 0;

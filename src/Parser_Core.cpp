@@ -9,6 +9,7 @@
 #include "LazyMemberResolver.h"
 #include "InstantiationQueue.h"
 #include "RebindStaticMemberAst.h"
+#include "SemanticAnalysis.h"
 #include <atomic> // Include atomic for constrained partial specialization counter
 #include <string_view> // Include string_view header
 #include <unordered_set> // Include unordered_set header
@@ -394,6 +395,20 @@ Parser::Parser(Lexer& lexer, CompileContext& context)
 	: lexer_(lexer), context_(context), current_token_(lexer_.next_token()) {
 	initialize_native_types();
 	ast_nodes_.reserve(default_ast_tree_size_);
+}
+
+void Parser::setActiveSemanticAnalysis(SemanticAnalysis* sema) {
+	active_sema_ = sema;
+}
+
+SemanticAnalysis* Parser::getActiveSemanticAnalysis() const {
+	return active_sema_;
+}
+
+void Parser::normalizePendingSemanticRootsIfAvailable() {
+	if (active_sema_ != nullptr) {
+		active_sema_->normalizePendingSemanticRoots();
+	}
 }
 
 int Parser::getStructTypeSizeBits(TypeIndex type_index) const {

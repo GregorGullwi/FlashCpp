@@ -263,6 +263,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			: makeDirectCallExpr(target_decl, std::move(args), called_from);
 		return gChunkedAnyStorage.emplace_back<ExpressionNode>(std::move(new_call));
 	};
+	auto normalizePendingSemanticRoots = [&]() {
+		parser_.normalizePendingSemanticRootsIfAvailable();
+	};
 	std::vector<ASTNode> explicit_template_arg_nodes;
 
 	// Check if this function call has explicit template arguments (e.g., base_trait<T>())
@@ -462,12 +465,20 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 					return std::nullopt;
 				}
 				if (have_complete_substituted_arg_types) {
-					return parser_.try_instantiate_template_explicit(
+					std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(
 						template_name,
 						substituted_template_args,
 						substituted_arg_types);
+					if (instantiated.has_value()) {
+						normalizePendingSemanticRoots();
+					}
+					return instantiated;
 				}
-				return parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
+				std::optional<ASTNode> instantiated = parser_.try_instantiate_template_explicit(template_name, substituted_template_args);
+				if (instantiated.has_value()) {
+					normalizePendingSemanticRoots();
+				}
+				return instantiated;
 			};
 			auto hasResolvedTypeOwner = [&](StringHandle owner_name_handle) {
 				const auto& types_by_name = getTypesByNameMap();
@@ -486,7 +497,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 						if (owner_template.has_value()) {
 							// Only class-template owners can be materialized here. Namespace-qualified
 							// calls like std::__atomic_impl::fn should skip this path entirely.
-							parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
+							std::optional<ASTNode> instantiated_owner_node = parser_.try_instantiate_class_template(owner_name, current_inst_args, true);
+							if (instantiated_owner_node.has_value()) {
+								normalizePendingSemanticRoots();
+							}
 							std::string_view instantiated_owner = parser_.get_instantiated_class_name(owner_name, current_inst_args);
 							if (!instantiated_owner.empty()) {
 								owner_name = instantiated_owner;
@@ -500,6 +514,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 							owner_name,
 							member_name,
 							substituted_template_args);
+						if (instantiated_template.has_value()) {
+							normalizePendingSemanticRoots();
+						}
 					}
 				}
 				if (!instantiated_template.has_value()) {
@@ -541,9 +558,15 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 			// Try variable template instantiation before class template
 			auto var_template_node = parser_.try_instantiate_variable_template(func_name, substituted_template_args);
+			if (var_template_node.has_value()) {
+				normalizePendingSemanticRoots();
+			}
 			// If not found by simple name, try qualified name if available
 			if (!var_template_node.has_value() && call.has_qualified_name()) {
 				var_template_node = parser_.try_instantiate_variable_template(call.qualified_name(), substituted_template_args);
+				if (var_template_node.has_value()) {
+					normalizePendingSemanticRoots();
+				}
 			}
 			if (var_template_node.has_value()) {
 				FLASH_LOG(Templates, Debug, "  Successfully instantiated variable template: ", func_name);
@@ -562,8 +585,14 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			auto instantiated_node = !qualified_name.empty()
 				? parser_.try_instantiate_class_template(qualified_name, substituted_template_args, true)
 				: parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+			if (instantiated_node.has_value()) {
+				normalizePendingSemanticRoots();
+			}
 			if (!instantiated_node.has_value() && !qualified_name.empty()) {
 				instantiated_node = parser_.try_instantiate_class_template(func_name, substituted_template_args, true);
+				if (instantiated_node.has_value()) {
+					normalizePendingSemanticRoots();
+				}
 			}
 			if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 				const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
@@ -669,6 +698,9 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			// Use shared helper to try instantiation with various name variations
 			auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
 				parser_, template_func_name, template_func_name, deduced_template_args);
+			if (instantiated_opt.has_value()) {
+				normalizePendingSemanticRoots();
+			}
 
 			if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 				const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();
@@ -705,7 +737,10 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 
 		if (!inst_args.empty()) {
 			// Instantiate the template with concrete types
-			parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+			std::optional<ASTNode> instantiated_base = parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+			if (instantiated_base.has_value()) {
+				normalizePendingSemanticRoots();
+			}
 			std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
 
 			// Build the corrected qualified function name
@@ -738,6 +773,7 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 				auto lazy_info = lazy_registry.getLazyMemberInfoAny(inst_name_handle, member_handle);
 				if (lazy_info.has_value()) {
 					parser_.instantiateLazyMemberFunction(*lazy_info);
+					normalizePendingSemanticRoots();
 					lazy_registry.markInstantiated(inst_name_handle, member_handle, lazy_info->identity.is_const_method);
 				}
 			}
@@ -1071,7 +1107,10 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (!inst_args.empty()) {
 		FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name,
 				  "' with ", inst_args.size(), " arguments");
-		parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+		std::optional<ASTNode> instantiated_namespace = parser_.try_instantiate_class_template(base_template_name, inst_args, true);
+		if (instantiated_namespace.has_value()) {
+			parser_.normalizePendingSemanticRootsIfAvailable();
+		}
 
 		// After instantiation, get the actual instantiated name (with new hash based on concrete types)
 		std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
@@ -1311,6 +1350,9 @@ TypeSpecifierNode ExpressionSubstitutor::substituteInType(const TypeSpecifierNod
 
 				if (needs_substitution && !substituted_args.empty()) {
 					auto instantiated_node = parser_.try_instantiate_class_template(base_name, substituted_args, true);
+					if (instantiated_node.has_value()) {
+						parser_.normalizePendingSemanticRootsIfAvailable();
+					}
 					if (instantiated_node.has_value() && instantiated_node->is<StructDeclarationNode>()) {
 						const StructDeclarationNode& class_decl = instantiated_node->as<StructDeclarationNode>();
 						StringHandle instantiated_name = class_decl.name();
@@ -1343,6 +1385,7 @@ void ExpressionSubstitutor::ensureTemplateInstantiated(
 	// Attempt to instantiate the template through the parser
 	auto result = parser_.try_instantiate_class_template(template_name, args, true);
 	if (result.has_value()) {
+		parser_.normalizePendingSemanticRootsIfAvailable();
 		FLASH_LOG(Templates, Debug, "  Successfully ensured instantiation of: ", template_name);
 	} else {
 		FLASH_LOG(Templates, Debug, "  Could not instantiate (may already exist or not be a class template): ", template_name);

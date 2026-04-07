@@ -752,6 +752,7 @@ ParseResult Parser::parse_lambda_expression() {
 			if (noexcept_expr.node().has_value()) {
 				ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 				eval_ctx.parser = this;
+				eval_ctx.sema = getActiveSemanticAnalysis();
 				auto eval_result = ConstExpr::Evaluator::evaluate(*noexcept_expr.node(), eval_ctx);
 				if (eval_result.success()) {
 					lambda_is_noexcept = eval_result.as_int() != 0;
@@ -1480,6 +1481,7 @@ ParseResult Parser::parse_if_statement() {
 	if (is_constexpr && has_parameter_packs_ && condition.node().has_value()) {
 		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
 		eval_ctx.parser = this;
+		eval_ctx.sema = getActiveSemanticAnalysis();
 		auto eval_result = ConstExpr::Evaluator::evaluate(*condition.node(), eval_ctx);
 		if (eval_result.success()) {
 			bool condition_value = eval_result.as_int() != 0;

@@ -49,6 +49,7 @@ struct CallInfo;
 class SemanticAnalysis {
 public:
 	SemanticAnalysis(Parser& parser, CompileContext& context, SymbolTable& symbols);
+	~SemanticAnalysis();
 
 	// Main entry point: run the translation-unit semantic pass.
 	// Phase 1 boundary guard: starts with a lightweight walk over the sema-owned
