@@ -293,6 +293,9 @@ Progress since that initial checkpoint:
 - added `tests/test_late_member_body_operator_arrow_ret42.cpp` as a regression for `forward(&inner)->value` inside a lazily instantiated template member body, covering the parser-owned substitution path that previously flattened `->` into `.`
 - restored `tests/test_arrow_member_in_template_body_ret42.cpp` for the original smart-pointer-member case (`ptr->value` on a `SmartPtr` data member inside a template member body)
 - taught `IrGenerator_MemberAccess.cpp` to preserve the operator-`->` handoff across nested member-access lowering, so `this.ptr->value` no longer gets forced down the plain pointer-dereference path before overload resolution can call `SmartPtr::operator->()`
+- taught `substituteTemplateParameters(...)` and `replacePackIdentifierInExpr(...)` to recurse through `PointerToMemberAccessNode` and to handle direct `ConstructorCallNode` / `PointerToMemberAccessNode` AST nodes instead of only their `ExpressionNode`-wrapped forms
+- widened late type-specifier substitution so placeholder `Auto` type nodes created for dependent functional-style constructor calls can still rebind through `substitute_template_parameter(...)` onto the concrete instantiated class before sema/codegen consume them
+- added `tests/test_late_member_body_pointer_to_member_ret42.cpp` as a regression for `decltype((Box<T>(42)).*member)` inside a lazily instantiated member body, covering the pointer-to-member path that previously left the nested `Box<T>(...)` constructor call bound to the parser placeholder type
 
 Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
 
@@ -302,6 +305,7 @@ The next obvious late-materialization gap is now narrower and sits beyond the co
 - functional-style calls like `Box<T>(2)` now also rebind their constructor-call type node onto the concrete instantiated class before sema/codegen consume it
 - operator-arrow and builtin-addressof metadata now also survive late template body substitution instead of being lost while rebuilding expression nodes
 - nested member-access lowering now keeps `ptr->member` eligible for operator-`->` overload dispatch even when the `ptr` subexpression is first materialized as `this.ptr`
+- pointer-to-member substitution now also walks into late-instantiated child expressions instead of leaving nested constructor calls stuck on parser placeholder types when `.*` / `->*` expressions materialize after the main sema pass
 - the remaining follow-up should focus on other parser-owned dependent-type recovery surfaces and fallback reductions near this same late-materialization boundary where late substitution still rebuilds AST instead of consuming fully sema-owned annotations
 
 ## Why this should simplify the code
