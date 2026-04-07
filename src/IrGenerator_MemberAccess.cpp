@@ -1029,6 +1029,47 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		return nullptr;
 	};
 
+	auto getMemberReferenceQualifier = [](const StructMember& member) -> CVReferenceQualifier {
+		if (member.is_rvalue_reference()) {
+			return CVReferenceQualifier::RValueReference;
+		}
+		if (member.is_reference()) {
+			return CVReferenceQualifier::LValueReference;
+		}
+		return CVReferenceQualifier::None;
+	};
+
+	auto getOperatorArrowMangledName = [&](const FunctionDeclarationNode& func_decl,
+										   TypeIndex object_type_index) {
+		const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+		std::string_view struct_name = StringTable::getStringView(getTypeInfo(object_type_index).name());
+		std::string_view operator_func_name = "operator->";
+		std::vector<TypeSpecifierNode> empty_params;
+		std::vector<std::string_view> empty_namespace;
+		return NameMangling::generateMangledName(
+			operator_func_name,
+			return_type,
+			empty_params,
+			false,
+			struct_name,
+			empty_namespace,
+			Linkage::CPlusPlus,
+			func_decl.is_const_member_function());
+	};
+
+	auto getStructObjectSizeBits = [&](TypeIndex object_type_index) -> int {
+		int size_bits = 0;
+		if (const TypeInfo* type_info = tryGetTypeInfo(object_type_index)) {
+			size_bits = type_info->sizeInBits().value;
+			if (size_bits == 0) {
+				if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+					size_bits = struct_info->sizeInBits().value;
+				}
+			}
+		}
+		return size_bits == 0 ? 64 : size_bits;
+	};
+
 	// OPERATOR-> OVERLOAD RESOLUTION
 	// If this is arrow access (obj->member), check if the object has operator->() overload
 	if (const IdentifierNode* ident = is_arrow ? get_identifier() : nullptr) {
@@ -1074,25 +1115,10 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				const StructMemberFunction& member_func = *overload_result.member_overload;
 				const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 
-				// Get struct name for mangling
-				std::string_view struct_name = StringTable::getStringView(getTypeInfo(operator_object_type).name());
-
 				// Get the return type from the function declaration (should be a pointer)
 				const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
 
-				// Generate mangled name for operator->
-				std::string_view operator_func_name = "operator->";
-				std::vector<TypeSpecifierNode> empty_params;
-				std::vector<std::string_view> empty_namespace;
-				auto mangled_name = NameMangling::generateMangledName(
-					operator_func_name,
-					return_type,
-					empty_params,
-					false,
-					struct_name,
-					empty_namespace,
-					Linkage::CPlusPlus,
-					func_decl.is_const_member_function());
+				auto mangled_name = getOperatorArrowMangledName(func_decl, operator_object_type);
 
 				// Generate the call to operator->()
 				TempVar ptr_result = var_counter.next();
@@ -1111,11 +1137,7 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 					member_load.object = StringTable::getOrInternStringHandle("this"sv);
 					member_load.member_name = member_object->getName();
 					member_load.offset = static_cast<int>(member_object_offset);
-					member_load.ref_qualifier = ((member_object->is_rvalue_reference()
-						? CVReferenceQualifier::RValueReference
-						: ((member_object->is_reference())
-							? CVReferenceQualifier::LValueReference
-							: CVReferenceQualifier::None)));
+					member_load.ref_qualifier = getMemberReferenceQualifier(*member_object);
 					member_load.struct_type_info = nullptr;
 					member_load.is_pointer_to_member = true;
 					ir_.addInstruction(IrInstruction(IrOpcode::MemberAccess, std::move(member_load), memberAccessNode.member_token()));
@@ -1311,33 +1333,8 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			const StructMemberFunction& member_func = *overload_result.member_overload;
 			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
 			const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
-
-			std::string_view struct_name = StringTable::getStringView(getTypeInfo(base_type_index).name());
-			std::string_view operator_func_name = "operator->";
-			std::vector<TypeSpecifierNode> empty_params;
-			std::vector<std::string_view> empty_namespace;
-			auto mangled_name = NameMangling::generateMangledName(
-				operator_func_name,
-				return_type,
-				empty_params,
-				false,
-				struct_name,
-				empty_namespace,
-				Linkage::CPlusPlus,
-				func_decl.is_const_member_function());
-
-			int base_size_bits = 64;
-			if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
-				base_size_bits = base_type_info->sizeInBits().value;
-				if (base_size_bits == 0) {
-					if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
-						base_size_bits = base_struct_info->sizeInBits().value;
-					}
-				}
-			}
-			if (base_size_bits == 0) {
-				base_size_bits = 64;
-			}
+			auto mangled_name = getOperatorArrowMangledName(func_decl, base_type_index);
+			int base_size_bits = getStructObjectSizeBits(base_type_index);
 
 			TempVar ptr_result = var_counter.next();
 			CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);

@@ -1087,7 +1087,11 @@ ASTNode Parser::substituteTemplateParameters(
 
 		ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);
 
-		return emplace_node<UnaryOperatorNode>(unary_op.get_token(), substituted_operand, unary_op.is_prefix());
+		return emplace_node<UnaryOperatorNode>(
+			unary_op.get_token(),
+			substituted_operand,
+			unary_op.is_prefix(),
+			unary_op.is_builtin_addressof());
 
 	} else if (node.is<VariableDeclarationNode>()) {
 		// Handle variable declarations
@@ -1481,7 +1485,11 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 		if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr_variant)) {
 			const UnaryOperatorNode& unop = *unary_operator;
 			ASTNode new_operand = replacePackIdentifierInExpr(unop.get_operand(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(UnaryOperatorNode(unop.get_token(), new_operand, unop.is_prefix()));
+			return emplace_node<ExpressionNode>(UnaryOperatorNode(
+				unop.get_token(),
+				new_operand,
+				unop.is_prefix(),
+				unop.is_builtin_addressof()));
 		}
 
 		if (std::holds_alternative<ConstructorCallNode>(expr_variant)) {
