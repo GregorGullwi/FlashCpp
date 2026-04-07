@@ -4732,7 +4732,9 @@ void SemanticAnalysis::tryAnnotateInitListConstructorArgs(
 		CanonicalTypeId inferred_arg_type_id{};
 		auto arg_type_opt = buildOverloadResolutionArgType(arg, &inferred_arg_type_id);
 		if (!arg_type_opt.has_value()) {
-			return;
+			arg_types.clear();
+			inferred_arg_type_ids.clear();
+			break;
 		}
 		arg_types.push_back(std::move(*arg_type_opt));
 		inferred_arg_type_ids.push_back(inferred_arg_type_id);
