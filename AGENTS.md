@@ -4,7 +4,7 @@
 FlashCpp is a C++20 compiler front-end. Core sources live in `src/`; tests sit in `tests/*.cpp`.
 Generated binaries belong in `x64/` or `Debug/` and stay untracked.
 Batch scripts, `FlashCpp.sln`, and the `Makefile` cover Windows and clang workflows.
-- Use `tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality
+- Use `pwsh tests/run_all_tests.ps1` to verify that your changes didn't break any existing functionality
 
 ## Build, Test, and Development Commands
 - You are most likely running in a powershell (pwsh), plan your calls accordingly.
