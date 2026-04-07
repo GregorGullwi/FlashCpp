@@ -66,10 +66,9 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 	advance(); // consume '(' or '{'
 
 	// Get type information first (needed for both empty and non-empty cases)
-	TypeCategory cast_type = TypeCategory::Int; // default
 	TypeQualifier qualifier = TypeQualifier::None;
 	SizeInBits type_size{32};
-	TypeIndex cast_type_index{};
+	TypeIndex cast_type_index = nativeTypeIndex(TypeCategory::Int);
 	CVQualifier cast_cv = CVQualifier::None;
 	ReferenceQualifier cast_ref = ReferenceQualifier::None;
 	std::optional<FunctionSignature> cast_function_signature;
@@ -78,9 +77,8 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 
 	auto builtin_type_info = get_builtin_type_info(type_name);
 	if (builtin_type_info.has_value()) {
-		cast_type = builtin_type_info->first;
 		type_size = SizeInBits{static_cast<int>(builtin_type_info->second)};
-		cast_type_index = nativeTypeIndex(cast_type);
+		cast_type_index = nativeTypeIndex(builtin_type_info->first);
 		// Handle special case for unsigned qualifier
 		if (type_name == "unsigned") {
 			qualifier = TypeQualifier::Unsigned;
@@ -98,10 +96,9 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 		if (type_info) {
 			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
 				type_info->registeredTypeIndex().withCategory(type_info->typeEnum()));
-			cast_type = resolved_alias.typeEnum();
 			cast_type_index = resolved_alias.type_index.is_valid()
-								  ? resolved_alias.type_index.withCategory(cast_type)
-								  : type_info->registeredTypeIndex().withCategory(cast_type);
+								  ? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+								  : type_info->registeredTypeIndex().withCategory(resolved_alias.typeEnum());
 			cast_cv = resolved_alias.cv_qualifier;
 			cast_ref = resolved_alias.reference_qualifier;
 			cast_function_signature = resolved_alias.function_signature;
@@ -114,17 +111,11 @@ ParseResult Parser::parse_functional_cast(std::string_view type_name, const Toke
 			} else {
 				type_size = type_info->sizeInBits();
 			}
-			if (type_info->isStruct()) {
-				cast_type = TypeCategory::Struct;
-			}
 		}
 	}
 
 	const auto make_type_node = [&]() -> ASTNode {
-		TypeSpecifierNode type_spec(cast_type, qualifier, type_size, type_token, cast_cv);
-		if (cast_type_index.is_valid()) {
-			type_spec.set_type_index(cast_type_index);
-		}
+		TypeSpecifierNode type_spec(cast_type_index, qualifier, type_size, type_token, cast_cv);
 		if (cast_pointer_depth > 0) {
 			type_spec.add_pointer_levels(cast_pointer_depth);
 		}
