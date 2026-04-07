@@ -16,6 +16,7 @@ struct StructTypeInfo {
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	SizeInBytes total_size{};  // Total size of struct in bytes
+	bool layout_is_complete = false;
 	size_t alignment = 1;		  // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
@@ -164,6 +165,9 @@ struct StructTypeInfo {
 		if (!referenced_size_bits) {
 			referenced_size_bits = member_size * 8;
 		}
+		if (isZeroWidthBitfield(bitfield_width)) {
+			effective_alignment = 1;
+		}
 		members.emplace_back(member_name, type_index, offset, member_size, effective_alignment,
 							 access, std::move(default_initializer), reference_qualifier,
 							 referenced_size_bits, is_array, std::move(array_dimensions), pointer_depth, bitfield_width);
@@ -182,7 +186,9 @@ struct StructTypeInfo {
 				total_size = toSizeInBytes(offset + member_size);
 			}
 		}
-		alignment = std::max(alignment, effective_alignment);
+		if (!isZeroWidthBitfield(bitfield_width)) {
+			alignment = std::max(alignment, effective_alignment);
+		}
 	}
 
 	// StringHandle overload for addMemberFunction - Phase 7A
@@ -267,8 +273,48 @@ struct StructTypeInfo {
 	bool hasFinalizationError() const { return !finalization_error_.empty(); }
 	const std::string& getFinalizationError() const { return finalization_error_; }
 
-	SizeInBits sizeInBits() const { return toBits(total_size); }
-	SizeInBytes sizeInBytes() const { return total_size; }
+	SizeInBits sizeInBits() const { return toBits(sizeInBytes()); }
+	SizeInBytes sizeInBytes() const {
+		SizeInBytes size = total_size;
+		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
+			enforceMinimumCompleteObjectSize(size, alignment);
+		}
+		return size;
+	}
+
+	static size_t alignLayoutSize(size_t size, size_t alignment_value) {
+		return alignment_value == 0 ? size : ((size + alignment_value - 1) & ~(alignment_value - 1));
+	}
+
+	static bool isZeroWidthBitfield(const std::optional<size_t>& bitfield_width) {
+		return bitfield_width.has_value() && *bitfield_width == 0;
+	}
+
+	bool hasDependentOrIncompleteLayout() const {
+		if (has_deferred_base_classes) {
+			return true;
+		}
+
+		for (const auto& member : members) {
+			if (member.size == 0 && !isZeroWidthBitfield(member.bitfield_width)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	static void enforceMinimumCompleteObjectSize(SizeInBytes& size, size_t alignment) {
+		if (toSizeT(size) == 0) {
+			size = toSizeInBytes(std::max<size_t>(alignment, 1));
+		}
+	}
+
+	void finalizeLayoutSize(size_t raw_size, size_t final_alignment) {
+		alignment = final_alignment;
+		total_size = toSizeInBytes(alignLayoutSize(raw_size, alignment));
+		layout_is_complete = true;
+	}
 
 	bool finalize() {
 		// Build vtable first (if struct has virtual functions)
@@ -296,7 +342,7 @@ struct StructTypeInfo {
 		}
 
 		// Pad struct to its alignment
-		total_size = toSizeInBytes((toSizeT(total_size) + alignment - 1) & ~(alignment - 1));
+		finalizeLayoutSize(toSizeT(total_size), alignment);
 		return true;
 	}
 

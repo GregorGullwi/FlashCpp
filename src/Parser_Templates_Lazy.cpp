@@ -180,7 +180,12 @@ std::optional<ASTNode> Parser::instantiateLazyMemberFunction(const LazyMemberFun
 			for (const auto& arg : init.arguments) {
 				substituteInitArg(arg, substituted_args);
 			}
-			new_ctor_ref.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
+			new_ctor_ref.add_base_initializer(
+				resolveBaseInitializerNameForTemplateArgs(
+					init.getBaseClassName(),
+					lazy_info.template_params,
+					converted_template_args),
+				std::move(substituted_args));
 		}
 		if (ctor_decl.delegating_initializer().has_value()) {
 			std::vector<ASTNode> substituted_del_args;
@@ -1146,7 +1151,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 			if (struct_info) {
 				// Layout is already computed during minimal instantiation
 				// Just verify it's valid
-				if (!struct_info->total_size.is_set() && !struct_info->members.empty()) {
+				if (!struct_info->sizeInBytes().is_set() && !struct_info->members.empty()) {
 					FLASH_LOG(Templates, Warning, "Struct has members but zero size: ", instantiated_name);
 				}
 			}
@@ -1307,7 +1312,7 @@ std::optional<TypeIndex> Parser::instantiateLazyNestedType(
 		size_t member_alignment = member_size > 0 ? member_size : 1;
 		if (const TypeInfo* member_type_info = tryGetTypeInfo(substituted_type_index)) {
 			if (member_type_info->getStructInfo()) {
-				member_size = toSizeT(member_type_info->getStructInfo()->total_size);
+				member_size = toSizeT(member_type_info->getStructInfo()->sizeInBytes());
 				member_alignment = member_type_info->getStructInfo()->alignment;
 			}
 		}

@@ -333,7 +333,7 @@ size_t AstToIr::getSizeInBytes(TypeIndex type_index, int size_in_bits) const {
 	if (isIrStructType(toIrType(type))) {
 		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
-				return toSizeT(struct_info->total_size);
+				return toSizeT(struct_info->sizeInBytes());
 			}
 		}
 		// TypeCategory::Struct must always have a valid StructInfo; reaching here for

@@ -380,7 +380,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 								 init_data,
 								 *elem_struct,
 								 member_result.array_elements[elem_i],
-								 abs_offset + elem_i * toSizeT(elem_struct->total_size),
+								 abs_offset + elem_i * toSizeT(elem_struct->sizeInBytes()),
 								 depth + 1);
 						}
 						continue;
@@ -716,7 +716,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 				// If size is 0 for struct-like types, look up from resolved struct info.
 				if (!op.size_in_bits.is_set()) {
 					if (const StructTypeInfo* member_si = tryGetStructTypeInfo(static_member.type_index)) {
-						size_t total_size = toSizeT(member_si->total_size);
+						size_t total_size = toSizeT(member_si->sizeInBytes());
 						if (static_member.is_array) {
 							for (size_t dim_size : static_member.array_dimensions) {
 								total_size *= dim_size;
@@ -809,7 +809,7 @@ void AstToIr::generateStaticMemberDeclarations() {
 							for (size_t dim_size : static_member.array_dimensions) {
 								total_elements *= dim_size;
 							}
-							size_t element_size = toSizeT(static_struct_info->total_size);
+							size_t element_size = toSizeT(static_struct_info->sizeInBytes());
 							op.init_data.resize(element_size * total_elements, 0);
 
 							auto pack_struct_array_level =
@@ -884,10 +884,10 @@ void AstToIr::generateStaticMemberDeclarations() {
 							write_back_constant_bytes();
 						} else if (static_struct_info) {
 							FLASH_LOG(Codegen, Debug, "Aggregate static member '", qualified_name,
-									  "': struct total_size=", static_struct_info->total_size,
+									  "': struct total_size=", static_struct_info->sizeInBytes(),
 									  ", members=", static_struct_info->members.size(),
 									  ", type_index=", static_member.type_index.index());
-							op.init_data.resize(toSizeT(static_struct_info->total_size), 0);
+							op.init_data.resize(toSizeT(static_struct_info->sizeInBytes()), 0);
 							fillAggregateInitData(op.init_data, *static_struct_info, static_member.initializer->as<InitializerListNode>(), eval_aggregate_leaf);
 							FLASH_LOG(Codegen, Debug, "Packed aggregate initializer for static member '", qualified_name, "' (", op.init_data.size(), " bytes)");
 							write_back_constant_bytes();
@@ -1647,7 +1647,7 @@ void AstToIr::resolveSelfReferentialType(TypeSpecifierNode& type, TypeIndex encl
 		const TypeInfo* ti = tryGetTypeInfo(type.type_index());
 		if (!ti)
 			return;
-		if (!ti->struct_info_ || !ti->struct_info_->total_size.is_set()) {
+		if (!ti->struct_info_ || !ti->struct_info_->sizeInBytes().is_set()) {
 			if (const TypeInfo* enc_ti = tryGetTypeInfo(enclosing_type_index)) {
 				// Verify this is actually a self-reference by checking that the unfinalized
 				// type's name matches the base name of the enclosing struct.

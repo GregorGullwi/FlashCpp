@@ -3176,7 +3176,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 			// Check return type for self-referential struct
 			if (return_type.category() == TypeCategory::Struct && return_type.type_index().is_valid()) {
 				const TypeInfo* rti = tryGetTypeInfo(return_type.type_index());
-				if (!rti || !rti->struct_info_ || !rti->struct_info_->total_size.is_set()) {
+				if (!rti || !rti->struct_info_ || !rti->struct_info_->sizeInBytes().is_set()) {
 					needs_resolution = true;
 				}
 			}
@@ -3186,7 +3186,7 @@ std::string_view AstToIr::generateMangledNameForCall(const FunctionDeclarationNo
 						const auto& pt = param.as<DeclarationNode>().type_node().as<TypeSpecifierNode>();
 						if (pt.category() == TypeCategory::Struct && pt.type_index().is_valid()) {
 							const TypeInfo* ti = tryGetTypeInfo(pt.type_index());
-							if (!ti || !ti->struct_info_ || !ti->struct_info_->total_size.is_set()) {
+							if (!ti || !ti->struct_info_ || !ti->struct_info_->sizeInBytes().is_set()) {
 								needs_resolution = true;
 								break;
 							}

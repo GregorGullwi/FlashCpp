@@ -2556,7 +2556,7 @@ std::optional<ExprResult> AstToIr::materializeSelectedConvertingConstructor(
 	}
 
 	int actual_size_bits = static_cast<int>(target_type.size_in_bits());
-	if (target_struct_info->total_size.is_set()) {
+	if (target_struct_info->sizeInBytes().is_set()) {
 		actual_size_bits = static_cast<int>(target_struct_info->sizeInBits().value);
 	}
 

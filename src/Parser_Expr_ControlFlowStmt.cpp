@@ -1160,8 +1160,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 	// For non-capturing lambdas, create a 1-byte struct (like Clang does)
 	if (lambda_captures.empty()) {
-		closure_struct_info->total_size = toSizeInBytes(1);
-		closure_struct_info->alignment = 1;
+		closure_struct_info->finalizeLayoutSize(1, 1);
 	} else {
 		// Add captured variables as members to the closure struct
 		for (const auto& capture : lambda_captures) {
@@ -1208,7 +1207,7 @@ ParseResult Parser::parse_lambda_expression() {
 							closure_struct_info->addMember(
 								copy_this_member_handle,			 // Special member name for copied this
 								enclosing_type->type_index_,		 // Type index of enclosing struct
-								toSizeT(enclosing_struct->total_size),		  // Size of the entire struct
+								toSizeT(enclosing_struct->sizeInBytes()),		  // Size of the entire struct
 								enclosing_struct->alignment,		 // Alignment from enclosing struct
 								AccessSpecifier::Public,
 								std::nullopt,						  // No initializer
@@ -1327,7 +1326,7 @@ ParseResult Parser::parse_lambda_expression() {
 
 		// addMember() already updates total_size and alignment, but ensure minimum size of 1
 		if (!closure_struct_info->total_size.is_set()) {
-			closure_struct_info->total_size = toSizeInBytes(1);
+			closure_struct_info->finalizeLayoutSize(1, closure_struct_info->alignment);
 		}
 	}
 

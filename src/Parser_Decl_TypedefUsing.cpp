@@ -1445,8 +1445,7 @@ ParseResult Parser::parse_typedef_declaration() {
 									max_alignment = member.alignment;
 								}
 							}
-							anon_struct_info->total_size = toSizeInBytes(max_size);
-							anon_struct_info->alignment = max_alignment;
+							anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
 						} else {
 							// Struct layout: sequential members with alignment
 							size_t current_offset = 0;
@@ -1466,8 +1465,7 @@ ParseResult Parser::parse_typedef_declaration() {
 							if (max_alignment > 0) {
 								current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
 							}
-							anon_struct_info->total_size = toSizeInBytes(current_offset);
-							anon_struct_info->alignment = max_alignment;
+							anon_struct_info->finalizeLayoutSize(current_offset, max_alignment);
 						}
 
 						// Set the struct info on the type info
@@ -1843,7 +1841,7 @@ ParseResult Parser::parse_typedef_declaration() {
 
 			if (!member_type_spec.is_pointer() && !member_type_spec.is_reference() && !member_type_spec.is_rvalue_reference()) {
 				if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(member_type_spec.type_index())) {
-					member_size = toSizeT(member_struct_info->total_size);
+					member_size = toSizeT(member_struct_info->sizeInBytes());
 					referenced_size_bits = static_cast<size_t>(member_struct_info->sizeInBits().value);
 					member_alignment = member_struct_info->alignment;
 				}

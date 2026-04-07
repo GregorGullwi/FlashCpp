@@ -10,6 +10,8 @@
 #include "ParserTemplateClassShared.h"
 #include <cctype>
 
+static constexpr size_t kMaxAliasUnwrapIterations = 64;
+
 // Compute the canonical instantiated lookup name for a member function.
 // For conversion operators (operator with an identifier suffix, e.g. "operator value_type"),
 // the substituted return type gives the canonical name (e.g. "operator int").
@@ -90,7 +92,7 @@ static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if ((category == TypeCategory::Struct || category == TypeCategory::UserDefined) &&
 		arg.type_index.is_valid()) {
 		if (const StructTypeInfo* si = tryGetStructTypeInfo(arg.type_index)) {
-			return static_cast<int>(toSizeT(si->total_size));
+			return static_cast<int>(toSizeT(si->sizeInBytes()));
 		}
 	}
 
@@ -733,7 +735,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		if (size_type_index.is_valid()) {
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(size_type_index)) {
-				return toSizeT(struct_info->total_size);
+				return toSizeT(struct_info->sizeInBytes());
 			}
 			if (const TypeInfo* type_info = tryGetTypeInfo(size_type_index)) {
 				if (type_info->hasStoredSize()) {
@@ -906,7 +908,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			for (const auto& arg : init.arguments) {
 				substituteInitArg(arg, substituted_args, tmpl_params, tmpl_args);
 			}
-			new_ctor.add_base_initializer(init.getBaseClassName(), std::move(substituted_args));
+			new_ctor.add_base_initializer(
+				resolveBaseInitializerNameForTemplateArgs(init.getBaseClassName(), tmpl_params, tmpl_args),
+				std::move(substituted_args));
 		}
 		if (orig_ctor.delegating_initializer().has_value()) {
 			const auto& del_init = *orig_ctor.delegating_initializer();
@@ -2410,7 +2414,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (type_it != getTypesByNameMap().end()) {
 											substituted_type_index = type_it->second->type_index_;
 											if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
-												substituted_size = toSizeT(nested_si->total_size);
+												substituted_size = toSizeT(nested_si->sizeInBytes());
 											}
 										}
 									}
@@ -3548,6 +3552,54 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		substitution_maps_initialized = true;
 	};
 
+	auto resolveConcreteBaseType = [&](TemplateTypeArg& concrete_arg) -> const TypeInfo* {
+		if (concrete_arg.is_value || !concrete_arg.type_index.is_valid()) {
+			return nullptr;
+		}
+
+		const TypeInfo* concrete_type = tryGetTypeInfo(concrete_arg.type_index);
+		if (!concrete_type) {
+			return nullptr;
+		}
+
+		if (concrete_type->isTemplateInstantiation() &&
+			(!concrete_type->getStructInfo() || !concrete_type->getStructInfo()->sizeInBytes().is_set())) {
+			std::string_view base_template_name = StringTable::getStringView(concrete_type->baseTemplateName());
+			std::vector<TemplateTypeArg> concrete_base_args =
+				materializeTemplateArgs(*concrete_type, template_params, template_args_to_use);
+			std::string_view instantiated_base_name =
+				instantiateAndResolveBaseName(base_template_name, concrete_base_args, false);
+			auto instantiated_base_it =
+				getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
+			if (instantiated_base_it != getTypesByNameMap().end()) {
+				concrete_type = instantiated_base_it->second;
+				concrete_arg.type_index = concrete_type->registeredTypeIndex();
+				concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+			}
+		}
+
+		// Deep alias chains show up in template-heavy code; keep enough headroom
+		// before stopping alias resolution.
+		size_t alias_unwrap_iterations_remaining = kMaxAliasUnwrapIterations;
+		while (concrete_type && !concrete_type->isStruct() && alias_unwrap_iterations_remaining-- > 0) {
+			const TypeInfo* underlying_type = tryGetTypeInfo(concrete_type->type_index_);
+			if (!underlying_type || underlying_type == concrete_type) {
+				break;
+			}
+
+			concrete_type = underlying_type;
+			concrete_arg.type_index = concrete_type->registeredTypeIndex();
+			concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+		}
+
+		if (concrete_type && concrete_type->getStructInfo()) {
+			concrete_arg.type_index = concrete_type->registeredTypeIndex();
+			concrete_arg.type_index.setCategory(TypeCategory::Struct);
+		}
+
+		return concrete_type;
+	};
+
 	// Generate the instantiated class name (again, with filled args)
 	instantiated_name = StringTable::getOrInternStringHandle(get_instantiated_class_name(template_name, template_args_to_use));
 
@@ -3629,21 +3681,22 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			auto subst_it = name_substitution_map.find(base_class_name);
 			bool found = false;
 			if (subst_it != name_substitution_map.end()) {
-				const TemplateTypeArg& concrete_arg = subst_it->second;
+				TemplateTypeArg concrete_arg = subst_it->second;
+				const TypeInfo* concrete_type = resolveConcreteBaseType(concrete_arg);
 
 				// Validate that the concrete type is a struct/class
 				if (concrete_arg.type_index.index() >= getTypeInfoCount()) {
 					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
 				} else {
-					const TypeInfo& concrete_type = getTypeInfo(concrete_arg.type_index);
-					if (!concrete_type.isStruct()) {
-						FLASH_LOG(Templates, Error, "Template argument '", concrete_type.name_, "' for base class must be a struct/class type");
-					} else if (concrete_type.struct_info_ && concrete_type.struct_info_->is_final) {
-						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type.name_, "'");
+					if (!concrete_type || !concrete_type->getStructInfo()) {
+						const TypeInfo& fallback_type = getTypeInfo(concrete_arg.type_index);
+						FLASH_LOG(Templates, Error, "Template argument '", fallback_type.name_, "' for base class must be a struct/class type");
+					} else if (concrete_type->struct_info_ && concrete_type->struct_info_->is_final) {
+						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name_, "'");
 					} else {
 						// Add the resolved base class
-						struct_info->addBaseClass(StringTable::getStringView(concrete_type.name_), concrete_arg.type_index, base.access, base.is_virtual);
-						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type.name_), "' with type_index=", concrete_arg.type_index);
+						struct_info->addBaseClass(StringTable::getStringView(concrete_type->name()), concrete_arg.type_index, base.access, base.is_virtual);
+						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type->name()), "' with type_index=", concrete_arg.type_index);
 						found = true;
 					}
 				}
@@ -3657,11 +3710,12 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				auto pack_it = pack_substitution_map.find(base_name_handle);
 				if (pack_it != pack_substitution_map.end()) {
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
-						if (const TypeInfo* concrete_type = tryGetTypeInfo(pack_arg.type_index)) {
-							if (concrete_type->isStruct() &&
+						TemplateTypeArg resolved_pack_arg = pack_arg;
+						if (const TypeInfo* concrete_type = resolveConcreteBaseType(resolved_pack_arg)) {
+							if (concrete_type->getStructInfo() &&
 								!(concrete_type->struct_info_ && concrete_type->struct_info_->is_final)) {
-								struct_info->addBaseClass(StringTable::getStringView(concrete_type->name_), pack_arg.type_index, base.access, base.is_virtual);
-								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type->name_), "'");
+								struct_info->addBaseClass(StringTable::getStringView(concrete_type->name()), resolved_pack_arg.type_index, base.access, base.is_virtual);
+								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type->name()), "'");
 								found = true;
 							}
 						}
@@ -3779,7 +3833,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else {
 								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
 								if (resolved_ti->isTemplateInstantiation() &&
-									(!resolved_struct_info || !resolved_struct_info->total_size.is_set())) {
+									(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {
 									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
 									std::string_view inst_name = instantiateAndResolveBaseName(base_template_name, instantiated_args, false);
@@ -4277,7 +4331,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (member_type_info->isTemplateInstantiation()) {
 				// This is a template instantiation - check if it's already fully instantiated
 				// Need to instantiate if: no struct_info OR struct_info exists but size is 0
-				if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->total_size.is_set()) {
+				if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->sizeInBytes().is_set()) {
 					// Not yet instantiated - get the base template name and instantiate
 					member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 					needs_instantiation = true;
@@ -4637,7 +4691,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
 				bool needs_instantiation = false;
 				if (member_type_info->isTemplateInstantiation()) {
-					if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->total_size.is_set()) {
+					if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->sizeInBytes().is_set()) {
 						member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 						needs_instantiation = true;
 					}
@@ -5614,7 +5668,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (adjusted_member_types) {
 					parsed_nested_info->recalculateLayout();
-					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(toSizeT(parsed_nested_info->total_size) * 8);
+					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(toSizeT(parsed_nested_info->sizeInBytes()) * 8);
 				}
 			}
 		}
@@ -5646,7 +5700,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TypeInfo* resolved_type = resolved_it->second;
 								member.type_index = resolved_type->type_index_;
 								if (resolved_type->getStructInfo()) {
-									member.size = toSizeT(resolved_type->getStructInfo()->total_size);
+									member.size = toSizeT(resolved_type->getStructInfo()->sizeInBytes());
 									member.alignment = resolved_type->getStructInfo()->alignment;
 								}
 								had_fixup = true;
@@ -5801,7 +5855,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (type_it != getTypesByNameMap().end()) {
 						sm.type_index = type_it->second->type_index_;
 						if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
-							sm.size = toSizeT(nested_si->total_size);
+							sm.size = toSizeT(nested_si->sizeInBytes());
 						}
 						FLASH_LOG(Templates, Debug, "Fixed up static member '", sm.getName(),
 								  "' type to '", StringTable::getStringView(qualified_handle),
