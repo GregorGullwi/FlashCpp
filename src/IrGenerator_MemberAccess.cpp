@@ -1046,6 +1046,9 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier_handle)) {
 					if (member_result.member &&
 						is_struct_type(member_result.member->type_index.category()) &&
+						// Intentionally exclude raw pointer members here: built-in pointer
+						// arrow handling should dereference them later instead of trying to
+						// dispatch operator-> on the pointee's class type.
 						member_result.member->pointer_depth == 0) {
 						member_object = member_result.member;
 						member_object_offset = member_result.adjusted_offset;
