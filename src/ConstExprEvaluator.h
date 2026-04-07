@@ -431,6 +431,7 @@ struct EvaluationContext {
 	// Parser pointer for template instantiation (optional)
 	Parser* parser = nullptr;
 	SemanticAnalysis* sema = nullptr;
+	void normalizePendingSemanticRoots() const;
 
 	// Return type of the constexpr function currently being evaluated.
 	// Set by evaluate_function_call_with_bindings so that aggregate initializer

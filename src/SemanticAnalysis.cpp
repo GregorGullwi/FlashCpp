@@ -824,12 +824,14 @@ void SemanticAnalysis::run() {
 	parser_.clearPendingSemanticRoots();
 
 	const auto& nodes = parser_.get_nodes();
-	stats_.total_roots = nodes.size();
+	const size_t initial_root_count = nodes.size();
+	stats_.total_roots = initial_root_count;
 
-	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", nodes.size(), " top-level nodes");
+	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
 	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
 
-	for (auto& node : nodes) {
+	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
+		ASTNode node = parser_.get_nodes()[root_index];
 		normalizeTopLevelNode(node);
 	}
 

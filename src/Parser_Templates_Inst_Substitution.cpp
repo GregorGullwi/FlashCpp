@@ -139,7 +139,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 	const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
 	const std::unordered_map<std::string_view, int64_t>& nontype_substitution_map) {
 
-	// ASTNode wraps types via std::any, check if it contains an ExpressionNode
+	// ASTNode is a typed pointer wrapper, check if it contains an ExpressionNode
 	if (!expr.is<ExpressionNode>()) {
 		FLASH_LOG(Templates, Debug, "substitute_template_params_in_expression: not an ExpressionNode");
 		return expr; // Return as-is if not an expression

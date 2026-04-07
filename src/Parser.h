@@ -327,10 +327,12 @@ public:
 	const auto& get_nodes() { return ast_nodes_; }
 	std::vector<ASTNode> takePendingSemanticRoots() {
 		std::vector<ASTNode> pending_roots = std::move(pending_semantic_roots_);
+		pending_semantic_root_keys_.clear();
 		return pending_roots;
 	}
 	void clearPendingSemanticRoots() {
 		pending_semantic_roots_.clear();
+		pending_semantic_root_keys_.clear();
 	}
 	ASTNode get_inner_node(ASTNode node) const {
 		return node;
@@ -370,6 +372,7 @@ private:
 	Token injected_token_;  // Phase 5: For >> splitting in nested templates (Uninitialized = empty)
 	std::vector<ASTNode> ast_nodes_;
 	std::vector<ASTNode> pending_semantic_roots_;
+	std::unordered_set<const void*> pending_semantic_root_keys_;
 	std::vector<ASTNode> ast_discarded_nodes_;  // Keep discarded nodes alive to prevent memory corruption
 	std::string last_error_;
 
@@ -916,32 +919,131 @@ private:
 		const ASTNode& template_node,
 		const std::vector<TemplateTypeArg>& template_args,
 		const FlashCpp::TemplateInstantiationKey& key);
+	bool enqueuePendingSemanticRoot(const ASTNode& node) {
+		if (!node.has_value()) {
+			return false;
+		}
+
+		const void* root_key = node.raw_pointer();
+		if (!root_key) {
+			return false;
+		}
+
+		auto [_, inserted] = pending_semantic_root_keys_.insert(root_key);
+		if (!inserted) {
+			return false;
+		}
+
+		pending_semantic_roots_.push_back(node);
+		return true;
+	}
+	std::optional<ASTNode> lookupLateMaterializedOwningStructRoot(StringHandle struct_name) const {
+		std::string_view struct_name_view = StringTable::getStringView(struct_name);
+		if (struct_name_view.empty()) {
+			return std::nullopt;
+		}
+
+		const auto as_struct_root = [](const std::optional<ASTNode>& symbol) -> std::optional<ASTNode> {
+			if (symbol.has_value() && symbol->is<StructDeclarationNode>()) {
+				return symbol;
+			}
+			return std::nullopt;
+		};
+
+		const auto find_nested_struct = [](const ASTNode& root,
+											 const std::vector<std::string_view>& components,
+											 size_t start_index) -> std::optional<ASTNode> {
+			ASTNode current = root;
+			for (size_t i = start_index; i < components.size(); ++i) {
+				if (!current.is<StructDeclarationNode>()) {
+					return std::nullopt;
+				}
+
+				std::optional<ASTNode> next_nested;
+				const auto& struct_decl = current.as<StructDeclarationNode>();
+				StringHandle nested_name_handle = StringTable::getOrInternStringHandle(components[i]);
+				for (const ASTNode& nested_node : struct_decl.nested_classes()) {
+					if (!nested_node.is<StructDeclarationNode>()) {
+						continue;
+					}
+
+					if (nested_node.as<StructDeclarationNode>().name() == nested_name_handle) {
+						next_nested = nested_node;
+						break;
+					}
+				}
+
+				if (!next_nested.has_value()) {
+					return std::nullopt;
+				}
+
+				current = *next_nested;
+			}
+
+			return current;
+		};
+
+		const std::vector<std::string_view> components = splitQualifiedNamespace(struct_name_view);
+		if (components.empty()) {
+			return std::nullopt;
+		}
+
+		for (size_t namespace_component_count = components.size() - 1;;) {
+			NamespaceHandle namespace_handle = NamespaceRegistry::GLOBAL_NAMESPACE;
+			bool namespace_path_valid = true;
+			for (size_t i = 0; i < namespace_component_count; ++i) {
+				namespace_handle = gNamespaceRegistry.lookupNamespace(
+					namespace_handle,
+					StringTable::getOrInternStringHandle(components[i]));
+				if (!namespace_handle.isValid()) {
+					namespace_path_valid = false;
+					break;
+				}
+			}
+
+			if (namespace_path_valid && namespace_component_count < components.size()) {
+				if (auto root_symbol = as_struct_root(
+						gSymbolTable.lookup_qualified(namespace_handle, components[namespace_component_count]));
+					root_symbol.has_value()) {
+					if (namespace_component_count + 1 == components.size()) {
+						return root_symbol;
+					}
+
+					if (auto nested_symbol = find_nested_struct(
+							*root_symbol,
+							components,
+							namespace_component_count + 1);
+						nested_symbol.has_value()) {
+						return nested_symbol;
+					}
+				}
+			}
+
+			if (namespace_component_count == 0) {
+				break;
+			}
+			--namespace_component_count;
+		}
+
+		return std::nullopt;
+	}
 
 public:
 	void registerLateMaterializedTopLevelNode(const ASTNode& node) {
 		ast_nodes_.push_back(node);
-		pending_semantic_roots_.push_back(node);
+		enqueuePendingSemanticRoot(node);
 	}
 	void registerLateMaterializedTopLevelNodeFront(const ASTNode& node) {
 		ast_nodes_.insert(ast_nodes_.begin(), node);
-		pending_semantic_roots_.push_back(node);
+		enqueuePendingSemanticRoot(node);
 	}
 	void registerLateMaterializedOwningStructRoot(StringHandle struct_name) {
 		if (!struct_name.isValid()) {
 			return;
 		}
 
-		auto symbol = gSymbolTable.lookup(struct_name);
-		if (!symbol.has_value()) {
-			std::string_view struct_name_view = StringTable::getStringView(struct_name);
-			if (size_t last_colon_pos = struct_name_view.rfind("::"); last_colon_pos != std::string_view::npos) {
-				symbol = gSymbolTable.lookup(
-					StringTable::getOrInternStringHandle(struct_name_view.substr(last_colon_pos + 2)));
-			}
-		}
-
-		if (symbol.has_value() && symbol->is<StructDeclarationNode>()) {
-			pending_semantic_roots_.push_back(*symbol);
+		if (auto symbol = lookupLateMaterializedOwningStructRoot(struct_name); symbol.has_value()) {
+			enqueuePendingSemanticRoot(*symbol);
 		}
 	}
 	std::optional<ASTNode> instantiateLazyMemberFunction(const LazyMemberFunctionInfo& lazy_info);  // NEW: Instantiate lazy member function on-demand

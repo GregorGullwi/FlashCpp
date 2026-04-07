@@ -1726,7 +1726,7 @@ inline OperatorOverloadResult findBinaryOperatorOverloadWithFreeFunction(
 		// Build a set of existing mangled names for O(1) dedup.
 		// Using std::string_view is safe: mangled names are interned in
 		// stable ChunkedStringAllocator storage (they never move).
-		// ASTNode stores a T* pointer via std::any, so &fd is stable across
+		// ASTNode stores a typed pointer handle, so &fd is stable across
 		// copies and vector reallocations — pointer dedup is a safe fallback
 		// for functions that do not yet have a mangled name.
 		std::unordered_set<std::string_view> existing_mangled;
