@@ -888,6 +888,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return nullptr;
 		}
 		auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+		normalizePendingSemanticRoots();
 		LazyMemberInstantiationRegistry::getInstance().markInstantiated(struct_name_handle, member_handle, lazy_info_opt->identity.is_const_method);
 		if (!instantiated_func.has_value() || !instantiated_func->is<FunctionDeclarationNode>()) {
 			return nullptr;
@@ -1403,6 +1404,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		ConstExpr::EvaluationContext ctx(global_symbol_table_ ? *global_symbol_table_ : gSymbolTable);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
+		ctx.sema = sema_;
 		auto eval_call_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
 		auto eval_result = ConstExpr::Evaluator::evaluate(eval_call_node, ctx);
 		if (!eval_result.success()) {

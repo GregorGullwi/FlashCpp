@@ -826,6 +826,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		ConstExpr::EvaluationContext ctx(symbol_table);
 		ctx.global_symbols = global_symbol_table_ ? global_symbol_table_ : &gSymbolTable;
 		ctx.parser = parser_;
+		ctx.sema = sema_;
 		// Step 1: Try evaluation via the member-function path (handles constexpr objects
 		// with 'this' access correctly).
 		auto member_eval_node = ASTNode::emplace_node<ExpressionNode>(callExprNode);
@@ -1071,6 +1072,7 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 					return;
 				}
 				auto instantiated_func = parser_->instantiateLazyMemberFunction(*lazy_info_opt);
+				normalizePendingSemanticRoots();
 				LazyMemberInstantiationRegistry::getInstance().markInstantiated(
 					owner_name,
 					member_name,

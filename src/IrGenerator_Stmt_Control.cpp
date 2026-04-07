@@ -521,7 +521,6 @@ void AstToIr::visitRangedForStatementNode(const RangedForStatementNode& node) {
 	ranged_for_counter++;
 
 		// Get the loop variable declaration and range expression
-	auto loop_var_decl = node.get_loop_variable_decl();
 	auto range_expr = node.get_range_expression();
 
 		// C++11+ standard: the range expression is materialized into a hidden

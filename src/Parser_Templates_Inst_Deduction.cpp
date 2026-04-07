@@ -1008,7 +1008,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 		gSymbolTable.insertGlobal(mangled_token.value(), new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
-		ast_nodes_.push_back(new_func_node);
+		registerLateMaterializedTopLevelNode(new_func_node);
 
 		return new_func_node;
 	} // end of overload loop
@@ -2409,7 +2409,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	gSymbolTable.insertGlobal(saved_mangled_name, new_func_node);
 
 	// Add to top-level AST so it gets visited by the code generator
-	ast_nodes_.push_back(new_func_node);
+	registerLateMaterializedTopLevelNode(new_func_node);
 
 	return new_func_node;
 }

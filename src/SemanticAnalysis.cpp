@@ -821,15 +821,21 @@ SemanticAnalysis::SemanticAnalysis(Parser& parser, CompileContext& context, Symb
 }
 
 void SemanticAnalysis::run() {
-	const auto& nodes = parser_.get_nodes();
-	stats_.total_roots = nodes.size();
+	parser_.clearPendingSemanticRoots();
 
-	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", nodes.size(), " top-level nodes");
+	const auto& nodes = parser_.get_nodes();
+	const size_t initial_root_count = nodes.size();
+	stats_.total_roots = initial_root_count;
+
+	FLASH_LOG(General, Debug, "SemanticAnalysis: starting pass over ", initial_root_count, " top-level nodes");
 	logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(nodes));
 
-	for (auto& node : nodes) {
+	for (size_t root_index = 0; root_index < initial_root_count; ++root_index) {
+		ASTNode node = parser_.get_nodes()[root_index];
 		normalizeTopLevelNode(node);
 	}
+
+	normalizePendingSemanticRoots();
 
 	resolveRemainingAutoReturns();
 
@@ -838,6 +844,33 @@ void SemanticAnalysis::run() {
 			  stats_.expressions_visited, " expressions, ",
 			  stats_.statements_visited, " statements, ",
 			  stats_.canonical_types_interned, " canonical types");
+}
+
+size_t SemanticAnalysis::normalizePendingSemanticRoots() {
+	size_t normalized_root_count = 0;
+
+	while (true) {
+		std::vector<ASTNode> pending_roots = parser_.takePendingSemanticRoots();
+		if (pending_roots.empty()) {
+			break;
+		}
+
+		stats_.total_roots += pending_roots.size();
+		logPostParseBoundaryReport(PostParseBoundaryChecker{}.run(pending_roots));
+
+		for (const ASTNode& pending_root : pending_roots) {
+			if (!pending_root.has_value()) {
+				continue;
+			}
+
+			normalizeTopLevelNode(pending_root);
+			ASTNode root_handle_for_auto_return_resolution = pending_root;
+			resolveRemainingAutoReturnsInNode(root_handle_for_auto_return_resolution);
+			++normalized_root_count;
+		}
+	}
+
+	return normalized_root_count;
 }
 
 std::vector<ASTNode> SemanticAnalysis::normalizeGenericLambdaParams(

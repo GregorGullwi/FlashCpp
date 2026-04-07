@@ -2,8 +2,15 @@
 #include "ConstExprEvaluator.h"
 #include "BuiltinListInitNarrowing.h"
 #include "CallNodeHelpers.h"
+#include "SemanticAnalysis.h"
 
 namespace ConstExpr {
+
+void EvaluationContext::normalizePendingSemanticRoots() const {
+	if (sema != nullptr) {
+		sema->normalizePendingSemanticRoots();
+	}
+}
 
 namespace {
 constexpr std::string_view kStatementExecutedWithoutReturn = "Statement executed (not a return)";
@@ -2105,6 +2112,7 @@ EvalResult Evaluator::evaluate_identifier(const IdentifierNode& identifier, Eval
 		if ((!resolved_static_initializer.initializer || !resolved_static_initializer.initializer->has_value()) &&
 			context.parser && context.struct_info &&
 			context.parser->instantiateLazyStaticMember(context.struct_info->name, name_handle)) {
+			context.normalizePendingSemanticRoots();
 			resolved_static_initializer = resolve_current_struct_static_initializer(
 				&identifier,
 				context,
@@ -3262,9 +3270,11 @@ EvalResult Evaluator::tryEvaluateAsVariableTemplate(std::string_view func_name, 
 	}
 
 	auto var_node = context.parser->try_instantiate_variable_template(func_name, template_args);
+	context.normalizePendingSemanticRoots();
 
 	if (!var_node.has_value() && call_expr.has_qualified_name()) {
 		var_node = context.parser->try_instantiate_variable_template(call_expr.qualified_name(), template_args);
+		context.normalizePendingSemanticRoots();
 	}
 
 	if (var_node.has_value() && var_node->is<VariableDeclarationNode>()) {
@@ -3604,6 +3614,7 @@ EvalResult Evaluator::evaluate_function_call(const CallExprNode& call_expr, Eval
 				// Use shared helper to try instantiation with various name variations
 				auto instantiated_opt = TemplateInstantiationHelper::tryInstantiateTemplateFunction(
 					*context.parser, qualified_name, func_name, deduced_args);
+				context.normalizePendingSemanticRoots();
 
 				if (instantiated_opt.has_value() && instantiated_opt->is<FunctionDeclarationNode>()) {
 					const FunctionDeclarationNode& instantiated_func = instantiated_opt->as<FunctionDeclarationNode>();

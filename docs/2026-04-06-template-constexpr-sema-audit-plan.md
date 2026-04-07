@@ -262,6 +262,24 @@ If that works well, the project can later decide whether a more eager “drain e
 5. migrate constexpr to consume the new invariant
 6. remove now-redundant fallback logic
 
+## 2026-04-07 progress update
+
+Started implementation of the low-risk **Option B** path:
+
+- added a parser-owned pending semantic-root queue for late materialized AST
+- taught late lazy/template materialization paths to register new roots there
+- added `SemanticAnalysis::normalizePendingSemanticRoots()` so the main pass can drain late roots incrementally
+- hooked codegen and constexpr-triggered lazy/template materialization paths to normalize pending roots before continuing
+
+This does **not** finish the audit plan yet, but it establishes the first concrete sema handoff for:
+
+- lazy member-function instantiation
+- lazy static-member instantiation
+- constexpr-triggered function-template instantiation
+- constexpr-triggered variable-template instantiation
+
+Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
+
 ## Why this should simplify the code
 
 If this plan succeeds:

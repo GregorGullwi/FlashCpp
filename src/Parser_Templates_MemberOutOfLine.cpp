@@ -378,7 +378,7 @@ std::optional<bool> Parser::try_parse_out_of_line_template_member(
 			// Skip to parameter list parsing with operator name
 			// Create function declaration and skip the body
 			auto [func_decl_node_op, func_decl_ref_op] = emplace_node_ref<DeclarationNode>(return_type_node, function_name_token_op);
-			auto [func_node_op, func_ref_op] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref_op, function_name_token_op.value());
+			[[maybe_unused]] auto [func_node_op, func_ref_op] = emplace_node_ref<FunctionDeclarationNode>(func_decl_ref_op, function_name_token_op.value());
 
 			if (peek() == "("_tok) {
 				skip_balanced_parens();

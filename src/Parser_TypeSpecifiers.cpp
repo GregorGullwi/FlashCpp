@@ -2097,7 +2097,7 @@ ParseResult Parser::parse_type_specifier() {
 			if (all_have_defaults) {
 				// Instantiate with empty args - defaults will be filled in
 				std::vector<TemplateTypeArg> empty_args;
-				auto instantiated_class = try_instantiate_class_template(type_name, empty_args);
+				try_instantiate_class_template(type_name, empty_args);
 
 				// Fill in default template arguments to get the actual instantiated name
 				// Helper lambda to build instantiated template name suffix

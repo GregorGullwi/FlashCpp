@@ -2,6 +2,7 @@
 #include "ConstExprEvaluator.h"
 #include "CallNodeHelpers.h"
 #include "OverloadResolution.h"
+#include "SemanticAnalysis.h"
 #include <limits>
 
 namespace ConstExpr {
@@ -1321,6 +1322,7 @@ Evaluator::ResolvedMemberFunctionCandidate Evaluator::find_current_struct_member
 			context.struct_info->name, function_name_handle);
 		if (lazy_info_opt.has_value()) {
 			context.parser->instantiateLazyMemberFunction(*lazy_info_opt);
+			context.normalizePendingSemanticRoots();
 			LazyMemberInstantiationRegistry::getInstance().markInstantiated(
 				context.struct_info->name, function_name_handle, lazy_info_opt->identity.is_const_method);
 		}
@@ -3431,6 +3433,7 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 						bool did_lazy = context.parser->instantiateLazyStaticMember(
 							owner_struct->name, member_handle);
 						if (did_lazy) {
+							context.normalizePendingSemanticRoots();
 							// Re-lookup the static member after instantiation
 							auto relookup_result = struct_info->findStaticMemberRecursive(member_handle);
 							if (relookup_result.first && relookup_result.first->initializer.has_value()) {

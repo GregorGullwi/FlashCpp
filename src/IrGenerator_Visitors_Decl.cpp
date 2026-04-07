@@ -232,6 +232,7 @@ void AstToIr::visitFunctionDeclarationNode(const FunctionDeclarationNode& node) 
 				ctx.global_symbols = global_symbol_table_;
 			}
 			ctx.parser = parser_;
+			ctx.sema = sema_;
 
 			auto eval_result = ConstExpr::Evaluator::evaluate(*node.noexcept_expression(), ctx);
 			is_truly_noexcept = eval_result.success() && eval_result.as_bool();
