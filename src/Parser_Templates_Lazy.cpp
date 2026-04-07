@@ -1184,9 +1184,7 @@ bool Parser::instantiateLazyClassToPhase(StringHandle instantiated_name, ClassIn
 		FLASH_LOG(Templates, Debug, "Completed Full phase for: ", instantiated_name);
 	}
 
-	if (static_cast<uint8_t>(initialPhase) < static_cast<uint8_t>(target_phase)) {
-		normalizePendingSemanticRootsIfAvailable();
-	}
+	normalizePendingSemanticRootsIfAvailable();
 
 	return true;
 }
