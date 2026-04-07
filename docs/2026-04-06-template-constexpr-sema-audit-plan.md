@@ -287,14 +287,16 @@ Progress since that initial checkpoint:
 - routed the remaining parser-side class-template materialization sites that still did raw `ast_nodes_.push_back(...)` through `registerLateMaterializedTopLevelNode(...)` instead, so those late struct roots now consistently enqueue pending semantic work
 - taught `instantiateLazyClassToPhase(...)` to drain pending semantic roots when an active `SemanticAnalysis` is present, so late phase promotion no longer leaves queued semantic work behind when parser-owned lazy instantiation advances a class
 - added `tests/test_late_member_body_class_template_paths_ret42.cpp` as a regression for late member-body class-template materialization via a local `Box<T>` declaration inside a lazily instantiated member body
+- fixed the adjacent functional-style constructor path so token-only concrete instantiated class names inside lazily instantiated member bodies are rebound to the registered instantiated type during substitution instead of reaching IR as stale placeholder type metadata
+- added `tests/test_late_member_body_class_template_functional_style_ret42.cpp` as a regression for `Box<T>(42)` inside a lazily instantiated member body
 
 Remaining work is still needed to reduce fallback logic and tighten the invariant across all late-materialization sites.
 
-The most obvious remaining gap found while extending this is a separate late functional-style constructor-call path inside lazily instantiated member bodies:
+The next obvious late-materialization gap is now narrower and sits beyond the constructor type rebinding above:
 
 - declaration-style local class-template materialization now crosses the sema boundary correctly
-- but functional-style calls like `Box<T>(2)` can still carry the earlier dependent placeholder name into IR/codegen instead of being rewritten to the concrete instantiated class before lowering
-- that follow-up should be handled as the next late-materialization/sema-boundary step, because it is adjacent to the same parser-owned dependent-type recovery surface
+- functional-style calls like `Box<T>(2)` now also rebind their constructor-call type node onto the concrete instantiated class before sema/codegen consume it
+- the remaining follow-up should focus on other parser-owned dependent-type recovery surfaces and fallback reductions near this same late-materialization boundary
 
 ## Why this should simplify the code
 

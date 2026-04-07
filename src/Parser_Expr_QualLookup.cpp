@@ -804,6 +804,14 @@ TypeIndex Parser::substitute_template_parameter(
 			type_name = original_type.token().value();
 		}
 
+		const TypeInfo* token_named_type_info = nullptr;
+		if (!type_name.empty()) {
+			auto token_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+			if (token_type_it != getTypesByNameMap().end()) {
+				token_named_type_info = token_type_it->second;
+			}
+		}
+
 		// If we have a valid type_index, prefer the name from gTypeInfo
 		if (const TypeInfo* type_info = tryGetTypeInfo(result_type_index)) {
 			type_name = StringTable::getStringView(type_info->name());
@@ -812,6 +820,10 @@ TypeIndex Parser::substitute_template_parameter(
 					  ", type_name='", type_name, "', underlying_type=", static_cast<int>(type_info->typeEnum()),
 					  ", underlying_type_index=", type_info->type_index_);
 		} else if (!type_name.empty()) {
+			if (token_named_type_info) {
+				result_type_index = token_named_type_info->registeredTypeIndex();
+				result_type = token_named_type_info->typeEnum();
+			}
 			FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", result_type_index, " is placeholder)");
 		}
 
