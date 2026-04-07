@@ -816,7 +816,7 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 			// Create a deferred function call for template contexts
 			// We create a MemberAccessNode followed by postfix call handling
 			// The codegen will handle this as this->operator_name(args)
-			auto member_access = emplace_node<ExpressionNode>(
+			(void)emplace_node<ExpressionNode>(
 				MemberAccessNode(this_node, operator_name_token, true)); // true = arrow access
 
 			// Create a placeholder type spec and decl for the deferred call

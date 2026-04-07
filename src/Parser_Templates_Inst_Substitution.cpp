@@ -761,9 +761,6 @@ std::optional<ASTNode> Parser::try_instantiate_variable_template(std::string_vie
 	// but we need to insert into global scope
 	[[maybe_unused]] bool insert_result = gSymbolTable.insertGlobal(persistent_name, instantiated_var_decl);
 
-	// Verify it's there
-	auto verify = gSymbolTable.lookup(persistent_name);
-
 	// Add to AST at the beginning so it gets code-generated before functions that use it
 	// Insert after other global declarations but before function definitions
 	registerLateMaterializedTopLevelNodeFront(instantiated_var_decl);

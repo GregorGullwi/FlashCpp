@@ -4289,7 +4289,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				// Try to instantiate with the current template arguments
 				std::vector<TemplateTypeArg> member_template_args = materializeMemberTemplateArgs();
 				FLASH_LOG(Templates, Debug, "Instantiating member template: ", member_struct_name, " with ", member_template_args.size(), " args");
-				auto inst_result = try_instantiate_class_template(member_struct_name, member_template_args);
+				try_instantiate_class_template(member_struct_name, member_template_args);
 
 				// If instantiation succeeded, look up the instantiated type
 				std::string_view inst_name_view = get_instantiated_class_name(member_struct_name, member_template_args);
