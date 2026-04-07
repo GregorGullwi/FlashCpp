@@ -1691,6 +1691,9 @@ ParseResult Parser::parse_type_specifier() {
 
 						auto qual_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
 						if (qual_type_it == getTypesByNameMap().end()) {
+							std::optional<StringHandle> dependent_member_template_base;
+							std::optional<InlineVector<TypeInfo::TemplateArgInfo, 4>> dependent_member_template_args;
+
 							// Type not found
 							// If there are template arguments, we need to parse them and include in the type name
 							// BUT: Check if the member is actually a known template first.
@@ -1728,6 +1731,17 @@ ParseResult Parser::parse_type_specifier() {
 								if (!member_template_args.has_value()) {
 									return ParseResult::error("Failed to parse template arguments for dependent member template", type_name_token);
 								}
+
+								dependent_member_template_args = convertToTemplateArgInfo(*member_template_args);
+								StringBuilder member_template_builder;
+								auto parent_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+								if (parent_type_it != getTypesByNameMap().end() && parent_type_it->second->isTemplateInstantiation()) {
+									member_template_builder.append(parent_type_it->second->baseTemplateName());
+								} else {
+									member_template_builder.append(instantiated_name);
+								}
+								dependent_member_template_base = StringTable::getOrInternStringHandle(
+									member_template_builder.append("::").append(member_name).commit());
 
 								// Append template arguments to qualified_type_name
 								// For dependent types, include argument count for better debugging
@@ -1789,21 +1803,30 @@ ParseResult Parser::parse_type_specifier() {
 							type_info.fallback_size_bits_ = 0; // Unknown size for dependent type
 							type_info.name_ = type_idx;
 							type_info.is_incomplete_instantiation_ = true;
+							if (dependent_member_template_base.has_value() && dependent_member_template_args.has_value()) {
+								type_info.setTemplateInstantiationInfo(
+									QualifiedIdentifier::fromQualifiedName(
+										StringTable::getStringView(*dependent_member_template_base),
+										gSymbolTable.get_current_namespace_handle()),
+									*dependent_member_template_args);
+							}
 							size_t sep_pos = qualified_type_name.rfind("::");
 							if (sep_pos != std::string_view::npos) {
 								StringHandle base_handle = StringTable::getOrInternStringHandle(qualified_type_name.substr(0, sep_pos));
 								auto base_type_it = getTypesByNameMap().find(base_handle);
-								if (base_type_it != getTypesByNameMap().end() && base_type_it->second->isTemplateInstantiation()) {
+								if (!type_info.isTemplateInstantiation() &&
+									base_type_it != getTypesByNameMap().end() &&
+									base_type_it->second->isTemplateInstantiation()) {
 									type_info.setTemplateInstantiationInfo(
 										base_type_it->second->base_template_,
 										base_type_it->second->templateArgs());
-									if (base_type_it->second->hasInstantiationContext()) {
-										const auto* base_ctx = base_type_it->second->instantiationContext();
-										type_info.setInstantiationContext(
-											base_ctx->param_names,
-											base_ctx->param_args,
-											base_ctx->parent);
-									}
+								}
+								if (base_type_it != getTypesByNameMap().end() && base_type_it->second->hasInstantiationContext()) {
+									const auto* base_ctx = base_type_it->second->instantiationContext();
+									type_info.setInstantiationContext(
+										base_ctx->param_names,
+										base_ctx->param_args,
+										base_ctx->parent);
 								}
 							}
 							getTypesByNameMap()[type_idx] = &type_info;
