@@ -873,14 +873,13 @@ TypeIndex Parser::substitute_template_parameter(
 		return true;
 	};
 
-	const TypeInfo* token_type_info = lookupTypeInfoByName(type_name);
 	if (const TypeInfo* indexed_type_info = tryGetTypeInfo(current_type_index)) {
 		type_name = StringTable::getStringView(indexed_type_info->name());
 		FLASH_LOG(Templates, Debug, "substitute_template_parameter: type_index=", current_type_index,
 				  ", type_name='", type_name, "', underlying_type=", static_cast<int>(indexed_type_info->typeEnum()),
 				  ", underlying_type_index=", indexed_type_info->type_index_);
 	} else if (!type_name.empty()) {
-		if (token_type_info) {
+		if (const TypeInfo* token_type_info = lookupTypeInfoByName(type_name)) {
 			assignResolvedType(*token_type_info);
 		}
 		FLASH_LOG(Templates, Debug, "substitute_template_parameter: using token name '", type_name, "' (type_index=", current_type_index, " is placeholder)");
