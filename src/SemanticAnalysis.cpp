@@ -3339,6 +3339,9 @@ static std::string getScopedEnumName(const CanonicalTypeDesc& desc) {
 
 void SemanticAnalysis::diagnoseScopedEnumBinaryOperands(const BinaryOperatorNode& bin_op,
 														CanonicalTypeId lhs_type_id, CanonicalTypeId rhs_type_id) {
+	if (bin_op.has_resolved_operator_overload())
+		return;
+
 	if (!lhs_type_id)
 		lhs_type_id = inferExpressionType(bin_op.get_lhs());
 	if (!rhs_type_id)
