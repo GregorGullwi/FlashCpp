@@ -40,6 +40,49 @@ static ReferenceQualifier collapseTemplateArgumentReferenceQualifier(
 	return ReferenceQualifier::RValueReference;
 }
 
+static void resetTypeIndirection(TypeSpecifierNode& type_spec) {
+	const TypeSpecifierNode empty_spec;
+	type_spec.copy_indirection_from(empty_spec);
+}
+
+static void mergeAliasAndUseSiteTypeSpec(
+	TypeSpecifierNode& resolved_spec,
+	const TypeSpecifierNode& use_site_spec,
+	const TypeSpecifierNode* alias_type_spec) {
+	resolved_spec.set_cv_qualifier(use_site_spec.cv_qualifier());
+	resetTypeIndirection(resolved_spec);
+	if (alias_type_spec) {
+		resolved_spec.add_cv_qualifier(alias_type_spec->cv_qualifier());
+		for (const auto& pointer_level : alias_type_spec->pointer_levels()) {
+			resolved_spec.add_pointer_level(pointer_level.cv_qualifier);
+		}
+		if (alias_type_spec->reference_qualifier() != ReferenceQualifier::None) {
+			resolved_spec.set_reference_qualifier(alias_type_spec->reference_qualifier());
+		}
+		if (alias_type_spec->is_array()) {
+			resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
+		}
+		if (alias_type_spec->has_function_signature()) {
+			resolved_spec.set_function_signature(alias_type_spec->function_signature());
+		}
+	}
+	for (const auto& pointer_level : use_site_spec.pointer_levels()) {
+		resolved_spec.add_pointer_level(pointer_level.cv_qualifier);
+	}
+	if (use_site_spec.reference_qualifier() != ReferenceQualifier::None || resolved_spec.reference_qualifier() != ReferenceQualifier::None) {
+		resolved_spec.set_reference_qualifier(
+			collapseTemplateArgumentReferenceQualifier(
+				resolved_spec.reference_qualifier(),
+				use_site_spec.reference_qualifier()));
+	}
+	if (use_site_spec.is_array()) {
+		resolved_spec.set_array_dimensions(use_site_spec.array_dimensions());
+	}
+	if (use_site_spec.has_function_signature()) {
+		resolved_spec.set_function_signature(use_site_spec.function_signature());
+	}
+}
+
 template <typename ParamContainer, typename ArgContainer>
 static void applyTemplateArgIndirection(
 	TypeSpecifierNode& substituted_type,
@@ -758,19 +801,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 					auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-					if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+					if (qualified_type_it != getTypesByNameMap().end() &&
+						qualified_type_it->second != nullptr &&
+						!qualified_type_it->second->is_incomplete_instantiation_) {
 						const TypeInfo* resolved_info = qualified_type_it->second;
+						ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+						TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+							? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+							: resolved_info->registeredTypeIndex();
 						int resolved_size_bits = resolved_info->hasStoredSize()
 							? static_cast<int>(resolved_info->sizeInBits().value)
-							: get_type_size_bits(resolved_info->typeEnum());
+							: get_type_size_bits(resolved_type_index.category());
 						TypeSpecifierNode resolved_spec(
-							resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
+							resolved_type_index,
 							resolved_size_bits,
 							ts.token(),
-							ts.cv_qualifier(),
-							ts.reference_qualifier());
-						resolved_spec.copy_indirection_from(ts);
-						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+							CVQualifier::None,
+							ReferenceQualifier::None);
+						mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 						return;
 					}
@@ -780,8 +828,14 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 				const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 				if (alias_node.target_type().is<TypeSpecifierNode>()) {
-					type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
-					return;
+					type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
+					if (!type_node.is<TypeSpecifierNode>())
+						return;
+					idx = type_node.as<TypeSpecifierNode>().type_index();
+					type_info = tryGetTypeInfo(idx);
+					if (!type_info)
+						return;
+					type_name = StringTable::getStringView(type_info->name());
 				}
 			}
 
@@ -809,8 +863,37 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 
 			StringHandle resolved_handle = build_resolved_handle(base_part, member_part);
 			auto type_it = getTypesByNameMap().find(resolved_handle);
+			if (type_it != getTypesByNameMap().end() &&
+				type_it->second != nullptr &&
+				type_it->second->is_incomplete_instantiation_) {
+				type_it = getTypesByNameMap().end();
+			}
+			if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+				if (!base_template_name.empty()) {
+					try_instantiate_class_template(base_template_name, template_args);
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+					resolved_handle = build_resolved_handle(instantiated_base, member_part);
+					type_it = getTypesByNameMap().find(resolved_handle);
+					if (type_it != getTypesByNameMap().end() &&
+						type_it->second != nullptr &&
+						type_it->second->is_incomplete_instantiation_) {
+						type_it = getTypesByNameMap().end();
+					}
+				}
+			}
+			auto resolve_base_template_name = [&](std::string_view candidate) {
+				// Prefer the exact template-instantiation metadata when it is available.
+				// Fall back to the older underscore-based extractor for synthesized names
+				// that do not have a registered TypeInfo entry yet.
+				std::string_view base_template_name = extractBaseTemplateName(candidate);
+				if (base_template_name.empty()) {
+					base_template_name = extract_base_template_name(candidate);
+				}
+				return base_template_name;
+			};
 			if (type_it == getTypesByNameMap().end()) {
-				std::string_view base_template_name = extract_base_template_name(base_part);
+				std::string_view base_template_name = resolve_base_template_name(base_part);
 				if (!base_template_name.empty()) {
 					auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 					if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
@@ -818,9 +901,19 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 						std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 						resolved_handle = build_resolved_handle(instantiated_base, member_part);
 						type_it = getTypesByNameMap().find(resolved_handle);
+						if (type_it != getTypesByNameMap().end() &&
+							type_it->second != nullptr &&
+							type_it->second->is_incomplete_instantiation_) {
+							type_it = getTypesByNameMap().end();
+						}
 						if (type_it == getTypesByNameMap().end()) {
 							StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
 							type_it = getTypesByNameMap().find(primary_handle);
+							if (type_it != getTypesByNameMap().end() &&
+								type_it->second != nullptr &&
+								type_it->second->is_incomplete_instantiation_) {
+								type_it = getTypesByNameMap().end();
+							}
 						}
 					}
 				}
@@ -836,12 +929,17 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				}
 			} else {
 				const TypeInfo* resolved_info = type_it->second;
+				ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+				TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+					? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+					: resolved_info->registeredTypeIndex();
 				TypeSpecifierNode resolved_spec(
-					resolved_info->typeEnum(),
-					TypeQualifier::None,
-					get_type_size_bits(resolved_info->typeEnum()),
-					Token(), CVQualifier::None);
-				resolved_spec.set_type_index(resolved_info->type_index_);
+					resolved_type_index,
+					get_type_size_bits(resolved_type_index.category()),
+					ts.token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 				type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			}
 		};
@@ -925,12 +1023,7 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 				TypeSpecifierNode& param_type_ref = param_type.as<TypeSpecifierNode>();
 				int resolved_param_size_bits = getTypeSpecSizeBits(param_type_ref);
 				if (resolved_param_size_bits > 0) {
-					param_type_ref = TypeSpecifierNode(
-						param_type_ref.type_index().withCategory(param_type_ref.type()),
-						resolved_param_size_bits,
-						param_type_ref.token(),
-						param_type_ref.cv_qualifier(),
-						param_type_ref.reference_qualifier());
+					param_type_ref.set_size_in_bits(resolved_param_size_bits);
 				}
 				param_type_ref.set_reference_qualifier(orig_param_type.reference_qualifier());
 				applyTemplateArgIndirection(param_type_ref, orig_param_type, template_params, explicit_types,
@@ -1864,6 +1957,34 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		return_type = emplace_node<TypeSpecifierNode>(new_return_type);
 	}
 
+	// Parse the template_name to extract namespace and function name
+	// template_name might be like "ns::sum" or just "sum"
+	std::vector<std::string_view> namespace_path;
+	std::string_view function_name_only;
+
+	size_t last_colon = template_name.rfind("::");
+	if (last_colon != std::string_view::npos) {
+		// Has namespace - split it
+		std::string_view namespace_part = template_name.substr(0, last_colon);
+		function_name_only = template_name.substr(last_colon + 2);
+
+		// Parse namespace parts (could be nested like "a::b::c")
+		size_t start = 0;
+		while (start < namespace_part.size()) {
+			size_t end = namespace_part.find("::", start);
+			if (end == std::string_view::npos) {
+				end = namespace_part.size();
+			}
+			if (end > start) {
+				namespace_path.push_back(namespace_part.substr(start, end - start));
+			}
+			start = (end == namespace_part.size()) ? end : end + 2;
+		}
+	} else {
+		// No namespace
+		function_name_only = template_name;
+	}
+
 	// Resolve dependent qualified aliases like Helper_T::type after substituting template arguments
 	auto resolve_dependent_member_alias = [&](ASTNode& type_node) {
 		if (!type_node.is<TypeSpecifierNode>())
@@ -1884,19 +2005,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 				StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
 					StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 				auto qualified_type_it = getTypesByNameMap().find(qualified_alias_handle);
-				if (qualified_type_it != getTypesByNameMap().end() && qualified_type_it->second != nullptr) {
+				if (qualified_type_it != getTypesByNameMap().end() &&
+					qualified_type_it->second != nullptr &&
+					!qualified_type_it->second->is_incomplete_instantiation_) {
 					const TypeInfo* resolved_info = qualified_type_it->second;
+					ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+					TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+						? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+						: resolved_info->registeredTypeIndex();
 					int resolved_size_bits = resolved_info->hasStoredSize()
 						? static_cast<int>(resolved_info->sizeInBits().value)
-						: get_type_size_bits(resolved_info->typeEnum());
+						: get_type_size_bits(resolved_type_index.category());
 					TypeSpecifierNode resolved_spec(
-						resolved_info->type_index_.withCategory(resolved_info->typeEnum()),
+						resolved_type_index,
 						resolved_size_bits,
 						ts.token(),
-						ts.cv_qualifier(),
-						ts.reference_qualifier());
-					resolved_spec.copy_indirection_from(ts);
-					resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 					type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 					return;
 				}
@@ -1908,9 +2034,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			direct_alias.has_value() && direct_alias->is<TemplateAliasNode>()) {
 			const auto& alias_node = direct_alias->as<TemplateAliasNode>();
 			if (alias_node.target_type().is<TypeSpecifierNode>()) {
-				type_node = emplace_node<TypeSpecifierNode>(alias_node.target_type().as<TypeSpecifierNode>());
-				FLASH_LOG(Templates, Debug, "Resolved dependent alias directly: ", type_name);
-				return;
+				type_node = substituteTemplateParameters(alias_node.target_type(), template_params, template_args);
+				if (!type_node.is<TypeSpecifierNode>())
+					return;
+				idx = type_node.as<TypeSpecifierNode>().type_index();
+				type_info = tryGetTypeInfo(idx);
+				if (!type_info)
+					return;
+				type_name = StringTable::getStringView(type_info->name());
+				FLASH_LOG(Templates, Debug, "Resolved dependent alias through substitution: ", type_name);
 			}
 		}
 
@@ -1944,12 +2076,41 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: resolved_name=",
 				  StringTable::getStringView(resolved_handle));
 		auto type_it = getTypesByNameMap().find(resolved_handle);
+		if (type_it != getTypesByNameMap().end() &&
+			type_it->second != nullptr &&
+			type_it->second->is_incomplete_instantiation_) {
+			type_it = getTypesByNameMap().end();
+		}
+		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
+			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+			if (!base_template_name.empty()) {
+				try_instantiate_class_template(base_template_name, template_args);
+				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+				resolved_handle = build_resolved_handle(instantiated_base, member_part);
+				type_it = getTypesByNameMap().find(resolved_handle);
+				if (type_it != getTypesByNameMap().end() &&
+					type_it->second != nullptr &&
+					type_it->second->is_incomplete_instantiation_) {
+					type_it = getTypesByNameMap().end();
+				}
+			}
+		}
 
+		auto resolve_base_template_name = [&](std::string_view candidate) {
+			// Prefer the exact template-instantiation metadata when it is available.
+			// Fall back to the older underscore-based extractor for synthesized names
+			// that do not have a registered TypeInfo entry yet.
+			std::string_view base_template_name = extractBaseTemplateName(candidate);
+			if (base_template_name.empty()) {
+				base_template_name = extract_base_template_name(candidate);
+			}
+			return base_template_name;
+		};
 		if (type_it == getTypesByNameMap().end()) {
 			// Try instantiating the base template to register member aliases
 			// The base_part contains a mangled name like "enable_if_void_int"
 			// We need to find the actual template name, which could be "enable_if" not just "enable"
-			std::string_view base_template_name = extract_base_template_name(base_part);
+			std::string_view base_template_name = resolve_base_template_name(base_part);
 
 			// Only try to instantiate if we found a class template (not a function template)
 			if (!base_template_name.empty()) {
@@ -1960,11 +2121,20 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = getTypesByNameMap().find(resolved_handle);
+					if (type_it != getTypesByNameMap().end() &&
+						type_it->second != nullptr &&
+						type_it->second->is_incomplete_instantiation_) {
+						type_it = getTypesByNameMap().end();
+					}
 
-					// Fallback: also try using the primary template name (uninstantiated) to find a registered alias
 					if (type_it == getTypesByNameMap().end()) {
 						StringHandle primary_handle = build_resolved_handle(base_template_name, member_part);
 						type_it = getTypesByNameMap().find(primary_handle);
+						if (type_it != getTypesByNameMap().end() &&
+							type_it->second != nullptr &&
+							type_it->second->is_incomplete_instantiation_) {
+							type_it = getTypesByNameMap().end();
+						}
 					}
 					FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: after instantiation lookup '",
 							  StringTable::getStringView(resolved_handle), "' found=", (type_it != getTypesByNameMap().end()));
@@ -1973,7 +2143,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 
 		if (type_it == getTypesByNameMap().end()) {
-			// Fallback: check alias templates registry
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
@@ -1986,12 +2155,17 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			}
 		} else {
 			const TypeInfo* resolved_info = type_it->second;
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+			TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+				? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+				: resolved_info->registeredTypeIndex();
 			TypeSpecifierNode resolved_spec(
-				resolved_info->typeEnum(),
-				TypeQualifier::None,
-				get_type_size_bits(resolved_info->typeEnum()),
-				Token(), CVQualifier::None);
-			resolved_spec.set_type_index(resolved_info->type_index_);
+				resolved_type_index,
+				get_type_size_bits(resolved_type_index.category()),
+				ts.token(),
+				CVQualifier::None,
+				ReferenceQualifier::None);
+			mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
 			type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 			FLASH_LOG(Templates, Debug, "Resolved dependent alias '", type_name, "' to type=", static_cast<int>(resolved_info->typeEnum()),
 					  ", index=", resolved_info->type_index_);
@@ -2009,34 +2183,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	auto new_decl = emplace_node<DeclarationNode>(return_type, func_name_token);
 
 	auto [new_func_node, new_func_ref] = emplace_node_ref<FunctionDeclarationNode>(new_decl.as<DeclarationNode>());
-
-	// Parse the template_name to extract namespace and function name
-	// template_name might be like "ns::sum" or just "sum"
-	std::vector<std::string_view> namespace_path;
-	std::string_view function_name_only;
-
-	size_t last_colon = template_name.rfind("::");
-	if (last_colon != std::string_view::npos) {
-		// Has namespace - split it
-		std::string_view namespace_part = template_name.substr(0, last_colon);
-		function_name_only = template_name.substr(last_colon + 2);
-
-		// Parse namespace parts (could be nested like "a::b::c")
-		size_t start = 0;
-		while (start < namespace_part.size()) {
-			size_t end = namespace_part.find("::", start);
-			if (end == std::string_view::npos) {
-				end = namespace_part.size();
-			}
-			if (end > start) {
-				namespace_path.push_back(namespace_part.substr(start, end - start));
-			}
-			start = (end == namespace_part.size()) ? end : end + 2;
-		}
-	} else {
-		// No namespace
-		function_name_only = template_name;
-	}
 
 	// Add parameters with substituted types
 	// Note: We compute the mangled name AFTER adding parameters, since the mangled name
@@ -2145,7 +2291,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						deduced_arg_type.type(),
 						TypeQualifier::None,
 						deduced_arg_type.size_in_bits(),
-						Token(),
+						orig_param_type.token(),
 						cv);
 					param_type.as<TypeSpecifierNode>().set_type_index(deduced_arg_type.type_index());
 					if (deduced_arg_type.has_function_signature()) {
@@ -2202,7 +2348,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						subst_type_index.category(),
 						TypeQualifier::None,
 						get_type_size_bits(subst_type_index.category()),
-						Token(),
+						orig_param_type.token(),
 						orig_param_type.cv_qualifier());
 					param_type.as<TypeSpecifierNode>().set_type_index(subst_type_index);
 					applyTemplateArgIndirection(param_type.as<TypeSpecifierNode>(), orig_param_type, template_params, template_args,
@@ -2238,6 +2384,7 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 					param_type.as<TypeSpecifierNode>().set_reference_qualifier(ReferenceQualifier::RValueReference);
 				}
 
+				resolve_dependent_member_alias(param_type);
 				TypeSpecifierNode& resolved_param_type = param_type.as<TypeSpecifierNode>();
 				const ResolvedAliasTypeInfo param_alias_info = resolveAliasTypeInfo(resolved_param_type.type_index());
 				if (param_alias_info.type_index.is_valid() && param_alias_info.type_index != resolved_param_type.type_index()) {

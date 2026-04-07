@@ -2255,6 +2255,10 @@ TEST_SUITE("Templates") {
 		run_test_from_file("test_template_alias_simple.cpp", "Templates:AliasSimple", false);
 	}
 
+	TEST_CASE("Templates:AliasFuncPtr") {
+		run_test_from_file("test_template_alias_funcptr_ret0.cpp", "Templates:AliasFuncPtr", false);
+	}
+
 	TEST_CASE("Templates:NoBrackets") {
 		run_test_from_file("test_template_no_brackets.cpp", "Templates:NoBrackets", false);
 	}
