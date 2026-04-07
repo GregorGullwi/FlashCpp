@@ -1039,9 +1039,10 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 		size_t member_object_offset = 0;
 		if (const DeclarationNode* decl = lookupDeclaration(identifier_handle)) {
 			type_node = &decl->type_node().as<TypeSpecifierNode>();
-		} else if (const StructTypeInfo* current_struct = getCurrentStructContext()) {
-			TypeIndex current_struct_type = current_struct->own_type_index_.value_or(TypeIndex{});
-			if (current_struct_type.is_valid()) {
+		} else if (current_struct_name_.isValid()) {
+			auto current_struct_it = getTypesByNameMap().find(current_struct_name_);
+			if (current_struct_it != getTypesByNameMap().end() && current_struct_it->second->isStruct()) {
+				TypeIndex current_struct_type = current_struct_it->second->type_index_;
 				if (auto member_result = FlashCpp::gLazyMemberResolver.resolve(current_struct_type, identifier_handle)) {
 					if (member_result.member &&
 						is_struct_type(member_result.member->type_index.category()) &&
@@ -1177,21 +1178,22 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			if (!base_type_index.isStructLike()) {
 				throw InternalError("nested member access on non-struct type");
 			}
-			if (is_arrow) {
-				is_pointer_dereference = true;
-			}
 			// When the nested member access resolved a struct reference member (e.g. wp.p
 			// where p is Point&), the result TempVar holds a pointer to the referenced struct.
 			// Detect this via the LValue metadata and set is_pointer_dereference so the
 			// subsequent MemberAccess instruction dereferences through the pointer.
 			// Two cases:
-			//   - Load context: struct ref member returns Kind::Member with is_pointer_to_member=true
+			//   - Load context: struct ref member returns ValueStorage::ContainsAddress
 			//   - LValueAddress context: struct ref member returns Kind::Indirect (pointer loaded)
+			if (nested_result.storage == ValueStorage::ContainsAddress ||
+				(is_arrow && nested_result.pointer_depth.value > 0)) {
+				is_pointer_dereference = true;
+			}
 			if (!is_pointer_dereference && std::holds_alternative<TempVar>(nested_result.value)) {
 				TempVar nested_temp = std::get<TempVar>(nested_result.value);
 				auto nested_lv = getTempVarLValueInfo(nested_temp);
 				if (nested_lv.has_value() &&
-					(nested_lv->is_pointer_to_member || nested_lv->kind == LValueInfo::Kind::Indirect)) {
+					nested_lv->kind == LValueInfo::Kind::Indirect) {
 					is_pointer_dereference = true;
 				}
 			}
@@ -1297,6 +1299,59 @@ ExprResult AstToIr::generateMemberAccessIr(const MemberAccessNode& memberAccessN
 			}
 		} else {
 			throw InternalError(std::string("member access on unsupported object expression type for member '") + std::string(memberAccessNode.member_token().value()) + "'" + (expr ? std::string(" (variant index ") + std::to_string(expr->index()) + ")" : " (no expression)"));
+		}
+	}
+
+	if (is_arrow && !is_pointer_dereference && base_type_index.is_valid()) {
+		auto overload_result = findUnaryOperatorOverload(base_type_index, OverloadableOperator::Arrow);
+		if (overload_result.has_match) {
+			const StructMemberFunction& member_func = *overload_result.member_overload;
+			const FunctionDeclarationNode& func_decl = member_func.function_decl.as<FunctionDeclarationNode>();
+			const TypeSpecifierNode& return_type = func_decl.decl_node().type_node().as<TypeSpecifierNode>();
+
+			std::string_view struct_name = StringTable::getStringView(getTypeInfo(base_type_index).name());
+			std::string_view operator_func_name = "operator->";
+			std::vector<TypeSpecifierNode> empty_params;
+			std::vector<std::string_view> empty_namespace;
+			auto mangled_name = NameMangling::generateMangledName(
+				operator_func_name,
+				return_type,
+				empty_params,
+				false,
+				struct_name,
+				empty_namespace,
+				Linkage::CPlusPlus,
+				func_decl.is_const_member_function());
+
+			int base_size_bits = 64;
+			if (const TypeInfo* base_type_info = tryGetTypeInfo(base_type_index)) {
+				base_size_bits = base_type_info->sizeInBits().value;
+				if (base_size_bits == 0) {
+					if (const StructTypeInfo* base_struct_info = base_type_info->getStructInfo()) {
+						base_size_bits = base_struct_info->sizeInBits().value;
+					}
+				}
+			}
+			if (base_size_bits == 0) {
+				base_size_bits = 64;
+			}
+
+			TempVar ptr_result = var_counter.next();
+			CallOp call_op = createCallOp(ptr_result, StringHandle{}, return_type, true, false);
+			call_op.function_name = mangled_name;
+			std::visit([&](auto&& base_value) {
+				call_op.args.push_back(makeTypedValue(
+					base_type_index,
+					SizeInBits{base_size_bits},
+					IrValue(base_value)));
+			}, base_object);
+			ir_.addInstruction(IrInstruction(IrOpcode::FunctionCall, std::move(call_op), memberAccessNode.member_token()));
+
+			if (return_type.pointer_depth() > 0) {
+				base_object = ptr_result;
+				base_type_index = return_type.type_index();
+				is_pointer_dereference = true;
+			}
 		}
 	}
 
