@@ -6,6 +6,44 @@
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
 
+namespace {
+
+ASTNode makeRebuiltConstructorCallNode(
+	const ConstructorCallNode& constructor_call,
+	ASTNode substituted_type,
+	ChunkedVector<ASTNode>&& arguments,
+	bool wrap_in_expression) {
+	if (wrap_in_expression) {
+		return ASTNode::emplace_node<ExpressionNode>(
+			ConstructorCallNode(substituted_type, std::move(arguments), constructor_call.called_from()));
+	}
+	return ASTNode::emplace_node<ConstructorCallNode>(
+		substituted_type,
+		std::move(arguments),
+		constructor_call.called_from());
+}
+
+ASTNode makeRebuiltPointerToMemberAccessNode(
+	const PointerToMemberAccessNode& member_access,
+	ASTNode substituted_object,
+	ASTNode substituted_member_pointer,
+	bool wrap_in_expression) {
+	if (wrap_in_expression) {
+		return ASTNode::emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+			substituted_object,
+			substituted_member_pointer,
+			member_access.operator_token(),
+			member_access.is_arrow()));
+	}
+	return ASTNode::emplace_node<PointerToMemberAccessNode>(
+		substituted_object,
+		substituted_member_pointer,
+		member_access.operator_token(),
+		member_access.is_arrow());
+}
+
+}
+
 ASTNode Parser::substituteTemplateParameters(
 	const ASTNode& node,
 	const InlineVector<ASTNode, 4>& template_params,
@@ -311,11 +349,11 @@ ASTNode Parser::substituteTemplateParameters(
 			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
 			ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
 			ASTNode substituted_member_pointer = substituteTemplateParameters(member_access.member_pointer(), template_params, template_args);
-			return emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+			return makeRebuiltPointerToMemberAccessNode(
+				member_access,
 				substituted_object,
 				substituted_member_pointer,
-				member_access.operator_token(),
-				member_access.is_arrow()));
+				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<ConstructorCallNode>(expr)) {
 			const ConstructorCallNode& constructor_call = std::get<ConstructorCallNode>(expr);
 			ASTNode substituted_type = substituteTemplateParameters(constructor_call.type_node(), template_params, template_args);
@@ -323,7 +361,11 @@ ASTNode Parser::substituteTemplateParameters(
 			for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 				substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 			}
-			return emplace_node<ExpressionNode>(ConstructorCallNode(substituted_type, std::move(substituted_args), constructor_call.called_from()));
+			return makeRebuiltConstructorCallNode(
+				constructor_call,
+				substituted_type,
+				std::move(substituted_args),
+				/*wrap_in_expression=*/true);
 		} else if (std::holds_alternative<TypeTraitExprNode>(expr)) {
 			const TypeTraitExprNode& trait_expr = std::get<TypeTraitExprNode>(expr);
 			ASTNode substituted_type = substituteTemplateParameters(
@@ -887,7 +929,11 @@ ASTNode Parser::substituteTemplateParameters(
 		for (size_t i = 0; i < constructor_call.arguments().size(); ++i) {
 			substituteArgWithPackExpansion(constructor_call.arguments()[i], template_params, template_args, substituted_args);
 		}
-		return emplace_node<ConstructorCallNode>(substituted_type, std::move(substituted_args), constructor_call.called_from());
+		return makeRebuiltConstructorCallNode(
+			constructor_call,
+			substituted_type,
+			std::move(substituted_args),
+			/*wrap_in_expression=*/false);
 
 	} else if (node.is<BinaryOperatorNode>()) {
 		// Handle binary operators
@@ -902,11 +948,11 @@ ASTNode Parser::substituteTemplateParameters(
 		const PointerToMemberAccessNode& member_access = node.as<PointerToMemberAccessNode>();
 		ASTNode substituted_object = substituteTemplateParameters(member_access.object(), template_params, template_args);
 		ASTNode substituted_member_pointer = substituteTemplateParameters(member_access.member_pointer(), template_params, template_args);
-		return emplace_node<PointerToMemberAccessNode>(
+		return makeRebuiltPointerToMemberAccessNode(
+			member_access,
 			substituted_object,
 			substituted_member_pointer,
-			member_access.operator_token(),
-			member_access.is_arrow());
+			/*wrap_in_expression=*/false);
 
 	} else if (node.is<DeclarationNode>()) {
 		// Handle declarations that might have template parameter types
@@ -1572,11 +1618,11 @@ ASTNode Parser::replacePackIdentifierInExpr(const ASTNode& expr, std::string_vie
 			const PointerToMemberAccessNode& member_access = *pointer_to_member_access;
 			ASTNode new_object = replacePackIdentifierInExpr(member_access.object(), pack_name, element_index);
 			ASTNode new_member_pointer = replacePackIdentifierInExpr(member_access.member_pointer(), pack_name, element_index);
-			return emplace_node<ExpressionNode>(PointerToMemberAccessNode(
+			return makeRebuiltPointerToMemberAccessNode(
+				member_access,
 				new_object,
 				new_member_pointer,
-				member_access.operator_token(),
-				member_access.is_arrow()));
+				/*wrap_in_expression=*/true);
 		}
 
 		if (const auto* array_subscript = std::get_if<ArraySubscriptNode>(&expr_variant)) {
