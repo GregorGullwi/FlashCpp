@@ -6,29 +6,7 @@ ASTNode rebindStaticMemberInitializerFunctionCalls(
 	bool set_qualified_name);
 
 inline void normalizeSubstitutedTypeSpec(TypeSpecifierNode& type_spec) {
-	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(type_spec.type_index());
-	if (resolved_alias.type_index.is_valid()) {
-		type_spec.set_type_index(resolved_alias.type_index.withCategory(resolved_alias.typeEnum()));
-		type_spec.set_category(resolved_alias.typeEnum());
-	}
-	type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
-	if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
-		resolved_alias.reference_qualifier != ReferenceQualifier::None) {
-		type_spec.set_reference_qualifier(resolved_alias.reference_qualifier);
-	}
-	if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
-		type_spec.set_function_signature(*resolved_alias.function_signature);
-	}
-	if (!resolved_alias.array_dimensions.empty()) {
-		std::vector<size_t> array_dimensions = type_spec.array_dimensions();
-		array_dimensions.insert(array_dimensions.end(),
-								resolved_alias.array_dimensions.begin(),
-								resolved_alias.array_dimensions.end());
-		type_spec.set_array_dimensions(array_dimensions);
-	}
-	if (const int resolved_size_bits = getTypeSpecSizeBits(type_spec); resolved_size_bits > 0) {
-		type_spec.set_size_in_bits(resolved_size_bits);
-	}
+	type_spec = normalizeAliasedTypeSpecifier(type_spec);
 }
 
 template <typename TSubstituteFn, typename TOwnerDecl, typename TParams, typename TArgs>

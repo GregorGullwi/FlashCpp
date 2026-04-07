@@ -1539,24 +1539,7 @@ std::optional<TypeSpecifierNode> Parser::get_expression_type(const ASTNode& expr
 		}
 
 		auto normalize_alias_return_type = [&](TypeSpecifierNode& type) {
-			const ResolvedAliasTypeInfo return_alias_info = resolveAliasTypeInfo(type.type_index());
-			if (return_alias_info.type_index.is_valid()) {
-				type.set_type_index(return_alias_info.type_index.withCategory(return_alias_info.typeEnum()));
-			}
-			type.add_pointer_levels(static_cast<int>(return_alias_info.pointer_depth));
-			if (type.reference_qualifier() == ReferenceQualifier::None &&
-				return_alias_info.reference_qualifier != ReferenceQualifier::None) {
-				type.set_reference_qualifier(return_alias_info.reference_qualifier);
-			}
-			if (!type.has_function_signature() && return_alias_info.function_signature.has_value()) {
-				type.set_function_signature(*return_alias_info.function_signature);
-			}
-			if (!return_alias_info.array_dimensions.empty()) {
-				type.set_array_dimensions(return_alias_info.array_dimensions);
-			}
-			if (const int resolved_size_bits = getTypeSpecSizeBits(type); resolved_size_bits > 0) {
-				type.set_size_in_bits(resolved_size_bits);
-			}
+			type = normalizeAliasedTypeSpecifier(type);
 		};
 
 		auto update_return_type_from_struct = [&](const StructTypeInfo* struct_info) {

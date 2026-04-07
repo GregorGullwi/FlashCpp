@@ -273,6 +273,7 @@ ASTNode Parser::substitute_template_params_in_expression(
 					TypeQualifier::None,
 					get_type_size_bits(arg.category()),
 					ctor.called_from(), CVQualifier::None);
+				new_type.set_type_index(arg.type_index);
 
 				// Recursively substitute in arguments
 				ChunkedVector<ASTNode> new_args;

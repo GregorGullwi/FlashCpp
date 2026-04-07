@@ -5114,20 +5114,16 @@ EvalResult Evaluator::materialize_constructor_object_value(
 		return EvalResult::error("Constructor call without valid type specifier");
 	}
 
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& raw_type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode type_spec = normalizeAliasedTypeSpecifier(raw_type_spec);
 	if (!is_struct_type(type_spec.category())) {
 		return EvalResult::error("Constructor call is not a struct/class type");
 	}
 
 	TypeIndex type_index = type_spec.type_index();
-	const TypeInfo* type_info = tryGetTypeInfo(type_index);
-	if (!type_info) {
-		return EvalResult::error("Constructor call has invalid struct/class type");
-	}
-
-	const StructTypeInfo* struct_info = type_info->getStructInfo();
+	const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_index);
 	if (!struct_info) {
-		return EvalResult::error("Constructor call type is not a struct/class");
+		return EvalResult::error("Constructor call has invalid struct/class type");
 	}
 
 	// Delegate to the shared helper for the find→bind→materialize sequence.

@@ -1056,6 +1056,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			// - Reference parameters: stored in VariableDeclOp with is_reference=true during code generation
 			// - Local reference variables: created with DeclarationNode that has reference TypeSpecifierNode
 		if (type_node.is_reference()) {
+			const TypeSpecifierNode normalized_type = normalizeAliasedTypeSpecifier(type_node);
 				// Check if this is actually a local reference variable (not a parameter)
 				// Local reference variables are stored on the stack and hold a pointer value
 				// We can detect this by checking if a VariableDeclOp was generated with is_reference=true
@@ -1073,10 +1074,10 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// For compound assignments, we need to return a TempVar with lvalue metadata
 				// For simple assignments and function calls, we can return the reference directly
 			if (context == ExpressionContext::LValueAddress) {
-				TypeCategory pointee_type = type_node.type();
-				int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier lvalue lowering");
+				TypeCategory pointee_type = normalized_type.type();
+				int pointee_size = resolveCodegenSizeBits(normalized_type, "reference identifier lvalue lowering");
 
-				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
+				TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, normalized_type.type_index());
 
 					// Create a TempVar with Indirect lvalue metadata for compound assignments
 					// This allows handleLValueCompoundAssignment to work with reference variables
@@ -1109,19 +1110,19 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 
 				// For non-array references in Load context, we need to dereference to get the value
 
-			TypeCategory pointee_type = type_node.category();
-			int pointee_size = resolveCodegenSizeBits(type_node, "reference identifier load lowering");
+			TypeCategory pointee_type = normalized_type.category();
+			int pointee_size = resolveCodegenSizeBits(normalized_type, "reference identifier load lowering");
 
-			TypeCategory semantic_pointee_type = type_node.type();
+			TypeCategory semantic_pointee_type = normalized_type.type();
 
 				// For enum references, lower the dereferenced value to its runtime
 				// representation so arithmetic/bitwise operations consume the
 				// underlying integer type.
-			pointee_type = getRuntimeValueType(type_node.type_index().withCategory(semantic_pointee_type), PointerDepth{});
+			pointee_type = getRuntimeValueType(normalized_type.type_index().withCategory(semantic_pointee_type), PointerDepth{});
 			pointee_size = getRuntimeValueSizeBits(
-				type_node.type_index(), pointee_size, PointerDepth{});
+				normalized_type.type_index(), pointee_size, PointerDepth{});
 
-			int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+			int ptr_depth = normalized_type.pointer_depth() > 0 ? normalized_type.pointer_depth() : 1;
 			TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 												  StringTable::getOrInternStringHandle(identifierNode.name()));
 
@@ -1134,7 +1135,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 			);
 			setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-			TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
+			TypeIndex type_index = preserveSemanticTypeIndex(normalized_type.type(), normalized_type.type_index());
 			return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 		}
 
@@ -1233,6 +1234,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				// Reference variables (both lvalue & and rvalue &&) hold an address, and we need to load the value from that address
 				// EXCEPT for array references, where the reference IS the array pointer
 			if (type_node.is_reference()) {
+				const TypeSpecifierNode normalized_type = normalizeAliasedTypeSpecifier(type_node);
 				FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': context={}",
 								 identifierNode.name(), context == ExpressionContext::LValueAddress ? "LValueAddress" : "Load");
 
@@ -1248,8 +1250,8 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					// as an indirect lvalue (pointer that needs dereferencing for stores)
 				if (context == ExpressionContext::LValueAddress) {
 					FLASH_LOG_FORMAT(Codegen, Debug, "VariableDecl reference '{}': Creating addr_temp for LValueAddress", identifierNode.name());
-					TypeCategory pointee_type = type_node.type();
-					int pointee_size = resolveCodegenSizeBits(type_node, "reference variable lvalue lowering");
+					TypeCategory pointee_type = normalized_type.type();
+					int pointee_size = resolveCodegenSizeBits(normalized_type, "reference variable lvalue lowering");
 
 						// The reference variable holds a pointer address
 						// We need to load it into a temp and mark it with Indirect LValue metadata
@@ -1274,16 +1276,16 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 					);
 					setTempVarMetadata(addr_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, type_node.type_index());
+					TypeIndex type_index = preserveSemanticTypeIndex(pointee_type, normalized_type.type_index());
 					return makeExprResult(type_index.withCategory(pointee_type), SizeInBits{pointee_size}, IrOperand{addr_temp}, PointerDepth{}, ValueStorage::ContainsAddress);
 				}
 
 					// For Load context (reading the value), dereference to get the value
 
-				TypeCategory pointee_type = type_node.type();
-				int pointee_size = resolveCodegenSizeBits(type_node, "reference variable load lowering");
+				TypeCategory pointee_type = normalized_type.type();
+				int pointee_size = resolveCodegenSizeBits(normalized_type, "reference variable load lowering");
 
-				int ptr_depth = type_node.pointer_depth() > 0 ? type_node.pointer_depth() : 1;
+				int ptr_depth = normalized_type.pointer_depth() > 0 ? normalized_type.pointer_depth() : 1;
 				TempVar result_temp = emitDereference(pointee_type, 64, ptr_depth,
 													  StringTable::getOrInternStringHandle(identifierNode.name()));
 
@@ -1296,7 +1298,7 @@ ExprResult AstToIr::generateIdentifierIr(const IdentifierNode& identifierNode,
 				);
 				setTempVarMetadata(result_temp, TempVarMetadata::makeLValue(lvalue_info, TypeCategory::Invalid, 0));
 
-				TypeIndex type_index = preserveSemanticTypeIndex(type_node.type(), type_node.type_index());
+				TypeIndex type_index = preserveSemanticTypeIndex(normalized_type.type(), normalized_type.type_index());
 				return makeIdentifierResult(pointee_type, pointee_size, result_temp, type_index);
 			}
 

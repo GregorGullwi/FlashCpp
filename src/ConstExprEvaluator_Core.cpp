@@ -1356,7 +1356,8 @@ EvalResult Evaluator::evaluate_offsetof(const OffsetofExprNode& offsetof_expr) {
 		return EvalResult::error("offsetof type argument must be TypeSpecifierNode");
 	}
 
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& raw_type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode type_spec = normalizeAliasedTypeSpecifier(raw_type_spec);
 	if (type_spec.category() != TypeCategory::Struct) {
 		return EvalResult::error("offsetof requires a struct type");
 	}

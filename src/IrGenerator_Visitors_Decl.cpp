@@ -2806,7 +2806,8 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 		return ExprResult{};
 	}
 
-	const TypeSpecifierNode& type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode& raw_type_spec = type_node.as<TypeSpecifierNode>();
+	const TypeSpecifierNode type_spec = normalizeAliasedTypeSpecifier(raw_type_spec);
 	size_t num_args = 0;
 	constructorCallNode.arguments().visit([&](ASTNode) { num_args++; });
 
@@ -2861,37 +2862,45 @@ ExprResult AstToIr::generateConstructorCallIr(const ConstructorCallNode& constru
 	// For constructor calls, we need to generate a constructor call instruction
 	// In C++, constructors are named after the class
 	StringHandle constructor_name;
-	if (is_struct_type(type_spec.category())) {
-		// If type_index is set, use it
-		if (type_spec.type_index().is_valid()) {
-			constructor_name = getTypeInfo(type_spec.type_index()).name();
+	if (type_spec.type_index().is_valid()) {
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+			constructor_name = type_info->name();
+		}
+	}
+	if (!constructor_name.isValid()) {
+		if (raw_type_spec.token().handle().isValid()) {
+			constructor_name = raw_type_spec.token().handle();
 		} else {
-			// Otherwise, use the token value (the identifier name)
 			constructor_name = type_spec.token().handle();
+		}
+	}
+	if (is_struct_type(type_spec.category())) {
+		if (!constructor_name.isValid()) {
+			throw InternalError("Struct constructor call is missing a resolved constructor name");
 		}
 	} else {
 		// For basic types, constructors might not exist, but we can handle them as value construction
-		constructor_name = getTypeInfo(type_spec.type_index()).name();
+		if (!constructor_name.isValid() && type_spec.type_index().is_valid()) {
+			constructor_name = getTypeInfo(type_spec.type_index()).name();
+		}
 	}
 
 	// Create a temporary variable for the result (the constructed object)
 	TempVar ret_var = var_counter.next();
 
 	// Get the actual size of the struct from gTypeInfo
-	int actual_size_bits = static_cast<int>(type_spec.size_in_bits());
-	const StructTypeInfo* struct_info = nullptr;
-	if (type_spec.category() == TypeCategory::Struct) {
-		const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index());
-		if (type_info && type_info->struct_info_) {
-			actual_size_bits = static_cast<int>(type_info->struct_info_->sizeInBits().value);
-			struct_info = type_info->struct_info_.get();
-		}
-	} else {
-		// Fallback: look up by name
+	int actual_size_bits = getTypeSpecSizeBits(type_spec);
+	const StructTypeInfo* struct_info = tryGetStructTypeInfo(type_spec.type_index());
+	if (struct_info) {
+		actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+	} else if (is_struct_type(type_spec.category())) {
+		// Fallback: look up by resolved name
 		auto type_it = getTypesByNameMap().find(constructor_name);
-		if (type_it != getTypesByNameMap().end() && type_it->second->struct_info_) {
-			actual_size_bits = static_cast<int>(type_it->second->struct_info_->sizeInBits().value);
-			struct_info = type_it->second->struct_info_.get();
+		if (type_it != getTypesByNameMap().end()) {
+			struct_info = type_it->second->getStructInfo();
+			if (struct_info) {
+				actual_size_bits = static_cast<int>(struct_info->sizeInBits().value);
+			}
 		}
 	}
 

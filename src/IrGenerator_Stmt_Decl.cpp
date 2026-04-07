@@ -160,6 +160,10 @@ std::string_view describeOverloadArgExprShape(const ASTNode& arg) {
 } // namespace
 
 std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(const ASTNode& arg) const {
+	auto normalizeArgType = [](TypeSpecifierNode type) {
+		return normalizeAliasedTypeSpecifier(type);
+	};
+
 	auto tryParserFallback = [&](const ASTNode& fallback_arg) -> std::optional<TypeSpecifierNode> {
 		if (!parser_) {
 			return std::nullopt;
@@ -168,13 +172,14 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 		auto parser_type = parser_->get_expression_type(fallback_arg);
 		if (parser_type.has_value()) {
 			adjust_argument_type_for_overload_resolution(fallback_arg, *parser_type);
+			*parser_type = normalizeArgType(*parser_type);
 		}
 		return parser_type;
 	};
 
 	if (sema_) {
 		if (auto sema_type = sema_->getOverloadResolutionArgType(arg); sema_type.has_value()) {
-			return sema_type;
+			return normalizeArgType(*sema_type);
 		}
 		if (sema_normalized_current_function_ &&
 			arg.is<ExpressionNode>() &&
@@ -302,7 +307,7 @@ std::optional<TypeSpecifierNode> AstToIr::buildCodegenOverloadResolutionArgType(
 
 	auto legacy_type = buildLegacyType(buildLegacyType, arg);
 	if (legacy_type.has_value()) {
-		return legacy_type;
+		return normalizeArgType(*legacy_type);
 	}
 	return tryParserFallback(arg);
 }

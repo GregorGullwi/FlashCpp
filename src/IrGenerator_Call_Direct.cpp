@@ -187,31 +187,7 @@ ExprResult AstToIr::buildIndirectCallReturnResult(const FunctionSignature& signa
 }
 
 static TypeSpecifierNode normalizeCallReturnType(TypeSpecifierNode return_type) {
-	if (return_type.type() != TypeCategory::TypeAlias || !return_type.type_index().is_valid()) {
-		return return_type;
-	}
-
-	const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(return_type.type_index());
-	if (resolved_alias.terminal_type_info) {
-		return_type.set_type_index(resolved_alias.terminal_type_info->type_index_);
-		return_type.set_category(resolved_alias.terminal_type_info->category());
-	}
-	return_type.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
-	if (return_type.reference_qualifier() == ReferenceQualifier::None &&
-		resolved_alias.reference_qualifier != ReferenceQualifier::None) {
-		return_type.set_reference_qualifier(resolved_alias.reference_qualifier);
-	}
-	if (!return_type.has_function_signature() && resolved_alias.function_signature.has_value()) {
-		return_type.set_function_signature(*resolved_alias.function_signature);
-	}
-	if (!resolved_alias.array_dimensions.empty()) {
-		std::vector<size_t> array_dimensions = return_type.array_dimensions();
-		array_dimensions.insert(array_dimensions.end(),
-								resolved_alias.array_dimensions.begin(),
-								resolved_alias.array_dimensions.end());
-		return_type.set_array_dimensions(array_dimensions);
-	}
-	return return_type;
+	return normalizeAliasedTypeSpecifier(return_type);
 }
 
 ExprResult AstToIr::buildCallReturnResult(

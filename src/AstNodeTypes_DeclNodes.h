@@ -1544,6 +1544,31 @@ inline ResolvedAliasTypeInfo resolveAliasTypeInfo(TypeIndex type_index) {
 	return resolved;
 }
 
+inline void applyResolvedAliasTypeInfo(TypeSpecifierNode& type_spec, const ResolvedAliasTypeInfo& resolved_alias) {
+	if (resolved_alias.type_index.is_valid()) {
+		type_spec.set_type_index(resolved_alias.type_index.withCategory(resolved_alias.typeEnum()));
+		type_spec.set_category(resolved_alias.typeEnum());
+	}
+	if (resolved_alias.pointer_depth > 0) {
+		type_spec.add_pointer_levels(static_cast<int>(resolved_alias.pointer_depth));
+	}
+	if (type_spec.reference_qualifier() == ReferenceQualifier::None &&
+		resolved_alias.reference_qualifier != ReferenceQualifier::None) {
+		type_spec.set_reference_qualifier(resolved_alias.reference_qualifier);
+	}
+	if (!type_spec.has_function_signature() && resolved_alias.function_signature.has_value()) {
+		type_spec.set_function_signature(*resolved_alias.function_signature);
+	}
+	if (!resolved_alias.array_dimensions.empty()) {
+		std::vector<size_t> array_dimensions = type_spec.array_dimensions();
+		array_dimensions.insert(array_dimensions.end(),
+								resolved_alias.array_dimensions.begin(),
+								resolved_alias.array_dimensions.end());
+		type_spec.set_array_dimensions(array_dimensions);
+	}
+	type_spec.set_cv_qualifier(type_spec.cv_qualifier() | resolved_alias.cv_qualifier);
+}
+
 inline TypeIndex getCanonicalConversionTargetType(const TypeSpecifierNode& type_spec) {
 	TypeIndex target_type_index = type_spec.type_index();
 	if (!target_type_index.is_valid() && type_spec.type() != TypeCategory::Invalid) {
@@ -1577,27 +1602,34 @@ inline TypeSpecifierNode finalizePlaceholderTypeDeduction(TypeCategory placehold
 // Final fallback: type_spec.size_in_bits() (set during parsing).
 // Returns 0 only for genuinely incomplete or void types.
 inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
+	TypeSpecifierNode normalized_type = type_spec;
+	if (normalized_type.type_index().is_valid()) {
+		applyResolvedAliasTypeInfo(normalized_type, resolveAliasTypeInfo(normalized_type.type_index()));
+	}
+
 	// Pointers are always 64 bits on x64 regardless of the pointee type
-	if (type_spec.pointer_depth() > 0) {
+	if (normalized_type.pointer_depth() > 0) {
 		return 64;
 	}
-	TypeCategory t = type_spec.type();
-	TypeIndex idx = type_spec.type_index();
+
+	TypeCategory t = normalized_type.type();
+	TypeIndex idx = normalized_type.type_index();
 	if (idx.is_valid()) {
-		const ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(idx);
-		if (const TypeInfo* ti = resolved_alias.terminal_type_info) {
+		if (const TypeInfo* ti = tryGetTypeInfo(idx)) {
 			if (ti->hasStoredSize()) {
 				return ti->sizeInBits().value;
 			}
-		}
-		TypeIndex canonical_index = resolved_alias.type_index;
-		if (canonical_index.is_valid()) {
-			TypeCategory canonical_type = canonical_index.category();
-			if (!needs_type_index(canonical_type)) {
-				int bits = get_type_size_bits(canonical_type);
-				if (bits > 0) {
-					return bits;
+			if (const StructTypeInfo* struct_info = ti->getStructInfo()) {
+				const int struct_bits = static_cast<int>(struct_info->sizeInBits().value);
+				if (struct_bits > 0) {
+					return struct_bits;
 				}
+			}
+		}
+		if (!needs_type_index(t)) {
+			int bits = get_type_size_bits(t);
+			if (bits > 0) {
+				return bits;
 			}
 		}
 	}
@@ -1607,10 +1639,23 @@ inline int getTypeSpecSizeBits(const TypeSpecifierNode& type_spec) {
 			return bits;
 	}
 	// Fallback: the parser may have stored the correct size directly
-	int stored = static_cast<int>(type_spec.size_in_bits());
+	int stored = static_cast<int>(normalized_type.size_in_bits());
+	if (stored > 0)
+		return stored;
+	stored = static_cast<int>(type_spec.size_in_bits());
 	if (stored > 0)
 		return stored;
 	return 0;
+}
+
+inline TypeSpecifierNode normalizeAliasedTypeSpecifier(TypeSpecifierNode type_spec) {
+	if (type_spec.type_index().is_valid()) {
+		applyResolvedAliasTypeInfo(type_spec, resolveAliasTypeInfo(type_spec.type_index()));
+	}
+	if (const int resolved_size_bits = getTypeSpecSizeBits(type_spec); resolved_size_bits > 0) {
+		type_spec.set_size_in_bits(resolved_size_bits);
+	}
+	return type_spec;
 }
 
 // Unified helper: creates a TypeInfo for a type alias, copies pointer_depth,

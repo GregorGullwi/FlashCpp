@@ -1535,25 +1535,26 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	};
 
 	auto normalizeSyntaxTypeSpec = [](const TypeSpecifierNode& type_spec) {
-		if (const TypeInfo* owner_type_info = tryGetTypeInfo(type_spec.type_index())) {
+		TypeSpecifierNode normalized_type = normalizeAliasedTypeSpecifier(type_spec);
+		if (const TypeInfo* owner_type_info = tryGetTypeInfo(normalized_type.type_index())) {
 			if (const StructTypeInfo* owner_struct = owner_type_info->getStructInfo()) {
-				std::string_view token_name = type_spec.token().value();
+				std::string_view token_name = normalized_type.token().value();
 				if (!token_name.empty() && token_name != StringTable::getStringView(owner_struct->name)) {
 					StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
 						StringBuilder().append(owner_struct->name).append("::").append(token_name).commit());
 					auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
 					if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
 						const TypeInfo& alias_type_info = *alias_it->second;
-						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, static_cast<int>(alias_type_info.sizeInBits().value), type_spec.token(), type_spec.cv_qualifier());
+						TypeSpecifierNode resolved(alias_type_info.typeEnum(), TypeQualifier::None, static_cast<int>(alias_type_info.sizeInBits().value), normalized_type.token(), normalized_type.cv_qualifier());
 						resolved.set_type_index(alias_type_info.type_index_);
-						resolved.copy_indirection_from(type_spec);
-						resolved.set_reference_qualifier(type_spec.reference_qualifier());
-						return resolved;
+						resolved.copy_indirection_from(normalized_type);
+						resolved.set_reference_qualifier(normalized_type.reference_qualifier());
+						return normalizeAliasedTypeSpecifier(resolved);
 					}
 				}
 			}
 		}
-		return type_spec;
+		return normalized_type;
 	};
 	auto typeSpecRequiresUserDefinedOperator = [&](const TypeSpecifierNode& raw_type_spec) {
 		const TypeSpecifierNode type_spec = normalizeSyntaxTypeSpec(raw_type_spec);
@@ -1586,35 +1587,9 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 			if (id.name() == "nullptr") {
 				return TypeSpecifierNode(TypeCategory::Nullptr, TypeQualifier::None, 64, id.identifier_token(), CVQualifier::None);
 			}
-			if (auto symbol = symbol_table.lookup(id.name())) {
-				const DeclarationNode* decl_ptr = nullptr;
-				if (symbol->is<VariableDeclarationNode>()) {
-					decl_ptr = &symbol->as<VariableDeclarationNode>().declaration();
-				} else if (symbol->is<DeclarationNode>()) {
-					decl_ptr = &symbol->as<DeclarationNode>();
-				}
-				if (decl_ptr && decl_ptr->type_node().is<TypeSpecifierNode>()) {
-					return normalizeSyntaxTypeSpec(decl_ptr->type_node().as<TypeSpecifierNode>());
-				}
-			}
-			return std::nullopt;
 		}
-		if (const auto* cast = std::get_if<StaticCastNode>(&expr)) {
-			if (cast->target_type().is<TypeSpecifierNode>()) {
-				return normalizeSyntaxTypeSpec(cast->target_type().as<TypeSpecifierNode>());
-			}
-			return std::nullopt;
-		}
-		if (const auto* literal = std::get_if<NumericLiteralNode>(&expr)) {
-			return TypeSpecifierNode(literal->type(), literal->qualifier(), literal->sizeInBits(), Token{}, CVQualifier::None);
-		}
-		if (std::holds_alternative<BoolLiteralNode>(expr)) {
-			return TypeSpecifierNode(TypeCategory::Bool, TypeQualifier::None, 8, Token{}, CVQualifier::None);
-		}
-		if (std::holds_alternative<StringLiteralNode>(expr)) {
-			TypeSpecifierNode str_type(TypeCategory::Char, TypeQualifier::None, 8, Token{}, CVQualifier::None);
-			str_type.add_pointer_level(CVQualifier::Const);
-			return str_type;
+		if (auto overload_arg_type = buildCodegenOverloadResolutionArgType(operand); overload_arg_type.has_value()) {
+			return normalizeSyntaxTypeSpec(*overload_arg_type);
 		}
 		return std::nullopt;
 	};
