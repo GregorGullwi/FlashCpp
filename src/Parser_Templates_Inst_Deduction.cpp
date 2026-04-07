@@ -773,15 +773,24 @@ std::optional<ASTNode> Parser::try_instantiate_template_explicit(std::string_vie
 							ts.token(),
 							ts.cv_qualifier(),
 							ts.reference_qualifier());
-						if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-							resolved_spec.copy_indirection_from(*alias_type_spec);
-							if (alias_type_spec->has_function_signature()) {
-								resolved_spec.set_function_signature(alias_type_spec->function_signature());
-							}
-						}
+						// Apply use-site (ts) indirection first, then selectively
+						// fill in missing fields from the alias so that alias-owned
+						// metadata (e.g. function_signature for function-pointer
+						// aliases) is not silently overwritten by an empty ts.
 						resolved_spec.copy_indirection_from(ts);
 						if (ts.reference_qualifier() != ReferenceQualifier::None) {
 							resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+						}
+						if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+							if (resolved_spec.pointer_levels().empty() && !alias_type_spec->pointer_levels().empty()) {
+								resolved_spec.copy_pointer_levels_from(*alias_type_spec);
+							}
+							if (!resolved_spec.has_function_signature() && alias_type_spec->has_function_signature()) {
+								resolved_spec.set_function_signature(alias_type_spec->function_signature());
+							}
+							if (!resolved_spec.is_array() && alias_type_spec->is_array()) {
+								resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
+							}
 						}
 						type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 						return;
@@ -1954,15 +1963,24 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 						ts.token(),
 						ts.cv_qualifier(),
 						ts.reference_qualifier());
-					if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
-						resolved_spec.copy_indirection_from(*alias_type_spec);
-						if (alias_type_spec->has_function_signature()) {
-							resolved_spec.set_function_signature(alias_type_spec->function_signature());
-						}
-					}
+					// Apply use-site (ts) indirection first, then selectively
+					// fill in missing fields from the alias so that alias-owned
+					// metadata (e.g. function_signature for function-pointer
+					// aliases) is not silently overwritten by an empty ts.
 					resolved_spec.copy_indirection_from(ts);
 					if (ts.reference_qualifier() != ReferenceQualifier::None) {
 						resolved_spec.set_reference_qualifier(ts.reference_qualifier());
+					}
+					if (const TypeSpecifierNode* alias_type_spec = resolved_info->aliasTypeSpecifier()) {
+						if (resolved_spec.pointer_levels().empty() && !alias_type_spec->pointer_levels().empty()) {
+							resolved_spec.copy_pointer_levels_from(*alias_type_spec);
+						}
+						if (!resolved_spec.has_function_signature() && alias_type_spec->has_function_signature()) {
+							resolved_spec.set_function_signature(alias_type_spec->function_signature());
+						}
+						if (!resolved_spec.is_array() && alias_type_spec->is_array()) {
+							resolved_spec.set_array_dimensions(alias_type_spec->array_dimensions());
+						}
 					}
 					type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
 					return;
