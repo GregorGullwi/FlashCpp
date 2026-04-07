@@ -820,7 +820,7 @@ TypeIndex Parser::substitute_template_parameter(
 	auto materializePlaceholderArgs = [&](const TypeInfo& placeholder_info) {
 		return materializeTemplateArgs(placeholder_info, template_params, template_args);
 	};
-	auto instantiateClassTemplateForLateTypeRecovery =
+	auto instantiateAndNormalize =
 		[&](std::string_view template_name,
 			const std::vector<TemplateTypeArg>& concrete_args,
 			bool force_eager) -> std::optional<ASTNode> {
@@ -855,13 +855,14 @@ TypeIndex Parser::substitute_template_parameter(
 		}
 
 		std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
-		auto instantiated = instantiateClassTemplateForLateTypeRecovery(
+		auto instantiated = instantiateAndNormalize(
 			base_template_name,
 			concrete_args,
 			/*force_eager=*/false);
-		if ((!instantiated.has_value() ||
-			 !instantiated->is<StructDeclarationNode>()) &&
-			!base_template_name.empty()) {
+		const bool needsRegistryFallback =
+			(!instantiated.has_value() || !instantiated->is<StructDeclarationNode>()) &&
+			!base_template_name.empty();
+		if (needsRegistryFallback) {
 			instantiated = gTemplateRegistry.getInstantiation(
 				StringTable::getOrInternStringHandle(base_template_name),
 				concrete_args);
@@ -942,7 +943,7 @@ TypeIndex Parser::substitute_template_parameter(
 			auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 			if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
 				std::vector<TemplateTypeArg> concrete_args = materializePlaceholderArgs(*placeholder_info);
-				instantiateClassTemplateForLateTypeRecovery(
+				instantiateAndNormalize(
 					base_template_name,
 					concrete_args,
 					/*force_eager=*/false);
@@ -980,7 +981,7 @@ TypeIndex Parser::substitute_template_parameter(
 				FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
 						  "' is a dependent placeholder for template '", base_template_name, "' - instantiating with concrete args");
 
-				instantiateClassTemplateForLateTypeRecovery(
+				instantiateAndNormalize(
 					base_template_name,
 					template_args,
 					/*force_eager=*/false);
@@ -1066,7 +1067,7 @@ TypeIndex Parser::substitute_template_parameter(
 					}
 				}
 
-				instantiateClassTemplateForLateTypeRecovery(
+				instantiateAndNormalize(
 					concrete_template_name,
 					concrete_args,
 					/*force_eager=*/false);
