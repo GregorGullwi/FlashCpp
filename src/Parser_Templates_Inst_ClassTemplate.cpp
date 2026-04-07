@@ -92,7 +92,7 @@ static int getTemplateArgumentSizeInBytes(const TemplateTypeArg& arg) {
 	if ((category == TypeCategory::Struct || category == TypeCategory::UserDefined) &&
 		arg.type_index.is_valid()) {
 		if (const StructTypeInfo* si = tryGetStructTypeInfo(arg.type_index)) {
-			return static_cast<int>(toSizeT(si->total_size));
+			return static_cast<int>(toSizeT(si->sizeInBytes()));
 		}
 	}
 
@@ -735,7 +735,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		if (size_type_index.is_valid()) {
 			if (const StructTypeInfo* struct_info = tryGetStructTypeInfo(size_type_index)) {
-				return toSizeT(struct_info->total_size);
+				return toSizeT(struct_info->sizeInBytes());
 			}
 			if (const TypeInfo* type_info = tryGetTypeInfo(size_type_index)) {
 				if (type_info->hasStoredSize()) {
@@ -2414,7 +2414,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 										if (type_it != getTypesByNameMap().end()) {
 											substituted_type_index = type_it->second->type_index_;
 											if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
-												substituted_size = toSizeT(nested_si->total_size);
+												substituted_size = toSizeT(nested_si->sizeInBytes());
 											}
 										}
 									}
@@ -3563,7 +3563,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		}
 
 		if (concrete_type->isTemplateInstantiation() &&
-			(!concrete_type->getStructInfo() || !concrete_type->getStructInfo()->total_size.is_set())) {
+			(!concrete_type->getStructInfo() || !concrete_type->getStructInfo()->sizeInBytes().is_set())) {
 			std::string_view base_template_name = StringTable::getStringView(concrete_type->baseTemplateName());
 			std::vector<TemplateTypeArg> concrete_base_args =
 				materializeTemplateArgs(*concrete_type, template_params, template_args_to_use);
@@ -3833,7 +3833,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							} else {
 								const StructTypeInfo* resolved_struct_info = resolved_ti->getStructInfo();
 								if (resolved_ti->isTemplateInstantiation() &&
-									(!resolved_struct_info || !resolved_struct_info->total_size.is_set())) {
+									(!resolved_struct_info || !resolved_struct_info->sizeInBytes().is_set())) {
 									std::string_view base_template_name = StringTable::getStringView(resolved_ti->baseTemplateName());
 									std::vector<TemplateTypeArg> instantiated_args = materializeTemplateArgs(*resolved_ti, template_params, template_args_to_use);
 									std::string_view inst_name = instantiateAndResolveBaseName(base_template_name, instantiated_args, false);
@@ -4331,7 +4331,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			if (member_type_info->isTemplateInstantiation()) {
 				// This is a template instantiation - check if it's already fully instantiated
 				// Need to instantiate if: no struct_info OR struct_info exists but size is 0
-				if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->total_size.is_set()) {
+				if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->sizeInBytes().is_set()) {
 					// Not yet instantiated - get the base template name and instantiate
 					member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 					needs_instantiation = true;
@@ -4691,7 +4691,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				std::string_view member_struct_name = StringTable::getStringView(member_type_info->name());
 				bool needs_instantiation = false;
 				if (member_type_info->isTemplateInstantiation()) {
-					if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->total_size.is_set()) {
+					if (!member_type_info->getStructInfo() || !member_type_info->getStructInfo()->sizeInBytes().is_set()) {
 						member_struct_name = StringTable::getStringView(member_type_info->baseTemplateName());
 						needs_instantiation = true;
 					}
@@ -5668,7 +5668,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (adjusted_member_types) {
 					parsed_nested_info->recalculateLayout();
-					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(toSizeT(parsed_nested_info->total_size) * 8);
+					resolved_nested_it->second->fallback_size_bits_ = static_cast<int>(toSizeT(parsed_nested_info->sizeInBytes()) * 8);
 				}
 			}
 		}
@@ -5700,7 +5700,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								const TypeInfo* resolved_type = resolved_it->second;
 								member.type_index = resolved_type->type_index_;
 								if (resolved_type->getStructInfo()) {
-									member.size = toSizeT(resolved_type->getStructInfo()->total_size);
+									member.size = toSizeT(resolved_type->getStructInfo()->sizeInBytes());
 									member.alignment = resolved_type->getStructInfo()->alignment;
 								}
 								had_fixup = true;
@@ -5855,7 +5855,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					if (type_it != getTypesByNameMap().end()) {
 						sm.type_index = type_it->second->type_index_;
 						if (const StructTypeInfo* nested_si = type_it->second->getStructInfo()) {
-							sm.size = toSizeT(nested_si->total_size);
+							sm.size = toSizeT(nested_si->sizeInBytes());
 						}
 						FLASH_LOG(Templates, Debug, "Fixed up static member '", sm.getName(),
 								  "' type to '", StringTable::getStringView(qualified_handle),

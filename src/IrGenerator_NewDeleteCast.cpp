@@ -77,7 +77,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 						if (type_info->struct_info_) {
 							const StructTypeInfo* struct_info = type_info->struct_info_.get();
-							size_t element_size = toSizeT(struct_info->total_size);
+							size_t element_size = toSizeT(struct_info->sizeInBytes());
 
 								// Generate initialization for each element
 							for (size_t i = 0; i < array_inits.size(); ++i) {
@@ -192,7 +192,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
 						if (type_info->struct_info_) {
 							const StructTypeInfo* struct_info = type_info->struct_info_.get();
-							size_t element_size = toSizeT(struct_info->total_size);
+							size_t element_size = toSizeT(struct_info->sizeInBytes());
 
 							for (size_t i = 0; i < array_inits.size(); ++i) {
 								const ASTNode& init = array_inits[i];
@@ -254,7 +254,7 @@ ExprResult AstToIr::generateNewExpressionIr(const NewExpressionNode& newExpr) {
 					// No explicit initializers: emit a loop calling the default constructor for each element
 				static size_t new_array_counter = 0;
 				size_t loop_id = new_array_counter++;
-				size_t elem_sz = toSizeT(array_struct_info->total_size);
+				size_t elem_sz = toSizeT(array_struct_info->sizeInBytes());
 
 				auto loop_start = StringTable::createStringHandle(StringBuilder().append("new_arr_start_").append(loop_id));
 				auto loop_end = StringTable::createStringHandle(StringBuilder().append("new_arr_end_").append(loop_id));
@@ -471,7 +471,7 @@ ExprResult AstToIr::generateDeleteExpressionIr(const DeleteExpressionNode& delet
 				const StructTypeInfo* struct_info = type_info->getStructInfo();
 				if (struct_info && struct_info->hasDestructor()) {
 					has_dtor_loop = true;
-					size_t elem_sz = toSizeT(struct_info->total_size);
+					size_t elem_sz = toSizeT(struct_info->sizeInBytes());
 
 						// Read count from cookie: raw_ptr = ptr - 8
 					TempVar raw_ptr = var_counter.next();

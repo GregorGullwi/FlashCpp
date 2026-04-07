@@ -16,6 +16,7 @@ struct StructTypeInfo {
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	SizeInBytes total_size{};  // Total size of struct in bytes
+	bool layout_is_complete = false;
 	size_t alignment = 1;		  // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
 	size_t pack_alignment = 0;   // Pack alignment from #pragma pack(n), 0 = no packing
@@ -272,8 +273,14 @@ struct StructTypeInfo {
 	bool hasFinalizationError() const { return !finalization_error_.empty(); }
 	const std::string& getFinalizationError() const { return finalization_error_; }
 
-	SizeInBits sizeInBits() const { return toBits(total_size); }
-	SizeInBytes sizeInBytes() const { return total_size; }
+	SizeInBits sizeInBits() const { return toBits(sizeInBytes()); }
+	SizeInBytes sizeInBytes() const {
+		SizeInBytes size = total_size;
+		if (layout_is_complete && !hasDependentOrIncompleteLayout()) {
+			enforceMinimumCompleteObjectSize(size, alignment);
+		}
+		return size;
+	}
 
 	static size_t alignLayoutSize(size_t size, size_t alignment_value) {
 		return alignment_value == 0 ? size : ((size + alignment_value - 1) & ~(alignment_value - 1));
@@ -306,9 +313,7 @@ struct StructTypeInfo {
 	void finalizeLayoutSize(size_t raw_size, size_t final_alignment) {
 		alignment = final_alignment;
 		total_size = toSizeInBytes(alignLayoutSize(raw_size, alignment));
-		if (!hasDependentOrIncompleteLayout()) {
-			enforceMinimumCompleteObjectSize(total_size, alignment);
-		}
+		layout_is_complete = true;
 	}
 
 	bool finalize() {

@@ -1017,8 +1017,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 									max_alignment = member.alignment;
 								}
 							}
-							anon_struct_info->total_size = toSizeInBytes(max_size);
-							anon_struct_info->alignment = max_alignment;
+							anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
 						} else {
 							// Struct layout: members are laid out sequentially
 							size_t offset = 0;
@@ -1038,8 +1037,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 							if (max_alignment > 0) {
 								offset = (offset + max_alignment - 1) / max_alignment * max_alignment;
 							}
-							anon_struct_info->total_size = toSizeInBytes(offset);
-							anon_struct_info->alignment = max_alignment;
+							anon_struct_info->finalizeLayoutSize(offset, max_alignment);
 						}
 
 						// Set the StructTypeInfo for the anonymous type
@@ -1264,7 +1262,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 						// For struct types, get size and alignment from the struct type info
 						if (!anon_member_type_spec.is_pointer() && !anon_member_type_spec.is_reference() && !anon_member_type_spec.is_rvalue_reference()) {
 							if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(anon_member_type_spec.type_index())) {
-								member_size = toSizeT(member_struct_info->total_size);
+								member_size = toSizeT(member_struct_info->sizeInBytes());
 								referenced_size_bits = member_struct_info->sizeInBits().value;
 								member_alignment = member_struct_info->alignment;
 							}
@@ -2738,7 +2736,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 			}
 
 			// Update total_size to account for the union (largest member)
-			struct_info->total_size = toSizeInBytes(aligned_union_start + union_max_size);
+			struct_info->finalizeLayoutSize(aligned_union_start + union_max_size, struct_info->alignment);
 			struct_info->active_bitfield_unit_size = 0;
 			struct_info->active_bitfield_bits_used = 0;
 			struct_info->active_bitfield_unit_alignment = 0;
@@ -2765,7 +2763,7 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 		// For struct types, get size and alignment from the struct type info
 		if (!type_spec.is_pointer() && !type_spec.is_reference() && !type_spec.is_rvalue_reference()) {
 			if (const StructTypeInfo* member_struct_info = tryGetStructTypeInfo(type_spec.type_index())) {
-				member_size = toSizeT(member_struct_info->total_size);
+				member_size = toSizeT(member_struct_info->sizeInBytes());
 				referenced_size_bits = member_struct_info->sizeInBits().value;
 				member_alignment = member_struct_info->alignment;
 			}
@@ -3951,8 +3949,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 							max_alignment = nested_member.alignment;
 						}
 					}
-					nested_anon_struct_info->total_size = toSizeInBytes(max_size);
-					nested_anon_struct_info->alignment = max_alignment;
+					nested_anon_struct_info->finalizeLayoutSize(max_size, max_alignment);
 				} else {
 					// Struct layout: sequential members with alignment
 					size_t current_offset = 0;
@@ -3972,8 +3969,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 					if (max_alignment > 0) {
 						current_offset = (current_offset + max_alignment - 1) & ~(max_alignment - 1);
 					}
-					nested_anon_struct_info->total_size = toSizeInBytes(current_offset);
-					nested_anon_struct_info->alignment = max_alignment;
+					nested_anon_struct_info->finalizeLayoutSize(current_offset, max_alignment);
 				}
 
 				// Set the struct info on the type info
@@ -3987,7 +3983,7 @@ ParseResult Parser::parse_anonymous_struct_union_members(StructTypeInfo* out_str
 				advance(); // consume the member name
 
 				// Calculate size for the nested anonymous type
-				size_t nested_type_size = toSizeT(nested_anon_type_info.getStructInfo()->total_size);
+				size_t nested_type_size = toSizeT(nested_anon_type_info.getStructInfo()->sizeInBytes());
 				size_t nested_type_alignment = nested_anon_type_info.getStructInfo()->alignment;
 
 				// Add member to the outer anonymous type

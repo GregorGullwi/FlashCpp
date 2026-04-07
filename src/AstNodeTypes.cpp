@@ -1146,6 +1146,7 @@ void StructTypeInfo::recalculateLayout() {
 	members.reserve(old_members.size());
 
 	total_size = SizeInBytes{};
+	layout_is_complete = false;
 	alignment = 1;
 	active_bitfield_unit_offset = 0;
 	active_bitfield_unit_size = 0;
