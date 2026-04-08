@@ -609,6 +609,52 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 	// This prevents errors when function templates like 'declval' are passed to this function
 	{
 		if (gTemplateRegistry.lookup_alias_template(template_name).has_value()) {
+			std::string_view alias_template_name = template_name;
+			std::string_view resolved_name = instantiate_and_register_base_template(alias_template_name, template_args);
+			if (!resolved_name.empty()) {
+				const StringHandle resolved_handle = StringTable::getOrInternStringHandle(resolved_name);
+				if (const TypeInfo* resolved_info = findTypeByName(resolved_handle)) {
+					std::string_view alias_instantiated_name = get_instantiated_class_name(template_name, template_args);
+					StringHandle alias_instantiated_handle = StringTable::getOrInternStringHandle(alias_instantiated_name);
+					TypeIndex resolved_registered_index =
+						resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum());
+					TypeSpecifierNode alias_type_spec(
+						resolved_registered_index,
+						resolved_info->sizeInBits(),
+						Token(),
+						CVQualifier::None,
+						ReferenceQualifier::None);
+					if (const TypeSpecifierNode* existing_alias_spec = resolved_info->aliasTypeSpecifier()) {
+						alias_type_spec = *existing_alias_spec;
+					}
+
+					TypeInfo* alias_info = nullptr;
+					auto existing_it = getTypesByNameMap().find(alias_instantiated_handle);
+					if (existing_it != getTypesByNameMap().end() && existing_it->second != nullptr) {
+						alias_info = existing_it->second;
+						const uint32_t alias_slot = alias_info->registeredTypeIndex().index();
+						alias_info->type_index_ = resolved_registered_index;
+						alias_info->registered_type_index_ = TypeIndex{alias_slot, TypeCategory::TypeAlias};
+						alias_info->fallback_size_bits_ = resolved_info->sizeInBits().value;
+						alias_info->is_type_alias_ = true;
+						alias_info->clearAliasTypeSpecifier();
+						alias_info->setAliasTypeSpecifier(alias_type_spec);
+					} else {
+						alias_info = &add_type_alias_copy(
+							alias_instantiated_handle,
+							resolved_registered_index,
+							resolved_info->sizeInBits().value,
+							alias_type_spec);
+					}
+
+					if (alias_info != nullptr) {
+						auto template_args_info = convertToTemplateArgInfo(template_args);
+						alias_info->setTemplateInstantiationInfo(
+							QualifiedIdentifier::fromQualifiedName(template_name, gSymbolTable.get_current_namespace_handle()),
+							template_args_info);
+					}
+				}
+			}
 			FLASH_LOG_FORMAT(Templates, Debug, "Skipping try_instantiate_class_template for alias template '{}'", template_name);
 			return std::nullopt;
 		}

@@ -824,6 +824,8 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 			}
 			advance(); // consume '='
 
+			SaveHandle alias_target_start = save_token_position();
+
 			// Try to parse as a type specifier (for type aliases like: using value_type = T;)
 			ParseResult type_result = parse_type_specifier();
 			if (!type_result.is_error()) {
@@ -831,6 +833,21 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 				// For example: using RvalueRef = typename T::type&&;
 				if (type_result.node().has_value()) {
 					TypeSpecifierNode type_spec = type_result.node()->as<TypeSpecifierNode>();
+					std::optional<std::pair<std::string_view, std::vector<TemplateTypeArg>>> raw_alias_template_use;
+					{
+						SaveHandle after_type_pos = save_token_position();
+						restore_token_position(alias_target_start);
+						if (peek().is_identifier()) {
+							std::string_view raw_type_name = peek_info().value();
+							advance();
+							auto raw_template_args = parse_explicit_template_arguments();
+							if (raw_template_args.has_value() &&
+								gTemplateRegistry.lookup_alias_template(raw_type_name).has_value()) {
+								raw_alias_template_use.emplace(raw_type_name, std::move(*raw_template_args));
+							}
+						}
+						restore_token_position(after_type_pos);
+					}
 
 					// Check for pointer-to-member type syntax: Type Class::*
 					// This is used in <type_traits> for result_of patterns
@@ -999,7 +1016,44 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 
 					// Register the type alias in getTypesByNameMap()
 					// Create a TypeInfo for the alias that points to the underlying type
-					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), type_spec);
+					TypeSpecifierNode resolved_type_spec = type_spec;
+					if (raw_alias_template_use.has_value()) {
+						std::string_view resolved_name = raw_alias_template_use->first;
+						resolved_name = instantiate_and_register_base_template(
+							resolved_name, raw_alias_template_use->second);
+						if (!resolved_name.empty()) {
+							if (const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name))) {
+								resolved_type_spec.set_type_index(
+									resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
+								resolved_type_spec.set_category(resolved_info->typeEnum());
+								resolved_type_spec.set_size_in_bits(resolved_info->sizeInBits());
+							}
+						}
+					} else if (const TypeInfo* aliased_info = tryGetTypeInfo(type_spec.type_index())) {
+						if (aliased_info->isTemplateInstantiation()) {
+							std::string_view base_template_name = StringTable::getStringView(aliased_info->baseTemplateName());
+							if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
+								std::vector<TemplateTypeArg> concrete_args;
+								concrete_args.reserve(aliased_info->templateArgs().size());
+								for (const auto& arg_info : aliased_info->templateArgs()) {
+									concrete_args.push_back(toTemplateTypeArg(arg_info));
+								}
+
+								std::string_view resolved_name = base_template_name;
+								resolved_name = instantiate_and_register_base_template(resolved_name, concrete_args);
+								if (!resolved_name.empty()) {
+									if (const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name))) {
+										resolved_type_spec.set_type_index(
+											resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
+										resolved_type_spec.set_category(resolved_info->typeEnum());
+										resolved_type_spec.set_size_in_bits(resolved_info->sizeInBits());
+									}
+								}
+							}
+						}
+					}
+
+					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), resolved_type_spec);
 
 					// Also register with namespace-qualified name for type aliases defined in namespaces
 					NamespaceHandle namespace_handle = gSymbolTable.get_current_namespace_handle();

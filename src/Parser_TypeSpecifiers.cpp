@@ -1059,6 +1059,48 @@ ParseResult Parser::parse_type_specifier() {
 									// This argument is a concrete type - keep it as is
 									substituted_args.push_back(TemplateTypeArg(arg_type));
 								}
+							} else if (arg_node.is<ExpressionNode>()) {
+								const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+								bool matched_alias_param = false;
+								size_t alias_param_idx = 0;
+								if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
+									for (size_t j = 0; j < param_names.size(); ++j) {
+										if (tparam_ref->param_name() == param_names[j]) {
+											matched_alias_param = true;
+											alias_param_idx = j;
+											break;
+										}
+									}
+								} else if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
+									for (size_t j = 0; j < param_names.size(); ++j) {
+										if (id->name() == param_names[j].view()) {
+											matched_alias_param = true;
+											alias_param_idx = j;
+											break;
+										}
+									}
+								}
+
+								if (matched_alias_param && alias_param_idx < template_args->size()) {
+									substituted_args.push_back((*template_args)[alias_param_idx]);
+								} else {
+									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+									auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+									if (eval_result.success()) {
+										if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+											substituted_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
+										} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+											TypeCategory value_category = eval_result.exact_type.has_value()
+												? eval_result.exact_type->category()
+												: TypeCategory::UnsignedLongLong;
+											substituted_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
+										} else if (eval_result.exact_type.has_value()) {
+											substituted_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
+										} else {
+											substituted_args.push_back(TemplateTypeArg(eval_result.as_int()));
+										}
+									}
+								}
 							}
 						}
 
@@ -1118,6 +1160,48 @@ ParseResult Parser::parse_type_specifier() {
 										} else {
 											// Keep the concrete type
 											nested_substituted_args.push_back(TemplateTypeArg(arg_type));
+										}
+									} else if (arg_node.is<ExpressionNode>()) {
+										const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+										bool is_target_param = false;
+										size_t target_param_idx = 0;
+										if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
+											for (size_t j = 0; j < target_param_names.size(); ++j) {
+												if (tparam_ref->param_name() == target_param_names[j]) {
+													is_target_param = true;
+													target_param_idx = j;
+													break;
+												}
+											}
+										} else if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
+											for (size_t j = 0; j < target_param_names.size(); ++j) {
+												if (id->name() == target_param_names[j].view()) {
+													is_target_param = true;
+													target_param_idx = j;
+													break;
+												}
+											}
+										}
+
+										if (is_target_param && target_param_idx < substituted_args.size()) {
+											nested_substituted_args.push_back(substituted_args[target_param_idx]);
+										} else {
+											ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+											auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+											if (eval_result.success()) {
+												if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+													nested_substituted_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
+												} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+													TypeCategory value_category = eval_result.exact_type.has_value()
+														? eval_result.exact_type->category()
+														: TypeCategory::UnsignedLongLong;
+													nested_substituted_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
+												} else if (eval_result.exact_type.has_value()) {
+													nested_substituted_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
+												} else {
+													nested_substituted_args.push_back(TemplateTypeArg(eval_result.as_int()));
+												}
+											}
 										}
 									}
 								}

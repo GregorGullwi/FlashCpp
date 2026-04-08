@@ -265,7 +265,12 @@ struct TemplateTypeArg {
 		h ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_value) {
-			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			if (is_dependent && dependent_name.isValid()) {
+				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			} else {
+				h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			}
 		}
 		h ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_template_template_arg) {
@@ -312,6 +317,8 @@ struct TemplateTypeArg {
 			  array_size == other.array_size &&
 			  member_pointer_kind == other.member_pointer_kind &&
 			  is_value == other.is_value &&
+			  is_dependent == other.is_dependent &&
+			  dependent_name == other.dependent_name &&
 			  (!is_value || value == other.value) &&
 			  is_template_template_arg == other.is_template_template_arg &&
 			  (!is_template_template_arg || template_name_handle == other.template_name_handle)))
@@ -340,6 +347,9 @@ struct TemplateTypeArg {
 	// Get string representation for mangling
 	std::string toString() const {
 		if (is_value) {
+			if (is_dependent && dependent_name.isValid()) {
+				return std::string(StringTable::getStringView(dependent_name));
+			}
 			// For boolean values, use "true" or "false" instead of "1" or "0"
 			// This is important for template specialization matching
 			if (category() == TypeCategory::Bool) {
@@ -492,7 +502,12 @@ struct TemplateTypeArg {
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (is_value) {
-			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			if (is_dependent && dependent_name.isValid()) {
+				hash ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			} else {
+				hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			}
 		}
 		hash ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (is_template_template_arg) {
@@ -531,7 +546,12 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<uint8_t>{}(static_cast<uint8_t>(arg.member_pointer_kind)) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_value) {
-			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<bool>{}(arg.is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			if (arg.is_dependent && arg.dependent_name.isValid()) {
+				hash ^= std::hash<StringHandle>{}(arg.dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			} else {
+				hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			}
 		}
 		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_template_template_arg) {
@@ -688,7 +708,7 @@ inline TemplateInstantiationKey makeInstantiationKey(
 	for (const auto& arg : args) {
 		if (arg.is_value) {
 			// Non-type template argument
-			key.value_args.push_back(arg.value);
+			key.value_args.push_back(ValueArgKey{arg.value, arg.dependent_name, arg.is_dependent});
 		} else if (arg.is_template_template_arg) {
 			// Template template argument
 			key.template_template_args.push_back(arg.template_name_handle);

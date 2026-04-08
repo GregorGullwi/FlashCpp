@@ -408,6 +408,30 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		// Also register it globally with qualified name (e.g., WithType::type)
 		// (re-get type_spec since we modified it above)
 		const TypeSpecifierNode& final_type_spec = type_result.node()->as<TypeSpecifierNode>();
+		TypeSpecifierNode resolved_type_spec = final_type_spec;
+		if (const TypeInfo* aliased_info = tryGetTypeInfo(final_type_spec.type_index())) {
+			if (aliased_info->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(aliased_info->baseTemplateName());
+				if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
+					std::vector<TemplateTypeArg> concrete_args;
+					concrete_args.reserve(aliased_info->templateArgs().size());
+					for (const auto& arg_info : aliased_info->templateArgs()) {
+						concrete_args.push_back(toTemplateTypeArg(arg_info));
+					}
+
+					std::string_view resolved_name = base_template_name;
+					resolved_name = instantiate_and_register_base_template(resolved_name, concrete_args);
+					if (!resolved_name.empty()) {
+						if (const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name))) {
+							resolved_type_spec.set_type_index(
+								resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
+							resolved_type_spec.set_category(resolved_info->typeEnum());
+							resolved_type_spec.set_size_in_bits(resolved_info->sizeInBits());
+						}
+					}
+				}
+			}
+		}
 
 		// Build qualified name if we're inside a struct.
 		// Walk struct_parsing_context_stack_ to build the full struct chain at any
@@ -430,7 +454,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 
 			// Register the simple name so the alias can be used as a type within
 			// the same struct body (e.g., using A = int; using B = A;).
-			TypeInfo& alias_info = register_type_alias(alias_name, final_type_spec, current_ns);
+			TypeInfo& alias_info = register_type_alias(alias_name, resolved_type_spec, current_ns);
 			// Also add struct-chain-relative entry pointing to the same TypeInfo.
 			getTypesByNameMap().emplace(struct_relative_handle, &alias_info);
 
@@ -447,7 +471,7 @@ ParseResult Parser::parse_member_type_alias(std::string_view keyword, StructDecl
 		}
 
 		// Non-struct alias: register with the simple name (alias_name)
-		register_type_alias(qualified_alias_name, final_type_spec);
+		register_type_alias(qualified_alias_name, resolved_type_spec);
 
 		return ParseResult::success();
 	}

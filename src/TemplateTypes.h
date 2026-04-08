@@ -182,10 +182,31 @@ struct TypeIndexArg {
  * TypeIndex-based keys are unambiguous because TypeIndex is assigned uniquely
  * to each type during parsing.
  */
+struct ValueArgKey {
+	int64_t value = 0;
+	StringHandle dependent_name{};
+	bool is_dependent = false;
+
+	bool operator==(const ValueArgKey& other) const {
+		return value == other.value &&
+			   dependent_name == other.dependent_name &&
+			   is_dependent == other.is_dependent;
+	}
+
+	size_t hash() const {
+		size_t h = std::hash<int64_t>{}(value);
+		h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		if (is_dependent && dependent_name.isValid()) {
+			h ^= std::hash<uint32_t>{}(dependent_name.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		}
+		return h;
+	}
+};
+
 struct TemplateInstantiationKey {
 	StringHandle base_template;							// Template name handle
 	InlineVector<TypeIndexArg, 4> type_args;				 // Type arguments
-	InlineVector<int64_t, 4> value_args;					 // Non-type arguments
+	InlineVector<ValueArgKey, 4> value_args;				 // Non-type arguments
 	InlineVector<StringHandle, 2> template_template_args; // Template template args
 
 	TemplateInstantiationKey() = default;
@@ -232,7 +253,7 @@ struct TemplateInstantiationKeyHash {
 
 		// Hash value arguments
 		for (const auto& val : key.value_args) {
-			h ^= std::hash<int64_t>{}(val) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= val.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 
 		// Hash template template arguments
@@ -329,7 +350,7 @@ inline std::string_view generateInstantiatedName(std::string_view template_name,
 		h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	for (const auto& arg : key.value_args) {
-		h ^= std::hash<int64_t>{}(arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= arg.hash() + 0x9e3779b9 + (h << 6) + (h >> 2);
 	}
 	for (const auto& arg : key.template_template_args) {
 		h ^= std::hash<uint32_t>{}(arg.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
