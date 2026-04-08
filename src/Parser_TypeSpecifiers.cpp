@@ -1398,7 +1398,7 @@ ParseResult Parser::parse_type_specifier() {
 					}
 
 					if (peek() == "::"_tok) {
-						FLASH_LOG(Parser, Error, "DBG alias instantiated_type return before trailing member for ", type_name);
+						FLASH_LOG(Parser, Debug, "DBG alias instantiated_type return before trailing member for ", type_name);
 					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
