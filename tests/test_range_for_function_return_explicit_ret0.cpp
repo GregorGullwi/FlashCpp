@@ -6,10 +6,7 @@ struct Container {
 };
 
 Container makeContainer() {
-	Container c{};
-	c.values[0] = 1;
-	c.values[1] = 2;
-	c.values[2] = 3;
+	Container c{{1, 2, 3}};
 	return c;
 }
 
