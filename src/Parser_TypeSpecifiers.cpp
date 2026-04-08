@@ -988,10 +988,120 @@ ParseResult Parser::parse_type_specifier() {
 						resolving_aliases_.erase(type_name);
 					});
 
+					std::optional<std::string_view> targetMemberName;
+					if (alias_node.target_type().is<TypeSpecifierNode>()) {
+						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+						if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+							std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+							size_t member_sep = alias_target_name.rfind("::");
+							if (member_sep != std::string_view::npos) {
+								targetMemberName = alias_target_name.substr(member_sep + 2);
+							}
+						}
+					}
+
+					auto finalizeInstantiatedAliasType = [&](const TypeSpecifierNode& instantiated_type) -> ParseResult {
+						const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index());
+						if (instantiated_type_info == nullptr) {
+							return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
+						}
+
+						std::string_view base_type_name = StringTable::getStringView(instantiated_type_info->name());
+
+						// Some deferred aliases encode a nested member type in the target itself
+						// (e.g. using enable_if_t = typename enable_if<B, T>::type;). Resolve that
+						// member against the concrete instantiated base before falling back to the
+						// placeholder type carried by the alias target.
+						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(base_type_name)
+									.append("::")
+									.append(*targetMemberName)
+									.commit());
+							auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+							if (member_type_it != getTypesByNameMap().end()) {
+								const TypeInfo* member_type_info = member_type_it->second;
+								ResolvedAliasTypeInfo resolved_member_alias =
+									resolveAliasTypeInfo(member_type_info->registeredTypeIndex());
+								TypeIndex resolved_member_type_index = resolved_member_alias.type_index.is_valid()
+									? resolved_member_alias.type_index.withCategory(resolved_member_alias.typeEnum())
+									: member_type_info->registeredTypeIndex();
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									resolved_member_type_index,
+									static_cast<unsigned char>(member_type_info->sizeInBits().value),
+									type_name_token,
+									cv_qualifier,
+									ReferenceQualifier::None));
+							}
+						}
+
+						// Check for member type access after alias template resolution
+						// Pattern: typename alias_template<...>::type
+						if (peek() == "::"_tok) {
+							advance(); // consume '::'
+
+							Token member_token = peek_info();
+							if (member_token.type() == Token::Type::Identifier) {
+								std::string_view member_name = member_token.value();
+								advance(); // consume member name
+
+								// Build qualified type name
+								StringBuilder qualified_name_builder;
+								std::string_view qualified_type_name = qualified_name_builder
+																		   .append(base_type_name)
+																		   .append("::")
+																		   .append(member_name)
+																		   .commit();
+
+								FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias template resolution");
+
+								// Look up the member type
+								auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+								if (member_type_it != getTypesByNameMap().end()) {
+									const TypeInfo* member_type_info = member_type_it->second;
+									FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
+									return ParseResult::success(emplace_node<TypeSpecifierNode>(
+										member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+										static_cast<unsigned char>(member_type_info->sizeInBits().value),
+										member_token,
+										cv_qualifier,
+										ReferenceQualifier::None));
+								}
+
+								// Member type not found - might be a dependent type
+								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
+								TypeInfo& placeholder_type = add_empty_type_entry();
+								placeholder_type.fallback_size_bits_ = 0;
+								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+								placeholder_type.is_incomplete_instantiation_ = true;
+								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									placeholder_type.type_index_.withCategory(TypeCategory::UserDefined),
+									0,
+									member_token,
+									cv_qualifier,
+									ReferenceQualifier::None));
+							}
+						}
+
+						if (peek() == "::"_tok) {
+							FLASH_LOG(Parser, Debug, "DBG alias instantiated_type return before trailing member for ", type_name);
+						}
+						return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
+					};
+
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
 					if (alias_node.is_deferred()) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
+
+						TypeSpecifierNode resolved_type_spec = alias_node.target_type_node();
+						if (parsing_template_depth_ == 0 &&
+							!targetMemberName.has_value() &&
+							resolveAliasTemplateInstantiation(resolved_type_spec, type_name, *template_args)) {
+							return finalizeInstantiatedAliasType(resolved_type_spec);
+						}
 
 						auto substituted_args_opt = materializeDeferredAliasTemplateArgs(alias_node, *template_args);
 						if (!substituted_args_opt.has_value()) {
@@ -1056,100 +1166,14 @@ ParseResult Parser::parse_type_specifier() {
 
 							const TypeInfo* typeInfo = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
 							if (typeInfo != nullptr) {
-								TypeIndex type_idx = typeInfo->type_index_;
-								const TypeInfo& new_ti = getTypeInfo(type_idx);
-
-								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
-
-								// Some deferred aliases encode a nested member type in the alias target
-								// itself (e.g. using enable_if_t = typename enable_if<B, T>::type).
-								// Resolve that member against the concrete instantiated base before
-								// falling back to the instantiated class type.
-								if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
-									const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
-									if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
-										std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
-										size_t member_sep = alias_target_name.rfind("::");
-										if (member_sep != std::string_view::npos) {
-											std::string_view member_name = alias_target_name.substr(member_sep + 2);
-											StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-												StringBuilder()
-													.append(instantiated_name)
-													.append("::")
-													.append(member_name)
-													.commit());
-											auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
-											if (member_type_it != getTypesByNameMap().end() && member_type_it->second != nullptr) {
-												const TypeInfo* member_type_info = member_type_it->second;
-												ResolvedAliasTypeInfo resolved_member_alias =
-													resolveAliasTypeInfo(member_type_info->registeredTypeIndex());
-												TypeIndex resolved_member_type_index = resolved_member_alias.type_index.is_valid()
-													? resolved_member_alias.type_index.withCategory(resolved_member_alias.typeEnum())
-													: member_type_info->registeredTypeIndex();
-												TypeSpecifierNode resolved_member_spec(
-													resolved_member_type_index,
-													static_cast<unsigned char>(member_type_info->sizeInBits().value),
-													type_name_token,
-													cv_qualifier,
-													ReferenceQualifier::None);
-												return ParseResult::success(emplace_node<TypeSpecifierNode>(resolved_member_spec));
-											}
-										}
-									}
-								}
-
-								// Check for member type access after alias template resolution
-								// Pattern: typename conditional_t<...>::type
-								if (peek() == "::"_tok) {
-									advance(); // consume '::'
-
-									Token member_token = peek_info();
-									if (member_token.type() == Token::Type::Identifier) {
-										std::string_view member_name = member_token.value();
-										advance(); // consume member name
-
-										// Build qualified type name
-										StringBuilder qualified_name_builder;
-										std::string_view qualified_type_name = qualified_name_builder
-																				   .append(instantiated_name)
-																				   .append("::")
-																				   .append(member_name)
-																				   .commit();
-
-										FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias resolution");
-
-										// Look up the member type
-										auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
-										if (member_type_it != getTypesByNameMap().end()) {
-											const TypeInfo* member_type_info = member_type_it->second;
-											FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
-											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
-												static_cast<unsigned char>(member_type_info->sizeInBits().value),
-												member_token, cv_qualifier, ReferenceQualifier::None));
-										} else {
-											// Member type not found - might be a dependent type
-											FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-											TypeInfo& placeholder_type = add_empty_type_entry();
-											placeholder_type.fallback_size_bits_ = 0;
-											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
-											placeholder_type.is_incomplete_instantiation_ = true;
-											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
-											return ParseResult::success(emplace_node<TypeSpecifierNode>(
-												placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
-										}
-									}
-								}
-
-								// Create the final type specifier
-								auto new_type_spec = emplace_node<TypeSpecifierNode>(
-									type_idx.withCategory(TypeCategory::Struct),
-									static_cast<unsigned char>(new_ti.sizeInBits().value),
-									Token(),
-									CVQualifier::None,
+								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", typeInfo->registeredTypeIndex());
+								TypeSpecifierNode instantiated_type(
+									typeInfo->registeredTypeIndex().withCategory(typeInfo->typeEnum()),
+									typeInfo->hasStoredSize() ? static_cast<unsigned char>(typeInfo->sizeInBits().value) : 0,
+									type_name_token,
+									cv_qualifier,
 									ReferenceQualifier::None);
-
-								return ParseResult::success(new_type_spec);
+								return finalizeInstantiatedAliasType(instantiated_type);
 							} else {
 								// Deferred instantiation didn't find the type, but this is often expected
 								// for complex template metaprogramming patterns (SFINAE, etc.)
@@ -1318,89 +1342,7 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
-					// Some deferred aliases encode a nested member type in the target itself
-					// (e.g. using enable_if_t = typename enable_if<B, T>::type;). Resolve that
-					// member against the concrete instantiated base before falling back to the
-					// placeholder type carried by the alias target.
-					if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
-						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
-						if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
-							std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
-							size_t member_sep = alias_target_name.rfind("::");
-							if (member_sep != std::string_view::npos) {
-								std::string_view member_name = alias_target_name.substr(member_sep + 2);
-								std::string_view base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
-								StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-									StringBuilder()
-										.append(base_type_name)
-										.append("::")
-										.append(member_name)
-										.commit());
-								auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
-								if (member_type_it != getTypesByNameMap().end()) {
-									const TypeInfo* member_type_info = member_type_it->second;
-									return ParseResult::success(emplace_node<TypeSpecifierNode>(
-										member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
-										static_cast<unsigned char>(member_type_info->sizeInBits().value),
-										type_name_token,
-										cv_qualifier,
-										ReferenceQualifier::None));
-								}
-
-							}
-						}
-					}
-
-					// Check for member type access after alias template resolution
-					// Pattern: typename alias_template<...>::type
-					if (peek() == "::"_tok) {
-						advance(); // consume '::'
-
-						Token member_token = peek_info();
-						if (member_token.type() == Token::Type::Identifier) {
-							std::string_view member_name = member_token.value();
-							advance(); // consume member name
-
-							// Get the type name from instantiated_type to look up member
-							std::string_view base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
-
-							// Build qualified type name
-							StringBuilder qualified_name_builder;
-							std::string_view qualified_type_name = qualified_name_builder
-																	   .append(base_type_name)
-																	   .append("::")
-																	   .append(member_name)
-																	   .commit();
-
-							FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after non-deferred alias resolution");
-
-							// Look up the member type
-							auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
-							if (member_type_it != getTypesByNameMap().end()) {
-								const TypeInfo* member_type_info = member_type_it->second;
-								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info->type_index_);
-								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
-									static_cast<unsigned char>(member_type_info->sizeInBits().value),
-									member_token, cv_qualifier, ReferenceQualifier::None));
-							} else {
-								// Member type not found - might be a dependent type
-								FLASH_LOG(Parser, Debug, "Member type '", qualified_type_name, "' not found, creating placeholder");
-								TypeInfo& placeholder_type = add_empty_type_entry();
-								placeholder_type.fallback_size_bits_ = 0;
-								placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
-								placeholder_type.is_incomplete_instantiation_ = true;
-								getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
-								return ParseResult::success(emplace_node<TypeSpecifierNode>(
-									placeholder_type.type_index_.withCategory(TypeCategory::UserDefined), 0, member_token, cv_qualifier, ReferenceQualifier::None));
-							}
-						}
-					}
-
-					if (peek() == "::"_tok) {
-						FLASH_LOG(Parser, Debug, "DBG alias instantiated_type return before trailing member for ", type_name);
-					}
-					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
+					return finalizeInstantiatedAliasType(instantiated_type);
 				}
 
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
