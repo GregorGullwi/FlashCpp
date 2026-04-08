@@ -19,8 +19,8 @@ int main() {
 
 	// Test ratio comparison
 	static_assert(std::ratio_equal<std::ratio<1, 2>, std::ratio<2, 4>>::value);
-	// Note: ratio_less requires __ratio_less_impl default parameter evaluation,
-	// which is not yet supported.
+	// Note: ratio_less still needs deeper dependent default evaluation support
+	// in __ratio_less_impl.
 	// static_assert(std::ratio_less<third, half>::value);
 
 	return 0;

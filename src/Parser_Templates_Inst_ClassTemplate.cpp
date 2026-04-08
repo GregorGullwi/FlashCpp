@@ -1018,6 +1018,77 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_arg;
 	};
 
+	auto toInlineTemplateArgs = [](const std::vector<TemplateTypeArg>& args) {
+		InlineVector<TemplateTypeArg, 4> inline_args;
+		for (const auto& arg : args) {
+			inline_args.push_back(arg);
+		}
+		return inline_args;
+	};
+
+	auto substituteDefaultTemplateArg = [&](const ASTNode& default_node,
+											const InlineVector<ASTNode, 4>& params,
+											const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
+		if (current_args.empty()) {
+			return default_node;
+		}
+		return substituteTemplateParameters(default_node, params, toInlineTemplateArgs(current_args));
+	};
+
+	auto tryAppendConstexprTemplateValue = [&](std::vector<TemplateTypeArg>& out_args,
+											   const ASTNode& expr_node,
+											   std::string_view log_context) -> bool {
+		if (!expr_node.is<ExpressionNode>()) {
+			return false;
+		}
+
+		ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+		auto eval_result = ConstExpr::Evaluator::evaluate(expr_node, eval_ctx);
+		if (!eval_result.success()) {
+			return false;
+		}
+
+		if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+			out_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
+		} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+			TypeCategory value_category = eval_result.exact_type.has_value()
+				? eval_result.exact_type->category()
+				: TypeCategory::UnsignedLongLong;
+			out_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
+		} else if (eval_result.exact_type.has_value()) {
+			out_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
+		} else {
+			out_args.push_back(TemplateTypeArg(eval_result.as_int()));
+		}
+
+		FLASH_LOG(Templates, Debug, "Evaluated ", log_context, " via ConstExprEvaluator: ", eval_result.as_int());
+		return true;
+	};
+
+	auto substituteNonTypeDefaultExpression = [&](const ASTNode& default_node,
+												 const InlineVector<ASTNode, 4>& params,
+												 const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
+		if (!default_node.is<ExpressionNode>() || current_args.empty()) {
+			return default_node;
+		}
+
+		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		for (size_t i = 0; i < params.size() && i < current_args.size(); ++i) {
+			if (!params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const TemplateParameterNode& template_param = params[i].as<TemplateParameterNode>();
+			param_map[template_param.name()] = current_args[i];
+		}
+
+		if (param_map.empty()) {
+			return default_node;
+		}
+
+		ExpressionSubstitutor substitutor(param_map, *this);
+		return substitutor.substitute(default_node);
+	};
+
 	// Helper lambda to resolve a deferred bitfield width from non-type template parameters
 	auto resolve_bitfield_width = [&](
 									  const StructMemberDecl& member_decl,
@@ -1192,6 +1263,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+					bool handled_type_default = false;
 
 					// Simple case: default is void
 					if (default_type.category() == TypeCategory::Void) {
@@ -1238,20 +1310,33 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								auto resolved = resolve_dependent_qualified_type(default_type_name, filled_args_for_pattern_match[arg_idx]);
 								if (resolved.has_value()) {
 									filled_args_for_pattern_match.push_back(*resolved);
-									goto next_param;
+									handled_type_default = true;
+									break;
 								}
 							}
 						}
 					}
 
-					// For other default types, use the type as-is
-					filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
-					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+					if (!handled_type_default) {
+						ASTNode substituted_default_node = substituteDefaultTemplateArg(default_node, primary_params, filled_args_for_pattern_match);
+						if (substituted_default_node.is<TypeSpecifierNode>()) {
+							filled_args_for_pattern_match.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
+							FLASH_LOG(Templates, Debug, "Filled in substituted default type argument for param ", i);
+							handled_type_default = true;
+						}
+					}
 
-				next_param:;
+					if (!handled_type_default) {
+						// For other default types, use the type as-is
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(default_type));
+						FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+					}
 				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
 					// Handle non-type template parameter defaults like is_arithmetic<T>::value
-					const ExpressionNode& expr = default_node.as<ExpressionNode>();
+					size_t size_before = filled_args_for_pattern_match.size();
+					ASTNode substituted_default_node = substituteNonTypeDefaultExpression(default_node, primary_params, filled_args_for_pattern_match);
+					const ASTNode& expr_source = substituted_default_node.is<ExpressionNode>() ? substituted_default_node : default_node;
+					const ExpressionNode& expr = expr_source.as<ExpressionNode>();
 
 					if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
 						const QualifiedIdentifierNode& qual_id = std::get<QualifiedIdentifierNode>(expr);
@@ -1373,6 +1458,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 								}
 							}
 						}
+					}
+
+					if (filled_args_for_pattern_match.size() == size_before) {
+						tryAppendConstexprTemplateValue(
+							filled_args_for_pattern_match,
+							expr_source,
+							"pattern-match non-type default");
+					}
+
+					if (filled_args_for_pattern_match.size() == size_before) {
+						filled_args_for_pattern_match.push_back(TemplateTypeArg(static_cast<int64_t>(0)));
+						FLASH_LOG(Templates, Warning, "Could not evaluate pattern-match default for param ", i,
+								  " of '", template_name, "', using 0");
 					}
 				}
 			}
@@ -3184,6 +3282,14 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				}
 
 				if (!resolved) {
+					ASTNode substituted_default_node = substituteDefaultTemplateArg(default_node, template_params, filled_template_args);
+					if (substituted_default_node.is<TypeSpecifierNode>()) {
+						filled_template_args.push_back(TemplateTypeArg(substituted_default_node.as<TypeSpecifierNode>()));
+						resolved = true;
+					}
+				}
+
+				if (!resolved) {
 					filled_template_args.push_back(TemplateTypeArg(default_type));
 				}
 			}
@@ -3472,14 +3578,10 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
 			if (filled_template_args.size() == size_before) {
-				if (substituted_default_node.is<ExpressionNode>()) {
-					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
-					if (eval_result.success()) {
-						filled_template_args.push_back(TemplateTypeArg(eval_result.as_int()));
-						FLASH_LOG(Templates, Debug, "Evaluated non-type default via ConstExprEvaluator: ", eval_result.as_int());
-					}
-				}
+				tryAppendConstexprTemplateValue(
+					filled_template_args,
+					substituted_default_node,
+					"non-type default");
 			}
 		}
 
