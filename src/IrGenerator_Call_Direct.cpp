@@ -964,16 +964,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			return;
 		}
 		std::string_view parent = resolved_target->parent_struct_name();
-		// Decl-only member-like calls still need the legacy lookup/remap path; sema only
-		// becomes authoritative here once the call node already carries a concrete callee.
-		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
-			return;
-		}
-		// Precomputed-mangled member calls still rely on the legacy remapping path for
-		// template-instantiation-sensitive owner recovery.
-		if (!parent.empty() && has_precomputed_mangled) {
-			return;
-		}
+		// Sema now owns the direct-call target even for decl-only and precomputed-mangled
+		// member-like calls; codegen should only keep legacy lookup recovery for bodies
+		// sema never normalized or explicit sema-recorded gaps.
 		if (!parent.empty() && callExprNode.has_qualified_name()) {
 			const StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
 			if (gTemplateRegistry.isPatternStructName(parent_handle)) {
@@ -1075,15 +1068,9 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// calls should no longer rely on a precomputed-mangled escape hatch.
 	const bool sema_recorded_unresolved_call =
 		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
-	const bool is_static_direct_call =
-		callExprNode.callee().is_static_member() ||
-		(callExprNode.callee().has_function_declaration() &&
-		 callExprNode.callee().function_declaration_or_null()->is_static());
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
-		is_static_direct_call || // direct static-member path is still partly synthetic
-		callExprNode.has_qualified_name() || // broader qualified-call fallback path still exists beyond sema-owned ordinary calls
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
