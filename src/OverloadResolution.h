@@ -1300,11 +1300,17 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 		}
 		return name;
 	};
-	auto template_base_name = StringTable::getStringView(param_ti.name());
-	if (template_base_name.find('$') != std::string_view::npos)
+	auto param_name = StringTable::getStringView(param_ti.name());
+	// If the parameter already carries a template hash suffix, it is already a concrete
+	// specialization (for example "Iter$abc123"), not the uninstantiated self-reference
+	// pattern spelled inside the class definition (for example plain "Iter"). In that
+	// case there is nothing to rewrite.
+	if (param_name.find('$') != std::string_view::npos)
 		return param_idx;
 	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	return (extract_self_ref_base_name(template_base_name) == extract_self_ref_base_name(instantiated_name))
+	auto param_base_name = extract_self_ref_base_name(param_name);
+	auto instantiated_base_name = extract_self_ref_base_name(instantiated_name);
+	return (param_base_name == instantiated_base_name)
 			   ? left_type_index
 			   : param_idx;
 }
