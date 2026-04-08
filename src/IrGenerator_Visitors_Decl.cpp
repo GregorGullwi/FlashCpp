@@ -1511,7 +1511,11 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	FunctionDeclOp ctor_decl_op;
 		// For nested classes, use current_struct_name_ which contains the fully qualified name
 	std::string_view struct_name_for_ctor = current_struct_name_.isValid() ? StringTable::getStringView(current_struct_name_) : StringTable::getStringView(node.struct_name());
-	const TypeInfo* enclosing_type_info = tryGetTypeInfo(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+	const TypeInfo* enclosing_type_info = nullptr;
+	if (auto enclosing_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(struct_name_for_ctor));
+		enclosing_type_it != getTypesByNameMap().end()) {
+		enclosing_type_info = enclosing_type_it->second;
+	}
 	const StructTypeInfo* enclosing_struct_info = enclosing_type_info ? enclosing_type_info->getStructInfo() : nullptr;
 	const bool emit_split_ctor_variants =
 		NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
