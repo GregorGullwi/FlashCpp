@@ -156,6 +156,18 @@ TEST_CASE("ChunkedVector") {
 	CHECK(count == 2);
 }
 
+TEST_CASE("Dependent and non-dependent type args produce different hashes") {
+	TemplateTypeArg plain_arg = TemplateTypeArg::makeType(nativeTypeIndex(TypeCategory::Int));
+	TemplateTypeArg dependent_arg = plain_arg;
+	dependent_arg.is_dependent = true;
+	dependent_arg.dependent_name = StringTable::getOrInternStringHandle("T");
+
+	CHECK_FALSE(plain_arg == dependent_arg);
+	CHECK(plain_arg.hash() != dependent_arg.hash());
+	CHECK(plain_arg.toHashString() != dependent_arg.toHashString());
+	CHECK(TemplateTypeArgHash{}(plain_arg) != TemplateTypeArgHash{}(dependent_arg));
+}
+
 TEST_CASE("ChunkedVector") {
 	ChunkedVector<int, 2> vec;
 	vec.push_back(1);
