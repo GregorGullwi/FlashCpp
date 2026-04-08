@@ -1056,6 +1056,29 @@ bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
 	return false;
 }
 
+bool hasReachableVirtualBase(const StructTypeInfo* struct_info, std::set<const StructTypeInfo*>& visited) {
+	if (!struct_info || !visited.insert(struct_info).second) {
+		return false;
+	}
+
+	for (const auto& base : struct_info->base_classes) {
+		if (base.is_virtual) {
+			return true;
+		}
+		if (const StructTypeInfo* base_info = getBaseStructInfo(base);
+			hasReachableVirtualBase(base_info, visited)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool hasReachableVirtualBase(const StructTypeInfo& struct_info) {
+	std::set<const StructTypeInfo*> visited;
+	return hasReachableVirtualBase(&struct_info, visited);
+}
+
 LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) {
 	LayoutBaseCollections collections;
 	collections.non_virtual_bases.reserve(struct_info.base_classes.size());
@@ -1753,7 +1776,7 @@ void StructTypeInfo::buildRTTI() {
 		itanium_class_storage.push_back(class_ti);
 		rtti_info->itanium_type_info = &itanium_class_storage.back();
 		rtti_info->itanium_kind = RTTITypeInfo::ItaniumTypeInfoKind::ClassTypeInfo;
-	} else if (base_classes.size() == 1 && !base_classes[0].is_virtual) {
+	} else if (base_classes.size() == 1 && !base_classes[0].is_virtual && !hasReachableVirtualBase(*this)) {
 		// __si_class_type_info - Single, non-virtual base class
 		ItaniumSIClassTypeInfo si_ti;
 		si_ti.vtable = nullptr; // Will be set to vtable for __si_class_type_info at link time

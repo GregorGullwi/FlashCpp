@@ -1681,6 +1681,81 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 		}
 	}
 
+	auto emitVptrStores = [&](const StructTypeInfo* struct_info, const TypeInfo* struct_type_info) {
+		if (!struct_info || !struct_info->has_vtable) {
+			return;
+		}
+
+		auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
+
+		MemberStoreOp vptr_store;
+		vptr_store.object = StringTable::getOrInternStringHandle("this");
+		vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+		vptr_store.offset = 0;
+		vptr_store.struct_type_info = struct_type_info;
+		vptr_store.ref_qualifier = CVReferenceQualifier::None;
+		vptr_store.vtable_symbol = vtable_symbol;
+		vptr_store.value.setType(TypeCategory::Void);
+		vptr_store.value.ir_type = IrType::Void;
+		vptr_store.value.size_in_bits = SizeInBits{64};
+		vptr_store.value.value = static_cast<unsigned long long>(0);
+		ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
+
+		for (const auto& base : struct_info->base_classes) {
+			if (base.is_virtual || base.offset == 0) {
+				continue;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (!base_struct_info || !base_struct_info->has_vtable) {
+				continue;
+			}
+
+			MemberStoreOp secondary_vptr_store;
+			secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
+			secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+			secondary_vptr_store.offset = static_cast<int>(base.offset);
+			secondary_vptr_store.struct_type_info = struct_type_info;
+			secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
+			secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+				struct_name_for_ctor,
+				StringTable::getStringView(base_type_info->name()),
+				base.offset);
+			secondary_vptr_store.value.setType(TypeCategory::Void);
+			secondary_vptr_store.value.ir_type = IrType::Void;
+			secondary_vptr_store.value.size_in_bits = SizeInBits{64};
+			secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
+		}
+
+		for (const auto& virtual_base : struct_info->virtual_bases) {
+			if (virtual_base.offset == 0) {
+				continue;
+			}
+			const TypeInfo* base_type_info = tryGetTypeInfo(virtual_base.type_index);
+			const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+			if (!base_struct_info || !base_struct_info->has_vtable) {
+				continue;
+			}
+
+			MemberStoreOp secondary_vptr_store;
+			secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
+			secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+			secondary_vptr_store.offset = static_cast<int>(virtual_base.offset);
+			secondary_vptr_store.struct_type_info = struct_type_info;
+			secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
+			secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+				struct_name_for_ctor,
+				StringTable::getStringView(base_type_info->name()),
+				virtual_base.offset);
+			secondary_vptr_store.value.setType(TypeCategory::Void);
+			secondary_vptr_store.value.ir_type = IrType::Void;
+			secondary_vptr_store.value.size_in_bits = SizeInBits{64};
+			secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
+			ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
+		}
+	};
+
 	if (emit_split_ctor_variants && enclosing_struct_info) {
 		FunctionDeclOp complete_ctor_decl_op = ctor_decl_op;
 		complete_ctor_decl_op.mangled_name = StringTable::getOrInternStringHandle(
@@ -1877,57 +1952,8 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				// Step 1.5: Initialize vptr if this class has virtual functions
 				// This must happen after base constructor calls (which set up base vptr)
 				// but before member initialization
-			if (struct_info->has_vtable) {
-					// Use the pre-generated vtable symbol from struct_info
-					// The vtable symbol is generated once during buildVTable()
-				auto vtable_symbol = StringTable::getOrInternStringHandle(struct_info->vtable_symbol);
-
-					// Create a MemberStore instruction to store vtable address to offset 0 (vptr)
-				MemberStoreOp vptr_store;
-				vptr_store.object = StringTable::getOrInternStringHandle("this");
-				vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");	 // Virtual pointer (synthetic member)
-				vptr_store.offset = 0;  // vptr is always at offset 0
-				vptr_store.struct_type_info = struct_type_info;	// Use TypeInfo pointer
-				vptr_store.ref_qualifier = CVReferenceQualifier::None;
-				vptr_store.vtable_symbol = vtable_symbol;  // Store vtable symbol as string_view
-
-					// The value is a vtable symbol reference
-					// Type is pointer (Type::Void with pointer semantics), size is 64 bits (8 bytes)
-					// The actual symbol will be loaded using the vtable_symbol field
-				vptr_store.value.setType(TypeCategory::Void);
-				vptr_store.value.ir_type = IrType::Void;
-				vptr_store.value.size_in_bits = SizeInBits{64};
-				vptr_store.value.value = static_cast<unsigned long long>(0);	 // Placeholder
-
-				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
-
-				for (const auto& base : struct_info->base_classes) {
-					if (base.is_virtual || base.offset == 0) {
-						continue;
-					}
-					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
-					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
-					if (!base_struct_info || !base_struct_info->has_vtable) {
-						continue;
-					}
-
-					MemberStoreOp secondary_vptr_store;
-					secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
-					secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
-					secondary_vptr_store.offset = static_cast<int>(base.offset);
-					secondary_vptr_store.struct_type_info = struct_type_info;
-					secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
-					secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
-						struct_name_for_ctor,
-						StringTable::getStringView(base_type_info->name()),
-						base.offset);
-					secondary_vptr_store.value.setType(TypeCategory::Void);
-					secondary_vptr_store.value.ir_type = IrType::Void;
-					secondary_vptr_store.value.size_in_bits = SizeInBits{64};
-					secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
-
-					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
-				}
+			if (!(node.is_implicit() && (is_implicit_copy_constructor || is_implicit_move_constructor))) {
+				emitVptrStores(struct_info, struct_type_info);
 			}
 		}
 	}
@@ -2075,6 +2101,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 
 						ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(member_store), node.name_token()));
 					}
+					emitVptrStores(struct_info, struct_type_info);
 				} else {
 						// Implicit default constructor: use default member initializers or zero-initialize
 

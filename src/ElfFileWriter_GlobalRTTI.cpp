@@ -17,15 +17,16 @@ void collectReachableVBases(const StructTypeInfo* si,
 		if (seen_vb.insert(vb.type_index).second) {
 			out.push_back(vb.type_index);
 		}
+		if (const TypeInfo* vbti = tryGetTypeInfo(vb.type_index)) {
+			collectReachableVBases(vbti->getStructInfo(), out, seen_vb, visited);
+		}
 	}
 	for (const auto& b : si->base_classes) {
 		if (b.is_virtual && seen_vb.insert(b.type_index).second) {
 			out.push_back(b.type_index);
 		}
-		if (!b.is_virtual) {
-			if (const TypeInfo* bti = tryGetTypeInfo(b.type_index)) {
-				collectReachableVBases(bti->getStructInfo(), out, seen_vb, visited);
-			}
+		if (const TypeInfo* bti = tryGetTypeInfo(b.type_index)) {
+			collectReachableVBases(bti->getStructInfo(), out, seen_vb, visited);
 		}
 	}
 }
@@ -412,7 +413,7 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
 	}
 
-	bool single_non_virtual = (base_classes.size() == 1 && !base_classes[0].is_virtual);
+	bool single_non_virtual = (base_classes.size() == 1 && !base_classes[0].is_virtual && struct_info->virtual_bases.empty());
 
 	if (single_non_virtual) {
 		// ------------------------------------------------------------------

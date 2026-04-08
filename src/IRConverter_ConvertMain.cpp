@@ -7255,29 +7255,24 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 
 					vtables_.push_back(std::move(vtable_info));
 
-					for (const auto& base : struct_info->base_classes) {
-						if (base.is_virtual || base.offset == 0) {
-							continue;
+					auto registerSecondaryVTable = [&](const BaseClassSpecifier& base) {
+						if (base.offset == 0) {
+							return;
 						}
 						const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
 						const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
 						if (!base_struct_info || !base_struct_info->has_vtable) {
-							continue;
+							return;
 						}
 
 						StringHandle secondary_vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
 							struct_name,
 							StringTable::getStringView(base_type_info->name()),
 							base.offset);
-						bool secondary_exists = false;
 						for (const auto& vt : vtables_) {
 							if (vt.vtable_symbol == secondary_vtable_symbol) {
-								secondary_exists = true;
-								break;
+								return;
 							}
-						}
-						if (secondary_exists) {
-							continue;
 						}
 
 						VTableInfo secondary_vtable_info;
@@ -7304,6 +7299,15 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						secondary_vtable_info.base_class_info = vtable_info.base_class_info;
 						secondary_vtable_info.rtti_info = struct_info->rtti_info;
 						vtables_.push_back(std::move(secondary_vtable_info));
+					};
+
+					for (const auto& base : struct_info->base_classes) {
+						if (!base.is_virtual) {
+							registerSecondaryVTable(base);
+						}
+					}
+					for (const auto& virtual_base : struct_info->virtual_bases) {
+						registerSecondaryVTable(virtual_base);
 					}
 				}
 
