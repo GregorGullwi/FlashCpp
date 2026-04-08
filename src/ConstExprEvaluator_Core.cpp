@@ -4478,7 +4478,7 @@ EvalResult Evaluator::evaluate_statement_with_bindings(
 			if (++context.step_count > context.max_steps)
 				return {true, EvalResult::error("Constexpr evaluation exceeded complexity limit in range-based for loop")};
 			range_decl_bindings[loop_var_name] = element;
-			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), bindings, context);
+			auto body_result = evaluate_statement_with_bindings(ranged_for.get_body_statement(), range_decl_bindings, context);
 			if (body_result.success())
 				return {true, body_result}; // return statement
 			if (isBreakExecuted(body_result))

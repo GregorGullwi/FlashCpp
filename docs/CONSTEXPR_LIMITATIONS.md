@@ -693,9 +693,9 @@ static_assert(sum_static() == 10);  // ✅ Works
 
 `break`, `continue`, and early `return` inside these loops work correctly.
 Nested range-for loops over two objects also work.
+Struct element types in the iteration variable now work too, so member reads like `p.key` and `p.value` are supported inside the loop body.
 
 **Current limitations:**
-- Element type must be an integer scalar (struct elements in the iteration variable are not yet supported due to a pre-existing member-access limitation in the evaluator)
 - `data + N` style in member functions (array decay) relies on `origin_var_name` tagging; this works when `begin()` returns the member array directly
 
 Also supported:
