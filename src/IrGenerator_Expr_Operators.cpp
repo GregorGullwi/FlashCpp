@@ -1275,18 +1275,28 @@ ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOpe
 	TypeCategory rhsCat = rhsExprResult.category();
 
 	auto tryGetBinaryOperatorTypeSpecs = [&]() -> std::optional<std::pair<TypeSpecifierNode, TypeSpecifierNode>> {
-		if (!parser_) {
-			return std::nullopt;
-		}
+		auto tryGetOperandTypeSpec = [&](const ASTNode& operand) -> std::optional<TypeSpecifierNode> {
+			if (sema_) {
+				if (auto sema_type_spec = sema_->getOverloadResolutionArgType(operand)) {
+					return sema_type_spec;
+				}
+			}
+			if (!parser_) {
+				return std::nullopt;
+			}
 
-		auto left_type_spec = parser_->get_expression_type(binaryOperatorNode.get_lhs());
-		auto right_type_spec = parser_->get_expression_type(binaryOperatorNode.get_rhs());
+			auto parser_type_spec = parser_->get_expression_type(operand);
+			if (parser_type_spec.has_value()) {
+				adjust_argument_type_for_overload_resolution(operand, *parser_type_spec);
+			}
+			return parser_type_spec;
+		};
+
+		auto left_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_lhs());
+		auto right_type_spec = tryGetOperandTypeSpec(binaryOperatorNode.get_rhs());
 		if (!left_type_spec.has_value() || !right_type_spec.has_value()) {
 			return std::nullopt;
 		}
-
-		adjust_argument_type_for_overload_resolution(binaryOperatorNode.get_lhs(), *left_type_spec);
-		adjust_argument_type_for_overload_resolution(binaryOperatorNode.get_rhs(), *right_type_spec);
 		return std::make_pair(*left_type_spec, *right_type_spec);
 	};
 
