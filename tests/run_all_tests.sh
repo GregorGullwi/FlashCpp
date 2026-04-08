@@ -57,26 +57,32 @@ done
 echo "FlashCpp ELF Test Runner"
 echo "========================"
 
-# Build if needed
-if [ ! -f "x64/Debug/FlashCpp" ]; then
-    echo "Building..."
-    make main CXX=clang++ > /dev/null 2>&1 || { echo -e "${RED}Build failed${NC}"; exit 1; }
+FLASHCPP_BIN=""
+if [ -x "x64/Sharded/FlashCpp" ]; then
+	FLASHCPP_BIN="./x64/Sharded/FlashCpp"
+elif [ -x "x64/Debug/FlashCpp" ]; then
+	FLASHCPP_BIN="./x64/Debug/FlashCpp"
+else
+	echo "Building..."
+	make main CXX=clang++ > /dev/null 2>&1 || { echo -e "${RED}Build failed${NC}"; exit 1; }
+	FLASHCPP_BIN="./x64/Debug/FlashCpp"
 fi
+export FLASHCPP_BIN
 
 print_flashcpp_build_info() {
 	local version_probe_src version_probe_obj version_banner git_head binary_mtime
 	version_probe_src=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.cpp)
 	version_probe_obj=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.o)
 	printf 'int main() { return 0; }\n' > "$version_probe_src"
-	version_banner=$(./x64/Debug/FlashCpp -o "$version_probe_obj" "$version_probe_src" 2>&1 | grep -m1 'FLASHCPP VERSION' || true)
+	version_banner=$("$FLASHCPP_BIN" -o "$version_probe_obj" "$version_probe_src" 2>&1 | grep -m1 'FLASHCPP VERSION' || true)
 	rm -f "$version_probe_src" "$version_probe_obj"
 
 	git_head=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-	binary_mtime=$(date -r "x64/Debug/FlashCpp" '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo "unknown")
+	binary_mtime=$(date -r "${FLASHCPP_BIN#./}" '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo "unknown")
 
 	[ -n "$version_banner" ] && echo "$version_banner"
 	echo "FlashCpp Git HEAD: $git_head"
-	echo "FlashCpp binary: $(realpath "x64/Debug/FlashCpp")"
+	echo "FlashCpp binary: $(realpath "${FLASHCPP_BIN#./}")"
 	echo "FlashCpp binary mtime: $binary_mtime"
 }
 
@@ -200,7 +206,7 @@ test_one_file() {
         extra_flags+=("-fno-access-control")
     fi
     local compile_output
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 "${extra_flags[@]}" -o "$obj" "$f" 2>&1)
+    compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 "${extra_flags[@]}" -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
     # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
@@ -297,7 +303,7 @@ test_one_fail_file() {
     rm -f "$obj"
 
     local compile_output
-    compile_output=$(timeout 30 ./x64/Debug/FlashCpp --log-level=1 -o "$obj" "$f" 2>&1)
+    compile_output=$(timeout 30 "$FLASHCPP_BIN" --log-level=1 -o "$obj" "$f" 2>&1)
     local compile_exit=$?
 
     # Check if compiler crashed (any signal kill returns 128+signal; e.g. 134=SIGABRT,
@@ -528,7 +534,7 @@ else
     if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
         echo "Re-running failing tests sequentially for diagnostics..."
         echo ""
-        FLASHCPP_RERUN_PHASE=1 bash "$0" -j1 --verbose "${FAILED_TEST_NAMES[@]}"
+        FLASHCPP_RERUN_PHASE=1 bash "$0" -j1 -v "${FAILED_TEST_NAMES[@]}"
         echo ""
     fi
     echo -e "${RED}RESULT: FAILED${NC}"
