@@ -259,12 +259,32 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
 		object_node.is<ExpressionNode>() &&
-		parser_) {
-		auto callee_type = parser_->get_expression_type(object_node);
-		if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+		(parser_ || sema_)) {
+		std::optional<TypeSpecifierNode> callee_type;
+		if (sema_ && sema_normalized_current_function_) {
+			callee_type = sema_->getExpressionType(object_node);
+		}
+		if (!callee_type.has_value() && parser_) {
+			callee_type = parser_->get_expression_type(object_node);
+		}
+		if (!callee_type.has_value()) {
+			if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+				if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+						callee_type = decl->type_node().as<TypeSpecifierNode>();
+					}
+				}
+			}
+		} else if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
 			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-					callee_type = decl->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& decl_type = decl->type_node().as<TypeSpecifierNode>();
+					if (decl_type.category() == TypeCategory::Struct ||
+						callee_type->category() == TypeCategory::Invalid ||
+						(callee_type->category() != TypeCategory::Struct &&
+						 (decl_type.is_function_pointer() || decl_type.has_function_signature()))) {
+						callee_type = decl_type;
+					}
 				}
 			}
 		}
@@ -393,6 +413,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
+			if (sema_ && sema_normalized_current_function_) {
+				if (auto sema_type = sema_->getExpressionType(receiver_node); sema_type.has_value()) {
+					if (auto resolved_sema_type = normalizeResolvedStructType(*sema_type); resolved_sema_type.has_value()) {
+						return resolved_sema_type;
+					}
+				}
+			}
+
 			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
 
 			if (std::holds_alternative<IdentifierNode>(receiver_expr)) {
