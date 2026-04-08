@@ -837,11 +837,17 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return nullptr;
 	};
 
-	auto buildNamespaceStack = [](std::string_view qualified_name, std::vector<std::string>& out) {
-		size_t ns_end = qualified_name.rfind("::");
-		if (ns_end == std::string_view::npos)
+	auto extractQualifiedOwner = [](std::string_view qualified_name) -> std::string_view {
+		const size_t scope_pos = qualified_name.rfind("::");
+		return scope_pos == std::string_view::npos
+			? std::string_view{}
+			: qualified_name.substr(0, scope_pos);
+	};
+
+	auto buildNamespaceStack = [&](std::string_view qualified_name, std::vector<std::string>& out) {
+		const std::string_view ns_part = extractQualifiedOwner(qualified_name);
+		if (ns_part.empty())
 			return;
-		std::string_view ns_part = qualified_name.substr(0, ns_end);
 		size_t start = 0;
 		while (start < ns_part.size()) {
 			size_t pos = ns_part.find("::", start);
@@ -1012,11 +1018,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		{
 			const TypeInfo* owner_type_info = nullptr;
 			if (callExprNode.has_qualified_name()) {
-				const std::string_view qualified_name = callExprNode.qualified_name();
-				const size_t scope_pos = qualified_name.rfind("::");
-				if (scope_pos != std::string_view::npos) {
-					owner_type_info = resolveQualifiedCallStruct(qualified_name.substr(0, scope_pos));
-				}
+				owner_type_info = resolveQualifiedCallStruct(extractQualifiedOwner(callExprNode.qualified_name()));
 			}
 			if (!owner_type_info) {
 				owner_type_info = resolveQualifiedCallStruct(parent);
@@ -1081,7 +1083,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		is_static_direct_call || // direct static-member path is still partly synthetic
-		callExprNode.has_qualified_name() || // fallback for template-owned qualifiers not yet sema-handled
+		callExprNode.has_qualified_name() || // broader qualified-call fallback path still exists beyond sema-owned ordinary calls
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
