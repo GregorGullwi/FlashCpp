@@ -764,6 +764,7 @@ private:
 		const std::vector<ASTNode>& parameters,
 		const std::vector<EvalResult>& evaluated_arguments,
 		std::unordered_map<std::string_view, EvalResult>& bindings,
+		EvaluationContext& context,
 		std::string_view invalid_parameter_error,
 		bool skip_invalid_params = false);
 	static EvalResult evaluate_block_with_bindings(

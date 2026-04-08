@@ -3886,21 +3886,11 @@ EvalResult Evaluator::bind_evaluated_arguments(
 	return EvalResult::from_bool(true);
 }
 
-// TODO: This function does not bind default values for parameters beyond the
-// explicit argument count.  bind_evaluated_arguments (above) was updated to
-// handle this, but bind_pre_evaluated_arguments was not, because it lacks an
-// EvaluationContext& needed to call evaluate() on default-value AST nodes.
-// Callers that use find_matching_constructor (which now returns constructors
-// callable via default params) and then feed the result into this function
-// (e.g., array element construction in evaluate_array_subscript_member_access,
-// nested member access materialization) will leave defaulted parameters
-// unbound if evaluated_arguments.size() < parameters.size().
-// To fix: add an EvaluationContext& parameter, add a second loop mirroring
-// bind_evaluated_arguments lines 3304-3322, and update all call sites.
 EvalResult Evaluator::bind_pre_evaluated_arguments(
 	const std::vector<ASTNode>& parameters,
 	const std::vector<EvalResult>& evaluated_arguments,
 	std::unordered_map<std::string_view, EvalResult>& bindings,
+	EvaluationContext& context,
 	std::string_view invalid_parameter_error,
 	bool skip_invalid_params) {
 	for (size_t i = 0; i < parameters.size() && i < evaluated_arguments.size(); ++i) {
@@ -3916,6 +3906,32 @@ EvalResult Evaluator::bind_pre_evaluated_arguments(
 		EvalResult arg_result = evaluated_arguments[i];
 		maybe_set_exact_type_from_declaration(arg_result, param_decl);
 		bindings[param_decl.identifier_token().value()] = std::move(arg_result);
+	}
+
+	for (size_t i = evaluated_arguments.size(); i < parameters.size(); ++i) {
+		const ASTNode& param_node = parameters[i];
+		if (!param_node.is<DeclarationNode>()) {
+			if (skip_invalid_params) {
+				continue;
+			}
+			return EvalResult::error(std::string(invalid_parameter_error));
+		}
+
+		const DeclarationNode& param_decl = param_node.as<DeclarationNode>();
+		if (!param_decl.has_default_value()) {
+			if (skip_invalid_params) {
+				continue;
+			}
+			return EvalResult::error("Missing required argument: " + std::string(param_decl.identifier_token().value()));
+		}
+
+		EvalResult default_result = evaluate(param_decl.default_value(), context);
+		if (!default_result.success()) {
+			return default_result;
+		}
+
+		maybe_set_exact_type_from_declaration(default_result, param_decl);
+		bindings[param_decl.identifier_token().value()] = std::move(default_result);
 	}
 
 	return EvalResult::from_bool(true);
