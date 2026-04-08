@@ -1018,39 +1018,12 @@ ParseResult Parser::parse_using_directive_or_declaration() {
 					// Create a TypeInfo for the alias that points to the underlying type
 					TypeSpecifierNode resolved_type_spec = type_spec;
 					if (raw_alias_template_use.has_value()) {
-						std::string_view resolved_name = raw_alias_template_use->first;
-						resolved_name = instantiate_and_register_base_template(
-							resolved_name, raw_alias_template_use->second);
-						if (!resolved_name.empty()) {
-							if (const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name))) {
-								resolved_type_spec.set_type_index(
-									resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
-								resolved_type_spec.set_category(resolved_info->typeEnum());
-								resolved_type_spec.set_size_in_bits(resolved_info->sizeInBits());
-							}
-						}
-					} else if (const TypeInfo* aliased_info = tryGetTypeInfo(type_spec.type_index())) {
-						if (aliased_info->isTemplateInstantiation()) {
-							std::string_view base_template_name = StringTable::getStringView(aliased_info->baseTemplateName());
-							if (gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
-								std::vector<TemplateTypeArg> concrete_args;
-								concrete_args.reserve(aliased_info->templateArgs().size());
-								for (const auto& arg_info : aliased_info->templateArgs()) {
-									concrete_args.push_back(toTemplateTypeArg(arg_info));
-								}
-
-								std::string_view resolved_name = base_template_name;
-								resolved_name = instantiate_and_register_base_template(resolved_name, concrete_args);
-								if (!resolved_name.empty()) {
-									if (const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name))) {
-										resolved_type_spec.set_type_index(
-											resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
-										resolved_type_spec.set_category(resolved_info->typeEnum());
-										resolved_type_spec.set_size_in_bits(resolved_info->sizeInBits());
-									}
-								}
-							}
-						}
+						resolveAliasTemplateInstantiation(
+							resolved_type_spec,
+							raw_alias_template_use->first,
+							raw_alias_template_use->second);
+					} else {
+						resolveAliasTemplateInstantiation(resolved_type_spec);
 					}
 
 					TypeInfo& alias_type_info = register_type_alias(alias_token.handle(), resolved_type_spec);

@@ -145,6 +145,85 @@ std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemp
 	return substituted_args;
 }
 
+void Parser::normalizeDependentNonTypeTemplateArgs(
+	const InlineVector<ASTNode, 4>& template_parameters,
+	std::vector<TemplateTypeArg>& template_args) {
+	size_t arg_index = 0;
+	for (size_t param_index = 0;
+		 param_index < template_parameters.size() && arg_index < template_args.size();
+		 ++param_index) {
+		if (!template_parameters[param_index].is<TemplateParameterNode>()) {
+			continue;
+		}
+
+		const TemplateParameterNode& template_param =
+			template_parameters[param_index].as<TemplateParameterNode>();
+		if (template_param.is_variadic()) {
+			break;
+		}
+
+		TemplateTypeArg& arg = template_args[arg_index];
+		if (template_param.kind() == TemplateParameterKind::NonType &&
+			arg.is_dependent &&
+			!arg.is_value) {
+			arg.is_value = true;
+			arg.value = 0;
+			TypeCategory value_category = TypeCategory::Int;
+			if (template_param.has_type() && template_param.type_node().is<TypeSpecifierNode>()) {
+				value_category = template_param.type_node().as<TypeSpecifierNode>().category();
+			}
+			TypeIndex value_type_index = nativeTypeIndex(value_category);
+			arg.type_index = value_type_index.is_valid()
+				? value_type_index
+				: TypeIndex{0, value_category};
+		}
+
+		++arg_index;
+	}
+}
+
+bool Parser::resolveAliasTemplateInstantiation(
+	TypeSpecifierNode& type_spec,
+	std::string_view alias_template_name,
+	const std::vector<TemplateTypeArg>& template_args) {
+	std::string_view resolved_name = alias_template_name;
+	resolved_name = instantiate_and_register_base_template(resolved_name, template_args);
+	if (resolved_name.empty()) {
+		return false;
+	}
+
+	const TypeInfo* resolved_info = findTypeByName(StringTable::getOrInternStringHandle(resolved_name));
+	if (!resolved_info) {
+		return false;
+	}
+
+	type_spec.set_type_index(
+		resolved_info->registeredTypeIndex().withCategory(resolved_info->typeEnum()));
+	type_spec.set_category(resolved_info->typeEnum());
+	type_spec.set_size_in_bits(resolved_info->sizeInBits());
+	return true;
+}
+
+bool Parser::resolveAliasTemplateInstantiation(TypeSpecifierNode& type_spec) {
+	const TypeInfo* aliased_info = tryGetTypeInfo(type_spec.type_index());
+	if (!aliased_info || !aliased_info->isTemplateInstantiation()) {
+		return false;
+	}
+
+	std::string_view base_template_name = StringTable::getStringView(aliased_info->baseTemplateName());
+	if (!gTemplateRegistry.lookup_alias_template(base_template_name).has_value()) {
+		return false;
+	}
+
+	std::vector<TemplateTypeArg> concrete_args;
+	concrete_args.reserve(aliased_info->templateArgs().size());
+	for (const auto& arg_info : aliased_info->templateArgs()) {
+		concrete_args.push_back(toTemplateTypeArg(arg_info));
+	}
+
+	return resolveAliasTemplateInstantiation(type_spec, base_template_name, concrete_args);
+}
+
 // Helper function to instantiate base class template and register it in the AST
 // This consolidates the duplicated code for instantiating base class templates
 // Returns the instantiated name, or empty string_view if not a template

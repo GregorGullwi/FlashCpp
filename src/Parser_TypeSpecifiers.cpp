@@ -958,38 +958,11 @@ ParseResult Parser::parse_type_specifier() {
 				template_args = parse_explicit_template_arguments();
 			}
 			if (template_args.has_value()) {
-				auto normalizeDependentNonTypeArgs = [&](const InlineVector<ASTNode, 4>& template_params) {
-					size_t arg_index = 0;
-					for (size_t param_index = 0; param_index < template_params.size() && arg_index < template_args->size(); ++param_index) {
-						if (!template_params[param_index].is<TemplateParameterNode>()) {
-							continue;
-						}
-						const TemplateParameterNode& template_param = template_params[param_index].as<TemplateParameterNode>();
-						if (template_param.is_variadic()) {
-							break;
-						}
-						TemplateTypeArg& arg = (*template_args)[arg_index];
-						if (template_param.kind() == TemplateParameterKind::NonType &&
-							arg.is_dependent &&
-							!arg.is_value) {
-							arg.is_value = true;
-							arg.value = 0;
-							TypeCategory value_category = TypeCategory::Int;
-							if (template_param.has_type() && template_param.type_node().is<TypeSpecifierNode>()) {
-								value_category = template_param.type_node().as<TypeSpecifierNode>().category();
-							}
-							TypeIndex value_type_index = nativeTypeIndex(value_category);
-							arg.type_index = value_type_index.is_valid()
-								? value_type_index
-								: TypeIndex{0, value_category};
-						}
-						++arg_index;
-					}
-				};
-
 				if (auto template_opt = gTemplateRegistry.lookupTemplate(type_name);
 					template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					normalizeDependentNonTypeArgs(template_opt->as<TemplateClassDeclarationNode>().template_parameters());
+					normalizeDependentNonTypeTemplateArgs(
+						template_opt->as<TemplateClassDeclarationNode>().template_parameters(),
+						*template_args);
 				}
 			}
 			// If parsing succeeded, check if this is an alias template first

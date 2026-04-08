@@ -3,6 +3,17 @@
 **Date:** 2026-04-08  
 **Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
 
+## Next agent starting point
+
+- Completed in the latest follow-up slice:
+  - extracted `Parser::normalizeDependentNonTypeTemplateArgs(...)` from `parse_type_specifier`
+  - extracted shared `Parser::resolveAliasTemplateInstantiation(...)` helpers and routed top-level plus struct-local `using` alias registration through them
+- Validation after that slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh`
+- Recommended next steps:
+  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template path so alias materialization stops diverging between alias declarations and ordinary type parsing.
+  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp` onto the same structured helper result instead of open-coded name recovery.
+  3. Continue Phase 1 by moving more dependent non-type argument creation sites to one canonical helper/carrier rather than rebuilding `is_value` / `is_dependent` state ad hoc.
+
 ---
 
 ## Executive summary
