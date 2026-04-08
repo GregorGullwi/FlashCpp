@@ -2823,11 +2823,12 @@ void SemanticAnalysis::registerEnumDeclarationInScope(const EnumDeclarationNode&
 	enum_desc.type_index = enum_type_index.withCategory(TypeCategory::Enum);
 	const CanonicalTypeId enum_type_id = type_context_.intern(enum_desc);
 
+	const StringHandle enum_name = StringTable::getOrInternStringHandle(node.name());
+	if (enum_name.isValid()) {
+		addLocalType(enum_name, enum_type_id);
+	}
+
 	if (node.is_scoped()) {
-		const StringHandle enum_name = StringTable::getOrInternStringHandle(node.name());
-		if (enum_name.isValid()) {
-			addLocalType(enum_name, enum_type_id);
-		}
 		return;
 	}
 
