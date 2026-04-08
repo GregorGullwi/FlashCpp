@@ -1087,13 +1087,27 @@ ParseResult Parser::parse_type_specifier() {
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 					};
 
+					auto aliasTargetHasImplicitMember = [&]() -> bool {
+						if (!alias_node.target_type().is<TypeSpecifierNode>()) {
+							return false;
+						}
+						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+						const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index());
+						if (alias_target_info == nullptr) {
+							return false;
+						}
+						return StringTable::getStringView(alias_target_info->name()).rfind("::") != std::string_view::npos;
+					};
+
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
 					if (alias_node.is_deferred()) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
 						TypeSpecifierNode resolved_type_spec = alias_node.target_type_node();
-						if (resolveAliasTemplateInstantiation(resolved_type_spec, type_name, *template_args)) {
+						if (parsing_template_depth_ == 0 &&
+							!aliasTargetHasImplicitMember() &&
+							resolveAliasTemplateInstantiation(resolved_type_spec, type_name, *template_args)) {
 							return finalizeInstantiatedAliasType(resolved_type_spec);
 						}
 
@@ -1182,13 +1196,85 @@ ParseResult Parser::parse_type_specifier() {
 							std::string_view instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
 							if (!instantiated_name.empty()) {
 								if (const TypeInfo* typeInfo = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name))) {
-									TypeSpecifierNode instantiated_type(
+									if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
+										const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+										if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+											std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+											size_t member_sep = alias_target_name.rfind("::");
+											if (member_sep != std::string_view::npos) {
+												std::string_view member_name = alias_target_name.substr(member_sep + 2);
+												StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+													StringBuilder()
+														.append(instantiated_name)
+														.append("::")
+														.append(member_name)
+														.commit());
+												auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+												if (member_type_it == getTypesByNameMap().end()) {
+													TypeInfo& placeholder_type = add_empty_type_entry();
+													placeholder_type.fallback_size_bits_ = 0;
+													placeholder_type.name_ = qualified_member_handle;
+													placeholder_type.is_incomplete_instantiation_ = true;
+													getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
+													member_type_it = getTypesByNameMap().find(qualified_member_handle);
+												}
+												const TypeInfo* member_type_info = member_type_it->second;
+												return ParseResult::success(emplace_node<TypeSpecifierNode>(
+													member_type_info->registeredTypeIndex().withCategory(member_type_info->typeEnum()),
+													member_type_info->hasStoredSize() ? static_cast<unsigned char>(member_type_info->sizeInBits().value) : 0,
+													type_name_token,
+													cv_qualifier,
+													ReferenceQualifier::None));
+											}
+										}
+									}
+
+									if (peek() == "::"_tok) {
+										advance(); // consume '::'
+
+										Token member_token = peek_info();
+										if (member_token.type() == Token::Type::Identifier) {
+											std::string_view member_name = member_token.value();
+											advance(); // consume member name
+
+											StringBuilder qualified_name_builder;
+											std::string_view qualified_type_name = qualified_name_builder
+																					   .append(instantiated_name)
+																					   .append("::")
+																					   .append(member_name)
+																					   .commit();
+
+											auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+											if (member_type_it != getTypesByNameMap().end()) {
+												const TypeInfo* member_type_info = member_type_it->second;
+												return ParseResult::success(emplace_node<TypeSpecifierNode>(
+													member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+													static_cast<unsigned char>(member_type_info->sizeInBits().value),
+													member_token,
+													cv_qualifier,
+													ReferenceQualifier::None));
+											}
+
+											TypeInfo& placeholder_type = add_empty_type_entry();
+											placeholder_type.fallback_size_bits_ = 0;
+											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+											placeholder_type.is_incomplete_instantiation_ = true;
+											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
+											return ParseResult::success(emplace_node<TypeSpecifierNode>(
+												placeholder_type.type_index_.withCategory(TypeCategory::UserDefined),
+												0,
+												member_token,
+												cv_qualifier,
+												ReferenceQualifier::None));
+										}
+									}
+
+									return ParseResult::success(emplace_node<TypeSpecifierNode>(
 										typeInfo->registeredTypeIndex().withCategory(typeInfo->typeEnum()),
 										typeInfo->hasStoredSize() ? static_cast<unsigned char>(typeInfo->sizeInBits().value) : 0,
 										type_name_token,
 										cv_qualifier,
-										ReferenceQualifier::None);
-									return finalizeInstantiatedAliasType(instantiated_type);
+										ReferenceQualifier::None));
 								}
 							}
 							FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());

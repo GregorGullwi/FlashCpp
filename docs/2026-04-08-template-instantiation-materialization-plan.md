@@ -6,6 +6,15 @@
 ## Next agent starting point
 
 - Completed in this slice:
+  - reused `resolveAliasTemplateInstantiation(...)` from `src/Parser_Templates_Inst_Substitution.cpp`
+    in `src/Parser_TypeSpecifiers.cpp` for ordinary deferred alias-template type parsing when we
+    are outside template instantiation and the alias target is not an implicit `::member` alias
+  - collapsed the duplicated ordinary alias-template member-resolution tail in
+    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path
+  - kept the legacy deferred fallback for template-instantiation/member-alias cases so
+    `enable_if_t`/SFINAE placeholder behavior still matches the pre-refactor path
+  - added `tests/test_alias_template_chain_type_specifier_ret42.cpp`
+  - added `tests/test_alias_template_member_type_type_specifier_ret42.cpp`
   - fixed the struct-local type alias static-initializer bug by teaching `ExpressionSubstitutor`
     to resolve `QualifiedIdentifierNode` namespaces like `constant_type` through the current
     instantiated owner type before falling back to template-name parsing
@@ -16,15 +25,15 @@
     `std::hash<uint32_t>{}(dependent_name.handle)` to `std::hash<StringHandle>{}(dependent_name)`
     so both `TemplateTypeArg::hash()` and `ValueArgKey::hash()` use the same hash strategy for
     dependent names (Phase 1 canonicalization).
-  - Added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
+  - added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
     chain with bool/int non-type template arguments (`bool_constant<true/false>` accessed through
     `true_type`/`false_type` aliases and `cond_val<B>`).
   - removed the fixed struct-local alias static-init issue from `docs/KNOWN_ISSUES.md`
-- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1945 pass, 0 fail.
+- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1948 pass, 0 fail.
 - Recommended next steps (priority order):
-  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template
-     path so alias materialization stops diverging between alias declarations and ordinary type
-     parsing.
+  1. Extend the shared alias-template helper path to template-instantiation and implicit-member
+     deferred aliases (`enable_if_t`, `typename alias<...>::type`) without regressing the existing
+     placeholder/member lookup semantics.
   2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
      onto the same structured helper result instead of open-coded name recovery.
   3. Continue Phase 1: extract `materialize_placeholder_args` lambda
