@@ -366,6 +366,7 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 				callExprNode.called_from());
 			CallMetadataCopyOptions copy_options;
 			copy_options.copy_mangled_name = false;
+			copy_options.copy_qualified_name = false;
 			copyCallMetadata(direct_static_call, callExprNode, copy_options);
 			return generateFunctionCallIr(direct_static_call, context, &callExprNode);
 		}
@@ -836,11 +837,17 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		return nullptr;
 	};
 
-	auto buildNamespaceStack = [](std::string_view qualified_name, std::vector<std::string>& out) {
-		size_t ns_end = qualified_name.rfind("::");
-		if (ns_end == std::string_view::npos)
+	auto extractQualifiedOwner = [](std::string_view qualified_name) -> std::string_view {
+		const size_t scope_pos = qualified_name.rfind("::");
+		return scope_pos == std::string_view::npos
+			? std::string_view{}
+			: qualified_name.substr(0, scope_pos);
+	};
+
+	auto buildNamespaceStack = [&](std::string_view qualified_name, std::vector<std::string>& out) {
+		const std::string_view ns_part = extractQualifiedOwner(qualified_name);
+		if (ns_part.empty())
 			return;
-		std::string_view ns_part = qualified_name.substr(0, ns_end);
 		size_t start = 0;
 		while (start < ns_part.size()) {
 			size_t pos = ns_part.find("::", start);
@@ -962,10 +969,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
 			return;
 		}
-		// Qualified/precomputed member calls still rely on the legacy remapping path for
+		// Precomputed-mangled member calls still rely on the legacy remapping path for
 		// template-instantiation-sensitive owner recovery.
-		if (!parent.empty() && (has_precomputed_mangled || callExprNode.has_qualified_name())) {
+		if (!parent.empty() && has_precomputed_mangled) {
 			return;
+		}
+		if (!parent.empty() && callExprNode.has_qualified_name()) {
+			const StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+			if (gTemplateRegistry.isPatternStructName(parent_handle)) {
+				return;
+			}
+			auto parent_it = getTypesByNameMap().find(parent_handle);
+			if (parent_it != getTypesByNameMap().end() &&
+				parent_it->second &&
+				parent_it->second->isTemplateInstantiation()) {
+				return;
+			}
 		}
 		if (!parent.empty() && current_struct_name_.isValid()) {
 			const std::string_view current_struct_name_view = StringTable::getStringView(current_struct_name_);
@@ -997,12 +1016,17 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		const StructTypeInfo* owner_struct_info = nullptr;
 
 		{
-			StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
-			auto owner_it = getTypesByNameMap().find(parent_handle);
-			if (owner_it != getTypesByNameMap().end() && owner_it->second->isStruct()) {
-				owner_handle = owner_it->second->name();
+			const TypeInfo* owner_type_info = nullptr;
+			if (callExprNode.has_qualified_name()) {
+				owner_type_info = resolveQualifiedCallStruct(extractQualifiedOwner(callExprNode.qualified_name()));
+			}
+			if (!owner_type_info) {
+				owner_type_info = resolveQualifiedCallStruct(parent);
+			}
+			if (owner_type_info && owner_type_info->isStruct()) {
+				owner_handle = owner_type_info->name();
 				resolved_owner_name = StringTable::getStringView(owner_handle);
-				owner_struct_info = owner_it->second->getStructInfo();
+				owner_struct_info = owner_type_info->getStructInfo();
 			}
 		}
 
@@ -1059,7 +1083,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		is_static_direct_call || // direct static-member path is still partly synthetic
-		callExprNode.has_qualified_name() || // qualified direct calls are not fully sema-owned yet
+		callExprNode.has_qualified_name() || // broader qualified-call fallback path still exists beyond sema-owned ordinary calls
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
