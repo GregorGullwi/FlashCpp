@@ -284,6 +284,9 @@ struct StructTypeInfo {
 	}
 
 	SizeInBytes baseSubobjectSizeInBytes() const {
+		if (has_vtable) {
+			return total_size;
+		}
 		return non_virtual_size.is_set() ? non_virtual_size : total_size;
 	}
 

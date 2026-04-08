@@ -1520,6 +1520,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	const bool emit_split_ctor_variants =
 		NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
 		enclosing_struct_info != nullptr &&
+		!enclosing_struct_info->has_vtable &&
 		!enclosing_struct_info->virtual_bases.empty();
 
 		// Extract just the last component of the class name for the constructor function name
@@ -1664,8 +1665,23 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	auto shouldCallBaseObjectVariant = [](const StructTypeInfo* target_struct_info) {
 		return NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
 			   target_struct_info != nullptr &&
+			   !target_struct_info->has_vtable &&
 			   !target_struct_info->virtual_bases.empty();
 	};
+
+	bool is_implicit_copy_constructor = false;
+	bool is_implicit_move_constructor = false;
+	if (node.is_implicit() && node.parameter_nodes().size() == 1) {
+		const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
+		const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
+		if (param_type.category() == TypeCategory::Struct) {
+			if (param_type.is_rvalue_reference()) {
+				is_implicit_move_constructor = true;
+			} else if (param_type.is_lvalue_reference()) {
+				is_implicit_copy_constructor = true;
+			}
+		}
+	}
 
 	if (emit_split_ctor_variants && enclosing_struct_info) {
 		FunctionDeclOp complete_ctor_decl_op = ctor_decl_op;
@@ -1700,7 +1716,26 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 					assert(virtual_base.offset <= static_cast<size_t>(std::numeric_limits<int>::max()) && "Base class offset exceeds int range");
 					ctor_op.base_class_offset = static_cast<int>(virtual_base.offset);
 					ctor_op.call_base_object_variant = shouldCallBaseObjectVariant(base_struct_info);
-					if (const BaseInitializer* base_init = findBaseInitializer(virtual_base)) {
+					if ((is_implicit_copy_constructor || is_implicit_move_constructor) &&
+						base_struct_info && base_struct_info->hasAnyConstructor()) {
+						if (const StructMemberFunction* base_same_type_ctor =
+								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
+							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
+							ctor_op.resolved_constructor =
+								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
+						}
+						ctor_op.source_base_class_offset = static_cast<int>(virtual_base.offset);
+						TypedValue other_arg;
+						other_arg.type_index = virtual_base.type_index;
+						other_arg.setType(TypeCategory::Struct);
+						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : enclosing_struct_info->sizeInBits().value)};
+						other_arg.value = StringTable::getOrInternStringHandle("other");
+						other_arg.ref_qualifier = is_implicit_copy_constructor ? ReferenceQualifier::LValueReference : ReferenceQualifier::RValueReference;
+						other_arg.cv_qualifier = is_implicit_copy_constructor ? CVQualifier::Const : CVQualifier::None;
+						ctor_op.arguments.push_back(std::move(other_arg));
+						finalizeConstructorCallOp(ctor_op, *base_struct_info, node.name_token());
+						ir_.addInstruction(IrInstruction(IrOpcode::ConstructorCall, std::move(ctor_op), node.name_token()));
+					} else if (const BaseInitializer* base_init = findBaseInitializer(virtual_base)) {
 						if (!base_struct_info) {
 							throw InternalError("Internal error: struct info not found for virtual base class");
 						}

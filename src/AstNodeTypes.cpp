@@ -1059,6 +1059,7 @@ bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
 LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) {
 	LayoutBaseCollections collections;
 	collections.non_virtual_bases.reserve(struct_info.base_classes.size());
+	const bool enable_indirect_virtual_base_sharing = !struct_info.has_vtable;
 
 	std::unordered_map<TypeIndex, BaseClassSpecifier*> direct_virtual_bases;
 	for (auto& base : struct_info.base_classes) {
@@ -1087,7 +1088,7 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 					auto direct_base_it = direct_virtual_bases.find(base.type_index);
 					if (direct_base_it != direct_virtual_bases.end()) {
 						collections.virtual_bases.push_back(*direct_base_it->second);
-					} else {
+					} else if (enable_indirect_virtual_base_sharing) {
 						collections.virtual_bases.emplace_back(base.name, base.type_index, base.access, true, 0, base.is_deferred);
 					}
 				}

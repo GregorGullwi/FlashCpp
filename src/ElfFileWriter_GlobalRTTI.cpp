@@ -13,6 +13,11 @@ void collectReachableVBases(const StructTypeInfo* si,
 							std::set<const StructTypeInfo*>& visited) {
 	if (!si || !visited.insert(si).second)
 		return;
+	for (const auto& vb : si->virtual_bases) {
+		if (seen_vb.insert(vb.type_index).second) {
+			out.push_back(vb.type_index);
+		}
+	}
 	for (const auto& b : si->base_classes) {
 		if (b.is_virtual && seen_vb.insert(b.type_index).second) {
 			out.push_back(b.type_index);
@@ -33,6 +38,12 @@ bool findVBaseOffset(const StructTypeInfo* si, TypeIndex target_tidx,
 					 std::set<const StructTypeInfo*>& visited) {
 	if (!si || !visited.insert(si).second)
 		return false;
+	for (const auto& vb : si->virtual_bases) {
+		if (vb.type_index == target_tidx) {
+			result = base_off + vb.offset;
+			return true;
+		}
+	}
 	for (const auto& b : si->base_classes) {
 		if (b.type_index == target_tidx && b.is_virtual) {
 			result = base_off + b.offset;
