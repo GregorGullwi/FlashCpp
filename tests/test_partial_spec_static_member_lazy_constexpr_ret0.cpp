@@ -19,7 +19,13 @@ constexpr int g() {
 	return pick<B*>::value;
 }
 
+template<typename X>
+constexpr int h() {
+	return pick<X*>::value;
+}
+
 int main() {
 	static_assert(g<A>() == 2);
-	return g<A>() == 2 ? 0 : g<A>();
+	static_assert(h<B>() == 2);
+	return g<A>() == 2 && h<B>() == 2 ? 0 : 1;
 }
