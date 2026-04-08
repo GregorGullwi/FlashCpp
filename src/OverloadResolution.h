@@ -1287,18 +1287,26 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
 	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size.is_set())
+	if (!param_ti.struct_info_)
 		return param_idx;
-	// param refers to an uninstantiated template (total_size==0); check name family
+	auto extract_self_ref_base_name = [](std::string_view name) {
+		auto last_scope = name.rfind("::");
+		if (last_scope != std::string_view::npos) {
+			name = name.substr(last_scope + 2);
+		}
+		auto dollar_pos = name.find('$');
+		if (dollar_pos != std::string_view::npos) {
+			name = name.substr(0, dollar_pos);
+		}
+		return name;
+	};
 	auto template_base_name = StringTable::getStringView(param_ti.name());
+	if (template_base_name.find('$') != std::string_view::npos)
+		return param_idx;
 	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	// Strip template hash suffix from the instantiated name: "Name$hash" -> "Name"
-	auto base_name = instantiated_name;
-	auto dollar_pos = base_name.find('$');
-	if (dollar_pos != std::string_view::npos) {
-		base_name = base_name.substr(0, dollar_pos);
-	}
-	return (template_base_name == base_name) ? left_type_index : param_idx;
+	return (extract_self_ref_base_name(template_base_name) == extract_self_ref_base_name(instantiated_name))
+			   ? left_type_index
+			   : param_idx;
 }
 
 inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
