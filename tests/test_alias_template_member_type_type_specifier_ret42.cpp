@@ -19,7 +19,7 @@ template <bool B>
 using choose_value_t = typename choose_value<B>::type;
 
 int main() {
-	choose_value_t<true> yes;
-	choose_value_t<false> no;
-	return yes.value + no.value;
+	choose_value_t<true> true_choice;
+	choose_value_t<false> false_choice;
+	return true_choice.value + false_choice.value;
 }

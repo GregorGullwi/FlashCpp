@@ -988,6 +988,18 @@ ParseResult Parser::parse_type_specifier() {
 						resolving_aliases_.erase(type_name);
 					});
 
+					std::optional<std::string_view> targetMemberName;
+					if (alias_node.target_type().is<TypeSpecifierNode>()) {
+						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+						if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+							std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+							size_t member_sep = alias_target_name.rfind("::");
+							if (member_sep != std::string_view::npos) {
+								targetMemberName = alias_target_name.substr(member_sep + 2);
+							}
+						}
+					}
+
 					auto finalizeInstantiatedAliasType = [&](const TypeSpecifierNode& instantiated_type) -> ParseResult {
 						const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index());
 						if (instantiated_type_info == nullptr) {
@@ -1000,35 +1012,27 @@ ParseResult Parser::parse_type_specifier() {
 						// (e.g. using enable_if_t = typename enable_if<B, T>::type;). Resolve that
 						// member against the concrete instantiated base before falling back to the
 						// placeholder type carried by the alias target.
-						if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
-							const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
-							if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
-								std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
-								size_t member_sep = alias_target_name.rfind("::");
-								if (member_sep != std::string_view::npos) {
-									std::string_view member_name = alias_target_name.substr(member_sep + 2);
-									StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-										StringBuilder()
-											.append(base_type_name)
-											.append("::")
-											.append(member_name)
-											.commit());
-									auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
-									if (member_type_it != getTypesByNameMap().end()) {
-										const TypeInfo* member_type_info = member_type_it->second;
-										ResolvedAliasTypeInfo resolved_member_alias =
-											resolveAliasTypeInfo(member_type_info->registeredTypeIndex());
-										TypeIndex resolved_member_type_index = resolved_member_alias.type_index.is_valid()
-											? resolved_member_alias.type_index.withCategory(resolved_member_alias.typeEnum())
-											: member_type_info->registeredTypeIndex();
-										return ParseResult::success(emplace_node<TypeSpecifierNode>(
-											resolved_member_type_index,
-											static_cast<unsigned char>(member_type_info->sizeInBits().value),
-											type_name_token,
-											cv_qualifier,
-											ReferenceQualifier::None));
-									}
-								}
+						if (peek() != "::"_tok && targetMemberName.has_value()) {
+							StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(base_type_name)
+									.append("::")
+									.append(*targetMemberName)
+									.commit());
+							auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+							if (member_type_it != getTypesByNameMap().end()) {
+								const TypeInfo* member_type_info = member_type_it->second;
+								ResolvedAliasTypeInfo resolved_member_alias =
+									resolveAliasTypeInfo(member_type_info->registeredTypeIndex());
+								TypeIndex resolved_member_type_index = resolved_member_alias.type_index.is_valid()
+									? resolved_member_alias.type_index.withCategory(resolved_member_alias.typeEnum())
+									: member_type_info->registeredTypeIndex();
+								return ParseResult::success(emplace_node<TypeSpecifierNode>(
+									resolved_member_type_index,
+									static_cast<unsigned char>(member_type_info->sizeInBits().value),
+									type_name_token,
+									cv_qualifier,
+									ReferenceQualifier::None));
 							}
 						}
 
@@ -1087,18 +1091,6 @@ ParseResult Parser::parse_type_specifier() {
 						return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 					};
 
-					auto aliasTargetHasImplicitMember = [&]() -> bool {
-						if (!alias_node.target_type().is<TypeSpecifierNode>()) {
-							return false;
-						}
-						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
-						const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index());
-						if (alias_target_info == nullptr) {
-							return false;
-						}
-						return StringTable::getStringView(alias_target_info->name()).rfind("::") != std::string_view::npos;
-					};
-
 					// OPTION 1: DEFERRED INSTANTIATION (preferred over string parsing)
 					// Check if this alias uses deferred instantiation (target is a template with unresolved params)
 					if (alias_node.is_deferred()) {
@@ -1106,7 +1098,7 @@ ParseResult Parser::parse_type_specifier() {
 
 						TypeSpecifierNode resolved_type_spec = alias_node.target_type_node();
 						if (parsing_template_depth_ == 0 &&
-							!aliasTargetHasImplicitMember() &&
+							!targetMemberName.has_value() &&
 							resolveAliasTemplateInstantiation(resolved_type_spec, type_name, *template_args)) {
 							return finalizeInstantiatedAliasType(resolved_type_spec);
 						}
@@ -1174,7 +1166,7 @@ ParseResult Parser::parse_type_specifier() {
 
 							const TypeInfo* typeInfo = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name));
 							if (typeInfo != nullptr) {
-								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", typeInfo->type_index_);
+								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", typeInfo->registeredTypeIndex());
 								TypeSpecifierNode instantiated_type(
 									typeInfo->registeredTypeIndex().withCategory(typeInfo->typeEnum()),
 									typeInfo->hasStoredSize() ? static_cast<unsigned char>(typeInfo->sizeInBits().value) : 0,

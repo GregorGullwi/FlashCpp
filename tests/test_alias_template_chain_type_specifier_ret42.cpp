@@ -13,6 +13,6 @@ using chained_bool_constant = bool_constant<B>;
 
 int main() {
 	chained_bool_constant<true> truth;
-	chained_bool_constant<false> lie;
-	return (truth.value ? 40 : 0) + (!lie.value ? 2 : 0);
+	chained_bool_constant<false> falsehood;
+	return (truth.value ? 40 : 0) + (!falsehood.value ? 2 : 0);
 }
