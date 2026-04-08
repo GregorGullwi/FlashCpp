@@ -272,8 +272,8 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (sema_ && sema_normalized_current_function_) {
 			callee_type = sema_->getExpressionType(object_node);
 		}
-		const bool needsParserFallback = isInconclusiveCallableType(callee_type);
-		if (needsParserFallback && parser_) {
+		const bool needs_parser_fallback = isInconclusiveCallableType(callee_type);
+		if (needs_parser_fallback && parser_) {
 			callee_type = parser_->get_expression_type(object_node);
 		}
 		if (!callee_type.has_value()) {
@@ -288,12 +288,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 					const TypeSpecifierNode& decl_type = decl->type_node().as<TypeSpecifierNode>();
-					const bool preferDeclStructType = decl_type.category() == TypeCategory::Struct;
-					const bool missingCalleeType = callee_type->category() == TypeCategory::Invalid;
-					const bool preferDeclCallableType =
+					const bool prefer_decl_struct_type = decl_type.category() == TypeCategory::Struct;
+					const bool missing_callee_type = callee_type->category() == TypeCategory::Invalid;
+					const bool prefer_decl_callable_type =
 						callee_type->category() != TypeCategory::Struct &&
 						(decl_type.is_function_pointer() || decl_type.has_function_signature());
-					if (preferDeclStructType || missingCalleeType || preferDeclCallableType) {
+					if (prefer_decl_struct_type || missing_callee_type || prefer_decl_callable_type) {
 						callee_type = decl_type;
 					}
 				}
