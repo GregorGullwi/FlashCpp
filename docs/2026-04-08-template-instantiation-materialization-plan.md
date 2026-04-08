@@ -6,6 +6,12 @@
 ## Next agent starting point
 
 - Completed in this slice:
+  - fixed the struct-local type alias static-initializer bug by teaching `ExpressionSubstitutor`
+    to resolve `QualifiedIdentifierNode` namespaces like `constant_type` through the current
+    instantiated owner type before falling back to template-name parsing
+  - threaded the current instantiated owner type name into the static-member substitution paths in
+    `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Lazy.cpp`
+  - added `tests/test_struct_local_alias_static_init_ret0.cpp`
   - Fixed hash drift in `ValueArgKey::hash()` (`src/TemplateTypes.h:200`): changed
     `std::hash<uint32_t>{}(dependent_name.handle)` to `std::hash<StringHandle>{}(dependent_name)`
     so both `TemplateTypeArg::hash()` and `ValueArgKey::hash()` use the same hash strategy for
@@ -13,29 +19,15 @@
   - Added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
     chain with bool/int non-type template arguments (`bool_constant<true/false>` accessed through
     `true_type`/`false_type` aliases and `cond_val<B>`).
-  - Documented a newly found bug in `docs/KNOWN_ISSUES.md`: struct-local type alias used in a
-    `static constexpr` member initializer resolves to the wrong instantiation. Root cause:
-    `ExpressionSubstitutor::substituteQualifiedIdentifier` does not resolve the namespace part of
-    a `QualifiedIdentifierNode` when it is a struct-local type alias (not a template parameter).
-    The ConstExpr evaluator then falls back to the lazy path which uses the wrong instantiation.
-- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1944 pass, 0 fail.
+  - removed the fixed struct-local alias static-init issue from `docs/KNOWN_ISSUES.md`
+- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1945 pass, 0 fail.
 - Recommended next steps (priority order):
-  1. **Fix struct-local alias static-init bug** (new, highest impact):
-     In `ExpressionSubstitutor::substituteQualifiedIdentifier` (around line 1048 in
-     `src/ExpressionSubstitutor.cpp`), after the `param_map_` lookup misses and before the
-     `extractBaseTemplateName` check, add a lookup against the type aliases registered on the
-     struct currently being instantiated. The namespace name (`ns_name`) may be a struct-local
-     alias name like `"MyCons"` or `"type"`. Retrieve the struct's type alias list from the
-     `EvaluationContext` or by passing the instantiation's `StructTypeInfo*` into the substitutor,
-     and if `ns_name` matches an alias, substitute its resolved target type name as the namespace.
-     Write a regression test: `tests/test_struct_local_alias_static_init_ret0.cpp` that
-     exercises `WA<false>::value` from the minimal repro in KNOWN_ISSUES.md.
-  2. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template
+  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template
      path so alias materialization stops diverging between alias declarations and ordinary type
      parsing.
-  3. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
+  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
      onto the same structured helper result instead of open-coded name recovery.
-  4. Continue Phase 1: extract `materialize_placeholder_args` lambda
+  3. Continue Phase 1: extract `materialize_placeholder_args` lambda
      (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) to a `Parser` member function (template
      on `ParamContainer`/`ArgContainer` like the existing `resolveBaseInitializerNameForTemplateArgs`).
 
