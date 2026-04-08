@@ -1850,8 +1850,15 @@ ExprResult AstToIr::generateBuiltinIncDec(
 	}
 	if (unaryOperatorNode.get_operand().is<ExpressionNode>()) {
 		const ExpressionNode& operandExpr = unaryOperatorNode.get_operand().as<ExpressionNode>();
-		if (parser_ && operand_pointer_depth == 0) {
-			if (auto operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand()); operand_type_opt.has_value()) {
+		if (operand_pointer_depth == 0) {
+			std::optional<TypeSpecifierNode> operand_type_opt;
+			if (sema_) {
+				operand_type_opt = sema_->getExpressionType(unaryOperatorNode.get_operand());
+			}
+			if (!operand_type_opt.has_value() && parser_) {
+				operand_type_opt = parser_->get_expression_type(unaryOperatorNode.get_operand());
+			}
+			if (operand_type_opt.has_value()) {
 				applyPointerTypeInfo(*operand_type_opt);
 			}
 		}
@@ -1875,6 +1882,9 @@ ExprResult AstToIr::generateBuiltinIncDec(
 						}
 					}
 				}
+			}
+			if (!object_type_opt.has_value() && sema_) {
+				object_type_opt = sema_->getExpressionType(member_access.object());
 			}
 			if (!object_type_opt.has_value() && parser_) {
 				object_type_opt = parser_->get_expression_type(member_access.object());

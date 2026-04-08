@@ -720,10 +720,11 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		else if (false_cat != TypeCategory::Invalid)
 			common_cat = false_cat;
 	}
-	// Fallback: try parser type inference
-	if (common_cat == TypeCategory::Invalid && parser_) {
-		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
-		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
+	// Fallback: use sema-backed expression types when no explicit conversion
+	// annotation was recorded for either branch.
+	if (common_cat == TypeCategory::Invalid && sema_) {
+		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
+		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
