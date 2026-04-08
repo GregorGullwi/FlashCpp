@@ -47,6 +47,11 @@ enum class ManglingStyle {
 	Itanium	// Itanium C++ ABI name mangling (Linux/Unix default)
 };
 
+enum class ConstructorVariant {
+	Complete,
+	BaseObject
+};
+
 // Global mangling style - managed via CompileContext::setManglingStyle()
 // Default is platform-dependent but changeable for cross-compilation
 inline ManglingStyle g_mangling_style =
@@ -584,7 +589,8 @@ inline void generateItaniumMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
-	bool is_const_method) {
+	bool is_const_method,
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
 	// Start with _Z prefix
 	output += "_Z";
 
@@ -661,7 +667,7 @@ inline void generateItaniumMangledName(
 			if (func_name == class_name) {
 				// Constructor: use C1 for complete constructor per Itanium C++ ABI
 				// C1 = complete, C2 = base, C3 = allocating
-				output += "C1";
+				output += constructor_variant == ConstructorVariant::BaseObject ? "C2" : "C1";
 			} else {
 				// Regular function: <length><name>
 				output += std::to_string(func_name.size());
@@ -1105,7 +1111,8 @@ inline void generateItaniumMangledName(
 	bool is_variadic,
 	std::string_view struct_name,
 	const std::vector<std::string_view>& namespace_path,
-	bool is_const_method) {
+	bool is_const_method,
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
 	// Extract parameter types from param_nodes
 	std::vector<TypeSpecifierNode> param_types;
 	param_types.reserve(param_nodes.size());
@@ -1116,7 +1123,7 @@ inline void generateItaniumMangledName(
 
 	// Use the main implementation
 	generateItaniumMangledName(output, func_name, return_type, param_types,
-							   is_variadic, struct_name, namespace_path, is_const_method);
+							   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
 }
 
 // Generate MSVC mangled name for a function
@@ -1138,7 +1145,8 @@ inline MangledName generateMangledName(
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
-	bool is_static_member);
+	bool is_static_member,
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete);
 
 inline MangledName generateMangledName(
 	std::string_view func_name,
@@ -1149,7 +1157,8 @@ inline MangledName generateMangledName(
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
-	bool is_static_member);
+	bool is_static_member,
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete);
 
 inline MangledName generateMangledName(
 	std::string_view func_name,
@@ -1181,7 +1190,8 @@ inline MangledName generateMangledName(
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
-	bool is_static_member) {
+	bool is_static_member,
+	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
 	// Special case: main function is never mangled
@@ -1200,7 +1210,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_types,
-								   is_variadic, struct_name, namespace_path, is_const_method);
+								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
 		return MangledName(builder.commit());
 	}
 
@@ -1310,7 +1320,8 @@ inline MangledName generateMangledName(
 	const std::vector<std::string_view>& namespace_path,
 	Linkage linkage,
 	bool is_const_method,
-	bool is_static_member) {
+	bool is_static_member,
+	ConstructorVariant constructor_variant) {
 	StringBuilder builder;
 
 	// Special case: main function is never mangled
@@ -1329,7 +1340,7 @@ inline MangledName generateMangledName(
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// Use Itanium C++ ABI name mangling
 		generateItaniumMangledName(builder, func_name, return_type, param_nodes,
-								   is_variadic, struct_name, namespace_path, is_const_method);
+								   is_variadic, struct_name, namespace_path, is_const_method, constructor_variant);
 		return MangledName(builder.commit());
 	}
 
@@ -1744,7 +1755,8 @@ inline MangledName generateMangledNameForDestructor(
 // Generate mangled name from a ConstructorDeclarationNode
 inline MangledName generateMangledNameFromNode(
 	const ConstructorDeclarationNode& ctor_node,
-	const std::vector<std::string_view>& namespace_path = {}) {
+	const std::vector<std::string_view>& namespace_path = {},
+	ConstructorVariant constructor_variant = ConstructorVariant::Complete) {
 	// Check mangling style and use appropriate mangler
 	if (g_mangling_style == ManglingStyle::Itanium) {
 		// For Itanium mangling, constructors are regular functions with C1/C2 markers
@@ -1764,7 +1776,7 @@ inline MangledName generateMangledNameFromNode(
 
 		// Call the regular mangling function with the class name as the function name
 		return generateMangledName(class_name, return_type, ctor_node.parameter_nodes(),
-								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false);
+								   false, struct_name_sv, namespace_path, Linkage::CPlusPlus, false, false, constructor_variant);
 	} else {
 		// Use MSVC-style constructor mangling
 		return generateMangledNameForConstructor(StringTable::getStringView(ctor_node.struct_name()), ctor_node.parameter_nodes(), namespace_path);

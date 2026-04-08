@@ -687,6 +687,7 @@ struct ConstructorCallOp {
 	std::optional<size_t> array_index;			   // For array element construction: index of element to construct
 	int base_class_offset = 0;					   // Offset to add to 'this' pointer when calling base class constructors in multiple inheritance
 	int source_base_class_offset = 0;				  // Offset to add to the first by-address source argument when forwarding a base subobject from another object
+	bool call_base_object_variant = false;
 };
 
 // Destructor call (invoke destructor on object)

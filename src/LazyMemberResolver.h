@@ -239,6 +239,12 @@ private:
 			}
 
 			// Add base classes to the queue
+			for (const auto& base : current_struct->virtual_bases) {
+				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
+					to_visit.push({base_info, current_offset + base.offset});
+				}
+			}
+
 			for (const auto& base : current_struct->base_classes) {
 				if (const StructTypeInfo* base_info = resolveStructInfo(base.type_index, base.name, current_struct->getNamespaceHandle())) {
 					to_visit.push({base_info, current_offset + base.offset});

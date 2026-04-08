@@ -1038,7 +1038,7 @@ const StructTypeInfo* getBaseStructInfo(const BaseClassSpecifier& base) {
 
 struct LayoutBaseCollections {
 	std::vector<BaseClassSpecifier*> non_virtual_bases;
-	std::vector<BaseClassSpecifier*> virtual_bases;
+	std::vector<BaseClassSpecifier> virtual_bases;
 	bool non_virtual_base_has_vtable = false;
 };
 
@@ -1086,7 +1086,9 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 				if (seen_virtual_bases.insert(base.type_index).second) {
 					auto direct_base_it = direct_virtual_bases.find(base.type_index);
 					if (direct_base_it != direct_virtual_bases.end()) {
-						collections.virtual_bases.push_back(direct_base_it->second);
+						collections.virtual_bases.push_back(*direct_base_it->second);
+					} else {
+						collections.virtual_bases.emplace_back(base.name, base.type_index, base.access, true, 0, base.is_deferred);
 					}
 				}
 				continue;
@@ -1128,7 +1130,24 @@ void placeBaseSubobjects(const std::vector<BaseClassSpecifier*>& bases,
 		size_t base_alignment = base_info->alignment;
 		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
 		base->offset = current_offset;
-		current_offset += toSizeT(base_info->total_size);
+		current_offset += toSizeT(base_info->baseSubobjectSizeInBytes());
+		max_alignment = std::max(max_alignment, base_alignment);
+	}
+}
+
+void placeBaseSubobjects(std::vector<BaseClassSpecifier>& bases,
+						 size_t& current_offset,
+						 size_t& max_alignment) {
+	for (BaseClassSpecifier& base : bases) {
+		const StructTypeInfo* base_info = getBaseStructInfo(base);
+		if (!base_info) {
+			continue;
+		}
+
+		size_t base_alignment = base_info->alignment;
+		current_offset = StructTypeInfo::alignLayoutSize(current_offset, base_alignment);
+		base.offset = current_offset;
+		current_offset += toSizeT(base_info->baseSubobjectSizeInBytes());
 		max_alignment = std::max(max_alignment, base_alignment);
 	}
 }
@@ -1157,6 +1176,7 @@ void StructTypeInfo::recalculateLayout() {
 	members.reserve(old_members.size());
 
 	total_size = SizeInBytes{};
+	non_virtual_size = SizeInBytes{};
 	layout_is_complete = false;
 	alignment = 1;
 	active_bitfield_unit_offset = 0;
@@ -1189,8 +1209,17 @@ void StructTypeInfo::recalculateLayout() {
 
 	current_offset = toSizeT(total_size);
 	max_alignment = alignment;
+	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
 
 	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
+	virtual_bases = base_collections.virtual_bases;
+	for (const auto& virtual_base : virtual_bases) {
+		for (auto& direct_base : base_classes) {
+			if (direct_base.is_virtual && direct_base.type_index == virtual_base.type_index) {
+				direct_base.offset = virtual_base.offset;
+			}
+		}
+	}
 
 	if (custom_alignment > 0) {
 		max_alignment = std::max(max_alignment, custom_alignment);
@@ -1239,8 +1268,18 @@ bool StructTypeInfo::finalizeWithBases() {
 		max_alignment = std::max(max_alignment, effective_alignment);
 	}
 
+	non_virtual_size = toSizeInBytes(alignLayoutSize(current_offset, max_alignment));
+
 	// Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
 	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
+	virtual_bases = base_collections.virtual_bases;
+	for (const auto& virtual_base : virtual_bases) {
+		for (auto& direct_base : base_classes) {
+			if (direct_base.is_virtual && direct_base.type_index == virtual_base.type_index) {
+				direct_base.offset = virtual_base.offset;
+			}
+		}
+	}
 
 	// Step 4: Apply custom alignment if specified
 	if (custom_alignment > 0) {
@@ -1421,6 +1460,24 @@ std::optional<StructMember> StructTypeInfo::findMemberRecursive(StringHandle mem
 	for (const auto& member : members) {
 		if (member.getName() == member_name) {
 			return member;
+		}
+	}
+
+	for (const auto& virtual_base : virtual_bases) {
+		if (virtual_base.type_index.index() >= gTypeInfo.size()) {
+			continue;
+		}
+
+		const TypeInfo& base_type = gTypeInfo[virtual_base.type_index.index()];
+		const StructTypeInfo* base_info = base_type.getStructInfo();
+		if (!base_info) {
+			continue;
+		}
+
+		auto base_member = base_info->findMemberRecursive(member_name);
+		if (base_member) {
+			base_member->offset += virtual_base.offset;
+			return base_member;
 		}
 	}
 

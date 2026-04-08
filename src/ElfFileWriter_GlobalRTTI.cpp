@@ -819,7 +819,9 @@ std::string_view ElfFileWriter::generateMangledName(std::string_view name, const
 		sig.class_name,
 		namespace_path,
 		sig.linkage,
-		sig.is_const);
+		sig.is_const,
+		sig.is_static,
+		sig.use_base_object_ctor_variant ? NameMangling::ConstructorVariant::BaseObject : NameMangling::ConstructorVariant::Complete);
 
 	// Store in function_signatures_ map to ensure stable storage
 	std::string key(mangled.view());

@@ -16,6 +16,7 @@ struct StructTypeInfo {
 	std::vector<StructMemberFunction> member_functions;
 	std::vector<BaseClassSpecifier> base_classes;  // Base classes for inheritance
 	SizeInBytes total_size{};  // Total size of struct in bytes
+	SizeInBytes non_virtual_size{}; // Size of the base subobject before reachable virtual bases
 	bool layout_is_complete = false;
 	size_t alignment = 1;		  // Alignment requirement of struct
 	size_t custom_alignment = 0; // Custom alignment from alignas(n), 0 = use natural alignment
@@ -46,7 +47,7 @@ struct StructTypeInfo {
 	std::string_view vtable_symbol;	// MSVC mangled vtable symbol name (e.g., "??_7Base@@6B@"), empty if no vtable
 
 	// Virtual base class support (Phase 3)
-	std::vector<const BaseClassSpecifier*> virtual_bases;  // Virtual base classes (shared across inheritance paths)
+	std::vector<BaseClassSpecifier> virtual_bases;  // Reachable virtual base classes with offsets in this complete object
 
 	// RTTI support (Phase 5)
 	RTTITypeInfo* rtti_info = nullptr;  // Runtime type information (for polymorphic classes)
@@ -280,6 +281,10 @@ struct StructTypeInfo {
 			enforceMinimumCompleteObjectSize(size, alignment);
 		}
 		return size;
+	}
+
+	SizeInBytes baseSubobjectSizeInBytes() const {
+		return non_virtual_size.is_set() ? non_virtual_size : total_size;
 	}
 
 	static size_t alignLayoutSize(size_t size, size_t alignment_value) {

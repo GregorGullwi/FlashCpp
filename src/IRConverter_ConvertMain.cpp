@@ -5180,6 +5180,7 @@ void IrToObjConverter<TWriterClass>::handleConstructorCall(const IrInstruction& 
 	TypeSpecifierNode void_return(TypeCategory::Void, TypeQualifier::None, 0, Token{}, CVQualifier::None);
 	ObjectFileWriter::FunctionSignature sig(void_return, parameter_types);
 	sig.class_name = std::string(class_name);
+	sig.use_base_object_ctor_variant = ctor_op.call_base_object_variant;
 
 		// Generate the correct mangled name for this specific constructor overload
 	auto mangled_name = writer.generateMangledName(function_name, sig);

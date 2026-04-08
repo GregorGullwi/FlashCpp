@@ -31,6 +31,7 @@ struct FunctionSignature {
 	std::string namespace_name;
 	std::string class_name;
 	Linkage linkage = Linkage::None;	 // C vs C++ linkage
+	bool use_base_object_ctor_variant = false;
 
 	FunctionSignature() = default;
 	FunctionSignature(const TypeSpecifierNode& ret_type, std::vector<TypeSpecifierNode> params)
