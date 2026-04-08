@@ -1200,6 +1200,76 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_name;
 	};
 
+	auto tryAppendStaticMemberValueFromTypeName = [&](
+		std::vector<TemplateTypeArg>& out_args,
+		std::string_view type_name,
+		std::string_view member_name,
+		const auto& params,
+		const std::vector<TemplateTypeArg>& current_args,
+		std::string_view log_context) -> bool {
+		auto try_append_from_type_info = [&](const TypeInfo& candidate_info) -> bool {
+			const StructTypeInfo* struct_info = candidate_info.getStructInfo();
+			if (!struct_info) {
+				return false;
+			}
+
+			for (const auto& static_member : struct_info->static_members) {
+				if (StringTable::getStringView(static_member.getName()) != member_name ||
+					!static_member.initializer.has_value()) {
+					continue;
+				}
+
+				if (tryAppendEvaluatedTemplateValue(out_args, *static_member.initializer, log_context)) {
+					return true;
+				}
+
+				if (!static_member.initializer->is<ExpressionNode>()) {
+					return false;
+				}
+
+				const ExpressionNode& init_expr = static_member.initializer->as<ExpressionNode>();
+				if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
+					out_args.push_back(TemplateTypeArg(bool_literal->value() ? 1LL : 0LL, TypeCategory::Bool));
+					return true;
+				}
+				if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
+					const auto& value = numeric_literal->value();
+					if (const auto* ull_value = std::get_if<unsigned long long>(&value)) {
+						out_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_value)));
+						return true;
+					}
+				}
+
+				return false;
+			}
+
+			return false;
+		};
+
+		auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(type_name));
+		if (type_it == getTypesByNameMap().end() || type_it->second == nullptr) {
+			return false;
+		}
+
+		const TypeInfo* candidate_info = type_it->second;
+		if (candidate_info->isTemplateInstantiation()) {
+			std::string_view base_template_name = StringTable::getStringView(candidate_info->baseTemplateName());
+			if (!base_template_name.empty()) {
+				std::vector<TemplateTypeArg> concrete_args =
+					materializeTemplateArgs(*candidate_info, params, current_args);
+				std::string_view instantiated_name =
+					instantiateAndResolveBaseName(base_template_name, concrete_args, false);
+				auto instantiated_it =
+					getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
+				if (instantiated_it != getTypesByNameMap().end() && instantiated_it->second != nullptr) {
+					candidate_info = instantiated_it->second;
+				}
+			}
+		}
+
+		return try_append_from_type_info(*candidate_info);
+	};
+
 	// 1) Full/Exact specialization lookup
 	// If there is an exact specialization registered for (template_name, template_args),
 	// it always wins over partial specializations and the primary template.
@@ -3382,48 +3452,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						}
 
 						if (is_dependent && !filled_template_args.empty()) {
-
-							// Build the instantiated template name using hash-based naming
-							std::string_view inst_name = get_instantiated_class_name(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-
-							FLASH_LOG(Templates, Debug, "Resolving dependent qualified identifier: ",
-									  type_name, "::", member_name, " -> ", inst_name, "::", member_name);
-
-							// Try to instantiate the template
-							try_instantiate_class_template(template_base_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-
-							// Look up the instantiated type
-							auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-							if (type_it != getTypesByNameMap().end()) {
-								const TypeInfo* type_info = type_it->second;
-								if (type_info->getStructInfo()) {
-									const StructTypeInfo* struct_info = type_info->getStructInfo();
-									// Find the static member
-									for (const auto& static_member : struct_info->static_members) {
-										if (StringTable::getStringView(static_member.getName()) == member_name) {
-											// Evaluate the static member's initializer
-											if (static_member.initializer.has_value()) {
-												const ASTNode& init_node = *static_member.initializer;
-												if (init_node.is<ExpressionNode>()) {
-													const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-													if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
-														bool val = bool_literal->value();
-														filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeCategory::Bool));
-														FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
-													} else if (std::holds_alternative<NumericLiteralNode>(init_expr)) {
-														const NumericLiteralNode& lit = std::get<NumericLiteralNode>(init_expr);
-														const auto& val = lit.value();
-														if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-															filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
-															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to numeric value");
-														}
-													}
-												}
-											}
-											break;
-										}
-									}
-								}
+							if (tryAppendStaticMemberValueFromTypeName(
+									filled_template_args,
+									type_name,
+									member_name,
+									template_params,
+									filled_template_args,
+									"dependent qualified static member")) {
+								FLASH_LOG(Templates, Debug, "Resolved dependent qualified identifier: ",
+										  type_name, "::", member_name);
 							}
 						}
 					}
@@ -3468,45 +3505,15 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 							// Try looking up as a dependent template instantiation
 							// Build the instantiated name using filled_template_args
 							if (!filled_template_args.empty()) {
-								// Use hash-based naming instead of underscore-based
-								std::string_view inst_name = get_instantiated_class_name(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-
-								FLASH_LOG(Templates, Debug, "Looking up instantiated type: '", inst_name, "'");
-
-								// Try to instantiate the template
-								try_instantiate_class_template(obj_name, std::vector<TemplateTypeArg>{filled_template_args[0]});
-
-								// Look up the instantiated type
-								auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(inst_name));
-								if (type_it != getTypesByNameMap().end()) {
-									const TypeInfo* type_info = type_it->second;
-									if (type_info->getStructInfo()) {
-										const StructTypeInfo* struct_info = type_info->getStructInfo();
-										// Find the static member
-										for (const auto& static_member : struct_info->static_members) {
-											if (StringTable::getStringView(static_member.getName()) == member_name) {
-												// Evaluate the static member's initializer
-												if (static_member.initializer.has_value()) {
-													const ASTNode& init_node = *static_member.initializer;
-													if (init_node.is<ExpressionNode>()) {
-														const ExpressionNode& init_expr = init_node.as<ExpressionNode>();
-														if (const auto* inner_bool_literal = std::get_if<BoolLiteralNode>(&init_expr)) {
-															bool val = inner_bool_literal->value();
-															filled_template_args.push_back(TemplateTypeArg(val ? 1LL : 0LL, TypeCategory::Bool));
-															FLASH_LOG(Templates, Debug, "Resolved static member '", member_name, "' to ", val);
-														} else if (const auto* numeric_literal = std::get_if<NumericLiteralNode>(&init_expr)) {
-															const NumericLiteralNode& lit = *numeric_literal;
-															const auto& val = lit.value();
-															if (const auto* ull_val = std::get_if<unsigned long long>(&val)) {
-																filled_template_args.push_back(TemplateTypeArg(static_cast<int64_t>(*ull_val)));
-															}
-														}
-													}
-												}
-												break;
-											}
-										}
-									}
+								if (tryAppendStaticMemberValueFromTypeName(
+										filled_template_args,
+										obj_name,
+										member_name,
+										template_params,
+										filled_template_args,
+										"dependent member-access static member")) {
+									FLASH_LOG(Templates, Debug, "Resolved static member '", member_name,
+											  "' from instantiated type '", obj_name, "'");
 								}
 							}
 						}
@@ -3768,7 +3775,34 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 		// Check if this base class is deferred (a template parameter)
 		if (base.is_deferred) {
-			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is a template parameter - resolving with concrete type");
+			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is deferred - resolving with concrete type");
+
+			auto try_add_concrete_base = [&](TemplateTypeArg concrete_arg) -> bool {
+				const TypeInfo* concrete_type = resolveConcreteBaseType(concrete_arg);
+
+				if (concrete_arg.type_index.index() >= getTypeInfoCount()) {
+					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
+					return false;
+				}
+				if (!concrete_type || !concrete_type->getStructInfo()) {
+					if (const TypeInfo* fallback_type = tryGetTypeInfo(concrete_arg.type_index)) {
+						FLASH_LOG(Templates, Debug, "Deferred base '", base_class_name,
+								  "' did not resolve to a concrete struct (candidate='",
+								  StringTable::getStringView(fallback_type->name()), "')");
+					}
+					return false;
+				}
+				if (concrete_type->struct_info_ && concrete_type->struct_info_->is_final) {
+					FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name_, "'");
+					return false;
+				}
+
+				struct_info->addBaseClass(StringTable::getStringView(concrete_type->name()), concrete_arg.type_index, base.access, base.is_virtual);
+				FLASH_LOG(Templates, Debug, "Resolved deferred base '", base_class_name,
+						  "' to concrete type '", StringTable::getStringView(concrete_type->name()),
+						  "' with type_index=", concrete_arg.type_index);
+				return true;
+			};
 
 			// Use name_substitution_map (which correctly handles all param kinds) to resolve
 			ensure_substitution_maps();
@@ -3776,24 +3810,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			bool found = false;
 			if (subst_it != name_substitution_map.end()) {
 				TemplateTypeArg concrete_arg = subst_it->second;
-				const TypeInfo* concrete_type = resolveConcreteBaseType(concrete_arg);
-
-				// Validate that the concrete type is a struct/class
-				if (concrete_arg.type_index.index() >= getTypeInfoCount()) {
-					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
-				} else {
-					if (!concrete_type || !concrete_type->getStructInfo()) {
-						const TypeInfo& fallback_type = getTypeInfo(concrete_arg.type_index);
-						FLASH_LOG(Templates, Error, "Template argument '", fallback_type.name_, "' for base class must be a struct/class type");
-					} else if (concrete_type->struct_info_ && concrete_type->struct_info_->is_final) {
-						FLASH_LOG(Templates, Error, "Cannot inherit from final class '", concrete_type->name_, "'");
-					} else {
-						// Add the resolved base class
-						struct_info->addBaseClass(StringTable::getStringView(concrete_type->name()), concrete_arg.type_index, base.access, base.is_virtual);
-						FLASH_LOG(Templates, Debug, "Resolved template parameter base '", base_class_name, "' to concrete type '", StringTable::getStringView(concrete_type->name()), "' with type_index=", concrete_arg.type_index);
-						found = true;
-					}
-				}
+				found = try_add_concrete_base(concrete_arg);
 			}
 
 			if (!found) {
@@ -3805,19 +3822,21 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 				if (pack_it != pack_substitution_map.end()) {
 					for (const TemplateTypeArg& pack_arg : pack_it->second) {
 						TemplateTypeArg resolved_pack_arg = pack_arg;
-						if (const TypeInfo* concrete_type = resolveConcreteBaseType(resolved_pack_arg)) {
-							if (concrete_type->getStructInfo() &&
-								!(concrete_type->struct_info_ && concrete_type->struct_info_->is_final)) {
-								struct_info->addBaseClass(StringTable::getStringView(concrete_type->name()), resolved_pack_arg.type_index, base.access, base.is_virtual);
-								FLASH_LOG(Templates, Debug, "Expanded pack base '", base_class_name, "' -> '", StringTable::getStringView(concrete_type->name()), "'");
-								found = true;
-							}
-						}
+						found = try_add_concrete_base(resolved_pack_arg) || found;
 					}
 				}
 			}
+			if (!found && base.type_index.is_valid()) {
+				TemplateTypeArg deferred_base_arg;
+				deferred_base_arg.type_index = base.type_index;
+				if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
+					deferred_base_arg.type_index = base_type_info->registeredTypeIndex();
+					deferred_base_arg.type_index.setCategory(base_type_info->typeEnum());
+				}
+				found = try_add_concrete_base(deferred_base_arg);
+			}
 			if (!found) {
-				FLASH_LOG(Templates, Warning, "Could not resolve template parameter base class: ", base_class_name);
+				FLASH_LOG(Templates, Warning, "Could not resolve deferred base class: ", base_class_name);
 			}
 		} else {
 			// Regular (non-deferred) base class
