@@ -972,12 +972,6 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 			if (gTemplateRegistry.isPatternStructName(parent_handle)) {
 				return;
 			}
-			auto parent_it = getTypesByNameMap().find(parent_handle);
-			if (parent_it != getTypesByNameMap().end() &&
-				parent_it->second &&
-				parent_it->second->isTemplateInstantiation()) {
-				return;
-			}
 		}
 		if (!parent.empty() && current_struct_name_.isValid()) {
 			const std::string_view current_struct_name_view = StringTable::getStringView(current_struct_name_);
@@ -1068,9 +1062,12 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// calls should no longer rely on a precomputed-mangled escape hatch.
 	const bool sema_recorded_unresolved_call =
 		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
+	const bool synthesized_member_static_direct_call =
+		sema_call_key != static_cast<const void*>(&callExprNode);
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
+		synthesized_member_static_direct_call || // static member calls lowered through receiver/member-access paths still synthesize a direct-call wrapper here
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned

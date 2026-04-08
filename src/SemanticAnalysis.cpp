@@ -4460,7 +4460,45 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 		return false;
 
 	const std::string_view struct_name_sv = qname.substr(0, scope_sep);
-	const auto struct_name_handle = StringTable::getOrInternStringHandle(struct_name_sv);
+	auto resolveQualifiedOwnerType = [&](std::string_view owner_name) -> const TypeInfo* {
+		auto resolve_type_info = [&](StringHandle handle) -> const TypeInfo* {
+			auto it = getTypesByNameMap().find(handle);
+			return it != getTypesByNameMap().end() ? it->second : nullptr;
+		};
+
+		const TypeInfo* type_info = nullptr;
+		if (!member_context_stack_.empty() &&
+			owner_name.find("::") == std::string_view::npos) {
+			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
+				const std::string_view current_type_name = StringTable::getStringView(current_type_info->name());
+				std::string_view qualified_alias_name = StringBuilder()
+													   .append(current_type_name)
+													   .append("::")
+													   .append(owner_name)
+													   .commit();
+				type_info = resolve_type_info(StringTable::getOrInternStringHandle(qualified_alias_name));
+			}
+		}
+
+		if (!type_info) {
+			type_info = resolve_type_info(StringTable::getOrInternStringHandle(owner_name));
+		}
+
+		constexpr size_t kMaxAliasDepth = 100;
+		for (size_t alias_depth = 0; type_info && alias_depth < kMaxAliasDepth; ++alias_depth) {
+			if (type_info->getStructInfo()) {
+				return type_info;
+			}
+			const TypeInfo* underlying = tryGetTypeInfo(type_info->type_index_);
+			if (!underlying || underlying == type_info) {
+				break;
+			}
+			type_info = underlying;
+		}
+
+		return nullptr;
+	};
+
 	if (!member_context_stack_.empty()) {
 		if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
 			if ((current_type_info->isTemplateInstantiation() &&
@@ -4472,9 +4510,9 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			}
 		}
 	}
-	auto struct_it = getTypesByNameMap().find(struct_name_handle);
-	if (struct_it != getTypesByNameMap().end() &&
-		searchTypeMembers(struct_it->second)) {
+	if (const TypeInfo* resolved_owner_type = resolveQualifiedOwnerType(struct_name_sv);
+		resolved_owner_type &&
+		searchTypeMembers(resolved_owner_type)) {
 		return true;
 	}
 
@@ -4510,8 +4548,19 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(const CallInfo& call_info,
 																				const void* call_key) {
 	const ChunkedVector<ASTNode>& arguments = *call_info.arguments;
-	if (call_info.has_receiver)
-		return call_info.function_declaration;
+	if (call_info.has_receiver) {
+		if (call_info.function_declaration) {
+			return call_info.function_declaration;
+		}
+
+		const DeclarationNode& decl = *call_info.declaration;
+		const FunctionDeclarationNode* recovered_func_decl = nullptr;
+		if (tryRecoverCallDeclFromStructMembers(call_info, decl, arguments, recovered_func_decl)) {
+			return recovered_func_decl;
+		}
+		unresolved_call_args_.insert(call_key);
+		return nullptr;
+	}
 
 	const FunctionDeclarationNode* func_decl = getResolvedOpCall(call_key);
 	if (!func_decl) {
@@ -4525,6 +4574,15 @@ const FunctionDeclarationNode* SemanticAnalysis::resolveCallArgAnnotationTarget(
 		return call_info.function_declaration;
 
 	const DeclarationNode& decl = *call_info.declaration;
+	if (call_info.mangled_name.isValid()) {
+		if (std::optional<ASTNode> mangled_symbol = symbols_.lookup(call_info.mangled_name);
+			mangled_symbol.has_value()) {
+			if (const FunctionDeclarationNode* mangled_candidate = getCallTargetFunctionCandidate(*mangled_symbol)) {
+				return mangled_candidate;
+			}
+		}
+	}
+
 	const std::string_view name = call_info.qualified_name.isValid()
 									  ? call_info.qualified_name.view()
 									  : decl.identifier_token().value();
@@ -4587,7 +4645,7 @@ void SemanticAnalysis::tryAnnotateCallArgConversionsImpl(const CallInfo& call_in
 	const bool cache_as_direct_call =
 		!resolved_op_call &&
 		(!call_info.has_receiver ||
-		 (call_info.function_declaration && call_info.function_declaration->is_static()));
+		 (func_decl && func_decl->is_static()));
 	if (cache_as_direct_call) {
 		resolved_direct_call_table_[call_key] = func_decl;
 	} else {
