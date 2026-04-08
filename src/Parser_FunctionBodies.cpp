@@ -228,25 +228,6 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 					delayed.ctor_node->set_delegating_initializer(std::move(init_args));
 				} else {
 					// Check if it's a base class initializer
-					auto isReachableVirtualBase = [&](auto&& self, const StructTypeInfo* current_info, std::string_view candidate_name) -> bool {
-						if (!current_info) {
-							return false;
-						}
-						for (const auto& base : current_info->base_classes) {
-							if (base.is_virtual && base.name == candidate_name) {
-								return true;
-							}
-							if (base.is_virtual) {
-								continue;
-							}
-							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
-								if (self(self, base_type_info->getStructInfo(), candidate_name)) {
-									return true;
-								}
-							}
-						}
-						return false;
-					};
 					if (delayed.struct_node) {
 						const StructTypeInfo* delayed_struct_info = nullptr;
 						if (const TypeInfo* delayed_type_info = tryGetTypeInfo(delayed.struct_type_index)) {
@@ -272,7 +253,7 @@ ParseResult Parser::parse_delayed_function_body(DelayedFunctionBody& delayed, st
 								}
 							}
 						}
-						if (!is_base_init && isReachableVirtualBase(isReachableVirtualBase, delayed_struct_info, init_name)) {
+						if (!is_base_init && isReachableVirtualBaseInitializer(delayed_struct_info, init_name)) {
 							is_base_init = true;
 							StringHandle init_name_handle = StringTable::getOrInternStringHandle(init_name);
 							delayed.ctor_node->add_base_initializer(init_name_handle, std::move(init_args));

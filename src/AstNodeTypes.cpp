@@ -1059,7 +1059,6 @@ bool structIntroducesVirtualMembers(const StructTypeInfo& struct_info) {
 LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) {
 	LayoutBaseCollections collections;
 	collections.non_virtual_bases.reserve(struct_info.base_classes.size());
-	const bool enable_indirect_virtual_base_sharing = !struct_info.has_vtable;
 
 	std::unordered_map<TypeIndex, BaseClassSpecifier*> direct_virtual_bases;
 	for (auto& base : struct_info.base_classes) {
@@ -1088,8 +1087,14 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 					auto direct_base_it = direct_virtual_bases.find(base.type_index);
 					if (direct_base_it != direct_virtual_bases.end()) {
 						collections.virtual_bases.push_back(*direct_base_it->second);
-					} else if (enable_indirect_virtual_base_sharing) {
-						collections.virtual_bases.emplace_back(base.name, base.type_index, base.access, true, 0, base.is_deferred);
+					} else {
+						collections.virtual_bases.emplace_back(
+							base.name,
+							base.type_index,
+							base.access,
+							/*is_virtual=*/true,
+							/*offset=*/0,
+							base.is_deferred);
 					}
 				}
 				continue;
@@ -1150,6 +1155,24 @@ void placeBaseSubobjects(std::vector<BaseClassSpecifier>& bases,
 		base.offset = current_offset;
 		current_offset += toSizeT(base_info->baseSubobjectSizeInBytes());
 		max_alignment = std::max(max_alignment, base_alignment);
+	}
+}
+
+void syncDirectVirtualBaseOffsets(const std::vector<BaseClassSpecifier>& virtual_bases,
+								  std::vector<BaseClassSpecifier>& base_classes) {
+	std::unordered_map<TypeIndex, size_t> virtual_base_offsets;
+	virtual_base_offsets.reserve(virtual_bases.size());
+	for (const auto& virtual_base : virtual_bases) {
+		virtual_base_offsets.emplace(virtual_base.type_index, virtual_base.offset);
+	}
+
+	for (auto& direct_base : base_classes) {
+		if (!direct_base.is_virtual) {
+			continue;
+		}
+		if (auto it = virtual_base_offsets.find(direct_base.type_index); it != virtual_base_offsets.end()) {
+			direct_base.offset = it->second;
+		}
 	}
 }
 } // namespace
@@ -1214,13 +1237,7 @@ void StructTypeInfo::recalculateLayout() {
 
 	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
 	virtual_bases = base_collections.virtual_bases;
-	for (const auto& virtual_base : virtual_bases) {
-		for (auto& direct_base : base_classes) {
-			if (direct_base.is_virtual && direct_base.type_index == virtual_base.type_index) {
-				direct_base.offset = virtual_base.offset;
-			}
-		}
-	}
+	syncDirectVirtualBaseOffsets(virtual_bases, base_classes);
 
 	if (custom_alignment > 0) {
 		max_alignment = std::max(max_alignment, custom_alignment);
@@ -1274,13 +1291,7 @@ bool StructTypeInfo::finalizeWithBases() {
 	// Step 3: Layout virtual base class subobjects (at the end, shared across inheritance paths)
 	placeBaseSubobjects(base_collections.virtual_bases, current_offset, max_alignment);
 	virtual_bases = base_collections.virtual_bases;
-	for (const auto& virtual_base : virtual_bases) {
-		for (auto& direct_base : base_classes) {
-			if (direct_base.is_virtual && direct_base.type_index == virtual_base.type_index) {
-				direct_base.offset = virtual_base.offset;
-			}
-		}
-	}
+	syncDirectVirtualBaseOffsets(virtual_bases, base_classes);
 
 	// Step 4: Apply custom alignment if specified
 	if (custom_alignment > 0) {

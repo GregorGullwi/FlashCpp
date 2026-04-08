@@ -1520,7 +1520,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	const bool emit_split_ctor_variants =
 		NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
 		enclosing_struct_info != nullptr &&
-		!enclosing_struct_info->has_vtable &&
 		!enclosing_struct_info->virtual_bases.empty();
 
 		// Extract just the last component of the class name for the constructor function name
@@ -1665,7 +1664,6 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 	auto shouldCallBaseObjectVariant = [](const StructTypeInfo* target_struct_info) {
 		return NameMangling::g_mangling_style == NameMangling::ManglingStyle::Itanium &&
 			   target_struct_info != nullptr &&
-			   !target_struct_info->has_vtable &&
 			   !target_struct_info->virtual_bases.empty();
 	};
 
@@ -1902,6 +1900,34 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				vptr_store.value.value = static_cast<unsigned long long>(0);	 // Placeholder
 
 				ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(vptr_store), node.name_token()));
+
+				for (const auto& base : struct_info->base_classes) {
+					if (base.is_virtual || base.offset == 0) {
+						continue;
+					}
+					const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index);
+					const StructTypeInfo* base_struct_info = base_type_info ? base_type_info->getStructInfo() : nullptr;
+					if (!base_struct_info || !base_struct_info->has_vtable) {
+						continue;
+					}
+
+					MemberStoreOp secondary_vptr_store;
+					secondary_vptr_store.object = StringTable::getOrInternStringHandle("this");
+					secondary_vptr_store.member_name = StringTable::getOrInternStringHandle("__vptr");
+					secondary_vptr_store.offset = static_cast<int>(base.offset);
+					secondary_vptr_store.struct_type_info = struct_type_info;
+					secondary_vptr_store.ref_qualifier = CVReferenceQualifier::None;
+					secondary_vptr_store.vtable_symbol = NameMangling::generateSecondaryVTableSymbol(
+						struct_name_for_ctor,
+						StringTable::getStringView(base_type_info->name()),
+						base.offset);
+					secondary_vptr_store.value.setType(TypeCategory::Void);
+					secondary_vptr_store.value.ir_type = IrType::Void;
+					secondary_vptr_store.value.size_in_bits = SizeInBits{64};
+					secondary_vptr_store.value.value = static_cast<unsigned long long>(0);
+
+					ir_.addInstruction(IrInstruction(IrOpcode::MemberStore, std::move(secondary_vptr_store), node.name_token()));
+				}
 			}
 		}
 	}
@@ -1918,23 +1944,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 				// If this is an implicit constructor, generate appropriate initialization
 			if (node.is_implicit()) {
 					// Check if this is a copy or move constructor (has one parameter that is a reference)
-				bool is_copy_constructor = false;
-				bool is_move_constructor = false;
-					// Implicit constructors always have exactly 1 parameter, but use
-					// is_lvalue_reference()/is_rvalue_reference() for correct distinction.
-				if (node.parameter_nodes().size() == 1) {
-					const auto& param_decl = node.parameter_nodes()[0].as<DeclarationNode>();
-					const auto& param_type = param_decl.type_node().as<TypeSpecifierNode>();
-					if (param_type.category() == TypeCategory::Struct) {
-						if (param_type.is_rvalue_reference()) {
-							is_move_constructor = true;
-						} else if (param_type.is_lvalue_reference()) {
-							is_copy_constructor = true;
-						}
-					}
-				}
-
-				if (is_copy_constructor || is_move_constructor) {
+				if (is_implicit_copy_constructor || is_implicit_move_constructor) {
 						// Implicit copy/move constructor: call base class copy/move constructors first, then memberwise copy/move from 'other' to 'this'
 
 						// Step 1: Call base class copy/move constructors (in declaration order)
@@ -1961,7 +1971,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						ConstructorCallOp ctor_op;
 						ctor_op.object = StringTable::getOrInternStringHandle("this");
 						if (const StructMemberFunction* base_same_type_ctor =
-								base_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+								base_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
 							base_same_type_ctor && base_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 							ctor_op.resolved_constructor =
 								&base_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -1979,10 +1989,10 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						other_arg.size_in_bits = SizeInBits{static_cast<int>(base_type_info->struct_info_ ? base_type_info->struct_info_->sizeInBits().value : struct_info->sizeInBits().value)};
 						other_arg.value = StringTable::getOrInternStringHandle("other");	 // Parameter value ('other' object)
 						other_arg.type_index = base.type_index;	// Use BASE class type index for proper mangling
-						if (is_copy_constructor) {
+						if (is_implicit_copy_constructor) {
 							other_arg.ref_qualifier = ReferenceQualifier::LValueReference;  // Copy ctor takes lvalue reference
 							other_arg.cv_qualifier = CVQualifier::Const;	 // Copy ctor takes const reference
-						} else if (is_move_constructor) {
+						} else if (is_implicit_move_constructor) {
 							other_arg.ref_qualifier = ReferenceQualifier::RValueReference;  // Move ctor takes rvalue reference
 						}
 						ctor_op.arguments.push_back(std::move(other_arg));
@@ -1996,7 +2006,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 						if (member.type_index.category() == TypeCategory::Struct) {
 							const TypeInfo* member_type_info = tryGetTypeInfo(member.type_index);
 							const StructTypeInfo* member_struct_info = member_type_info ? member_type_info->getStructInfo() : nullptr;
-							if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_move_constructor)) {
+							if (member_struct_info && member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor)) {
 								TempVar member_source_addr = var_counter.next();
 								AddressOfMemberOp addr_member_op;
 								addr_member_op.result = member_source_addr;
@@ -2009,7 +2019,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								ConstructorCallOp ctor_op;
 								ctor_op.object = StringTable::getOrInternStringHandle("this");
 								if (const StructMemberFunction* member_same_type_ctor =
-										member_struct_info->findPreferredSameTypeConstructor(is_move_constructor, true);
+										member_struct_info->findPreferredSameTypeConstructor(is_implicit_move_constructor, true);
 									member_same_type_ctor && member_same_type_ctor->function_decl.is<ConstructorDeclarationNode>()) {
 									ctor_op.resolved_constructor =
 										&member_same_type_ctor->function_decl.as<ConstructorDeclarationNode>();
@@ -2023,7 +2033,7 @@ void AstToIr::visitConstructorDeclarationNode(const ConstructorDeclarationNode& 
 								other_arg.size_in_bits = SizeInBits{static_cast<int>(member.size * 8)};
 								other_arg.value = member_source_addr;
 								other_arg.type_index = member.type_index;
-								if (is_copy_constructor) {
+								if (is_implicit_copy_constructor) {
 									other_arg.ref_qualifier = ReferenceQualifier::LValueReference;
 									other_arg.cv_qualifier = CVQualifier::Const;
 								} else {

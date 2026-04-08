@@ -614,7 +614,9 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 							   std::string_view class_name,
 							   [[maybe_unused]] std::span<const std::string_view> base_class_names,
 							   [[maybe_unused]] std::span<const BaseClassDescriptorInfo> base_class_info,
-							   const RTTITypeInfo* rtti_info) {
+							   const RTTITypeInfo* rtti_info,
+							   TypeIndex subobject_type_index,
+							   int64_t offset_to_top) {
 
 	FLASH_LOG_FORMAT(Codegen, Debug, "Adding vtable '{}' for class {} with {} virtual functions",
 					 vtable_symbol, class_name, function_symbols.size());
@@ -674,7 +676,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// Collect unique virtual bases for this class (depth-first, left-to-right)
 	// so we can emit vbase offset entries in the vtable prefix.
 	struct VBaseEntry {
-		size_t offset_from_derived;
+		int64_t offset_from_address_point;
 	};
 	std::vector<VBaseEntry> vbase_entries;
 	{
@@ -689,12 +691,23 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 			}
 		}
 		if (this_struct) {
+			const StructTypeInfo* vbase_owner_struct = this_struct;
+			size_t subobject_offset = 0;
+			if (subobject_type_index.is_valid()) {
+				if (const TypeInfo* subobject_type_info = tryGetTypeInfo(subobject_type_index)) {
+					vbase_owner_struct = subobject_type_info->getStructInfo();
+				}
+				if (offset_to_top < 0) {
+					subobject_offset = static_cast<size_t>(-offset_to_top);
+				}
+			}
+
 			// Collect all unique virtual base TypeIndexes reachable from this class.
 			std::vector<TypeIndex> vbase_type_indices;
 			{
 				std::set<TypeIndex> seen;
 				std::set<const StructTypeInfo*> visited;
-				collectReachableVBases(this_struct, vbase_type_indices, seen, visited);
+				collectReachableVBases(vbase_owner_struct, vbase_type_indices, seen, visited);
 			}
 
 			// Now find each vbase's offset in THIS class (the most-derived).
@@ -705,7 +718,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 				size_t offset = 0;
 				std::set<const StructTypeInfo*> visited;
 				findVBaseOffset(this_struct, vb_tidx, 0, offset, visited);
-				vbase_entries.push_back({offset});
+				vbase_entries.push_back({static_cast<int64_t>(offset) - static_cast<int64_t>(subobject_offset)});
 			}
 		}
 	}
@@ -715,7 +728,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 					 vtable_symbol, n_vbase_entries);
 	for (size_t i = 0; i < n_vbase_entries; ++i) {
 		FLASH_LOG_FORMAT(Codegen, Debug, "    vbase[{}] offset_from_derived={}",
-						 i, vbase_entries[i].offset_from_derived);
+						 i, vbase_entries[i].offset_from_address_point);
 	}
 
 	// Emit vbase offset entries (before offset_to_top).
@@ -724,12 +737,11 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	// The vptr points to func_ptrs[0].
 	// vbase_offset[i] is at vtable[-(3+i)] i.e. -(3+i)*8 bytes from the vptr.
 	for (size_t i = n_vbase_entries; i > 0; --i) {
-		int64_t vbase_off = static_cast<int64_t>(vbase_entries[i - 1].offset_from_derived);
+		int64_t vbase_off = vbase_entries[i - 1].offset_from_address_point;
 		append_bytes(&vbase_off, 8);
 	}
 
-	// Offset to top (8 bytes, value = 0)
-	uint64_t offset_to_top = 0;
+	// Offset to top (8 bytes)
 	append_bytes(&offset_to_top, 8);
 
 	// RTTI pointer (8 bytes, null for now)

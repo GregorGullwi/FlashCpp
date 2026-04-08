@@ -98,6 +98,22 @@ private:
 	StringHandle storage_;
 };
 
+inline StringHandle generateSecondaryVTableSymbol(
+	std::string_view most_derived_name,
+	std::string_view base_name,
+	size_t base_offset) {
+	StringBuilder builder;
+	builder.append("$flash$vtable$")
+		.append(most_derived_name.size())
+		.append(most_derived_name)
+		.append("$")
+		.append(base_offset)
+		.append("$")
+		.append(base_name.size())
+		.append(base_name);
+	return StringTable::getOrInternStringHandle(builder.commit());
+}
+
 // Helper to append CV-qualifier code (A/B/C/D) to output
 inline void appendCVQualifier(auto& output, CVQualifier cv) {
 	if (cv == CVQualifier::None) {
