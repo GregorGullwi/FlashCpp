@@ -1896,6 +1896,18 @@ void SemanticAnalysis::normalizeStatement(const ASTNode& node, const SemanticCon
 			}
 			normalizeExpression(*init, ctx);
 		}
+	} else if (node.is<EnumDeclarationNode>()) {
+		registerEnumDeclarationInScope(node.as<EnumDeclarationNode>());
+	} else if (node.is<UsingDirectiveNode>()) {
+		addUsingDirectiveInScope(node.as<UsingDirectiveNode>().namespace_handle());
+	} else if (node.is<UsingDeclarationNode>()) {
+		const auto& using_decl = node.as<UsingDeclarationNode>();
+		addUsingDeclarationInScope(
+			using_decl.identifier_token().handle(),
+			using_decl.namespace_handle(),
+			using_decl.identifier_token().handle());
+	} else if (node.is<UsingEnumNode>()) {
+		registerUsingEnumInScope(node.as<UsingEnumNode>());
 	} else if (node.is<StructuredBindingNode>()) {
 		const auto& binding = node.as<StructuredBindingNode>();
 		normalizeExpression(binding.initializer(), ctx);
@@ -2708,16 +2720,33 @@ CastInfoIndex SemanticAnalysis::allocateNonUserDefinedCastInfo(CanonicalTypeId s
 
 void SemanticAnalysis::pushScope() {
 	scope_stack_.emplace_back();
+	using_directive_stack_.emplace_back();
+	using_declaration_stack_.emplace_back();
 }
 
 void SemanticAnalysis::popScope() {
-	if (!scope_stack_.empty())
+	if (!scope_stack_.empty()) {
 		scope_stack_.pop_back();
+		using_directive_stack_.pop_back();
+		using_declaration_stack_.pop_back();
+	}
 }
 
 void SemanticAnalysis::addLocalType(StringHandle name, CanonicalTypeId type_id) {
 	if (!scope_stack_.empty())
 		scope_stack_.back()[name] = type_id;
+}
+
+void SemanticAnalysis::addUsingDirectiveInScope(NamespaceHandle namespace_handle) {
+	if (!using_directive_stack_.empty() && namespace_handle.isValid()) {
+		using_directive_stack_.back().push_back(namespace_handle);
+	}
+}
+
+void SemanticAnalysis::addUsingDeclarationInScope(StringHandle local_name, NamespaceHandle namespace_handle, StringHandle original_name) {
+	if (!using_declaration_stack_.empty() && local_name.isValid() && namespace_handle.isValid() && original_name.isValid()) {
+		using_declaration_stack_.back()[local_name] = std::make_pair(namespace_handle, original_name);
+	}
 }
 
 CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
@@ -2727,6 +2756,107 @@ CanonicalTypeId SemanticAnalysis::lookupLocalType(StringHandle name) const {
 			return found->second;
 	}
 	return {};
+}
+
+CanonicalTypeId SemanticAnalysis::inferSymbolType(const ASTNode& symbol) {
+	const DeclarationNode* decl = nullptr;
+	if (symbol.is<DeclarationNode>()) {
+		decl = &symbol.as<DeclarationNode>();
+	} else if (symbol.is<VariableDeclarationNode>()) {
+		decl = &symbol.as<VariableDeclarationNode>().declaration();
+	}
+
+	if (decl) {
+		const ASTNode type_node = decl->type_node();
+		if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) {
+			return {};
+		}
+
+		TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
+		if (decl->is_array()) {
+			type.add_pointer_level();
+		}
+		return canonicalizeType(type);
+	}
+
+	if (symbol.is<FunctionDeclarationNode>()) {
+		const auto& func = symbol.as<FunctionDeclarationNode>();
+		const ASTNode ret_type_node = func.decl_node().type_node();
+		if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
+			return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
+		}
+	}
+
+	return {};
+}
+
+CanonicalTypeId SemanticAnalysis::lookupImportedType(StringHandle name) {
+	for (size_t idx = using_declaration_stack_.size(); idx-- > 0;) {
+		auto using_decl_it = using_declaration_stack_[idx].find(name);
+		if (using_decl_it != using_declaration_stack_[idx].end()) {
+			const auto& [namespace_handle, original_name] = using_decl_it->second;
+			if (auto symbol = symbols_.lookup_qualified(namespace_handle, original_name); symbol.has_value()) {
+				if (CanonicalTypeId type_id = inferSymbolType(*symbol)) {
+					return type_id;
+				}
+			}
+		}
+
+		for (NamespaceHandle namespace_handle : using_directive_stack_[idx]) {
+			if (auto symbol = symbols_.lookup_qualified(namespace_handle, name); symbol.has_value()) {
+				if (CanonicalTypeId type_id = inferSymbolType(*symbol)) {
+					return type_id;
+				}
+			}
+		}
+	}
+	return {};
+}
+
+void SemanticAnalysis::registerEnumDeclarationInScope(const EnumDeclarationNode& node) {
+	const TypeIndex enum_type_index = node.type_index();
+	if (!enum_type_index.is_valid()) {
+		return;
+	}
+
+	CanonicalTypeDesc enum_desc;
+	enum_desc.type_index = enum_type_index.withCategory(TypeCategory::Enum);
+	const CanonicalTypeId enum_type_id = type_context_.intern(enum_desc);
+
+	if (node.is_scoped()) {
+		const StringHandle enum_name = StringTable::getOrInternStringHandle(node.name());
+		if (enum_name.isValid()) {
+			addLocalType(enum_name, enum_type_id);
+		}
+		return;
+	}
+
+	for (const ASTNode& enumerator_node : node.enumerators()) {
+		if (!enumerator_node.is<EnumeratorNode>()) {
+			continue;
+		}
+		const StringHandle enumerator_name = enumerator_node.as<EnumeratorNode>().name_token().handle();
+		if (enumerator_name.isValid()) {
+			addLocalType(enumerator_name, enum_type_id);
+		}
+	}
+}
+
+void SemanticAnalysis::registerUsingEnumInScope(const UsingEnumNode& node) {
+	auto type_it = getTypesByNameMap().find(node.enum_type_name());
+	if (type_it == getTypesByNameMap().end() || !type_it->second || !type_it->second->getEnumInfo()) {
+		return;
+	}
+
+	CanonicalTypeDesc enum_desc;
+	enum_desc.type_index = type_it->second->type_index_.withCategory(TypeCategory::Enum);
+	const CanonicalTypeId enum_type_id = type_context_.intern(enum_desc);
+
+	for (const Enumerator& enumerator : type_it->second->getEnumInfo()->enumerators) {
+		if (enumerator.getName().isValid()) {
+			addLocalType(enumerator.getName(), enum_type_id);
+		}
+	}
 }
 
 // --- Expression type inference ---
@@ -2755,38 +2885,9 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				const CanonicalTypeId local_id = lookupLocalType(e.nameHandle());
 				if (local_id)
 					return local_id;
-
-				auto infer_symbol_type = [&](const ASTNode& symbol) -> CanonicalTypeId {
-					const DeclarationNode* decl = nullptr;
-					if (symbol.is<DeclarationNode>()) {
-						decl = &symbol.as<DeclarationNode>();
-					} else if (symbol.is<VariableDeclarationNode>()) {
-						decl = &symbol.as<VariableDeclarationNode>().declaration();
-					}
-
-					if (decl) {
-						const ASTNode type_node = decl->type_node();
-						if (!type_node.has_value() || !type_node.is<TypeSpecifierNode>()) {
-							return {};
-						}
-
-						TypeSpecifierNode type = type_node.as<TypeSpecifierNode>();
-						if (decl->is_array()) {
-							type.add_pointer_level();
-						}
-						return canonicalizeType(type);
-					}
-
-					if (symbol.is<FunctionDeclarationNode>()) {
-						const auto& func = symbol.as<FunctionDeclarationNode>();
-						const ASTNode ret_type_node = func.decl_node().type_node();
-						if (ret_type_node.has_value() && ret_type_node.is<TypeSpecifierNode>()) {
-							return canonicalizeType(ret_type_node.as<TypeSpecifierNode>());
-						}
-					}
-
-					return {};
-				};
+				if (const CanonicalTypeId imported_id = lookupImportedType(e.nameHandle())) {
+					return imported_id;
+				}
 
 				auto lookup_bound_symbol = [&]() -> std::optional<ASTNode> {
 					if (e.resolved_name().isValid()) {
@@ -2799,7 +2900,7 @@ CanonicalTypeId SemanticAnalysis::inferExpressionType(const ASTNode& node) {
 				};
 
 				if (auto symbol = lookup_bound_symbol(); symbol.has_value()) {
-					if (const CanonicalTypeId symbol_type_id = infer_symbol_type(*symbol)) {
+					if (const CanonicalTypeId symbol_type_id = inferSymbolType(*symbol)) {
 						return symbol_type_id;
 					}
 				}

@@ -25,6 +25,10 @@ class ConstructorCallNode;
 class InitializerListNode;
 class RangedForStatementNode;
 class VariableDeclarationNode;
+class EnumDeclarationNode;
+class UsingDirectiveNode;
+class UsingDeclarationNode;
+class UsingEnumNode;
 struct StructMember;
 struct StructTypeInfo;
 struct LambdaInfo;
@@ -299,7 +303,13 @@ private:
 	void pushScope();
 	void popScope();
 	void addLocalType(StringHandle name, CanonicalTypeId type_id);
+	void addUsingDirectiveInScope(NamespaceHandle namespace_handle);
+	void addUsingDeclarationInScope(StringHandle local_name, NamespaceHandle namespace_handle, StringHandle original_name);
 	CanonicalTypeId lookupLocalType(StringHandle name) const;
+	CanonicalTypeId lookupImportedType(StringHandle name);
+	CanonicalTypeId inferSymbolType(const ASTNode& symbol);
+	void registerEnumDeclarationInScope(const EnumDeclarationNode& node);
+	void registerUsingEnumInScope(const UsingEnumNode& node);
 
 	// Diagnose implicit conversion from scoped enum.
 	// C++11+: scoped enums do not allow implicit conversion to other types.
@@ -358,6 +368,8 @@ private:
 
 	// Scope stack: each entry maps local variable StringHandle → canonical type id.
 	std::vector<std::unordered_map<StringHandle, CanonicalTypeId>> scope_stack_;
+	std::vector<std::vector<NamespaceHandle>> using_directive_stack_;
+	std::vector<std::unordered_map<StringHandle, std::pair<NamespaceHandle, StringHandle>>> using_declaration_stack_;
 
 	// Enclosing implicit-member context for bodies/default initializers currently
 	// being normalized. Used to type `IdentifierBinding::NonStaticMember`
