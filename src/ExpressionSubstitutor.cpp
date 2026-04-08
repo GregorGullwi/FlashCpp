@@ -741,14 +741,16 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 			if (!instantiated_name.empty()) {
 				normalizePendingSemanticRoots();
 			} else {
-				instantiated_name = template_name_to_instantiate;
 				auto registry_hit = gTemplateRegistry.getInstantiation(
 					StringTable::getOrInternStringHandle(base_template_name), inst_args);
 				if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
 					instantiated_name = StringTable::getStringView(
 						registry_hit->as<StructDeclarationNode>().name());
-				} else if (instantiated_name.empty()) {
+				} else {
 					instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+					if (instantiated_name.empty()) {
+						instantiated_name = template_name_to_instantiate;
+					}
 				}
 			}
 
@@ -1167,14 +1169,16 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		if (!instantiated_name.empty()) {
 			parser_.normalizePendingSemanticRootsIfAvailable();
 		} else {
-			instantiated_name = template_name_to_instantiate;
 			auto registry_hit = gTemplateRegistry.getInstantiation(
 				StringTable::getOrInternStringHandle(base_template_name), inst_args);
 			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
 				instantiated_name = StringTable::getStringView(
 					registry_hit->as<StructDeclarationNode>().name());
-			} else if (instantiated_name.empty()) {
+			} else {
 				instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+				if (instantiated_name.empty()) {
+					instantiated_name = template_name_to_instantiate;
+				}
 			}
 		}
 

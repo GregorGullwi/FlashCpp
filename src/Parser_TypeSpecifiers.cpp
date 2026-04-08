@@ -1020,89 +1020,11 @@ ParseResult Parser::parse_type_specifier() {
 					if (alias_node.is_deferred()) {
 						FLASH_LOG(Parser, Debug, "Using deferred instantiation for alias '", type_name, "' -> '", alias_node.target_template_name(), "'");
 
-						// Build substituted template arguments by replacing alias parameters with concrete values
-						std::vector<TemplateTypeArg> substituted_args;
-						const auto& param_names = alias_node.template_param_names();
-						const auto& target_template_args = alias_node.target_template_args();
-
-						// For each argument in the target template (e.g., bool, B in integral_constant<bool, B>)
-						for (size_t i = 0; i < target_template_args.size(); ++i) {
-							const ASTNode& arg_node = target_template_args[i];
-
-							// Check if this argument is a type specifier
-							if (arg_node.is<TypeSpecifierNode>()) {
-								const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
-
-								// Check if this type is one of the alias template parameters
-								// We check the token value, not type_index, because type_index may be 0 (placeholder) for template parameters
-								bool is_alias_param = false;
-								size_t alias_param_idx = 0;
-
-								Token arg_token = arg_type.token();
-								if (arg_token.type() == Token::Type::Identifier) {
-									std::string_view arg_token_value = arg_token.value();
-									for (size_t j = 0; j < param_names.size(); ++j) {
-										if (arg_token_value == param_names[j].view()) {
-											is_alias_param = true;
-											alias_param_idx = j;
-											break;
-										}
-									}
-								}
-
-								if (is_alias_param && alias_param_idx < template_args->size()) {
-									// This argument references an alias parameter - substitute it with the actual argument
-									// IMPORTANT: The alias argument might be a value (e.g., true), not a type
-									FLASH_LOG(Parser, Debug, "Substituting alias parameter '", param_names[alias_param_idx].view(), "' at position ", alias_param_idx);
-									substituted_args.push_back((*template_args)[alias_param_idx]);
-								} else {
-									// This argument is a concrete type - keep it as is
-									substituted_args.push_back(TemplateTypeArg(arg_type));
-								}
-							} else if (arg_node.is<ExpressionNode>()) {
-								const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
-								bool matched_alias_param = false;
-								size_t alias_param_idx = 0;
-								if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
-									for (size_t j = 0; j < param_names.size(); ++j) {
-										if (tparam_ref->param_name() == param_names[j]) {
-											matched_alias_param = true;
-											alias_param_idx = j;
-											break;
-										}
-									}
-								} else if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
-									for (size_t j = 0; j < param_names.size(); ++j) {
-										if (id->name() == param_names[j].view()) {
-											matched_alias_param = true;
-											alias_param_idx = j;
-											break;
-										}
-									}
-								}
-
-								if (matched_alias_param && alias_param_idx < template_args->size()) {
-									substituted_args.push_back((*template_args)[alias_param_idx]);
-								} else {
-									ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-									auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-									if (eval_result.success()) {
-										if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-											substituted_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-										} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-											TypeCategory value_category = eval_result.exact_type.has_value()
-												? eval_result.exact_type->category()
-												: TypeCategory::UnsignedLongLong;
-											substituted_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-										} else if (eval_result.exact_type.has_value()) {
-											substituted_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-										} else {
-											substituted_args.push_back(TemplateTypeArg(eval_result.as_int()));
-										}
-									}
-								}
-							}
+						auto substituted_args_opt = materializeDeferredAliasTemplateArgs(alias_node, *template_args);
+						if (!substituted_args_opt.has_value()) {
+							return ParseResult::error("Could not materialize alias template arguments", type_name_token);
 						}
+						std::vector<TemplateTypeArg> substituted_args = std::move(*substituted_args_opt);
 
 						FLASH_LOG(Parser, Debug, "Instantiating '", alias_node.target_template_name(), "' with ", substituted_args.size(), " substituted arguments");
 
@@ -1126,85 +1048,11 @@ ParseResult Parser::parse_type_specifier() {
 							const TemplateAliasNode& target_alias = target_alias_opt->as<TemplateAliasNode>();
 
 							if (target_alias.is_deferred()) {
-								// Recursively instantiate through the target alias
-								// Build the substituted args for the target alias
-								const auto& target_param_names = target_alias.template_param_names();
-								const auto& target_target_args = target_alias.target_template_args();
-								std::vector<TemplateTypeArg> nested_substituted_args;
-
-								for (size_t i = 0; i < target_target_args.size(); ++i) {
-									const ASTNode& arg_node = target_target_args[i];
-
-									if (arg_node.is<TypeSpecifierNode>()) {
-										const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
-
-										// Check if this arg references a parameter of the target alias
-										bool is_target_param = false;
-										size_t target_param_idx = 0;
-
-										Token arg_token = arg_type.token();
-										if (arg_token.type() == Token::Type::Identifier) {
-											std::string_view arg_token_value = arg_token.value();
-											for (size_t j = 0; j < target_param_names.size(); ++j) {
-												if (arg_token_value == target_param_names[j].view()) {
-													is_target_param = true;
-													target_param_idx = j;
-													break;
-												}
-											}
-										}
-
-										if (is_target_param && target_param_idx < substituted_args.size()) {
-											// Substitute with the argument we already substituted
-											nested_substituted_args.push_back(substituted_args[target_param_idx]);
-										} else {
-											// Keep the concrete type
-											nested_substituted_args.push_back(TemplateTypeArg(arg_type));
-										}
-									} else if (arg_node.is<ExpressionNode>()) {
-										const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
-										bool is_target_param = false;
-										size_t target_param_idx = 0;
-										if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
-											for (size_t j = 0; j < target_param_names.size(); ++j) {
-												if (tparam_ref->param_name() == target_param_names[j]) {
-													is_target_param = true;
-													target_param_idx = j;
-													break;
-												}
-											}
-										} else if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
-											for (size_t j = 0; j < target_param_names.size(); ++j) {
-												if (id->name() == target_param_names[j].view()) {
-													is_target_param = true;
-													target_param_idx = j;
-													break;
-												}
-											}
-										}
-
-										if (is_target_param && target_param_idx < substituted_args.size()) {
-											nested_substituted_args.push_back(substituted_args[target_param_idx]);
-										} else {
-											ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
-											auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
-											if (eval_result.success()) {
-												if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
-													nested_substituted_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
-												} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
-													TypeCategory value_category = eval_result.exact_type.has_value()
-														? eval_result.exact_type->category()
-														: TypeCategory::UnsignedLongLong;
-													nested_substituted_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
-												} else if (eval_result.exact_type.has_value()) {
-													nested_substituted_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
-												} else {
-													nested_substituted_args.push_back(TemplateTypeArg(eval_result.as_int()));
-												}
-											}
-										}
-									}
+								auto nested_substituted_args_opt = materializeDeferredAliasTemplateArgs(target_alias, substituted_args);
+								if (!nested_substituted_args_opt.has_value()) {
+									return ParseResult::error("Could not materialize nested alias template arguments", type_name_token);
 								}
+								std::vector<TemplateTypeArg> nested_substituted_args = std::move(*nested_substituted_args_opt);
 
 								FLASH_LOG(Parser, Debug, "Nested instantiation: '", target_alias.target_template_name(), "' with ", nested_substituted_args.size(), " args");
 								instantiated_class = try_instantiate_class_template(target_alias.target_template_name(), nested_substituted_args);
@@ -1239,6 +1087,43 @@ ParseResult Parser::parse_type_specifier() {
 								const TypeInfo& new_ti = getTypeInfo(type_idx);
 
 								FLASH_LOG(Parser, Debug, "Deferred instantiation succeeded: '", instantiated_name, "' at index ", type_idx);
+
+								// Some deferred aliases encode a nested member type in the alias target
+								// itself (e.g. using enable_if_t = typename enable_if<B, T>::type).
+								// Resolve that member against the concrete instantiated base before
+								// falling back to the instantiated class type.
+								if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
+									const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+									if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+										std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+										size_t member_sep = alias_target_name.rfind("::");
+										if (member_sep != std::string_view::npos) {
+											std::string_view member_name = alias_target_name.substr(member_sep + 2);
+											StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+												StringBuilder()
+													.append(instantiated_name)
+													.append("::")
+													.append(member_name)
+													.commit());
+											auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+											if (member_type_it != getTypesByNameMap().end() && member_type_it->second != nullptr) {
+												const TypeInfo* member_type_info = member_type_it->second;
+												ResolvedAliasTypeInfo resolved_member_alias =
+													resolveAliasTypeInfo(member_type_info->registeredTypeIndex());
+												TypeIndex resolved_member_type_index = resolved_member_alias.type_index.is_valid()
+													? resolved_member_alias.type_index.withCategory(resolved_member_alias.typeEnum())
+													: member_type_info->registeredTypeIndex();
+												TypeSpecifierNode resolved_member_spec(
+													resolved_member_type_index,
+													static_cast<unsigned char>(member_type_info->sizeInBits().value),
+													type_name_token,
+													cv_qualifier,
+													ReferenceQualifier::None);
+												return ParseResult::success(emplace_node<TypeSpecifierNode>(resolved_member_spec));
+											}
+										}
+									}
+								}
 
 								// Check for member type access after alias template resolution
 								// Pattern: typename conditional_t<...>::type
@@ -1300,7 +1185,93 @@ ParseResult Parser::parse_type_specifier() {
 							}
 						} else {
 							// try_instantiate_class_template returned nullopt, which is expected for
-							// dependent types and SFINAE patterns - fall through to simple alias handling
+							// dependent types and SFINAE patterns. Rebind the alias target to the
+							// concrete dependent placeholder produced from the substituted args
+							// instead of falling back to the alias definition's raw parameter names.
+							std::string_view instantiated_name = get_instantiated_class_name(alias_node.target_template_name(), substituted_args);
+							if (!instantiated_name.empty()) {
+								if (const TypeInfo* typeInfo = findTypeByName(StringTable::getOrInternStringHandle(instantiated_name))) {
+									if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
+										const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+										if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+											std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+											size_t member_sep = alias_target_name.rfind("::");
+											if (member_sep != std::string_view::npos) {
+												std::string_view member_name = alias_target_name.substr(member_sep + 2);
+												StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+													StringBuilder()
+														.append(instantiated_name)
+														.append("::")
+														.append(member_name)
+														.commit());
+												auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+												if (member_type_it == getTypesByNameMap().end()) {
+													TypeInfo& placeholder_type = add_empty_type_entry();
+													placeholder_type.fallback_size_bits_ = 0;
+													placeholder_type.name_ = qualified_member_handle;
+													placeholder_type.is_incomplete_instantiation_ = true;
+													getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
+													member_type_it = getTypesByNameMap().find(qualified_member_handle);
+												}
+												const TypeInfo* member_type_info = member_type_it->second;
+												return ParseResult::success(emplace_node<TypeSpecifierNode>(
+													member_type_info->registeredTypeIndex().withCategory(member_type_info->typeEnum()),
+													member_type_info->hasStoredSize() ? static_cast<unsigned char>(member_type_info->sizeInBits().value) : 0,
+													type_name_token,
+													cv_qualifier,
+													ReferenceQualifier::None));
+											}
+										}
+									}
+
+									if (peek() == "::"_tok) {
+										advance(); // consume '::'
+
+										Token member_token = peek_info();
+										if (member_token.type() == Token::Type::Identifier) {
+											std::string_view member_name = member_token.value();
+											advance(); // consume member name
+
+											StringBuilder qualified_name_builder;
+											std::string_view qualified_type_name = qualified_name_builder
+																					   .append(instantiated_name)
+																					   .append("::")
+																					   .append(member_name)
+																					   .commit();
+
+											auto member_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(qualified_type_name));
+											if (member_type_it != getTypesByNameMap().end()) {
+												const TypeInfo* member_type_info = member_type_it->second;
+												return ParseResult::success(emplace_node<TypeSpecifierNode>(
+													member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+													static_cast<unsigned char>(member_type_info->sizeInBits().value),
+													member_token,
+													cv_qualifier,
+													ReferenceQualifier::None));
+											}
+
+											TypeInfo& placeholder_type = add_empty_type_entry();
+											placeholder_type.fallback_size_bits_ = 0;
+											placeholder_type.name_ = StringTable::getOrInternStringHandle(qualified_type_name);
+											placeholder_type.is_incomplete_instantiation_ = true;
+											getTypesByNameMap()[placeholder_type.name_] = &placeholder_type;
+											return ParseResult::success(emplace_node<TypeSpecifierNode>(
+												placeholder_type.type_index_.withCategory(TypeCategory::UserDefined),
+												0,
+												member_token,
+												cv_qualifier,
+												ReferenceQualifier::None));
+										}
+									}
+
+									return ParseResult::success(emplace_node<TypeSpecifierNode>(
+										typeInfo->registeredTypeIndex().withCategory(typeInfo->typeEnum()),
+										typeInfo->hasStoredSize() ? static_cast<unsigned char>(typeInfo->sizeInBits().value) : 0,
+										type_name_token,
+										cv_qualifier,
+										ReferenceQualifier::None));
+								}
+							}
 							FLASH_LOG(Parser, Debug, "Deferred instantiation failed for '", alias_node.target_template_name(), "' at line ", type_name_token.line());
 						}
 
@@ -1374,6 +1345,39 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
+					// Some deferred aliases encode a nested member type in the target itself
+					// (e.g. using enable_if_t = typename enable_if<B, T>::type;). Resolve that
+					// member against the concrete instantiated base before falling back to the
+					// placeholder type carried by the alias target.
+					if (peek() != "::"_tok && alias_node.target_type().is<TypeSpecifierNode>()) {
+						const auto& alias_target_spec = alias_node.target_type().as<TypeSpecifierNode>();
+						if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_spec.type_index())) {
+							std::string_view alias_target_name = StringTable::getStringView(alias_target_info->name());
+							size_t member_sep = alias_target_name.rfind("::");
+							if (member_sep != std::string_view::npos) {
+								std::string_view member_name = alias_target_name.substr(member_sep + 2);
+								std::string_view base_type_name = StringTable::getStringView(getTypeInfo(instantiated_type.type_index()).name());
+								StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+									StringBuilder()
+										.append(base_type_name)
+										.append("::")
+										.append(member_name)
+										.commit());
+								auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
+								if (member_type_it != getTypesByNameMap().end()) {
+									const TypeInfo* member_type_info = member_type_it->second;
+									return ParseResult::success(emplace_node<TypeSpecifierNode>(
+										member_type_info->type_index_.withCategory(member_type_info->typeEnum()),
+										static_cast<unsigned char>(member_type_info->sizeInBits().value),
+										type_name_token,
+										cv_qualifier,
+										ReferenceQualifier::None));
+								}
+
+							}
+						}
+					}
+
 					// Check for member type access after alias template resolution
 					// Pattern: typename alias_template<...>::type
 					if (peek() == "::"_tok) {
@@ -1420,6 +1424,9 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
+					if (peek() == "::"_tok) {
+						FLASH_LOG(Parser, Error, "DBG alias instantiated_type return before trailing member for ", type_name);
+					}
 					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
 

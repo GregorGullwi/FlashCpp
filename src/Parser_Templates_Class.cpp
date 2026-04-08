@@ -783,10 +783,25 @@ ParseResult Parser::parse_template_declaration() {
 			std::string_view type_name = StringTable::getStringView(ti.name());
 
 			// Check for incomplete instantiation indicating unresolved template parameters
-			// But NOT if the name already contains :: (which means ::type was already resolved)
+			auto has_unresolved_member_base = [&]() {
+				size_t scope_pos = type_name.rfind("::");
+				if (scope_pos == std::string_view::npos) {
+					return false;
+				}
+				std::string_view base_name = type_name.substr(0, scope_pos);
+				auto base_type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_name));
+				if (base_type_it == getTypesByNameMap().end() || base_type_it->second == nullptr) {
+					return false;
+				}
+				const TypeInfo* base_type_info = base_type_it->second;
+				return base_type_info->is_incomplete_instantiation_ || base_type_info->isTemplateInstantiation();
+			};
 			if (ti.is_incomplete_instantiation_ && type_name.find("::") == std::string_view::npos) {
 				has_unresolved_params = true;
 				FLASH_LOG(Parser, Debug, "Alias target type '", StringTable::getStringView(ti.name()), "' has unresolved parameters - using deferred instantiation");
+			} else if (has_unresolved_member_base()) {
+				has_unresolved_params = true;
+				FLASH_LOG(Parser, Debug, "Alias target '", type_name, "' depends on unresolved member base - using deferred instantiation");
 			}
 			// Phase 6: Use TypeInfo::isTemplateInstantiation() instead of parsing $
 			// Check if this is a template instantiation (hash-based naming)
@@ -842,6 +857,10 @@ ParseResult Parser::parse_template_declaration() {
 				// Rewind and re-parse to extract template name and arguments as AST nodes
 				restore_token_position(target_type_start_pos);
 
+				if (peek() == "typename"_tok) {
+					advance();
+				}
+
 				// Parse the template name (possibly namespace-qualified like ns1::vec)
 				if (peek().is_identifier()) {
 					StringBuilder name_builder;
@@ -878,6 +897,26 @@ ParseResult Parser::parse_template_declaration() {
 									FLASH_LOG(Parser, Debug, "  Node[", i, "]: TypeSpecifier, type=", static_cast<int>(ts.type()),
 											  ", type_name='", node_type_name, "'");
 								}
+							}
+						}
+					}
+
+					// Consume any dependent member suffix (e.g. ::type) so the alias
+					// declaration can continue after we have captured the base template
+					// name and its argument AST nodes for deferred instantiation.
+					while (peek() == "::"_tok) {
+						advance();
+						if (peek() == "template"_tok) {
+							advance();
+						}
+						if (peek_info().type() != Token::Type::Identifier) {
+							break;
+						}
+						advance();
+						if (peek() == "<"_tok) {
+							auto ignored_member_args = parse_explicit_template_arguments();
+							if (!ignored_member_args.has_value()) {
+								break;
 							}
 						}
 					}

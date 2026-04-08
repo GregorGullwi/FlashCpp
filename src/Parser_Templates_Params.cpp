@@ -1051,12 +1051,24 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 							FLASH_LOG(Templates, Debug, "Accepting dependent expression as template argument");
 						// Successfully parsed a dependent expression
 						// Create a dependent template argument
-						// IMPORTANT: For template parameter references (like T in is_same<T, T>),
-						// this should be a TYPE argument, not a VALUE argument!
-						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters
+						// IMPORTANT: Preserve whether this is a type-like placeholder (e.g. T)
+						// or a value-like dependent expression (e.g. Trait<T>::value).
+						// Try to get the type_index for the template parameter so pattern matching can detect reused parameters.
 							TemplateTypeArg dependent_arg;
-							dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
-							dependent_arg.is_value = false;	// This is a TYPE parameter, not a value
+							bool is_value_like_dependent_expr =
+								std::holds_alternative<QualifiedIdentifierNode>(expr) ||
+								std::holds_alternative<MemberAccessNode>(expr) ||
+								std::holds_alternative<NoexceptExprNode>(expr) ||
+								std::holds_alternative<SizeofExprNode>(expr) ||
+								std::holds_alternative<AlignofExprNode>(expr) ||
+								std::holds_alternative<TypeTraitExprNode>(expr);
+							if (is_value_like_dependent_expr) {
+								dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);
+								dependent_arg.is_value = true;
+							} else {
+								dependent_arg.type_index = nativeTypeIndex(TypeCategory::UserDefined);  // Template parameter is a user-defined type placeholder; will try to look up
+								dependent_arg.is_value = false;	// This is a TYPE parameter, not a value
+							}
 							dependent_arg.is_dependent = true;
 
 						// Try to get the type_index for template parameter references

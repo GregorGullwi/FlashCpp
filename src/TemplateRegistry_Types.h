@@ -266,10 +266,9 @@ struct TemplateTypeArg {
 		h ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_value) {
 			h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			if (is_dependent && dependent_name.isValid()) {
 				h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
-			} else {
-				h ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (h << 6) + (h >> 2);
 			}
 		}
 		h ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (h << 6) + (h >> 2);
@@ -503,10 +502,9 @@ struct TemplateTypeArg {
 		hash ^= std::hash<bool>{}(is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (is_value) {
 			hash ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 			if (is_dependent && dependent_name.isValid()) {
 				hash ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			} else {
-				hash ^= std::hash<int64_t>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 			}
 		}
 		hash ^= std::hash<bool>{}(is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
@@ -547,10 +545,9 @@ struct TemplateTypeArgHash {
 		hash ^= std::hash<bool>{}(arg.is_value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 		if (arg.is_value) {
 			hash ^= std::hash<bool>{}(arg.is_dependent) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+			hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 			if (arg.is_dependent && arg.dependent_name.isValid()) {
 				hash ^= std::hash<StringHandle>{}(arg.dependent_name) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
-			} else {
-				hash ^= std::hash<int64_t>{}(arg.value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
 			}
 		}
 		hash ^= std::hash<bool>{}(arg.is_template_template_arg) + 0x9e3779b9 + (hash << 6) + (hash >> 2);

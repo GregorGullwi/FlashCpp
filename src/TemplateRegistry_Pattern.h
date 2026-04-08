@@ -23,6 +23,7 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
 	ta.function_signature = arg.function_signature;
+	ta.is_dependent = arg.dependent_name.isValid();
 	if (arg.is_value) {
 		ta.value = arg.intValue();
 	}

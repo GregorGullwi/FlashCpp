@@ -147,6 +147,61 @@ That gives the cleanup we wanted from `std::optional`, but in a form that can ac
 
 ---
 
+## Design questions raised during branch work
+
+### Q: Is there any point in keeping both `TypeInfo::TemplateArgInfo` and `TemplateTypeArg`?
+
+**Short answer:** yes **for now**, but not in their current blurry form.
+
+`TemplateTypeArg` is still the richer working representation:
+
+- deduction/matching state
+- dependent-vs-concrete identity
+- pack/template-template/member-pointer metadata
+- parser/substitution-time manipulation
+
+`TypeInfo::TemplateArgInfo` is the lighter persistent representation owned by instantiated `TypeInfo` entries and their instantiation contexts:
+
+- compact storage on `TypeInfo`
+- fewer dependencies from core type records into template-matching logic
+- easier persistence of type-owned template environments for later constexpr/codegen/sema lookups
+
+So they are **not fully equivalent today**, even if they overlap heavily.
+
+What *does not* make sense long-term is letting both evolve as peer representations with duplicated semantics. The better direction is:
+
+1. keep a **canonical template-argument identity carrier**
+2. let `TemplateTypeArg` stay a rich working/adaptation layer if needed
+3. make `TemplateArgInfo` either:
+   - a compact serialized/persistent projection of that canonical carrier, or
+   - disappear entirely if the canonical carrier is cheap enough to store directly
+
+In other words: **keeping two layers can make sense; keeping two independently authoritative models does not**.
+
+### Q: Does it make sense to keep all `add_type_alias_copy()` overloads?
+
+**Short answer:** not really in their current form.
+
+The overload set is convenient, but it is also bug-prone because alias canonicalization behavior can diverge depending on which overload the caller happened to use. That already showed up in this branch work: the primitive-target fix had to be applied in the `alias_type_spec`-carrying path specifically.
+
+There is still a legitimate distinction between:
+
+- "register an alias from a known canonical target type"
+- "register an alias while preserving the source alias type-specifier surface"
+
+But that should probably be expressed through **one authoritative implementation** with explicit inputs, not multiple overload bodies that can drift. A better shape would be:
+
+- one core helper or builder taking:
+  - alias name
+  - canonical source type/index
+  - fallback size
+  - optional alias type specifier
+- plus, at most, tiny forwarding wrappers if they add no behavior
+
+So the architectural answer is: **keep the semantic distinction, but collapse the overload behavior behind one implementation**.
+
+---
+
 ## Concrete implementation plan
 
 ## Phase 0: freeze the regression surface first

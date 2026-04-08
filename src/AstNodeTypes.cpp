@@ -220,6 +220,17 @@ TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, ui
 
 TypeInfo& add_type_alias_copy(StringHandle name, TypeIndex source_type_index, uint32_t size_bits, const TypeSpecifierNode& alias_type_spec) {
 	auto& type_info = add_type_alias_copy(name, source_type_index, size_bits);
+	if (!type_info.type_index_.is_valid() && alias_type_spec.type() != TypeCategory::Invalid) {
+		TypeIndex canonical_source = alias_type_spec.type_index();
+		if (canonical_source.is_valid()) {
+			canonical_source = canonical_source.withCategory(alias_type_spec.type());
+		} else if (TypeIndex native_type_index = nativeTypeIndex(alias_type_spec.type()); native_type_index.is_valid()) {
+			canonical_source = native_type_index;
+		} else {
+			canonical_source = type_info.registeredTypeIndex().withCategory(alias_type_spec.type());
+		}
+		type_info.type_index_ = canonical_source;
+	}
 	type_info.setAliasTypeSpecifier(alias_type_spec);
 	return type_info;
 }

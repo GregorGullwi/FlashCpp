@@ -2056,6 +2056,126 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			StringBuilder sb;
 			return StringTable::getOrInternStringHandle(sb.append(base).append("::").append(member).commit());
 		};
+		auto materialize_placeholder_args = [&](const TypeInfo& placeholder_info) {
+			std::vector<TemplateTypeArg> concrete_args =
+				materializeTemplateArgs(placeholder_info, template_params, template_args);
+
+			const auto resolve_concrete_base_handle = [&](std::string_view base_name) -> StringHandle {
+				auto base_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_name));
+				if (base_it == getTypesByNameMap().end() || base_it->second == nullptr) {
+					return {};
+				}
+
+				const TypeInfo* base_info = base_it->second;
+				if (!base_info->isTemplateInstantiation()) {
+					return base_info->name();
+				}
+
+				std::string_view nested_template_name = StringTable::getStringView(base_info->baseTemplateName());
+				if (nested_template_name.empty()) {
+					return base_info->name();
+				}
+
+				std::vector<TemplateTypeArg> nested_args =
+					materializeTemplateArgs(*base_info, template_params, template_args);
+				try_instantiate_class_template(nested_template_name, nested_args);
+				std::string_view instantiated_nested_name =
+					get_instantiated_class_name(nested_template_name, nested_args);
+				if (instantiated_nested_name.empty()) {
+					return base_info->name();
+				}
+
+				return StringTable::getOrInternStringHandle(instantiated_nested_name);
+			};
+
+			for (auto& concrete_arg : concrete_args) {
+				if (!concrete_arg.is_value || !concrete_arg.dependent_name.isValid()) {
+					continue;
+				}
+
+				std::string_view dep_name = StringTable::getStringView(concrete_arg.dependent_name);
+				size_t scope_pos = dep_name.rfind("::");
+				if (scope_pos == std::string_view::npos) {
+					continue;
+				}
+
+				StringHandle concrete_base_handle = resolve_concrete_base_handle(dep_name.substr(0, scope_pos));
+				if (!concrete_base_handle.isValid()) {
+					continue;
+				}
+
+				std::string_view member_name = dep_name.substr(scope_pos + 2);
+				Token member_token(Token::Type::Identifier, member_name, 0, 0, 0);
+				NamespaceHandle member_ns = gNamespaceRegistry.getOrCreateNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					concrete_base_handle);
+				QualifiedIdentifierNode& member_qual_id =
+					gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(member_ns, member_token);
+				ExpressionNode& member_expr =
+					gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
+				if (auto value = try_evaluate_constant_expression(ASTNode(&member_expr))) {
+					concrete_arg.is_dependent = false;
+					concrete_arg.dependent_name = {};
+					concrete_arg.type_index = nativeTypeIndex(value->type);
+					concrete_arg.value = value->value;
+					continue;
+				}
+
+				auto concrete_type_it = getTypesByNameMap().find(concrete_base_handle);
+				if (concrete_type_it == getTypesByNameMap().end() || concrete_type_it->second == nullptr) {
+					continue;
+				}
+				const TypeInfo* concrete_type_info = concrete_type_it->second;
+				if (concrete_type_info->isTemplateInstantiation()) {
+					std::string_view base_template_name = StringTable::getStringView(concrete_type_info->baseTemplateName());
+					if (!base_template_name.empty()) {
+						std::vector<TemplateTypeArg> exact_args =
+							materializeTemplateArgs(*concrete_type_info, template_params, template_args);
+						auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
+						if (!specialization_ast.has_value()) {
+							specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+						}
+						if (specialization_ast.has_value() && specialization_ast->is<StructDeclarationNode>()) {
+							const auto& specialization_struct = specialization_ast->as<StructDeclarationNode>();
+							for (const auto& static_member_decl : specialization_struct.static_members()) {
+								if (StringTable::getStringView(static_member_decl.name) != member_name ||
+									!static_member_decl.initializer.has_value()) {
+									continue;
+								}
+								if (auto value = try_evaluate_constant_expression(*static_member_decl.initializer)) {
+									concrete_arg.is_dependent = false;
+									concrete_arg.dependent_name = {};
+									concrete_arg.type_index = nativeTypeIndex(value->type);
+									concrete_arg.value = value->value;
+									break;
+								}
+							}
+							if (!concrete_arg.is_dependent) {
+								continue;
+							}
+						}
+					}
+				}
+
+				const StructTypeInfo* concrete_struct = concrete_type_info->getStructInfo();
+				if (!concrete_struct) {
+					continue;
+				}
+				auto [static_member, owner_struct] = concrete_struct->findStaticMemberRecursive(
+					StringTable::getOrInternStringHandle(member_name));
+				if (!static_member || !static_member->initializer.has_value()) {
+					continue;
+				}
+				if (auto value = try_evaluate_constant_expression(*static_member->initializer)) {
+					concrete_arg.is_dependent = false;
+					concrete_arg.dependent_name = {};
+					concrete_arg.type_index = nativeTypeIndex(value->type);
+					concrete_arg.value = value->value;
+				}
+			}
+
+			return concrete_args;
+		};
 		FLASH_LOG(Templates, Debug, "resolve_dependent_member_alias: type_name=", type_name,
 				  " base_part=", base_part, " member_part=", member_part,
 				  " template_args=", template_args.size());
@@ -2081,11 +2201,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			type_it->second->is_incomplete_instantiation_) {
 			type_it = getTypesByNameMap().end();
 		}
+		std::vector<TemplateTypeArg> concrete_instantiation_args;
+		if (type_info->isTemplateInstantiation()) {
+			concrete_instantiation_args = materialize_placeholder_args(*type_info);
+		}
 		if (type_it == getTypesByNameMap().end() && type_info->isTemplateInstantiation()) {
 			std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
 			if (!base_template_name.empty()) {
-				try_instantiate_class_template(base_template_name, template_args);
-				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+				try_instantiate_class_template(base_template_name, concrete_instantiation_args);
+				std::string_view instantiated_base = get_instantiated_class_name(base_template_name, concrete_instantiation_args);
 				resolved_handle = build_resolved_handle(instantiated_base, member_part);
 				type_it = getTypesByNameMap().find(resolved_handle);
 				if (type_it != getTypesByNameMap().end() &&
@@ -2116,9 +2240,15 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 			if (!base_template_name.empty()) {
 				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
 				if (template_opt.has_value() && template_opt->is<TemplateClassDeclarationNode>()) {
-					try_instantiate_class_template(base_template_name, template_args);
+					std::vector<TemplateTypeArg> args_to_use;
+					if (concrete_instantiation_args.empty()) {
+						args_to_use.assign(template_args.begin(), template_args.end());
+					} else {
+						args_to_use = concrete_instantiation_args;
+					}
+					try_instantiate_class_template(base_template_name, args_to_use);
 
-					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, template_args);
+					std::string_view instantiated_base = get_instantiated_class_name(base_template_name, args_to_use);
 					resolved_handle = build_resolved_handle(instantiated_base, member_part);
 					type_it = getTypesByNameMap().find(resolved_handle);
 					if (type_it != getTypesByNameMap().end() &&
@@ -2143,6 +2273,60 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		}
 
 		if (type_it == getTypesByNameMap().end()) {
+			if (type_info->isTemplateInstantiation()) {
+				std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+				if (!base_template_name.empty()) {
+					std::vector<TemplateTypeArg> args_to_use;
+					if (concrete_instantiation_args.empty()) {
+						args_to_use.assign(template_args.begin(), template_args.end());
+					} else {
+						args_to_use = concrete_instantiation_args;
+					}
+
+					auto instantiation_opt = gTemplateRegistry.getInstantiation(
+						StringTable::getOrInternStringHandle(base_template_name),
+						args_to_use);
+					if (instantiation_opt.has_value() && instantiation_opt->is<StructDeclarationNode>()) {
+						const auto& instantiated_struct = instantiation_opt->as<StructDeclarationNode>();
+						for (const auto& type_alias : instantiated_struct.type_aliases()) {
+							if (StringTable::getStringView(type_alias.alias_name) != member_part) {
+								continue;
+							}
+							StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+								StringBuilder()
+									.append(StringTable::getStringView(instantiated_struct.name()))
+									.append("::")
+									.append(member_part)
+									.commit());
+							auto qualified_alias_it = getTypesByNameMap().find(qualified_alias_handle);
+							if (qualified_alias_it != getTypesByNameMap().end() && qualified_alias_it->second != nullptr) {
+								const TypeInfo* resolved_info = qualified_alias_it->second;
+								ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(resolved_info->registeredTypeIndex());
+								TypeIndex resolved_type_index = resolved_alias.type_index.is_valid()
+									? resolved_alias.type_index.withCategory(resolved_alias.typeEnum())
+									: resolved_info->registeredTypeIndex();
+								TypeSpecifierNode resolved_spec(
+									resolved_type_index,
+									get_type_size_bits(resolved_type_index.category()),
+									ts.token(),
+									CVQualifier::None,
+									ReferenceQualifier::None);
+								mergeAliasAndUseSiteTypeSpec(resolved_spec, ts, resolved_info->aliasTypeSpecifier());
+								type_node = emplace_node<TypeSpecifierNode>(resolved_spec);
+								FLASH_LOG(Templates, Debug, "Resolved dependent alias from registered qualified alias '",
+										  StringTable::getStringView(qualified_alias_handle), "'");
+								return;
+							}
+							if (type_alias.type_node.is<TypeSpecifierNode>()) {
+								type_node = emplace_node<TypeSpecifierNode>(type_alias.type_node.as<TypeSpecifierNode>());
+								FLASH_LOG(Templates, Debug, "Resolved dependent alias from instantiated struct '",
+										  type_name, "' -> ", member_part);
+								return;
+							}
+						}
+					}
+				}
+			}
 			auto alias_opt = gTemplateRegistry.lookup_alias_template(StringTable::getStringView(resolved_handle));
 			if (alias_opt.has_value() && alias_opt->is<TemplateAliasNode>()) {
 				const TemplateAliasNode& alias_node = alias_opt->as<TemplateAliasNode>();
@@ -2175,8 +2359,6 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 	resolve_dependent_member_alias(return_type);
 	if (return_type.is<TypeSpecifierNode>()) {
 		const auto& rt = return_type.as<TypeSpecifierNode>();
-		FLASH_LOG(Templates, Debug, "Template instantiation: final return type after alias resolve: type=",
-				  static_cast<int>(rt.type()), " index=", rt.type_index());
 		if ((rt.category() == TypeCategory::UserDefined ||
 			 rt.category() == TypeCategory::TypeAlias ||
 			 rt.category() == TypeCategory::Template) &&

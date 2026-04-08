@@ -958,6 +958,14 @@ private:
 	std::optional<ASTNode> try_instantiate_class_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, bool force_eager = false);	// NEW: Instantiate class template
 	std::optional<ASTNode> instantiate_full_specialization(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args, ASTNode& spec_node);  // Instantiate full specialization
 	std::optional<ASTNode> try_instantiate_variable_template(std::string_view template_name, const std::vector<TemplateTypeArg>& template_args);	 // NEW: Instantiate variable template
+	std::optional<TemplateTypeArg> materializeDeferredAliasTemplateArg(
+		const ASTNode& arg_node,
+		const InlineVector<ASTNode, 4>& template_parameters,
+		const InlineVector<StringHandle, 4>& param_names,
+		const std::vector<TemplateTypeArg>& template_args);
+	std::optional<std::vector<TemplateTypeArg>> materializeDeferredAliasTemplateArgs(
+		const TemplateAliasNode& alias_node,
+		const std::vector<TemplateTypeArg>& template_args);
 	ASTNode substitute_template_params_in_expression(
 		const ASTNode& expr,
 		const std::unordered_map<TypeIndex, TemplateTypeArg>& type_substitution_map,
