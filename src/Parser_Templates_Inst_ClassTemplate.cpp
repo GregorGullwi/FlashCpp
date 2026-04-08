@@ -438,6 +438,21 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 
 	instantiateDeferredStaticInitializerCalls(*initializer, parser, struct_info);
 
+	if (initializer->is<ExpressionNode>()) {
+		std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+		for (size_t i = 0; i < template_params.size() && i < template_args.size(); ++i) {
+			if (!template_params[i].is<TemplateParameterNode>()) {
+				continue;
+			}
+			const TemplateParameterNode& param = template_params[i].as<TemplateParameterNode>();
+			param_map[param.name()] = template_args[i];
+		}
+		if (!param_map.empty()) {
+			ExpressionSubstitutor substitutor(param_map, *parser);
+			initializer = substitutor.substitute(initializer.value());
+		}
+	}
+
 	const bool contains_function_call =
 		staticMemberInitializerContainsFunctionCall(*initializer);
 	ConstExpr::EvaluationContext eval_ctx = makeStaticMemberInitializerEvaluationContext(
@@ -3663,26 +3678,43 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			return nullptr;
 		}
 
-		if (concrete_type->isTemplateInstantiation() &&
-			(!concrete_type->getStructInfo() || !concrete_type->getStructInfo()->sizeInBytes().is_set())) {
+		auto materialize_template_placeholder = [&](bool force_eager) {
+			if (!concrete_type->isTemplateInstantiation() ||
+				(concrete_type->getStructInfo() && concrete_type->getStructInfo()->sizeInBytes().is_set())) {
+				return false;
+			}
+
 			std::string_view base_template_name = StringTable::getStringView(concrete_type->baseTemplateName());
+			if (base_template_name.empty()) {
+				return false;
+			}
+
 			std::vector<TemplateTypeArg> concrete_base_args =
 				materializeTemplateArgs(*concrete_type, template_params, template_args_to_use);
 			std::string_view instantiated_base_name =
-				instantiateAndResolveBaseName(base_template_name, concrete_base_args, false);
+				instantiateAndResolveBaseName(base_template_name, concrete_base_args, force_eager);
 			auto instantiated_base_it =
 				getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
-			if (instantiated_base_it != getTypesByNameMap().end()) {
-				concrete_type = instantiated_base_it->second;
-				concrete_arg.type_index = concrete_type->registeredTypeIndex();
-				concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+			if (instantiated_base_it == getTypesByNameMap().end()) {
+				return false;
 			}
-		}
+
+			concrete_type = instantiated_base_it->second;
+			concrete_arg.type_index = concrete_type->registeredTypeIndex();
+			concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+			return true;
+		};
+
+		materialize_template_placeholder(false);
 
 		// Deep alias chains show up in template-heavy code; keep enough headroom
 		// before stopping alias resolution.
 		size_t alias_unwrap_iterations_remaining = kMaxAliasUnwrapIterations;
 		while (concrete_type && !concrete_type->isStruct() && alias_unwrap_iterations_remaining-- > 0) {
+			if (materialize_template_placeholder(false) && concrete_type->isStruct()) {
+				break;
+			}
+
 			const TypeInfo* underlying_type = tryGetTypeInfo(concrete_type->type_index_);
 			if (!underlying_type || underlying_type == concrete_type) {
 				break;
@@ -3778,7 +3810,30 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			FLASH_LOG(Templates, Debug, "Base class '", base_class_name, "' is deferred - resolving with concrete type");
 
 			auto try_add_concrete_base = [&](TemplateTypeArg concrete_arg) -> bool {
+				TemplateTypeArg original_arg = concrete_arg;
 				const TypeInfo* concrete_type = resolveConcreteBaseType(concrete_arg);
+				if ((!concrete_type || !concrete_type->getStructInfo()) &&
+					!original_arg.is_value &&
+					original_arg.type_index.is_valid()) {
+					if (const TypeInfo* unresolved_type = tryGetTypeInfo(original_arg.type_index)) {
+						if (unresolved_type->isTemplateInstantiation()) {
+							std::string_view base_template_name = StringTable::getStringView(unresolved_type->baseTemplateName());
+							if (!base_template_name.empty()) {
+								std::vector<TemplateTypeArg> concrete_base_args =
+									materializeTemplateArgs(*unresolved_type, template_params, template_args_to_use);
+								std::string_view instantiated_base_name =
+									instantiateAndResolveBaseName(base_template_name, concrete_base_args, true);
+								auto instantiated_base_it =
+									getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_base_name));
+								if (instantiated_base_it != getTypesByNameMap().end()) {
+									concrete_type = instantiated_base_it->second;
+									concrete_arg.type_index = concrete_type->registeredTypeIndex();
+									concrete_arg.type_index.setCategory(concrete_type->typeEnum());
+								}
+							}
+						}
+					}
+				}
 
 				if (concrete_arg.type_index.index() >= getTypeInfoCount()) {
 					FLASH_LOG(Templates, Error, "Template argument for base class has invalid type_index: ", concrete_arg.type_index);
@@ -3834,6 +3889,18 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					deferred_base_arg.type_index.setCategory(base_type_info->typeEnum());
 				}
 				found = try_add_concrete_base(deferred_base_arg);
+				if (!found) {
+					if (const TypeInfo* unresolved_base = tryGetTypeInfo(base.type_index)) {
+						struct_info->addBaseClass(
+							StringTable::getStringView(unresolved_base->name()),
+							unresolved_base->registeredTypeIndex(),
+							base.access,
+							base.is_virtual);
+						FLASH_LOG(Templates, Debug, "Preserved unresolved deferred base '", base_class_name,
+								  "' as placeholder '", StringTable::getStringView(unresolved_base->name()), "'");
+						found = true;
+					}
+				}
 			}
 			if (!found) {
 				FLASH_LOG(Templates, Warning, "Could not resolve deferred base class: ", base_class_name);

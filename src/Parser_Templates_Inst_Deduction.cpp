@@ -2177,6 +2177,20 @@ std::optional<ASTNode> Parser::try_instantiate_single_template(
 		const auto& rt = return_type.as<TypeSpecifierNode>();
 		FLASH_LOG(Templates, Debug, "Template instantiation: final return type after alias resolve: type=",
 				  static_cast<int>(rt.type()), " index=", rt.type_index());
+		if ((rt.category() == TypeCategory::UserDefined ||
+			 rt.category() == TypeCategory::TypeAlias ||
+			 rt.category() == TypeCategory::Template) &&
+			rt.type_index().is_valid()) {
+			if (const TypeInfo* rt_info = tryGetTypeInfo(rt.type_index())) {
+				if (rt_info->is_incomplete_instantiation_) {
+					std::string_view unresolved_name = StringTable::getStringView(rt_info->name());
+					if (unresolved_name.find("::") != std::string_view::npos) {
+						FLASH_LOG(Templates, Debug, "SFINAE: unresolved dependent member alias remains after resolution: ", unresolved_name);
+						return std::nullopt;
+					}
+				}
+			}
+		}
 	}
 
 	// Use the original function name token for the declaration, not the mangled name

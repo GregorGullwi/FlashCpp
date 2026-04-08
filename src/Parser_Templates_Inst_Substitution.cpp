@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
@@ -60,6 +61,48 @@ std::string_view Parser::instantiate_and_register_base_template(
 					} else {
 						substituted_args.push_back(TemplateTypeArg(arg_type));
 					}
+				} else if (arg_node.is<ExpressionNode>()) {
+					const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+					bool matched_alias_param = false;
+					size_t alias_param_idx = 0;
+					if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
+						for (size_t j = 0; j < param_names.size(); ++j) {
+							if (tparam_ref->param_name() == param_names[j]) {
+								matched_alias_param = true;
+								alias_param_idx = j;
+								break;
+							}
+						}
+					} else if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
+						for (size_t j = 0; j < param_names.size(); ++j) {
+							if (id->name() == param_names[j].view()) {
+								matched_alias_param = true;
+								alias_param_idx = j;
+								break;
+							}
+						}
+					}
+
+					if (matched_alias_param && alias_param_idx < template_args.size()) {
+						substituted_args.push_back(template_args[alias_param_idx]);
+					} else {
+						ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+						auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+						if (eval_result.success()) {
+							if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+								substituted_args.push_back(TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool));
+							} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+								TypeCategory value_category = eval_result.exact_type.has_value()
+									? eval_result.exact_type->category()
+									: TypeCategory::UnsignedLongLong;
+								substituted_args.push_back(TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category));
+							} else if (eval_result.exact_type.has_value()) {
+								substituted_args.push_back(TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category()));
+							} else {
+								substituted_args.push_back(TemplateTypeArg(eval_result.as_int()));
+							}
+						}
+					}
 				}
 			}
 
@@ -115,6 +158,39 @@ std::string_view Parser::instantiate_and_register_base_template(
 					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
 					filled_args.emplace_back(default_type);
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_args.size(); ++filled_idx) {
+						if (!primary_params[filled_idx].is<TemplateParameterNode>()) {
+							continue;
+						}
+						const TemplateParameterNode& earlier_param = primary_params[filled_idx].as<TemplateParameterNode>();
+						param_map[earlier_param.name()] = filled_args[filled_idx];
+					}
+
+					ASTNode substituted_default_node = default_node;
+					if (!param_map.empty()) {
+						ExpressionSubstitutor substitutor(param_map, *this);
+						substituted_default_node = substitutor.substitute(default_node);
+					}
+
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+					if (eval_result.success()) {
+						if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+							filled_args.emplace_back(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
+						} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+							TypeCategory value_category = eval_result.exact_type.has_value()
+								? eval_result.exact_type->category()
+								: TypeCategory::UnsignedLongLong;
+							filled_args.emplace_back(static_cast<int64_t>(*uint_value), value_category);
+						} else if (eval_result.exact_type.has_value()) {
+							filled_args.emplace_back(eval_result.as_int(), eval_result.exact_type->category());
+						} else {
+							filled_args.emplace_back(eval_result.as_int());
+						}
+						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);
+					}
 				}
 			}
 

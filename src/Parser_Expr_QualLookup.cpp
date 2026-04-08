@@ -745,6 +745,35 @@ ParseResult Parser::validate_and_add_base_class(
 		base_type_info = underlying;
 	}
 
+	if (base_type_info->isTemplateInstantiation() &&
+		(!base_type_info->getStructInfo() || !base_type_info->getStructInfo()->sizeInBytes().is_set())) {
+		bool has_dependent_template_args = false;
+		for (const auto& arg_info : base_type_info->templateArgs()) {
+			if (arg_info.dependent_name.isValid()) {
+				has_dependent_template_args = true;
+				break;
+			}
+		}
+
+		if (!has_dependent_template_args) {
+			std::vector<ASTNode> no_template_params;
+			std::vector<TemplateTypeArg> no_template_args;
+			std::vector<TemplateTypeArg> concrete_args =
+				materializeTemplateArgs(*base_type_info, no_template_params, no_template_args);
+			std::string_view concrete_base_name = StringTable::getStringView(base_type_info->baseTemplateName());
+			std::string_view instantiated_name =
+				instantiate_and_register_base_template(concrete_base_name, concrete_args);
+			if (!instantiated_name.empty()) {
+				concrete_base_name = instantiated_name;
+			}
+
+			auto concrete_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(concrete_base_name));
+			if (concrete_it != getTypesByNameMap().end() && concrete_it->second != nullptr) {
+				base_type_info = concrete_it->second;
+			}
+		}
+	}
+
 	FLASH_LOG_FORMAT(Parser, Debug, "process_base_class: final base_type_info: type={}, type_index={}",
 					 static_cast<int>(base_type_info->typeEnum()), base_type_info->type_index_);
 
