@@ -480,6 +480,36 @@ Guardrail:
 
 ---
 
+## Reviewer-identified issues and refactoring opportunities
+
+The following items were raised during code review (Gemini) and should be addressed as part of or alongside the phases above.
+
+### Dead `else if` in `ExpressionSubstitutor.cpp` (two sites)
+
+At `src/ExpressionSubstitutor.cpp:744` and `src/ExpressionSubstitutor.cpp:1170`, `instantiated_name` is unconditionally assigned `template_name_to_instantiate` (which is non-empty), making the subsequent `else if (instantiated_name.empty())` always false. `get_instantiated_class_name` is therefore dead code. The fix is to try the registry lookup first, then fall back to `get_instantiated_class_name`, and only use the raw template name as a last resort. **Relates to Phase 2.**
+
+### Alias resolution duplication between top-level and struct-local `using`
+
+`src/Parser_Decl_TopLevel.cpp:1019-1054` and `src/Parser_Decl_TypedefUsing.cpp:410-434` both contain the same pattern: check `isTemplateInstantiation`, materialize args via `toTemplateTypeArg`, call `instantiate_and_register_base_template`, and update the `TypeSpecifierNode`. Extract a shared helper (e.g. `resolveAndRegisterAliasTarget`). **Relates to Phase 2.**
+
+### Expression substitution duplication across instantiation sites
+
+`src/Parser_Templates_Inst_ClassTemplate.cpp:441-454` duplicates the `ExpressionSubstitutor` + `ConstExpr::Evaluator::evaluate` dispatch pattern that appears at 9+ other sites in this PR. Extract a shared helper (e.g. `TemplateTypeArg fromEvalResult(const ConstExpr::EvalResult&)` plus a `substituteAndEvaluateNonTypeDefault` wrapper). **Relates to Phase 2.**
+
+### Extract `materialize_placeholder_args` from deduction
+
+The `materialize_placeholder_args` lambda at `src/Parser_Templates_Inst_Deduction.cpp:2059-2178` is ~120 lines. It should be a dedicated `Parser` member function for readability and testability. **Relates to Phase 2 / Phase 3.**
+
+### Extract `normalizeDependentNonTypeArgs` from `parse_type_specifier`
+
+The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961-988` is complex and likely needed in other parts of the template parsing pipeline. It should be a dedicated helper method on `Parser`. **Relates to Phase 1.**
+
+### Hash strategy drift between `TemplateTypeArg::hash()` and `ValueArgKey::hash()`
+
+`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate. **Relates to Phase 1.**
+
+---
+
 ## Out of scope for this document
 
 - a full rewrite that moves all template instantiation out of the parser immediately
