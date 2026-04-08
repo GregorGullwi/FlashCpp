@@ -728,13 +728,26 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		if (true_ts.has_value() && false_ts.has_value())
 			common_cat = get_common_type(true_ts->category(), false_ts->category());
 	}
+	// Fallback: try parser type inference when sema did not populate expression types
+	// (e.g. non-normalized function bodies, template instantiations).
+	if (common_cat == TypeCategory::Invalid && parser_) {
+		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
+		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
+		if (true_ts.has_value() && false_ts.has_value())
+			common_cat = get_common_type(true_ts->category(), false_ts->category());
+	}
 
 	// Evaluate true expression
 	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
-	// Finalize common_cat: if parser inference failed, fall back to true branch type
-	if (common_cat == TypeCategory::Invalid)
+	// Finalize common_cat: if both sema and parser inference failed, fall back to
+	// true branch type.  In normalized bodies sema should always provide the common
+	// type, so treat a miss there as a compiler bug.
+	if (common_cat == TypeCategory::Invalid) {
+		if (sema_normalized_current_function_)
+			throw InternalError("sema missed ternary common-type inference");
 		common_cat = true_result.category();
+	}
 	TypeCategory common_type = common_cat;
 
 	// Convert true result to common type if needed.
