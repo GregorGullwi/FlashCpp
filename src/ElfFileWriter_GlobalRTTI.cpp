@@ -413,7 +413,15 @@ std::string ElfFileWriter::get_or_create_class_typeinfo(const StructTypeInfo* st
 		rela_acc = rela_accessors_[".rela.data.rel.ro"].get();
 	}
 
-	bool single_non_virtual = (base_classes.size() == 1 && !base_classes[0].is_virtual && struct_info->virtual_bases.empty());
+	std::vector<TypeIndex> reachable_virtual_bases;
+	{
+		std::set<TypeIndex> seen_vb;
+		std::set<const StructTypeInfo*> visited;
+		collectReachableVBases(struct_info, reachable_virtual_bases, seen_vb, visited);
+	}
+	bool single_non_virtual = (base_classes.size() == 1 &&
+							   !base_classes[0].is_virtual &&
+							   reachable_virtual_bases.empty());
 
 	if (single_non_virtual) {
 		// ------------------------------------------------------------------
@@ -728,7 +736,7 @@ void ElfFileWriter::add_vtable(std::string_view vtable_symbol,
 	FLASH_LOG_FORMAT(Codegen, Debug, "  vtable '{}': {} vbase entries in prefix",
 					 vtable_symbol, n_vbase_entries);
 	for (size_t i = 0; i < n_vbase_entries; ++i) {
-		FLASH_LOG_FORMAT(Codegen, Debug, "    vbase[{}] offset_from_derived={}",
+		FLASH_LOG_FORMAT(Codegen, Debug, "    vbase[{}] offset_from_address_point={}",
 						 i, vbase_entries[i].offset_from_address_point);
 	}
 
