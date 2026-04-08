@@ -19,3 +19,9 @@ validated.
   to `TypeIndexArg` and propagate them in `makeTypeIndexArg()`, `TypeIndexArg::hash()`,
   and `TypeIndexArg::operator==()`, or document that dependent args are always resolved
   before name generation. (PR #1164, partially addressed in PR #1166)
+
+- C++20 range-for with an init-statement over a prvalue function-return container is
+  still miscompiled. A minimal repro is
+  `for (int factor = 2; auto value : makeContainer()) { sum += value * factor; }`,
+  which currently produces the wrong runtime result even though plain
+  `for (auto value : makeContainer())` works.
