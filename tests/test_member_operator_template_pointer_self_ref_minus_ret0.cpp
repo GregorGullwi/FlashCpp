@@ -7,5 +7,6 @@ struct Iter {
 
 int main() {
 	using DiffType = decltype(Iter<int>{} - Iter<int>{});
-	return sizeof(DiffType) == sizeof(long) ? 0 : 1;
+	using BuiltinDiffType = decltype((int*)0 - (int*)0);
+	return sizeof(DiffType) == sizeof(BuiltinDiffType) ? 0 : 1;
 }
