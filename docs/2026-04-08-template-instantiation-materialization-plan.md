@@ -5,6 +5,32 @@
 
 ## Next agent starting point
 
+- Latest completed slice:
+  - introduced `Parser::AliasTemplateMaterializationResult` in
+    `src/Parser_Templates_Inst_Substitution.cpp` / `src/Parser.h` so deferred alias-template
+    materialization keeps both the instantiated base name and any resolved concrete `TypeInfo`
+  - switched the deferred alias path in `src/Parser_TypeSpecifiers.cpp` to use that structured
+    helper for template-parsing and implicit/explicit member-alias cases instead of the older
+    open-coded alias-chain/class-instantiation fallback
+  - consolidated deferred alias member lookup / placeholder creation in
+    `src/Parser_TypeSpecifiers.cpp` onto one local finalization path and normalized pending
+    semantic roots before consuming the materialized result
+  - added `tests/test_alias_template_deferred_return_ret0.cpp` to cover deferred alias-template
+    materialization in a template return type (`choose_value_t<B>`)
+- Validation after this slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh` —
+  1949 pass, 0 fail.
+- Recommended next steps after this slice:
+  1. Reuse `AliasTemplateMaterializationResult` from `src/ExpressionSubstitutor.cpp` and delete the
+     remaining open-coded `instantiate_and_register_base_template(...)` /
+     `get_instantiated_class_name(...)` recovery there.
+  2. Investigate deferred nested member aliases inside instantiated class templates (for example a
+     `holder<B>::selected` alias that names `typename choose_value_alias<B>::type`): the return-type
+     path now materializes correctly, but nested alias consumers still look like they can retain the
+     dependent placeholder too long.
+  3. Continue Phase 1 extraction work by moving `materialize_placeholder_args`
+     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) into a reusable `Parser` helper.
+### Earlier completed work on this branch
+
 - Completed in this slice:
   - reused `resolveAliasTemplateInstantiation(...)` from `src/Parser_Templates_Inst_Substitution.cpp`
     in `src/Parser_TypeSpecifiers.cpp` for ordinary deferred alias-template type parsing when we

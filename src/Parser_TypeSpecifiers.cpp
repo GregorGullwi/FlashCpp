@@ -1000,13 +1000,17 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
+					auto buildQualifiedMemberName = [&](std::string_view base_type_name, std::string_view member_name) {
+						return StringBuilder()
+							.append(base_type_name)
+							.append("::")
+							.append(member_name)
+							.commit();
+					};
+
 					auto findOrCreateQualifiedMemberType = [&](std::string_view base_type_name, std::string_view member_name) -> const TypeInfo& {
-						StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
-							StringBuilder()
-								.append(base_type_name)
-								.append("::")
-								.append(member_name)
-								.commit());
+						StringHandle qualified_member_handle =
+							StringTable::getOrInternStringHandle(buildQualifiedMemberName(base_type_name, member_name));
 						auto member_type_it = getTypesByNameMap().find(qualified_member_handle);
 						if (member_type_it == getTypesByNameMap().end()) {
 							TypeInfo& placeholder_type = add_empty_type_entry();
@@ -1014,7 +1018,7 @@ ParseResult Parser::parse_type_specifier() {
 							placeholder_type.name_ = qualified_member_handle;
 							placeholder_type.is_incomplete_instantiation_ = true;
 							getTypesByNameMap()[qualified_member_handle] = &placeholder_type;
-							member_type_it = getTypesByNameMap().find(qualified_member_handle);
+							return placeholder_type;
 						}
 						return *member_type_it->second;
 					};
@@ -1037,11 +1041,12 @@ ParseResult Parser::parse_type_specifier() {
 							ReferenceQualifier::None));
 					};
 
-					auto finalizeInstantiatedAliasType = [&](std::string_view base_type_name, const TypeInfo* instantiated_type_info) -> std::optional<ParseResult> {
-						if (base_type_name.empty() && instantiated_type_info != nullptr) {
-							base_type_name = StringTable::getStringView(instantiated_type_info->name());
+					auto finalizeInstantiatedAliasType = [&](std::string_view instantiated_type_name, const TypeInfo* instantiated_type_info) -> std::optional<ParseResult> {
+						std::string_view resolved_instantiated_type_name = instantiated_type_name;
+						if (resolved_instantiated_type_name.empty() && instantiated_type_info != nullptr) {
+							resolved_instantiated_type_name = StringTable::getStringView(instantiated_type_info->name());
 						}
-						if (base_type_name.empty()) {
+						if (resolved_instantiated_type_name.empty()) {
 							return std::nullopt;
 						}
 
@@ -1051,7 +1056,7 @@ ParseResult Parser::parse_type_specifier() {
 						// placeholder type carried by the alias target.
 						if (peek() != "::"_tok && targetMemberName.has_value()) {
 							const TypeInfo& member_type_info =
-								findOrCreateQualifiedMemberType(base_type_name, *targetMemberName);
+								findOrCreateQualifiedMemberType(resolved_instantiated_type_name, *targetMemberName);
 							return buildTypeFromInfo(member_type_info, type_name_token, true);
 						}
 
@@ -1066,16 +1071,13 @@ ParseResult Parser::parse_type_specifier() {
 								advance(); // consume member name
 
 								// Build qualified type name
-								std::string_view qualified_type_name = StringBuilder()
-									.append(base_type_name)
-									.append("::")
-									.append(member_name)
-									.commit();
+								std::string_view qualified_type_name =
+									buildQualifiedMemberName(resolved_instantiated_type_name, member_name);
 
 								FLASH_LOG(Parser, Debug, "Looking up member type '", qualified_type_name, "' after alias template resolution");
 
 								const TypeInfo& member_type_info =
-									findOrCreateQualifiedMemberType(base_type_name, member_name);
+									findOrCreateQualifiedMemberType(resolved_instantiated_type_name, member_name);
 								FLASH_LOG(Parser, Debug, "Found member type '", qualified_type_name, "' at index ", member_type_info.type_index_);
 								return buildTypeFromInfo(member_type_info, member_token, false);
 							}
@@ -1097,6 +1099,14 @@ ParseResult Parser::parse_type_specifier() {
 
 						AliasTemplateMaterializationResult materialized_alias =
 							materializeAliasTemplateInstantiation(type_name, *template_args);
+						if (!materialized_alias.instantiated_name.empty()) {
+							normalizePendingSemanticRootsIfAvailable();
+							if (materialized_alias.resolved_type_info == nullptr) {
+								materialized_alias.resolved_type_info = findTypeByName(
+									StringTable::getOrInternStringHandle(
+										materialized_alias.instantiated_name));
+							}
+						}
 						if (std::optional<ParseResult> finalized_alias =
 								finalizeInstantiatedAliasType(
 									materialized_alias.instantiated_name,
@@ -1180,7 +1190,17 @@ ParseResult Parser::parse_type_specifier() {
 						}
 					}
 
-					return finalizeInstantiatedAliasType(instantiated_type);
+					if (const TypeInfo* instantiated_type_info = tryGetTypeInfo(instantiated_type.type_index())) {
+						if (std::optional<ParseResult> finalized_alias =
+								finalizeInstantiatedAliasType(
+									StringTable::getStringView(instantiated_type_info->name()),
+									instantiated_type_info);
+							finalized_alias.has_value()) {
+							return *finalized_alias;
+						}
+					}
+
+					return ParseResult::success(emplace_node<TypeSpecifierNode>(instantiated_type));
 				}
 
 				// Check if this is a template parameter being used with template arguments (e.g., Container<T>)
