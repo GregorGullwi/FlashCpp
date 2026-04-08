@@ -3491,10 +3491,6 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 				if (static_member && owner_struct) {
 					FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(),
 							  ", has_initializer: ", static_member->initializer.has_value());
-					if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
-						FLASH_LOG(ConstExpr, Debug, "Evaluated static member from specialization AST");
-						return *exact_value;
-					}
 
 					// Always try to trigger lazy instantiation for static members.
 					// The member might have an initializer from template parsing that

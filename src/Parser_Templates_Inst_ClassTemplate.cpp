@@ -4912,6 +4912,9 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			// Note: We'd need context to determine this, so be conservative
 			if (std::holds_alternative<IdentifierNode>(expr))
 				return true;
+			// Qualified ids like T::value can also be template-parameter dependent.
+			if (std::holds_alternative<QualifiedIdentifierNode>(expr))
+				return true;
 
 			return false;
 		};
