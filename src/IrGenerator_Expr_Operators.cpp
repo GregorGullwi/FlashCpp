@@ -720,7 +720,16 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 		else if (false_cat != TypeCategory::Invalid)
 			common_cat = false_cat;
 	}
-	// Fallback: try parser type inference
+	// Fallback: use sema-backed expression types when no explicit conversion
+	// annotation was recorded for either branch.
+	if (common_cat == TypeCategory::Invalid && sema_) {
+		auto true_ts = sema_->getExpressionType(ternaryNode.true_expr());
+		auto false_ts = sema_->getExpressionType(ternaryNode.false_expr());
+		if (true_ts.has_value() && false_ts.has_value())
+			common_cat = get_common_type(true_ts->category(), false_ts->category());
+	}
+	// Fallback: try parser type inference when sema did not populate expression types
+	// (e.g. non-normalized function bodies, template instantiations).
 	if (common_cat == TypeCategory::Invalid && parser_) {
 		auto true_ts = parser_->get_expression_type(ternaryNode.true_expr());
 		auto false_ts = parser_->get_expression_type(ternaryNode.false_expr());
@@ -731,7 +740,11 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Evaluate true expression
 	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
 
-	// Finalize common_cat: if parser inference failed, fall back to true branch type
+	// Finalize common_cat: if both sema and parser inference failed, fall back to
+	// true branch type.  This is correct for same-type ternaries; for mixed-type
+	// ternaries the sema or parser paths above should have resolved the common type.
+	// NOTE: sema does not yet cover all contexts (e.g. catch-block bodies), so we
+	// cannot treat a miss here as an InternalError even in normalized bodies.
 	if (common_cat == TypeCategory::Invalid)
 		common_cat = true_result.category();
 	TypeCategory common_type = common_cat;

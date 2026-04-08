@@ -110,6 +110,7 @@ bool allowsLegacyOverloadArgFallbackInNormalizedBody(const ASTNode& arg) {
 			return inner.binding() != IdentifierBinding::EnumConstant;
 		} else if constexpr (std::is_same_v<T, StringLiteralNode> ||
 							 std::is_same_v<T, MemberAccessNode> ||
+							 std::is_same_v<T, TernaryOperatorNode> ||
 							 std::is_same_v<T, StaticCastNode> ||
 							 std::is_same_v<T, ConstCastNode> ||
 							 std::is_same_v<T, ReinterpretCastNode> ||
