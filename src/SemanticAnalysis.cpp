@@ -4471,12 +4471,13 @@ bool SemanticAnalysis::tryRecoverCallDeclFromStructMembers(const CallInfo& call_
 			owner_name.find("::") == std::string_view::npos) {
 			if (const TypeInfo* current_type_info = tryGetTypeInfo(member_context_stack_.back())) {
 				const std::string_view current_type_name = StringTable::getStringView(current_type_info->name());
-				std::string_view qualified_alias_name = StringBuilder()
-													   .append(current_type_name)
-													   .append("::")
-													   .append(owner_name)
-													   .commit();
-				type_info = resolve_type_info(StringTable::getOrInternStringHandle(qualified_alias_name));
+				const StringHandle qualified_alias_name =
+					StringTable::getOrInternStringHandle(StringBuilder()
+														 .append(current_type_name)
+														 .append("::")
+														 .append(owner_name)
+														 .commit());
+				type_info = resolve_type_info(qualified_alias_name);
 			}
 		}
 

@@ -1070,7 +1070,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 	// calls should no longer rely on a precomputed-mangled escape hatch.
 	const bool sema_recorded_unresolved_call =
 		sema_ && sema_->hasUnresolvedCallArgs(sema_call_key);
-	const bool synthesized_member_static_direct_call =
+	const bool has_synthetic_call_key =
 		sema_call_key != static_cast<const void*>(&callExprNode);
 	const bool allow_lookup_recovery =
 		!sema_ || // no semantic data wired into codegen
@@ -1078,7 +1078,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		has_precomputed_mangled || // precomputed-mangled calls still include legacy parser-owned resolution shapes such as ADL and delayed static-member paths
 		callExprNode.has_template_arguments() || // explicit-template-argument calls still rely on older codegen lookup/mangling paths
 		has_synthesized_template_suffix || // hashed instantiated callee names (notably member-template instantiations) still rely on legacy direct-call lowering
-		synthesized_member_static_direct_call || // static member calls lowered through receiver/member-access paths still synthesize a direct-call wrapper here
+		has_synthetic_call_key || // synthesized call wrappers (for example receiver/member-access static direct-call lowering) still rely on legacy direct-call recovery here
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
