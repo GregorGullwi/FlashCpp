@@ -1252,6 +1252,25 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 					ctor_ref->set_delegating_initializer(std::move(init_args));
 				} else {
 					// Check if it's a base class initializer
+					auto isReachableVirtualBase = [&](auto&& self, const StructTypeInfo* current_info, std::string_view candidate_name) -> bool {
+						if (!current_info) {
+							return false;
+						}
+						for (const auto& base : current_info->base_classes) {
+							if (base.is_virtual && base.name == candidate_name) {
+								return true;
+							}
+							if (base.is_virtual) {
+								continue;
+							}
+							if (const TypeInfo* base_type_info = tryGetTypeInfo(base.type_index)) {
+								if (self(self, base_type_info->getStructInfo(), candidate_name)) {
+									return true;
+								}
+							}
+						}
+						return false;
+					};
 					for (const auto& base : struct_info->base_classes) {
 						if (base.name == init_name) {
 							is_base_init = true;
@@ -1259,6 +1278,11 @@ ParseResult Parser::parse_out_of_line_constructor_or_destructor(std::string_view
 							ctor_ref->add_base_initializer(base_name_handle, std::move(init_args));
 							break;
 						}
+					}
+					if (!is_base_init && isReachableVirtualBase(isReachableVirtualBase, struct_info, init_name)) {
+						is_base_init = true;
+						StringHandle base_name_handle = StringTable::getOrInternStringHandle(init_name);
+						ctor_ref->add_base_initializer(base_name_handle, std::move(init_args));
 					}
 
 					if (!is_base_init) {
