@@ -261,26 +261,30 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		object_node.is<ExpressionNode>() &&
 		(parser_ || sema_)) {
 		std::optional<TypeSpecifierNode> callee_type;
+		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
+		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
+			return !candidate.has_value() ||
+				   (candidate->category() != TypeCategory::Struct &&
+					!candidate->is_function_pointer() &&
+					!candidate->has_function_signature());
+		};
 		if (sema_ && sema_normalized_current_function_) {
 			callee_type = sema_->getExpressionType(object_node);
 		}
-		const bool needsParserFallback =
-			!callee_type.has_value() ||
-			(callee_type->category() != TypeCategory::Struct &&
-			 !callee_type->is_function_pointer() &&
-			 !callee_type->has_function_signature());
+		const bool needsParserFallback = isInconclusiveCallableType(callee_type);
 		if (needsParserFallback && parser_) {
 			callee_type = parser_->get_expression_type(object_node);
 		}
 		if (!callee_type.has_value()) {
-			if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+			if (object_ident) {
 				if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 						callee_type = decl->type_node().as<TypeSpecifierNode>();
 					}
 				}
 			}
-		} else if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+		} else if (object_ident) {
 			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
 					const TypeSpecifierNode& decl_type = decl->type_node().as<TypeSpecifierNode>();
