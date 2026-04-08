@@ -1094,6 +1094,9 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 										}
 									}
 								}
+							} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+								const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+								dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
 							}
 
 						// Check for pack expansion (...)

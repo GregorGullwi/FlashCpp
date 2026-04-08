@@ -1060,6 +1060,40 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					inst_args.push_back(ta);
 					continue;
 				}
+
+				if (ta.is_value) {
+					size_t scope_pos = dep_name.rfind("::");
+					if (scope_pos != std::string_view::npos) {
+						std::string_view base_name = dep_name.substr(0, scope_pos);
+						std::string_view member_name = dep_name.substr(scope_pos + 2);
+						auto base_subst_it = param_map_.find(base_name);
+						if (base_subst_it != param_map_.end()) {
+							const TemplateTypeArg& concrete_base = base_subst_it->second;
+							if (is_struct_type(concrete_base.category())) {
+								if (const TypeInfo* concrete_base_info = tryGetTypeInfo(concrete_base.type_index)) {
+									StringHandle concrete_type_name = concrete_base_info->name();
+									Token member_token(Token::Type::Identifier, member_name, 0, 0, 0);
+									NamespaceHandle member_ns = gNamespaceRegistry.getOrCreateNamespace(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										concrete_type_name);
+									QualifiedIdentifierNode& member_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+										member_ns,
+										member_token);
+									ExpressionNode& member_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
+									if (auto value = parser_.try_evaluate_constant_expression(ASTNode(&member_expr))) {
+										ta.is_value = true;
+										ta.value = value->value;
+										ta.type_index = nativeTypeIndex(value->type);
+										FLASH_LOG(Templates, Debug, "  Evaluated dependent member arg '", dep_name,
+												  "' -> value=", ta.value, ", type=", static_cast<int>(value->type));
+										inst_args.push_back(ta);
+										continue;
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// Check if this arg is a dependent template parameter that needs substitution
