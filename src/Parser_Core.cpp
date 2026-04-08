@@ -168,6 +168,17 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 	return 0;  // Will be resolved during member access
 }
 
+// Helper to convert a std::vector of template arguments into an InlineVector so
+// the existing substitution helpers can reuse the current argument list without
+// re-implementing the conversion at each call site.
+InlineVector<TemplateTypeArg, 4> toInlineTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateTypeArg, 4> result;
+	for (const auto& arg : template_args) {
+		result.push_back(arg);
+	}
+	return result;
+}
+
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
 InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {

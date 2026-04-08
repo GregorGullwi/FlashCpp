@@ -1,5 +1,6 @@
 #include "Parser.h"
 #include "ConstExprEvaluator.h"
+#include "ExpressionSubstitutor.h"
 #include "NameMangling.h"
 #include "OverloadResolution.h"
 #include "TypeTraitEvaluator.h"
@@ -10,6 +11,138 @@ std::string_view Parser::get_instantiated_class_name(std::string_view template_n
 	}
 	auto result = FlashCpp::generateInstantiatedNameFromArgs(template_name, template_args);
 	return result;
+}
+
+std::optional<TemplateTypeArg> Parser::materializeDeferredAliasTemplateArg(
+	const ASTNode& arg_node,
+	const InlineVector<ASTNode, 4>& template_parameters,
+	const InlineVector<StringHandle, 4>& param_names,
+	const std::vector<TemplateTypeArg>& template_args) {
+	const auto find_param_index = [&](StringHandle param_name) -> std::optional<size_t> {
+		for (size_t i = 0; i < param_names.size(); ++i) {
+			if (param_names[i] == param_name) {
+				return i;
+			}
+		}
+		return std::nullopt;
+	};
+	const auto normalize_alias_param_arg = [&](size_t alias_param_idx, const TemplateTypeArg& source_arg) {
+		TemplateTypeArg normalized = source_arg;
+		if (alias_param_idx < template_parameters.size() &&
+			template_parameters[alias_param_idx].is<TemplateParameterNode>()) {
+			const auto& alias_param = template_parameters[alias_param_idx].as<TemplateParameterNode>();
+			if (alias_param.kind() == TemplateParameterKind::NonType && !normalized.is_value) {
+				normalized.is_value = true;
+				normalized.is_dependent = normalized.is_dependent || normalized.dependent_name.isValid();
+				if (alias_param.has_type() && alias_param.type_node().is<TypeSpecifierNode>()) {
+					const auto& param_type = alias_param.type_node().as<TypeSpecifierNode>();
+					normalized.type_index = param_type.type_index();
+					normalized.setCategory(param_type.type());
+				} else if (!normalized.type_index.is_valid()) {
+					normalized.type_index = nativeTypeIndex(TypeCategory::Int);
+					normalized.setCategory(TypeCategory::Int);
+				}
+			}
+		}
+		return normalized;
+	};
+
+	if (arg_node.is<TypeSpecifierNode>()) {
+		const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
+		Token arg_token = arg_type.token();
+		if (arg_token.type() == Token::Type::Identifier) {
+			if (auto alias_param_idx = find_param_index(arg_token.handle());
+				alias_param_idx.has_value() && *alias_param_idx < template_args.size()) {
+				return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
+			}
+		}
+		return TemplateTypeArg(arg_type);
+	}
+
+	if (!arg_node.is<ExpressionNode>()) {
+		return std::nullopt;
+	}
+
+	const ExpressionNode& arg_expr = arg_node.as<ExpressionNode>();
+	if (const auto* tparam_ref = std::get_if<TemplateParameterReferenceNode>(&arg_expr)) {
+		if (auto alias_param_idx = find_param_index(tparam_ref->param_name());
+			alias_param_idx.has_value() && *alias_param_idx < template_args.size()) {
+			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
+		}
+		TemplateTypeArg dependent_arg;
+		dependent_arg.is_value = true;
+		dependent_arg.is_dependent = true;
+		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Int);
+		dependent_arg.dependent_name = tparam_ref->param_name();
+		return dependent_arg;
+	}
+
+	if (const auto* id = std::get_if<IdentifierNode>(&arg_expr)) {
+		StringHandle id_handle = StringTable::getOrInternStringHandle(id->name());
+		if (auto alias_param_idx = find_param_index(id_handle);
+			alias_param_idx.has_value() && *alias_param_idx < template_args.size()) {
+			return normalize_alias_param_arg(*alias_param_idx, template_args[*alias_param_idx]);
+		}
+
+		TemplateTypeArg dependent_arg;
+		dependent_arg.is_value = true;
+		dependent_arg.is_dependent = true;
+		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Int);
+		dependent_arg.dependent_name = id_handle;
+		return dependent_arg;
+	}
+
+	ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+	auto eval_result = ConstExpr::Evaluator::evaluate(arg_node, eval_ctx);
+	if (eval_result.success()) {
+		if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+			return TemplateTypeArg(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
+		}
+		if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+			TypeCategory value_category = eval_result.exact_type.has_value()
+				? eval_result.exact_type->category()
+				: TypeCategory::UnsignedLongLong;
+			return TemplateTypeArg(static_cast<int64_t>(*uint_value), value_category);
+		}
+		if (eval_result.exact_type.has_value()) {
+			return TemplateTypeArg(eval_result.as_int(), eval_result.exact_type->category());
+		}
+		return TemplateTypeArg(eval_result.as_int());
+	}
+
+	if (const auto* qual_id = std::get_if<QualifiedIdentifierNode>(&arg_expr)) {
+		TemplateTypeArg dependent_arg;
+		dependent_arg.is_value = true;
+		dependent_arg.is_dependent = true;
+		dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);
+		dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id->full_name());
+		return dependent_arg;
+	}
+
+	return std::nullopt;
+}
+
+std::optional<std::vector<TemplateTypeArg>> Parser::materializeDeferredAliasTemplateArgs(
+	const TemplateAliasNode& alias_node,
+	const std::vector<TemplateTypeArg>& template_args) {
+	std::vector<TemplateTypeArg> substituted_args;
+	const auto& param_names = alias_node.template_param_names();
+	const auto& target_template_args = alias_node.target_template_args();
+	substituted_args.reserve(target_template_args.size());
+
+	for (const auto& arg_node : target_template_args) {
+		auto materialized_arg = materializeDeferredAliasTemplateArg(
+			arg_node,
+			alias_node.template_parameters(),
+			param_names,
+			template_args);
+		if (!materialized_arg.has_value()) {
+			return std::nullopt;
+		}
+		substituted_args.push_back(std::move(*materialized_arg));
+	}
+
+	return substituted_args;
 }
 
 // Helper function to instantiate base class template and register it in the AST
@@ -27,41 +160,11 @@ std::string_view Parser::instantiate_and_register_base_template(
 		const TemplateAliasNode& alias_node = alias_entry->as<TemplateAliasNode>();
 
 		if (alias_node.is_deferred()) {
-			// Deferred template alias - need to substitute template arguments
-			const auto& param_names = alias_node.template_param_names();
-			const auto& target_template_args = alias_node.target_template_args();
-			std::vector<TemplateTypeArg> substituted_args;
-
-			// For each argument in the target template
-			for (size_t i = 0; i < target_template_args.size(); ++i) {
-				const ASTNode& arg_node = target_template_args[i];
-
-				if (arg_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& arg_type = arg_node.as<TypeSpecifierNode>();
-
-					// Check if this arg references a parameter of the alias template
-					bool is_alias_param = false;
-					size_t alias_param_idx = 0;
-
-					Token arg_token = arg_type.token();
-					if (arg_token.type() == Token::Type::Identifier) {
-						std::string_view arg_token_value = arg_token.value();
-						for (size_t j = 0; j < param_names.size(); ++j) {
-							if (arg_token_value == param_names[j].view()) {
-								is_alias_param = true;
-								alias_param_idx = j;
-								break;
-							}
-						}
-					}
-
-					if (is_alias_param && alias_param_idx < template_args.size()) {
-						substituted_args.push_back(template_args[alias_param_idx]);
-					} else {
-						substituted_args.push_back(TemplateTypeArg(arg_type));
-					}
-				}
+			auto substituted_args_opt = materializeDeferredAliasTemplateArgs(alias_node, template_args);
+			if (!substituted_args_opt.has_value()) {
+				return std::string_view();
 			}
+			std::vector<TemplateTypeArg> substituted_args = std::move(*substituted_args_opt);
 
 			// Now recursively instantiate the target template
 			// The target might itself be a template alias (chain of aliases)
@@ -112,9 +215,55 @@ std::string_view Parser::instantiate_and_register_base_template(
 
 				const ASTNode& default_node = param.default_value();
 				if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
-					const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
-					filled_args.emplace_back(default_type);
+					InlineVector<TemplateTypeArg, 4> filled_args_inline;
+					filled_args_inline.reserve(filled_args.size());
+					for (const auto& filled_arg : filled_args) {
+						filled_args_inline.push_back(filled_arg);
+					}
+					ASTNode substituted_default_node = substituteTemplateParameters(
+						default_node,
+						primary_params,
+						filled_args_inline);
+					if (substituted_default_node.is<TypeSpecifierNode>()) {
+						filled_args.emplace_back(substituted_default_node.as<TypeSpecifierNode>());
+					} else {
+						const TypeSpecifierNode& default_type = default_node.as<TypeSpecifierNode>();
+						filled_args.emplace_back(default_type);
+					}
 					FLASH_LOG(Templates, Debug, "Filled in default type argument for param ", i);
+				} else if (param.kind() == TemplateParameterKind::NonType && default_node.is<ExpressionNode>()) {
+					std::unordered_map<std::string_view, TemplateTypeArg> param_map;
+					for (size_t filled_idx = 0; filled_idx < i && filled_idx < filled_args.size(); ++filled_idx) {
+						if (!primary_params[filled_idx].is<TemplateParameterNode>()) {
+							continue;
+						}
+						const TemplateParameterNode& earlier_param = primary_params[filled_idx].as<TemplateParameterNode>();
+						param_map[earlier_param.name()] = filled_args[filled_idx];
+					}
+
+					ASTNode substituted_default_node = default_node;
+					if (!param_map.empty()) {
+						ExpressionSubstitutor substitutor(param_map, *this);
+						substituted_default_node = substitutor.substitute(default_node);
+					}
+
+					ConstExpr::EvaluationContext eval_ctx(gSymbolTable);
+					auto eval_result = ConstExpr::Evaluator::evaluate(substituted_default_node, eval_ctx);
+					if (eval_result.success()) {
+						if (const auto* bool_value = std::get_if<bool>(&eval_result.value)) {
+							filled_args.emplace_back(*bool_value ? 1LL : 0LL, TypeCategory::Bool);
+						} else if (const auto* uint_value = std::get_if<unsigned long long>(&eval_result.value)) {
+							TypeCategory value_category = eval_result.exact_type.has_value()
+								? eval_result.exact_type->category()
+								: TypeCategory::UnsignedLongLong;
+							filled_args.emplace_back(static_cast<int64_t>(*uint_value), value_category);
+						} else if (eval_result.exact_type.has_value()) {
+							filled_args.emplace_back(eval_result.as_int(), eval_result.exact_type->category());
+						} else {
+							filled_args.emplace_back(eval_result.as_int());
+						}
+						FLASH_LOG(Templates, Debug, "Filled in default non-type argument for param ", i);
+					}
 				}
 			}
 
@@ -904,17 +1053,36 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			type_spec.has_function_signature() ? std::optional(type_spec.function_signature()) : std::nullopt);
 	}
 
-	// Copy static members
-	// Look up the specialization's StructTypeInfo to get static members
-	// (The specialization should have been parsed and its TypeInfo registered already)
-	auto spec_name_lookup = spec_struct.name();
-	auto spec_type_it = getTypesByNameMap().find(spec_name_lookup);
-	if (spec_type_it != getTypesByNameMap().end()) {
-		const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
-		if (spec_struct_info) {
-			for (const auto& static_member : spec_struct_info->static_members) {
-				FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
-				struct_info->static_members.push_back(static_member);
+	// Copy static members. Prefer the specialization AST so we preserve in-class
+	// initializers even when the parsed StructTypeInfo has not materialized them yet.
+	if (!spec_struct.static_members().empty()) {
+		for (const auto& static_member : spec_struct.static_members()) {
+			FLASH_LOG(Templates, Debug, "Copying static member: ", StringTable::getStringView(static_member.name));
+			struct_info->addStaticMember(
+				static_member.name,
+				static_member.type_index,
+				static_member.size,
+				static_member.alignment,
+				static_member.access,
+				static_member.initializer,
+				static_member.cv_qualifier,
+				static_member.reference_qualifier,
+				static_member.pointer_depth,
+				static_member.is_array,
+				static_member.array_dimensions);
+		}
+	} else {
+		// Fall back to the specialization's StructTypeInfo when the AST does not
+		// carry static members (older registration paths).
+		auto spec_name_lookup = spec_struct.name();
+		auto spec_type_it = getTypesByNameMap().find(spec_name_lookup);
+		if (spec_type_it != getTypesByNameMap().end()) {
+			const StructTypeInfo* spec_struct_info = spec_type_it->second->getStructInfo();
+			if (spec_struct_info) {
+				for (const auto& static_member : spec_struct_info->static_members) {
+					FLASH_LOG(Templates, Debug, "Copying static member: ", static_member.getName());
+					struct_info->static_members.push_back(static_member);
+				}
 			}
 		}
 	}

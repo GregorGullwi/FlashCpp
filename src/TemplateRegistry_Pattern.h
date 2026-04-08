@@ -23,6 +23,7 @@ inline TemplateTypeArg toTemplateTypeArg(const TypeInfo::TemplateArgInfo& arg) {
 	ta.pointer_cv_qualifiers = arg.pointer_cv_qualifiers;
 	ta.dependent_name = arg.dependent_name;
 	ta.function_signature = arg.function_signature;
+	ta.is_dependent = arg.dependent_name.isValid();
 	if (arg.is_value) {
 		ta.value = arg.intValue();
 	}
@@ -188,13 +189,12 @@ struct TemplatePattern {
 			if (const TypeInfo* p_ti = tryGetTypeInfo(p.type_index)) {
 				if (p_ti->isTemplateInstantiation()) {
 					// Nested template instantiation (e.g., Pair<A,B>): verify same base template and recurse
-					if (!is_struct_type(c.category())) {
+					ResolvedAliasTypeInfo concrete_alias = resolveAliasTypeInfo(c.type_index);
+					const TypeInfo* c_ti = concrete_alias.terminal_type_info;
+					if (!c_ti || !is_struct_type(concrete_alias.type_index.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: nested pattern is template instantiation but concrete is not UserDefined/Struct");
 						return false;
 					}
-					const TypeInfo* c_ti = tryGetTypeInfo(c.type_index);
-					if (!c_ti)
-						return false;
 					StringHandle p_base = p_ti->baseTemplateName();
 					StringHandle c_base = c_ti->isTemplateInstantiation() ? c_ti->baseTemplateName() : c_ti->name();
 					if (p_base != c_base) {
@@ -524,14 +524,12 @@ struct TemplatePattern {
 				if (pattern_type_info->isTemplateInstantiation()) {
 					// Pattern is a template instantiation — concrete must match base template
 					StringHandle pattern_base = pattern_type_info->baseTemplateName();
-					if (!is_struct_type(concrete_arg.category())) {
+					ResolvedAliasTypeInfo concrete_alias = resolveAliasTypeInfo(concrete_arg.type_index);
+					const TypeInfo* concrete_type_info = concrete_alias.terminal_type_info;
+					if (!concrete_type_info || !is_struct_type(concrete_alias.type_index.category())) {
 						FLASH_LOG(Templates, Trace, "  FAILED: pattern is template instantiation '",
 								  StringTable::getStringView(pattern_base),
 								  "' but concrete is fundamental type");
-						return false;
-					}
-					const TypeInfo* concrete_type_info = tryGetTypeInfo(concrete_arg.type_index);
-					if (!concrete_type_info) {
 						return false;
 					}
 					StringHandle concrete_base = concrete_type_info->isTemplateInstantiation()

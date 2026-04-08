@@ -853,9 +853,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 
 	const ExpressionNode& expr = expr_node.as<ExpressionNode>();
 
-	// Log what variant we have
-	FLASH_LOG_FORMAT(Templates, Debug, "Expression variant index: {}", expr.index());
-
 	// Handle boolean literals directly
 	if (const auto* bool_literal = std::get_if<BoolLiteralNode>(&expr)) {
 		const BoolLiteralNode& lit = *bool_literal;
@@ -872,6 +869,64 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return ConstantValue{static_cast<int64_t>(*d_val), lit.type()};
 		}
 	}
+
+	auto try_evaluate_specialization_static_member = [&](const TypeInfo* type_info, StringHandle member_name_handle) -> std::optional<ConstantValue> {
+		if (!type_info || !type_info->isTemplateInstantiation()) {
+			return std::nullopt;
+		}
+		std::string_view base_template_name = StringTable::getStringView(type_info->baseTemplateName());
+		FLASH_LOG_FORMAT(Templates, Debug, "try_evaluate_specialization_static_member: base='{}' member='{}' args={}",
+						 base_template_name, StringTable::getStringView(member_name_handle), type_info->templateArgs().size());
+		if (base_template_name.empty()) {
+			return std::nullopt;
+		}
+
+		std::vector<TemplateTypeArg> exact_args;
+		exact_args.reserve(type_info->templateArgs().size());
+		for (const auto& arg_info : type_info->templateArgs()) {
+			TemplateTypeArg arg;
+			arg.type_index = arg_info.type_index;
+			arg.is_value = arg_info.is_value;
+			arg.cv_qualifier = arg_info.cv_qualifier;
+			arg.ref_qualifier = arg_info.ref_qualifier;
+			arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
+			arg.is_array = arg_info.is_array;
+			arg.array_size = arg_info.array_size;
+			arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+			arg.dependent_name = arg_info.dependent_name;
+			arg.function_signature = arg_info.function_signature;
+			arg.is_dependent = arg_info.dependent_name.isValid();
+			if (arg.is_value) {
+				arg.value = arg_info.intValue();
+			}
+			exact_args.push_back(std::move(arg));
+		}
+
+		auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
+		if (!specialization_ast.has_value()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "No exact specialization AST for '{}', trying patterns", base_template_name);
+			specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+		}
+		if (!specialization_ast.has_value() || !specialization_ast->is<StructDeclarationNode>()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "No specialization AST found for '{}'", base_template_name);
+			return std::nullopt;
+		}
+
+		const auto& specialization_struct = specialization_ast->as<StructDeclarationNode>();
+		FLASH_LOG_FORMAT(Templates, Debug, "Found specialization AST '{}' with {} static members",
+						 StringTable::getStringView(specialization_struct.name()), specialization_struct.static_members().size());
+		for (const auto& static_member_decl : specialization_struct.static_members()) {
+			FLASH_LOG_FORMAT(Templates, Debug, "  specialization static member '{}' has initializer={}",
+							 StringTable::getStringView(static_member_decl.name), static_member_decl.initializer.has_value());
+			if (static_member_decl.name != member_name_handle ||
+				!static_member_decl.initializer.has_value()) {
+				continue;
+			}
+			return try_evaluate_constant_expression(*static_member_decl.initializer);
+		}
+
+		return std::nullopt;
+	};
 
 	// Handle qualified identifier expressions (e.g., is_int<double>::value)
 	// This is the most common case for template member access in C++
@@ -961,8 +1016,15 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			}
 		}
 
+		if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle)) {
+			return value;
+		}
+
 		// Check if it has an initializer
 		if (!static_member->initializer.has_value()) {
+			if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle)) {
+				return value;
+			}
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
 			return std::nullopt;
 		}
@@ -970,7 +1032,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Evaluate the initializer - it should be a constant expression
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
-
 		// Recursively evaluate the initializer
 		return try_evaluate_constant_expression(init_node);
 	}
@@ -1029,8 +1090,15 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			return std::nullopt;
 		}
 
+		if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle2)) {
+			return value;
+		}
+
 		// Check if it has an initializer
 		if (!static_member->initializer.has_value()) {
+			if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle2)) {
+				return value;
+			}
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {}::{} has no initializer", type_name, member_name);
 			return std::nullopt;
 		}
@@ -1038,7 +1106,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		// Evaluate the initializer - it should be a constant expression
 		// For type traits, this is typically a bool literal (true/false)
 		const ASTNode& init_node = *static_member->initializer;
-
 		// Recursively evaluate the initializer
 		return try_evaluate_constant_expression(init_node);
 	}

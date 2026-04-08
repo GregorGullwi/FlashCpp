@@ -1,0 +1,534 @@
+# Template Instantiation Identity / Materialization Follow-up Plan
+
+**Date:** 2026-04-08  
+**Context:** Follows the branch fix that made `test_integral_constant_comprehensive_ret100.cpp`, `test_integral_constant_pattern_ret42.cpp`, `test_ratio_less_alias_ret0.cpp`, `test_sfinae_enable_if_ret0.cpp`, and `test_sfinae_same_name_overload_ret0.cpp` pass by preserving dependent non-type template-argument identity in template-instantiation keys.
+
+---
+
+## Executive summary
+
+The immediate regression is fixed, but the compiler still spreads template-instantiation identity and alias-template materialization across too many parser-owned paths.
+
+The main architectural problem is no longer just "dependent `B` collided with concrete `false`". The broader issue is that the same logical fact is represented in several partially overlapping ways:
+
+- `TemplateTypeArg` stores value/template/dependency state directly in `src\TemplateRegistry_Types.h:170-183`
+- `TemplateInstantiationKey` stores a second value-identity model in `src\TemplateTypes.h:185-240`
+- alias-template materialization is reimplemented in several parser entry points instead of one authoritative helper
+- late materialized roots are normalized through an ad-hoc queue/flush contract rather than a single explicit work model
+
+The next cleanup should therefore happen in this order:
+
+1. **Canonicalize non-type template-argument identity**
+2. **Centralize alias-template materialization and alias-chain resolution**
+3. **Make late materialization and pending-sema normalization one explicit contract**
+4. **Replace placeholder-name heuristics with explicit unresolved-dependent states**
+
+This is intentionally narrower than a full "move all template instantiation into sema" rewrite. It is the smallest architectural slice that removes the class of bug we just fixed while improving the parser/sema boundary for future work.
+
+---
+
+## Current branch status
+
+### What is already better
+
+- Dependent non-type arguments now keep distinct identity in `TemplateInstantiationKey`, so declaration-time placeholders do not collide with concrete values like `false`.
+- Top-level and non-top-level alias registrations now materialize alias-template-backed types more consistently.
+- SFINAE return-type viability is stricter when a dependent `::type` placeholder survives alias resolution.
+- The original five metaprogramming regressions are passing again.
+
+### What is still structurally weak
+
+#### 1. Non-type template-argument identity is still split across two layers
+
+`TemplateTypeArg` still mixes these concerns directly:
+
+- value-vs-type-vs-template-template
+- concrete value storage
+- dependency tagging
+- dependent-name storage
+
+Relevant code:
+
+- `src\TemplateRegistry_Types.h:170-183`
+- `src\TemplateRegistry_Types.h:348-365`
+- `src\TemplateRegistry_Types.h:483-565`
+
+Then `TemplateInstantiationKey` re-encodes part of the same concept separately via `ValueArgKey`:
+
+- `src\TemplateTypes.h:185-240`
+- `src\TemplateTypes.h:245-265`
+- `src\TemplateRegistry_Types.h:699-721`
+
+That fixed the immediate collision, but it still means identity is partly owned by `TemplateTypeArg` and partly by the key-building layer.
+
+#### 2. Alias-template materialization is duplicated
+
+The same broad job shows up in multiple places:
+
+- parse a raw alias-template-id use
+- substitute alias parameters into target template arguments
+- evaluate non-type argument expressions when concrete
+- follow alias chains
+- instantiate the final class template
+- register late materialized structs
+- rewrite the resulting `TypeSpecifierNode`
+
+Relevant code:
+
+- `src\Parser_Decl_TopLevel.cpp:827-1071`
+- `src\Parser_Decl_TypedefUsing.cpp:410-434`
+- `src\Parser_TypeSpecifiers.cpp:995-1235`
+- `src\Parser_Templates_Inst_Substitution.cpp:19-180`
+
+This is the clearest place where one bug can require touching several parser files.
+
+#### 3. Late materialization is still parser-driven and normalized opportunistically
+
+There is already useful infrastructure:
+
+- pending semantic roots in `src\Parser.h:976-993`
+- parser-to-sema bridge in `src\Parser_Core.cpp:419-423`
+- IR-side bridge in `src\IrGenerator_Helpers.cpp:5-11`
+
+But the actual call pattern is still scattered:
+
+- template/class instantiation sites call `registerLateMaterializedTopLevelNode(...)` from many parser files
+- some sites also call `normalizePendingSemanticRootsIfAvailable()`
+- constexpr lazy-member lookup can instantiate members on demand and then flush pending roots immediately (`src\ConstExprEvaluator_Members.cpp:1319-1326`)
+
+That works, but it is still too easy for a new instantiation path to forget one part of the contract.
+
+#### 4. Some viability checks still infer semantics from names instead of explicit state
+
+The current SFINAE guard in `src\Parser_Templates_Inst_Deduction.cpp:2175-2190` is an improvement, but it still detects one important unresolved case through:
+
+- incomplete-instantiation state
+- plus a string-level `::` name heuristic
+
+That is a useful stopgap, not a final representation.
+
+---
+
+## Target invariants
+
+After this follow-up work:
+
+1. A non-type template argument has **one canonical identity model** from parser capture through registry lookup and instantiated-name generation.
+2. Alias-template uses are materialized through **one authoritative helper**, not hand-reimplemented at each parser entry point.
+3. Any late-materialized AST root that becomes visible to sema, constexpr, or codegen goes through **one explicit registration + normalization path**.
+4. Unresolved dependent placeholders are identified by **typed state**, not by best-effort name inspection.
+
+---
+
+## Recommended data-model direction
+
+I do **not** recommend only replacing `is_dependent + dependent_name` with `std::optional<StringHandle>`.
+
+That would remove one invalid state, but it would still be too weak for the real architectural need. The plan should instead move toward something closer to:
+
+```cpp
+struct DependentValueIdentity {
+	StringHandle name;
+};
+
+struct TemplateValueArg {
+	TypeCategory category;
+	std::variant<int64_t, DependentValueIdentity> payload;
+};
+```
+
+The exact final type can differ, but the important design rule is:
+
+- **dependency identity should be carried as a first-class payload**
+- **key building should consume that payload directly**
+- **stringification/hash/equality should all project from the same carrier**
+
+That gives the cleanup we wanted from `std::optional`, but in a form that can actually become authoritative.
+
+---
+
+## Design questions raised during branch work
+
+### Q: Is there any point in keeping both `TypeInfo::TemplateArgInfo` and `TemplateTypeArg`?
+
+**Short answer:** yes **for now**, but not in their current blurry form.
+
+`TemplateTypeArg` is still the richer working representation:
+
+- deduction/matching state
+- dependent-vs-concrete identity
+- pack/template-template/member-pointer metadata
+- parser/substitution-time manipulation
+
+`TypeInfo::TemplateArgInfo` is the lighter persistent representation owned by instantiated `TypeInfo` entries and their instantiation contexts:
+
+- compact storage on `TypeInfo`
+- fewer dependencies from core type records into template-matching logic
+- easier persistence of type-owned template environments for later constexpr/codegen/sema lookups
+
+So they are **not fully equivalent today**, even if they overlap heavily.
+
+What *does not* make sense long-term is letting both evolve as peer representations with duplicated semantics. The better direction is:
+
+1. keep a **canonical template-argument identity carrier**
+2. let `TemplateTypeArg` stay a rich working/adaptation layer if needed
+3. make `TemplateArgInfo` either:
+   - a compact serialized/persistent projection of that canonical carrier, or
+   - disappear entirely if the canonical carrier is cheap enough to store directly
+
+In other words: **keeping two layers can make sense; keeping two independently authoritative models does not**.
+
+### Q: Does it make sense to keep all `add_type_alias_copy()` overloads?
+
+**Short answer:** not really in their current form.
+
+The overload set is convenient, but it is also bug-prone because alias canonicalization behavior can diverge depending on which overload the caller happened to use. That already showed up in this branch work: the primitive-target fix had to be applied in the `alias_type_spec`-carrying path specifically.
+
+There is still a legitimate distinction between:
+
+- "register an alias from a known canonical target type"
+- "register an alias while preserving the source alias type-specifier surface"
+
+But that should probably be expressed through **one authoritative implementation** with explicit inputs, not multiple overload bodies that can drift. A better shape would be:
+
+- one core helper or builder taking:
+  - alias name
+  - canonical source type/index
+  - fallback size
+  - optional alias type specifier
+- plus, at most, tiny forwarding wrappers if they add no behavior
+
+So the architectural answer is: **keep the semantic distinction, but collapse the overload behavior behind one implementation**.
+
+---
+
+## Concrete implementation plan
+
+## Phase 0: freeze the regression surface first
+
+**Goal**
+
+Keep the recent metaprogramming fixes stable while refactoring the underlying representation.
+
+**Primary files**
+
+- `tests\test_integral_constant_comprehensive_ret100.cpp`
+- `tests\test_integral_constant_pattern_ret42.cpp`
+- `tests\test_ratio_less_alias_ret0.cpp`
+- `tests\test_sfinae_enable_if_ret0.cpp`
+- `tests\test_sfinae_same_name_overload_ret0.cpp`
+
+**Concrete work**
+
+1. Treat the five restored tests as a must-pass regression set for every slice below.
+2. Add one or two narrow regression tests if a phase changes representation without exercising an existing failure shape:
+   - alias chain with dependent non-type argument
+   - late-instantiated alias-template use reached through constexpr or qualified lookup
+3. Keep the refactor incremental: do not combine Phase 1 and Phase 2 into one large patch.
+
+**Done when**
+
+- every phase can be validated against the current five-test regression set,
+- any new failure can be localized to one architectural slice rather than a multi-file rewrite.
+
+---
+
+## Phase 1: canonicalize non-type template-argument identity
+
+**Goal**
+
+Remove the split-state representation where `TemplateTypeArg` owns one dependency model and `TemplateInstantiationKey` owns another.
+
+**Primary files**
+
+- `src\TemplateRegistry_Types.h`
+- `src\TemplateTypes.h`
+- `src\TemplateRegistry_Registry.h`
+- parser/template helpers that create `TemplateTypeArg` values
+
+**Concrete work**
+
+1. Introduce a first-class carrier for non-type value identity in `TemplateRegistry_Types.h`.
+2. Replace the current `is_value + value + is_dependent + dependent_name` split for value arguments with that carrier.
+3. Make `TemplateInstantiationKey` consume the same carrier directly instead of re-deriving `ValueArgKey` from loosely related fields.
+4. Move hash/equality/string/mangled-name generation behind shared helpers so all projections come from the same identity model.
+5. Audit all `TemplateTypeArg` constructors/factories and all "evaluate expression -> make value arg" sites to ensure they stamp the new identity consistently.
+6. Keep bool/int equivalence behavior only where it is intentional for partial-specialization/value matching; document that rule right next to equality/hash code.
+
+**Why this phase is first**
+
+The recent regression proved that name/key generation is the last point where distinct instantiations can still collapse even after parser capture is correct.
+
+**Done when**
+
+- there is one canonical representation of a non-type template argument's dependency identity,
+- `TemplateInstantiationKey` no longer needs to reconstruct dependency semantics from ad-hoc fields,
+- hash/equality/name generation cannot disagree on whether an argument is concrete or dependent.
+
+**Read/query first**
+
+- `src\TemplateRegistry_Types.h:170-183`
+- `src\TemplateRegistry_Types.h:348-365`
+- `src\TemplateRegistry_Types.h:483-565`
+- `src\TemplateRegistry_Types.h:699-721`
+- `src\TemplateTypes.h:185-265`
+- `src\TemplateTypes.h:345-360`
+
+---
+
+## Phase 2: centralize alias-template materialization
+
+**Goal**
+
+Make alias-template use resolution one parser-owned service instead of a behavior repeated in top-level using, struct-local using, type-specifier parsing, and substitution helpers.
+
+**Primary files**
+
+- `src\Parser.h`
+- `src\Parser_Decl_TopLevel.cpp`
+- `src\Parser_Decl_TypedefUsing.cpp`
+- `src\Parser_TypeSpecifiers.cpp`
+- `src\Parser_Templates_Inst_Substitution.cpp`
+- `src\ExpressionSubstitutor.cpp`
+
+**Concrete work**
+
+1. Add one helper with a narrow contract, e.g. "given alias template name + raw/concrete args, return the resolved target type/materialized instantiation result".
+2. Move these responsibilities into that helper:
+   - alias-parameter substitution
+   - concrete non-type argument evaluation
+   - alias-chain recursion
+   - class-template instantiation
+   - late materialized struct registration
+   - use-site `TypeSpecifierNode` rewrite
+3. Change top-level `using Alias = AliasTemplate<...>;` handling to only gather syntax and call the helper.
+4. Change struct-local `using` / typedef alias registration to do the same.
+5. Change general type-specifier alias-template handling to route through the same helper instead of its own deferred-substitution loop.
+6. Audit `ExpressionSubstitutor.cpp` and any other template-substitution sites that currently instantiate aliases/classes directly so they also reuse the shared helper or an adjacent lower-level primitive.
+
+**Important design constraint**
+
+This helper should return more than just a name string. It should carry enough structured result to avoid each caller redoing type lookup and `TypeSpecifierNode` rebuilding differently.
+
+**Done when**
+
+- parser entry points no longer each contain their own alias-template argument-substitution loop,
+- alias-chain behavior is consistent regardless of whether the use site is a type alias, a type specifier, or template substitution,
+- fixing alias-template behavior in one place updates all surfaces.
+
+**Read/query first**
+
+- `src\Parser_Decl_TopLevel.cpp:827-1071`
+- `src\Parser_Decl_TypedefUsing.cpp:410-434`
+- `src\Parser_TypeSpecifiers.cpp:995-1235`
+- `src\Parser_Templates_Inst_Substitution.cpp:19-180`
+
+---
+
+## Phase 3: make late materialization + pending-sema normalization explicit
+
+**Goal**
+
+Turn the current "register late materialized node, then maybe normalize pending roots if available" pattern into one explicit contract.
+
+**Primary files**
+
+- `src\Parser.h`
+- `src\Parser_Core.cpp`
+- `src\IrGenerator_Helpers.cpp`
+- `src\Parser_Templates_Lazy.cpp`
+- `src\Parser_Expr_QualLookup.cpp`
+- `src\ConstExprEvaluator_Members.cpp`
+- any parser/template instantiation sites that call `registerLateMaterializedTopLevelNode(...)`
+
+**Concrete work**
+
+1. Define the intended lifecycle in code comments and helper naming:
+   - materialize AST root
+   - register it
+   - enqueue it for sema
+   - normalize it when a sema owner is active
+2. Add one helper that performs the registration/enqueue part together so call sites cannot forget half of the contract.
+3. Decide whether normalization belongs:
+   - immediately in parser/constexpr call sites when active sema exists, or
+   - behind a dedicated queue-drain helper used by parser/constexpr/codegen bridges
+4. Replace direct scattered `normalizePendingSemanticRootsIfAvailable()` calls with that one policy.
+5. Audit current late-instantiation sites from class-template instantiation, lazy members, qualified lookup, constexpr member lookup, and substitution paths.
+6. Ensure the ownership rule is the same regardless of whether the instantiation was triggered by parser lookup, constexpr evaluation, or IR/codegen-side lazy generation.
+
+**Why this matters**
+
+The current architecture already has the pieces for incremental sema normalization. What it lacks is one obvious, enforced path that every new late-instantiation site must use.
+
+**Done when**
+
+- there is one obvious helper or queue contract for late-materialized roots,
+- new instantiation sites do not need to remember "register here, normalize there",
+- constexpr-triggered and parser-triggered materialization follow the same normalization rule.
+
+**Read/query first**
+
+- `src\Parser.h:976-993`
+- `src\Parser_Core.cpp:419-423`
+- `src\IrGenerator_Helpers.cpp:5-11`
+- `src\ConstExprEvaluator_Members.cpp:1319-1326`
+- the `registerLateMaterializedTopLevelNode(...)` call sites across parser/template files
+
+---
+
+## Phase 4: replace unresolved-placeholder heuristics with explicit state
+
+**Goal**
+
+Stop detecting important dependent placeholder cases by combining incomplete-instantiation state with string-level name inspection.
+
+**Primary files**
+
+- `src\Parser_Templates_Inst_Deduction.cpp`
+- `src\TypeInfo*` / template-registry carrier types that currently model placeholder state
+- any alias/late-instantiation code that creates dependent placeholder types
+
+**Concrete work**
+
+1. Identify the exact placeholder states that currently surface as "incomplete instantiation with a `::` in the name".
+2. Add an explicit kind/flag for unresolved dependent member-alias placeholders or equivalent unresolved-dependent materialization states.
+3. Use that explicit state in SFINAE viability checks.
+4. Audit whether the same explicit state should also guide alias-template resolution, late instantiation lookup, and constexpr member lookup.
+5. Remove or narrow the current string heuristic once the explicit state is available everywhere it is needed.
+
+**Done when**
+
+- SFINAE viability checks do not need to infer unresolved dependent state from names,
+- placeholder categories are visible in the type/instantiation model itself,
+- future dependent-alias bugs are easier to reason about from debugger/log output.
+
+**Read/query first**
+
+- `src\Parser_Templates_Inst_Deduction.cpp:2175-2190`
+
+---
+
+## Phase 5: only then consider the larger parser/sema ownership move
+
+**Goal**
+
+Use the earlier cleanup to make the broader parser/template/sema boundary work practical rather than theoretical.
+
+**Primary references**
+
+- `docs\2026-04-06-template-constexpr-sema-audit-plan.md`
+- `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
+
+**Concrete work**
+
+1. Revisit whether alias-template instantiation or more late-instantiation logic should move behind a sema-owned incremental work queue.
+2. Decide whether template materialization should stay parser-owned with stronger invariants, or whether some subset should become sema-triggered.
+3. Keep this as a follow-on after Phases 1-4, not as a prerequisite for them.
+
+**Why this is last**
+
+The recent bug did not require a full architecture rewrite. It exposed specific duplication and split identity first. Removing those is the cheaper and safer way to earn clearer sema ownership later.
+
+---
+
+## Validation matrix
+
+Each phase should at minimum run:
+
+- `.\build_flashcpp.bat Sharded`
+- `powershell -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_integral_constant_comprehensive_ret100.cpp test_integral_constant_pattern_ret42.cpp test_ratio_less_alias_ret0.cpp test_sfinae_enable_if_ret0.cpp test_sfinae_same_name_overload_ret0.cpp`
+
+Recommended targeted additions during the refactor:
+
+1. alias chain with dependent bool non-type argument
+2. alias-template use through top-level `using`
+3. alias-template use through struct-local `using`
+4. dependent `enable_if<..., T>::type` return-type viability
+5. late-instantiated member/template path that requires pending-sema normalization after materialization
+
+---
+
+## Risks and guardrails
+
+### Risk 1: changing value-arg identity can perturb specialization matching
+
+Guardrail:
+
+- keep bool/int normalization only where the current semantics depend on it,
+- do not silently change equality/hash rules without matching tests.
+
+### Risk 2: centralizing alias materialization can accidentally drop use-site qualifiers
+
+Guardrail:
+
+- treat alias target resolution and use-site pointer/reference/cv/array modifiers as separate steps,
+- preserve the current merge behavior when rebuilding `TypeSpecifierNode`.
+
+### Risk 3: eager normalization hooks can create re-entrancy surprises
+
+Guardrail:
+
+- make the registration/queue contract explicit before widening normalization calls,
+- prefer a queue-drain helper over hidden recursive normalization in many unrelated sites.
+
+### Risk 4: placeholder-state cleanup can overfit one SFINAE bug
+
+Guardrail:
+
+- model unresolved-dependent state broadly enough that it also explains alias-member placeholders and other dependent `::type` shapes,
+- do not bake test-specific string patterns into the final representation.
+
+---
+
+## Reviewer-identified issues and refactoring opportunities
+
+The following items were raised during code review (Gemini) and should be addressed as part of or alongside the phases above.
+
+### Dead `else if` in `ExpressionSubstitutor.cpp` (two sites)
+
+At `src/ExpressionSubstitutor.cpp:744` and `src/ExpressionSubstitutor.cpp:1170`, `instantiated_name` is unconditionally assigned `template_name_to_instantiate` (which is non-empty), making the subsequent `else if (instantiated_name.empty())` always false. `get_instantiated_class_name` is therefore dead code. The fix is to try the registry lookup first, then fall back to `get_instantiated_class_name`, and only use the raw template name as a last resort. **Relates to Phase 2.**
+
+### Alias resolution duplication between top-level and struct-local `using`
+
+`src/Parser_Decl_TopLevel.cpp:1019-1054` and `src/Parser_Decl_TypedefUsing.cpp:410-434` both contain the same pattern: check `isTemplateInstantiation`, materialize args via `toTemplateTypeArg`, call `instantiate_and_register_base_template`, and update the `TypeSpecifierNode`. Extract a shared helper (e.g. `resolveAndRegisterAliasTarget`). **Relates to Phase 2.**
+
+### Expression substitution duplication across instantiation sites
+
+`src/Parser_Templates_Inst_ClassTemplate.cpp:441-454` duplicates the `ExpressionSubstitutor` + `ConstExpr::Evaluator::evaluate` dispatch pattern that appears at 9+ other sites in this PR. Extract a shared helper (e.g. `TemplateTypeArg fromEvalResult(const ConstExpr::EvalResult&)` plus a `substituteAndEvaluateNonTypeDefault` wrapper). **Relates to Phase 2.**
+
+### Extract `materialize_placeholder_args` from deduction
+
+The `materialize_placeholder_args` lambda at `src/Parser_Templates_Inst_Deduction.cpp:2059-2178` is ~120 lines. It should be a dedicated `Parser` member function for readability and testability. **Relates to Phase 2 / Phase 3.**
+
+### Extract `normalizeDependentNonTypeArgs` from `parse_type_specifier`
+
+The `normalizeDependentNonTypeArgs` lambda at `src/Parser_TypeSpecifiers.cpp:961-988` is complex and likely needed in other parts of the template parsing pipeline. It should be a dedicated helper method on `Parser`. **Relates to Phase 1.**
+
+### Hash strategy drift between `TemplateTypeArg::hash()` and `ValueArgKey::hash()`
+
+`TemplateTypeArg::hash()` (`src/TemplateRegistry_Types.h:267-272`) uses `std::hash<StringHandle>` for `dependent_name`, while `ValueArgKey::hash()` (`src/TemplateTypes.h:196-203`) uses `std::hash<uint32_t>` on the raw `.handle` field. The two types are never compared in the same hash map so this is not a correctness bug today, but it is exactly the kind of drift that Phase 1 canonicalization should eliminate. **Relates to Phase 1.**
+
+---
+
+## Out of scope for this document
+
+- a full rewrite that moves all template instantiation out of the parser immediately
+- a full constexpr architecture rewrite
+- unrelated codegen/sema ownership cleanup outside the template-materialization surface
+
+---
+
+## Related docs
+
+- `docs\2026-04-06-template-constexpr-sema-audit-plan.md`
+- `docs\2026-04-06-constructor-overload-resolution-refactor.md`
+- `docs\2026-04-04-codegen-name-lookup-investigation.md`
+- `docs\2026-03-21_PARSER_TEMPLATE_SEMA_BOUNDARY_PLAN.md`
+
+---
+
+## Bottom line
+
+The branch fix solved the immediate regression by teaching instantiation keys to distinguish dependent and concrete non-type arguments. The next worthwhile architectural step is to make that distinction authoritative everywhere, then collapse alias-template materialization and late-materialization normalization onto explicit shared helpers.
+
+That is the highest-leverage follow-up because it attacks the actual fault line that produced the recent failures: duplicated template identity logic plus duplicated materialization paths.

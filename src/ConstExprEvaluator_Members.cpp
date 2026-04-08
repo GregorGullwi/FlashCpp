@@ -3420,9 +3420,63 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					}
 				}
 
+				auto evaluate_specialization_static_member = [&](StringHandle lookup_member_handle) -> std::optional<EvalResult> {
+					if (!resolved_type_info || !resolved_type_info->isTemplateInstantiation()) {
+						return std::nullopt;
+					}
+					std::string_view base_template_name = StringTable::getStringView(resolved_type_info->baseTemplateName());
+					if (base_template_name.empty()) {
+						return std::nullopt;
+					}
+
+					std::vector<TemplateTypeArg> exact_args;
+					exact_args.reserve(resolved_type_info->templateArgs().size());
+					for (const auto& arg_info : resolved_type_info->templateArgs()) {
+						TemplateTypeArg arg;
+						arg.type_index = arg_info.type_index;
+						arg.is_value = arg_info.is_value;
+						arg.cv_qualifier = arg_info.cv_qualifier;
+						arg.ref_qualifier = arg_info.ref_qualifier;
+						arg.pointer_depth = static_cast<uint8_t>(arg_info.pointer_depth);
+						arg.is_array = arg_info.is_array;
+						arg.array_size = arg_info.array_size;
+						arg.pointer_cv_qualifiers = arg_info.pointer_cv_qualifiers;
+						arg.dependent_name = arg_info.dependent_name;
+						arg.function_signature = arg_info.function_signature;
+						arg.is_dependent = arg_info.dependent_name.isValid();
+						if (arg.is_value) {
+							arg.value = arg_info.intValue();
+						}
+						exact_args.push_back(std::move(arg));
+					}
+
+					auto specialization_ast = gTemplateRegistry.lookupExactSpecialization(base_template_name, exact_args);
+					if (!specialization_ast.has_value()) {
+						specialization_ast = gTemplateRegistry.matchSpecializationPattern(base_template_name, exact_args);
+					}
+					if (!specialization_ast.has_value() || !specialization_ast->is<StructDeclarationNode>()) {
+						return std::nullopt;
+					}
+
+					const auto& specialization_struct = specialization_ast->as<StructDeclarationNode>();
+					for (const auto& static_member_decl : specialization_struct.static_members()) {
+						if (static_member_decl.name != lookup_member_handle ||
+							!static_member_decl.initializer.has_value()) {
+							continue;
+						}
+						return evaluate(*static_member_decl.initializer, context);
+					}
+
+					return std::nullopt;
+				};
+
 				if (static_member && owner_struct) {
 					FLASH_LOG(ConstExpr, Debug, "Static member is_const: ", static_member->is_const(),
 							  ", has_initializer: ", static_member->initializer.has_value());
+					if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
+						FLASH_LOG(ConstExpr, Debug, "Evaluated static member from specialization AST");
+						return *exact_value;
+					}
 
 					// Always try to trigger lazy instantiation for static members.
 					// The member might have an initializer from template parsing that
@@ -3447,6 +3501,12 @@ EvalResult Evaluator::evaluate_qualified_identifier(const QualifiedIdentifierNod
 					// Note: Even if not marked const, we can evaluate constexpr initializers
 					if (static_member->initializer.has_value()) {
 						FLASH_LOG(ConstExpr, Debug, "Evaluating static member initializer");
+					}
+					if (!static_member->initializer.has_value()) {
+						if (auto exact_value = evaluate_specialization_static_member(member_handle)) {
+							FLASH_LOG(ConstExpr, Debug, "Evaluated static member from specialization AST");
+							return *exact_value;
+						}
 					}
 
 					// If not constexpr or no initializer, return default value based on type

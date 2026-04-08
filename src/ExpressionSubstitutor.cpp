@@ -735,12 +735,24 @@ ASTNode ExpressionSubstitutor::substituteFunctionCallImpl(const CallExprNode& ca
 		std::vector<TemplateTypeArg> inst_args = collectCurrentInstantiationArgs();
 
 		if (!inst_args.empty()) {
-			// Instantiate the template with concrete types
-			std::optional<ASTNode> instantiated_base = parser_.try_instantiate_class_template(base_template_name, inst_args, true);
-			if (instantiated_base.has_value()) {
+			std::string_view template_name_to_instantiate = base_template_name;
+			std::string_view instantiated_name =
+				parser_.instantiate_and_register_base_template(template_name_to_instantiate, inst_args);
+			if (!instantiated_name.empty()) {
 				normalizePendingSemanticRoots();
+			} else {
+				auto registry_hit = gTemplateRegistry.getInstantiation(
+					StringTable::getOrInternStringHandle(base_template_name), inst_args);
+				if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+					instantiated_name = StringTable::getStringView(
+						registry_hit->as<StructDeclarationNode>().name());
+				} else {
+					instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+					if (instantiated_name.empty()) {
+						instantiated_name = template_name_to_instantiate;
+					}
+				}
 			}
-			std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
 
 			// Build the corrected qualified function name
 			StringBuilder new_func_name_builder;
@@ -989,10 +1001,21 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 												: nullptr) {
 				StringHandle type_name_handle = type_info->name();
 
-				// If this is a template instantiation, ensure it's been instantiated
 				if (type_info->isTemplateInstantiation()) {
 					std::string_view base_name = StringTable::getStringView(type_info->baseTemplateName());
 					FLASH_LOG(Templates, Debug, "  Concrete type is template instantiation: base='", base_name, "'");
+					if (!base_name.empty()) {
+						std::vector<TemplateTypeArg> concrete_inst_args;
+						for (const auto& stored_arg : type_info->templateArgs()) {
+							concrete_inst_args.push_back(toTemplateTypeArg(stored_arg));
+						}
+						std::string_view template_name_to_instantiate = base_name;
+						std::string_view instantiated_name =
+							parser_.instantiate_and_register_base_template(template_name_to_instantiate, concrete_inst_args);
+						if (!instantiated_name.empty()) {
+							type_name_handle = StringTable::getOrInternStringHandle(instantiated_name);
+						}
+					}
 				}
 
 				// Create a new QualifiedIdentifierNode with the concrete struct as namespace
@@ -1060,6 +1083,40 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					inst_args.push_back(ta);
 					continue;
 				}
+
+				if (ta.is_value) {
+					size_t scope_pos = dep_name.rfind("::");
+					if (scope_pos != std::string_view::npos) {
+						std::string_view base_name = dep_name.substr(0, scope_pos);
+						std::string_view member_name = dep_name.substr(scope_pos + 2);
+						auto base_subst_it = param_map_.find(base_name);
+						if (base_subst_it != param_map_.end()) {
+							const TemplateTypeArg& concrete_base = base_subst_it->second;
+							if (is_struct_type(concrete_base.category())) {
+								if (const TypeInfo* concrete_base_info = tryGetTypeInfo(concrete_base.type_index)) {
+									StringHandle concrete_type_name = concrete_base_info->name();
+									Token member_token(Token::Type::Identifier, member_name, 0, 0, 0);
+									NamespaceHandle member_ns = gNamespaceRegistry.getOrCreateNamespace(
+										NamespaceRegistry::GLOBAL_NAMESPACE,
+										concrete_type_name);
+									QualifiedIdentifierNode& member_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+										member_ns,
+										member_token);
+									ExpressionNode& member_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(member_qual_id);
+									if (auto value = parser_.try_evaluate_constant_expression(ASTNode(&member_expr))) {
+										ta.is_value = true;
+										ta.value = value->value;
+										ta.type_index = nativeTypeIndex(value->type);
+										FLASH_LOG(Templates, Debug, "  Evaluated dependent member arg '", dep_name,
+												  "' -> value=", ta.value, ", type=", static_cast<int>(value->type));
+										inst_args.push_back(ta);
+										continue;
+									}
+								}
+							}
+						}
+					}
+				}
 			}
 
 			// Check if this arg is a dependent template parameter that needs substitution
@@ -1106,12 +1163,24 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 	if (!inst_args.empty()) {
 		FLASH_LOG(Templates, Debug, "  Triggering instantiation of template '", base_template_name,
 				  "' with ", inst_args.size(), " arguments");
-		if (parser_.try_instantiate_class_template(base_template_name, inst_args, true).has_value()) {
+		std::string_view template_name_to_instantiate = base_template_name;
+		std::string_view instantiated_name =
+			parser_.instantiate_and_register_base_template(template_name_to_instantiate, inst_args);
+		if (!instantiated_name.empty()) {
 			parser_.normalizePendingSemanticRootsIfAvailable();
+		} else {
+			auto registry_hit = gTemplateRegistry.getInstantiation(
+				StringTable::getOrInternStringHandle(base_template_name), inst_args);
+			if (registry_hit.has_value() && registry_hit->is<StructDeclarationNode>()) {
+				instantiated_name = StringTable::getStringView(
+					registry_hit->as<StructDeclarationNode>().name());
+			} else {
+				instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
+				if (instantiated_name.empty()) {
+					instantiated_name = template_name_to_instantiate;
+				}
+			}
 		}
-
-		// After instantiation, get the actual instantiated name (with new hash based on concrete types)
-		std::string_view instantiated_name = parser_.get_instantiated_class_name(base_template_name, inst_args);
 
 		FLASH_LOG(Templates, Debug, "  Substituted namespace: ", ns_name, " -> ", instantiated_name);
 
