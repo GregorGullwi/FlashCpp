@@ -331,6 +331,8 @@ ASTNode Parser::substituteTemplateParameters(
 			ASTNode substituted_right = substituteTemplateParameters(bin_op.get_rhs(), template_params, template_args);
 			BinaryOperatorNode substituted_binop(bin_op.get_token(), substituted_left, substituted_right);
 			return emplace_node<ExpressionNode>(substituted_binop);
+		} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+			return substituteWithExpressionSubstitutor(node);
 		} else if (const auto* unary_operator = std::get_if<UnaryOperatorNode>(&expr)) {
 			const UnaryOperatorNode& unary_op = *unary_operator;
 			ASTNode substituted_operand = substituteTemplateParameters(unary_op.get_operand(), template_params, template_args);

@@ -25,16 +25,6 @@ validated.
   and `TypeIndexArg::operator==()`, or document that dependent args are always resolved
   before name generation. (PR #1164, partially addressed in PR #1166)
 
-- In `src/ConstExprEvaluator_Members.cpp:3476-3479`,
-  `evaluate_specialization_static_member` is called immediately when a static member
-  is found, **before** lazy instantiation (lines 3486–3498). If a partial
-  specialization's AST contains a static member whose initializer still references
-  template parameters, `evaluate()` is called on the raw, unsubstituted initializer.
-  When that evaluation accidentally succeeds (e.g. parameter names resolve in the
-  current scope), it returns a potentially incorrect value, bypassing the lazy
-  instantiation path that would produce the correctly-substituted initializer.
-  The early call should be moved after the lazy instantiation attempt. (PR #1164)
-
 - Dead `else if` in `src/ExpressionSubstitutor.cpp:744-752` (and identical pattern at
   line 1170-1178). After `instantiate_and_register_base_template` returns empty,
   `instantiated_name` is unconditionally assigned `template_name_to_instantiate`

@@ -1016,10 +1016,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 			}
 		}
 
-		if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle)) {
-			return value;
-		}
-
 		// Check if it has an initializer
 		if (!static_member->initializer.has_value()) {
 			if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle)) {
@@ -1088,10 +1084,6 @@ std::optional<Parser::ConstantValue> Parser::try_evaluate_constant_expression(co
 		if (!static_member) {
 			FLASH_LOG_FORMAT(Templates, Debug, "Static member {} not found in {}", member_name, type_name);
 			return std::nullopt;
-		}
-
-		if (auto value = try_evaluate_specialization_static_member(type_info, member_name_handle2)) {
-			return value;
 		}
 
 		// Check if it has an initializer
