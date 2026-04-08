@@ -63,6 +63,26 @@ if [ ! -f "x64/Debug/FlashCpp" ]; then
     make main CXX=clang++ > /dev/null 2>&1 || { echo -e "${RED}Build failed${NC}"; exit 1; }
 fi
 
+print_flashcpp_build_info() {
+	local version_probe_src version_probe_obj version_banner git_head binary_mtime
+	version_probe_src=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.cpp)
+	version_probe_obj=$(mktemp /tmp/flashcpp_version_probe_XXXXXX.o)
+	printf 'int main() { return 0; }\n' > "$version_probe_src"
+	version_banner=$(./x64/Debug/FlashCpp -o "$version_probe_obj" "$version_probe_src" 2>&1 | grep -m1 'FLASHCPP VERSION' || true)
+	rm -f "$version_probe_src" "$version_probe_obj"
+
+	git_head=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+	binary_mtime=$(date -r "x64/Debug/FlashCpp" '+%Y-%m-%d %H:%M:%S %z' 2>/dev/null || echo "unknown")
+
+	[ -n "$version_banner" ] && echo "$version_banner"
+	echo "FlashCpp Git HEAD: $git_head"
+	echo "FlashCpp binary: $(realpath "x64/Debug/FlashCpp")"
+	echo "FlashCpp binary mtime: $binary_mtime"
+}
+
+print_flashcpp_build_info
+echo ""
+
 # Expected failures
 EXPECTED_FAIL=(
     # Standard header tests have been moved to tests/std/
@@ -331,12 +351,14 @@ declare -a RUNTIME_CRASH=()
 declare -a RUNTIME_CRASH_DETAILS=()
 declare -a RETURN_MISMATCH=()
 declare -a RETURN_MISMATCH_DETAILS=()
+declare -a FAILED_TEST_NAMES=()
 
 for base in "${TEST_FILES[@]}"; do
     result_file="$RESULT_DIR/$base.result"
     if [ ! -f "$result_file" ]; then
         COMPILE_FAIL+=("$base (no result)")
         COMPILE_FAIL_DETAILS+=("")
+        FAILED_TEST_NAMES+=("$base")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
@@ -351,6 +373,7 @@ for base in "${TEST_FILES[@]}"; do
             LINK_OK+=("$base")
             RETURN_MISMATCH+=("$base")
             RETURN_MISMATCH_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
             echo -e "${RED}[RETURN MISMATCH]${NC} $base ($detail)"
             ;;
         RUNTIME_CRASH)
@@ -362,6 +385,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 RUNTIME_CRASH+=("$base")
                 RUNTIME_CRASH_DETAILS+=("$detail")
+                FAILED_TEST_NAMES+=("$base")
                 echo -e "${RED}[RUNTIME CRASH]${NC} $base ($detail)"
             fi
             ;;
@@ -374,6 +398,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 LINK_FAIL+=("$base")
                 LINK_FAIL_DETAILS+=("$detail")
+                FAILED_TEST_NAMES+=("$base")
                 echo -e "${RED}[LINK FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail" | sed 's/^/  /'
             fi
@@ -385,6 +410,7 @@ for base in "${TEST_FILES[@]}"; do
             else
                 COMPILE_FAIL+=("$base")
                 COMPILE_FAIL_DETAILS+=("$detail")
+                FAILED_TEST_NAMES+=("$base")
                 echo -e "${RED}[COMPILE FAIL]${NC} $base"
                 [ -n "$detail" ] && echo "  $detail"
             fi
@@ -397,6 +423,7 @@ for base in "${FAIL_FILES[@]}"; do
     if [ ! -f "$result_file" ]; then
         FAIL_BAD+=("$base (no result)")
         FAIL_BAD_DETAILS+=("")
+        FAILED_TEST_NAMES+=("$base")
         continue
     fi
     IFS='|' read -r status file detail < "$result_file"
@@ -408,6 +435,7 @@ for base in "${FAIL_FILES[@]}"; do
         FAIL_BAD)
             FAIL_BAD+=("$base")
             FAIL_BAD_DETAILS+=("$detail")
+            FAILED_TEST_NAMES+=("$base")
             if [[ "$detail" == CRASHED* ]]; then
                 echo -e "${RED}[COMPILER CRASH]${NC} $base ($detail)"
             else
@@ -497,6 +525,12 @@ if [ ${#COMPILE_FAIL[@]} -eq 0 ] && [ ${#LINK_FAIL[@]} -eq 0 ] && [ ${#FAIL_BAD[
     echo -e "${GREEN}RESULT: SUCCESS${NC}"
     exit 0
 else
+    if [ "${FLASHCPP_RERUN_PHASE:-0}" != "1" ] && [ ${#FAILED_TEST_NAMES[@]} -gt 0 ]; then
+        echo "Re-running failing tests sequentially for diagnostics..."
+        echo ""
+        FLASHCPP_RERUN_PHASE=1 bash "$0" -j1 --verbose "${FAILED_TEST_NAMES[@]}"
+        echo ""
+    fi
     echo -e "${RED}RESULT: FAILED${NC}"
     exit 1
 fi
