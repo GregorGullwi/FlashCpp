@@ -1450,6 +1450,24 @@ EvalResult Evaluator::evaluate_expression_with_bindings(
 		return materialize_lambda_value(*lambda_expression, context, &bindings);
 	}
 
+	if (const auto* sizeof_expr = std::get_if<SizeofExprNode>(&expr)) {
+		auto* saved_local_bindings = context.local_bindings;
+		context.local_bindings = &bindings;
+		auto restore = ScopeGuard([&context, saved_local_bindings]() {
+			context.local_bindings = saved_local_bindings;
+		});
+		return evaluate_sizeof(*sizeof_expr, context);
+	}
+
+	if (const auto* alignof_expr = std::get_if<AlignofExprNode>(&expr)) {
+		auto* saved_local_bindings = context.local_bindings;
+		context.local_bindings = &bindings;
+		auto restore = ScopeGuard([&context, saved_local_bindings]() {
+			context.local_bindings = saved_local_bindings;
+		});
+		return evaluate_alignof(*alignof_expr, context);
+	}
+
 	// Check if it's an identifier that matches a parameter
 	if (std::holds_alternative<IdentifierNode>(expr)) {
 		const IdentifierNode& id = std::get<IdentifierNode>(expr);
