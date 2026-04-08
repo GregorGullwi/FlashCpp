@@ -366,6 +366,7 @@ ExprResult AstToIr::generateCallExprIr(const CallExprNode& callExprNode, Express
 				callExprNode.called_from());
 			CallMetadataCopyOptions copy_options;
 			copy_options.copy_mangled_name = false;
+			copy_options.copy_qualified_name = false;
 			copyCallMetadata(direct_static_call, callExprNode, copy_options);
 			return generateFunctionCallIr(direct_static_call, context, &callExprNode);
 		}
@@ -962,10 +963,22 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		if (!callExprNode.callee().has_function_declaration() && !parent.empty()) {
 			return;
 		}
-		// Qualified/precomputed member calls still rely on the legacy remapping path for
+		// Precomputed-mangled member calls still rely on the legacy remapping path for
 		// template-instantiation-sensitive owner recovery.
-		if (!parent.empty() && (has_precomputed_mangled || callExprNode.has_qualified_name())) {
+		if (!parent.empty() && has_precomputed_mangled) {
 			return;
+		}
+		if (!parent.empty() && callExprNode.has_qualified_name()) {
+			const StringHandle parent_handle = StringTable::getOrInternStringHandle(parent);
+			if (gTemplateRegistry.isPatternStructName(parent_handle)) {
+				return;
+			}
+			auto parent_it = getTypesByNameMap().find(parent_handle);
+			if (parent_it != getTypesByNameMap().end() &&
+				parent_it->second &&
+				parent_it->second->isTemplateInstantiation()) {
+				return;
+			}
 		}
 		if (!parent.empty() && current_struct_name_.isValid()) {
 			const std::string_view current_struct_name_view = StringTable::getStringView(current_struct_name_);
@@ -1059,7 +1072,7 @@ ExprResult AstToIr::generateFunctionCallIr(const CallExprNode& callExprNode, Exp
 		!sema_ || // no semantic data wired into codegen
 		!sema_normalized_current_function_ || // body not tracked by normalized_bodies_
 		is_static_direct_call || // direct static-member path is still partly synthetic
-		callExprNode.has_qualified_name() || // qualified direct calls are not fully sema-owned yet
+		callExprNode.has_qualified_name() || // fallback for template-owned qualifiers not yet sema-handled
 		sema_recorded_unresolved_call; // sema recorded a known resolution gap
 
 	// For sema-normalized ordinary direct calls, lowering must consume the sema-owned
