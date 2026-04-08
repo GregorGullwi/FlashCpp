@@ -270,6 +270,14 @@ ownership explicit:
 - `tests/test_conv_op_no_conv_op_ret0.cpp`: regression test confirming that structs
   without conversion operators pass through sema correctly without spurious
   `UserDefined` annotation attempts
+- `RangedForStatementNode` now retains a sema-owned `resolved_range_type`
+  annotation, filled by `normalizeRangedForLoopDecl()` once the range expression
+  type is known and preserved through `RebindStaticMemberAst`
+- ranged-for lowering in `IrGenerator_Stmt_Control.cpp` now consumes that
+  annotation before considering any parser fallback for non-identifier range
+  expressions, reducing one more codegen-time type query
+- `tests/test_range_for_function_return_explicit_ret0.cpp`: regression test for a
+  function-return range expression lowered through the sema-owned range-type path
 
 **Test result:** 1685 pass, 98 expected-fail (was 1683/98 before this phase).
 
