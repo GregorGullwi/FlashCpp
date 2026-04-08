@@ -259,12 +259,43 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	if (member_func_decl.decl_node().identifier_token().value() == "operator()"sv &&
 		object_node.is<ExpressionNode>() &&
-		parser_) {
-		auto callee_type = parser_->get_expression_type(object_node);
-		if (const auto* object_ident = std::get_if<IdentifierNode>(&object_node.as<ExpressionNode>())) {
+		(parser_ || sema_)) {
+		std::optional<TypeSpecifierNode> callee_type;
+		const ExpressionNode& object_expr = object_node.as<ExpressionNode>();
+		const auto* object_ident = std::get_if<IdentifierNode>(&object_expr);
+		auto isInconclusiveCallableType = [](const std::optional<TypeSpecifierNode>& candidate) {
+			return !candidate.has_value() ||
+				   (candidate->category() != TypeCategory::Struct &&
+					!candidate->is_function_pointer() &&
+					!candidate->has_function_signature());
+		};
+		if (sema_ && sema_normalized_current_function_) {
+			callee_type = sema_->getExpressionType(object_node);
+		}
+		const bool needs_parser_fallback = isInconclusiveCallableType(callee_type);
+		if (needs_parser_fallback && parser_) {
+			callee_type = parser_->get_expression_type(object_node);
+		}
+		if (!callee_type.has_value()) {
+			if (object_ident) {
+				if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
+					if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
+						callee_type = decl->type_node().as<TypeSpecifierNode>();
+					}
+				}
+			}
+		} else if (object_ident) {
 			if (std::optional<ASTNode> symbol = lookupSymbol(object_ident->name()); symbol.has_value()) {
 				if (const DeclarationNode* decl = get_decl_from_symbol(*symbol)) {
-					callee_type = decl->type_node().as<TypeSpecifierNode>();
+					const TypeSpecifierNode& decl_type = decl->type_node().as<TypeSpecifierNode>();
+					const bool prefer_decl_struct_type = decl_type.category() == TypeCategory::Struct;
+					const bool missing_callee_type = callee_type->category() == TypeCategory::Invalid;
+					const bool prefer_decl_callable_type =
+						callee_type->category() != TypeCategory::Struct &&
+						(decl_type.is_function_pointer() || decl_type.has_function_signature());
+					if (prefer_decl_struct_type || missing_callee_type || prefer_decl_callable_type) {
+						callee_type = decl_type;
+					}
 				}
 			}
 		}
@@ -393,6 +424,14 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 
 	auto resolveStructTypeFromReceiverNode = [&](const ASTNode& receiver_node) -> std::optional<TypeSpecifierNode> {
 		if (receiver_node.is<ExpressionNode>()) {
+			if (sema_ && sema_normalized_current_function_) {
+				if (auto sema_type = sema_->getExpressionType(receiver_node); sema_type.has_value()) {
+					if (auto resolved_sema_type = normalizeResolvedStructType(*sema_type); resolved_sema_type.has_value()) {
+						return resolved_sema_type;
+					}
+				}
+			}
+
 			const ExpressionNode& receiver_expr = receiver_node.as<ExpressionNode>();
 
 			if (std::holds_alternative<IdentifierNode>(receiver_expr)) {
