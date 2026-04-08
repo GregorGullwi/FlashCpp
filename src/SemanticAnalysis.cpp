@@ -1218,6 +1218,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const VariableDeclarationNo
 
 ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNode& stmt) {
 	auto& mutable_stmt = const_cast<RangedForStatementNode&>(stmt);
+	mutable_stmt.set_resolved_range_type(std::nullopt);
 	mutable_stmt.set_resolved_dereference_function(nullptr);
 	mutable_stmt.set_resolved_member_begin_function(nullptr);
 	mutable_stmt.set_resolved_member_end_function(nullptr);
@@ -1250,6 +1251,7 @@ ASTNode SemanticAnalysis::normalizeRangedForLoopDecl(const RangedForStatementNod
 		}
 		range_type = materializeTypeSpecifier(type_context_.get(range_type_id));
 	}
+	mutable_stmt.set_resolved_range_type(range_type);
 
 	if (range_type->is_array()) {
 		return resolveRangedForLoopDeclNode(original_var_decl, *range_type);
