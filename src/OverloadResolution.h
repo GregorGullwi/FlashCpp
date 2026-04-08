@@ -1287,18 +1287,37 @@ inline TypeIndex resolveSelfRefParamIndex(TypeIndex param_idx, TypeIndex left_ty
 	if (!param_idx.is_valid() || param_idx.index() >= type_info_size || left_type_index.index() >= type_info_size)
 		return param_idx;
 	const auto& param_ti = getTypeInfo(param_idx);
-	if (!param_ti.struct_info_ || param_ti.struct_info_->total_size.is_set())
+	if (!param_ti.struct_info_)
 		return param_idx;
-	// param refers to an uninstantiated template (total_size==0); check name family
-	auto template_base_name = StringTable::getStringView(param_ti.name());
+	auto strip_template_hash_suffix = [](std::string_view name) {
+		auto dollar_pos = name.find('$');
+		if (dollar_pos != std::string_view::npos) {
+			name = name.substr(0, dollar_pos);
+		}
+		return name;
+	};
+	auto param_name = StringTable::getStringView(param_ti.name());
+	auto param_base_name = strip_template_hash_suffix(param_name);
+	// If the parameter already carries a template hash suffix, it is already a concrete
+	// specialization (for example "Iter$abc123"), not the uninstantiated self-reference
+	// pattern spelled inside the class definition (for example plain "Iter"). In that
+	// case there is nothing to rewrite.
+	if (param_base_name.size() != param_name.size())
+		return param_idx;
 	auto instantiated_name = StringTable::getStringView(getTypeInfo(left_type_index).name());
-	// Strip template hash suffix from the instantiated name: "Name$hash" -> "Name"
-	auto base_name = instantiated_name;
-	auto dollar_pos = base_name.find('$');
-	if (dollar_pos != std::string_view::npos) {
-		base_name = base_name.substr(0, dollar_pos);
+	auto instantiated_base_name = strip_template_hash_suffix(instantiated_name);
+	if (param_base_name == instantiated_base_name)
+		return left_type_index;
+	// Uninstantiated self-references inside nested classes are often stored as just "Inner",
+	// while the instantiated owner is recorded as "Outer::Inner$hash". Only fall back to an
+	// unqualified-name comparison when the parameter itself is already unqualified so that
+	// unrelated qualified types with the same leaf name do not match.
+	if (param_base_name.find("::") == std::string_view::npos) {
+		auto last_scope = instantiated_base_name.rfind("::");
+		if (last_scope != std::string_view::npos && param_base_name == instantiated_base_name.substr(last_scope + 2))
+			return left_type_index;
 	}
-	return (template_base_name == base_name) ? left_type_index : param_idx;
+	return param_idx;
 }
 
 inline bool binaryOperatorUsesTypeIndexIdentity(TypeCategory cat) {
