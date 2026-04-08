@@ -170,6 +170,16 @@ int getTypeSizeFromTemplateArgument(const TemplateTypeArg& arg) {
 
 // Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
 // This enables storing template instantiation metadata in TypeInfo for O(1) lookup
+InlineVector<TemplateTypeArg, 4> toInlineTemplateArgs(const std::vector<TemplateTypeArg>& template_args) {
+	InlineVector<TemplateTypeArg, 4> result;
+	for (const auto& arg : template_args) {
+		result.push_back(arg);
+	}
+	return result;
+}
+
+// Helper to convert TemplateTypeArg vector to TypeInfo::TemplateArgInfo vector
+// This enables storing template instantiation metadata in TypeInfo for O(1) lookup
 InlineVector<TypeInfo::TemplateArgInfo, 4> convertToTemplateArgInfo(const std::vector<TemplateTypeArg>& template_args) {
 	InlineVector<TypeInfo::TemplateArgInfo, 4> result;
 	for (const auto& arg : template_args) {

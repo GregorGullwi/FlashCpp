@@ -1018,14 +1018,6 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return resolved_arg;
 	};
 
-	auto toInlineTemplateArgs = [](const std::vector<TemplateTypeArg>& args) {
-		InlineVector<TemplateTypeArg, 4> inline_args;
-		for (const auto& arg : args) {
-			inline_args.push_back(arg);
-		}
-		return inline_args;
-	};
-
 	auto substituteDefaultTemplateArg = [&](const ASTNode& default_node,
 											const InlineVector<ASTNode, 4>& params,
 											const std::vector<TemplateTypeArg>& current_args) -> ASTNode {
@@ -1035,7 +1027,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 		return substituteTemplateParameters(default_node, params, toInlineTemplateArgs(current_args));
 	};
 
-	auto tryAppendConstexprTemplateValue = [&](std::vector<TemplateTypeArg>& out_args,
+	auto tryAppendEvaluatedTemplateValue = [&](std::vector<TemplateTypeArg>& out_args,
 											   const ASTNode& expr_node,
 											   std::string_view log_context) -> bool {
 		if (!expr_node.is<ExpressionNode>()) {
@@ -1461,7 +1453,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 					}
 
 					if (filled_args_for_pattern_match.size() == size_before) {
-						tryAppendConstexprTemplateValue(
+						tryAppendEvaluatedTemplateValue(
 							filled_args_for_pattern_match,
 							expr_source,
 							"pattern-match non-type default");
@@ -3578,7 +3570,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 
 			// NonType fallback: if no handler above pushed a value, try ConstExprEvaluator
 			if (filled_template_args.size() == size_before) {
-				tryAppendConstexprTemplateValue(
+				tryAppendEvaluatedTemplateValue(
 					filled_template_args,
 					substituted_default_node,
 					"non-type default");

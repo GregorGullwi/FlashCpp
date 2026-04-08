@@ -1500,10 +1500,7 @@ ParseResult Parser::parse_type_specifier() {
 							continue;
 						}
 						const ASTNode& default_node = param.default_value();
-						InlineVector<TemplateTypeArg, 4> inline_filled_args;
-						for (const auto& arg : filled_template_args) {
-							inline_filled_args.push_back(arg);
-						}
+						InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
 						if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 							ASTNode substituted_default_node = default_node;
 							if (!inline_filled_args.empty()) {
@@ -2152,10 +2149,7 @@ ParseResult Parser::parse_type_specifier() {
 						continue;
 					}
 					const ASTNode& default_node = param.default_value();
-					InlineVector<TemplateTypeArg, 4> inline_filled_args;
-					for (const auto& arg : filled_template_args) {
-						inline_filled_args.push_back(arg);
-					}
+					InlineVector<TemplateTypeArg, 4> inline_filled_args = toInlineTemplateArgs(filled_template_args);
 					if (param.kind() == TemplateParameterKind::Type && default_node.is<TypeSpecifierNode>()) {
 						ASTNode substituted_default_node = default_node;
 						if (!inline_filled_args.empty()) {
