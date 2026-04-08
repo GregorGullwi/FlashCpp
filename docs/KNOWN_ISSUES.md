@@ -14,16 +14,15 @@ validated.
   so it appears in production error output during normal alias template resolution.
   Should be changed to Debug level. (PR #1164)
 
-- `TemplateTypeArg::operator==` (`src/TemplateRegistry_Types.h:319-320`) compares
-  `is_dependent` and `dependent_name` unconditionally (for both type and value args),
-  but `hash()` (`src/TemplateRegistry_Types.h:267-272`), `TemplateTypeArgHash`
-  (`src/TemplateRegistry_Types.h:546-551`), and `toHashString()`
-  (`src/TemplateRegistry_Types.h:503-508`) only include those fields when `is_value`
-  is true. Two non-value type args that differ only in `is_dependent` will compare
-  unequal but produce the same hash and the same `generateInstantiatedName()` result,
-  which can cause silent incorrect template lookups. Either gate the `operator==`
-  comparison on `is_value` (to match hash), or include `is_dependent` in hash for all
-  args (to match `operator==`). (PR #1164)
+- In `src/ConstExprEvaluator_Members.cpp:3476-3479`,
+  `evaluate_specialization_static_member` is called immediately when a static member
+  is found, **before** lazy instantiation (lines 3486–3498). If a partial
+  specialization's AST contains a static member whose initializer still references
+  template parameters, `evaluate()` is called on the raw, unsubstituted initializer.
+  When that evaluation accidentally succeeds (e.g. parameter names resolve in the
+  current scope), it returns a potentially incorrect value, bypassing the lazy
+  instantiation path that would produce the correctly-substituted initializer.
+  The early call should be moved after the lazy instantiation attempt. (PR #1164)
 
 - Dead `else if` in `src/ExpressionSubstitutor.cpp:744-752` (and identical pattern at
   line 1170-1178). After `instantiate_and_register_base_template` returns empty,
