@@ -3234,6 +3234,11 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 		if (inferred_type_id)
 			*inferred_type_id = inferred_id;
 		TypeSpecifierNode arg_type = materializeTypeSpecifier(type_context_.get(inferred_id));
+		auto storeArgType = [this, &arg](const TypeSpecifierNode& type) {
+			if (arg.is<ExpressionNode>()) {
+				overload_resolution_arg_types_[getExpressionKey(arg)] = type;
+			}
+		};
 		if (arg.is<ExpressionNode>()) {
 			const ExpressionNode& expr = arg.as<ExpressionNode>();
 			if (const auto* member_access = std::get_if<MemberAccessNode>(&expr)) {
@@ -3267,10 +3272,12 @@ std::optional<TypeSpecifierNode> SemanticAnalysis::buildOverloadResolutionArgTyp
 				// category here; the generic helper would incorrectly rewrite all of
 				// them to lvalues. TODO(Phase 2, docs/2026-04-04-codegen-name-lookup-investigation.md):
 				// fold this into the shared helper once it understands member-access categories.
+				storeArgType(arg_type);
 				return arg_type;
 			}
 		}
 		adjust_argument_type_for_overload_resolution(arg, arg_type);
+		storeArgType(arg_type);
 		return arg_type;
 	}
 
