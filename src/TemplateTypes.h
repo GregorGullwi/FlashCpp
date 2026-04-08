@@ -197,7 +197,7 @@ struct ValueArgKey {
 		size_t h = std::hash<int64_t>{}(value);
 		h ^= std::hash<bool>{}(is_dependent) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		if (is_dependent && dependent_name.isValid()) {
-			h ^= std::hash<uint32_t>{}(dependent_name.handle) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<StringHandle>{}(dependent_name) + 0x9e3779b9 + (h << 6) + (h >> 2);
 		}
 		return h;
 	}
