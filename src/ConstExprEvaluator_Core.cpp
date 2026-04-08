@@ -33,6 +33,55 @@ bool should_preserve_exact_type(const TypeSpecifierNode& type_spec) {
 	return !isPlaceholderAutoType(type_spec.category());
 }
 
+std::optional<size_t> tryGetConstexprTypeSizeBytes(TypeSpecifierNode type_spec) {
+	if (type_spec.is_array()) {
+		const std::vector<size_t> dimensions = type_spec.array_dimensions();
+		type_spec.set_array_dimensions({});
+		const int element_size_bits = getTypeSpecSizeBits(type_spec);
+		if (element_size_bits <= 0) {
+			return std::nullopt;
+		}
+		size_t total_size = static_cast<size_t>(element_size_bits) / 8;
+		for (size_t dimension : dimensions) {
+			total_size *= dimension;
+		}
+		return total_size;
+	}
+
+	const int size_bits = getTypeSpecSizeBits(type_spec);
+	if (size_bits <= 0) {
+		return std::nullopt;
+	}
+	return static_cast<size_t>(size_bits) / 8;
+}
+
+std::optional<size_t> tryGetConstexprTypeAlignment(TypeSpecifierNode type_spec) {
+	if (type_spec.is_array()) {
+		type_spec.set_array_dimensions({});
+	}
+
+	if (type_spec.category() == TypeCategory::Struct) {
+		const TypeIndex type_index = type_spec.type_index();
+		if (const TypeInfo* type_info = tryGetTypeInfo(type_index)) {
+			if (const StructTypeInfo* struct_info = type_info->getStructInfo()) {
+				return struct_info->alignment;
+			}
+		}
+		return std::nullopt;
+	}
+
+	int size_bits = type_spec.size_in_bits();
+	if (size_bits == 0) {
+		size_bits = getTypeSpecSizeBits(type_spec);
+	}
+	if (size_bits <= 0) {
+		return std::nullopt;
+	}
+
+	const size_t size_in_bytes = static_cast<size_t>(size_bits) / 8;
+	return calculate_alignment_from_size(size_in_bytes, type_spec.category());
+}
+
 void maybe_set_exact_type(EvalResult& result, const TypeSpecifierNode& type_spec) {
 	if (should_preserve_exact_type(type_spec)) {
 		result.set_exact_type(type_spec);
@@ -1099,8 +1148,8 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				}
 			}
 
-			// size_in_bits() returns bits, convert to bytes
-			unsigned long long size_in_bytes = get_typespec_size_bytes(type_spec);
+			const std::optional<size_t> size_in_bytes_opt = tryGetConstexprTypeSizeBytes(type_spec);
+			unsigned long long size_in_bytes = size_in_bytes_opt.has_value() ? static_cast<unsigned long long>(*size_in_bytes_opt) : 0;
 			// sizeof never returns 0 in valid C++ (sizeof(char) == 1, all complete types >= 1).
 			// A zero result indicates an incomplete or template-dependent type.
 			// Before returning an error, try context.template_param_names (e.g., T=int from Box<int>).
@@ -1250,9 +1299,15 @@ EvalResult Evaluator::evaluate_sizeof(const SizeofExprNode& sizeof_expr, Evaluat
 				}
 			}
 
-			// For other expressions, we would need full type inference
-			// which requires tracking expression types through the AST
-			// This is a compiler limitation, not a C++20 limitation
+			if (context.parser) {
+				if (auto expr_type_opt = context.parser->get_expression_type(expr_node); expr_type_opt.has_value()) {
+					if (auto size_in_bytes_opt = tryGetConstexprTypeSizeBytes(*expr_type_opt); size_in_bytes_opt.has_value()) {
+						return EvalResult::from_int(static_cast<long long>(*size_in_bytes_opt));
+					}
+					return EvalResult::error("sizeof operand has incomplete or dependent type", EvalErrorType::TemplateDependentExpression);
+				}
+			}
+
 			return EvalResult::error("sizeof with complex expression not yet supported in constexpr");
 		}
 	}
@@ -1281,15 +1336,10 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 				return EvalResult::error("Struct alignment not available");
 			}
 
-			// For primitive types, use standard alignment calculation
-			int size_bits = type_spec.size_in_bits();
-			if (size_bits == 0) {
-				size_bits = get_type_size_bits(type_spec.category());
+			if (auto alignment_opt = tryGetConstexprTypeAlignment(type_spec); alignment_opt.has_value()) {
+				return EvalResult::from_int(static_cast<long long>(*alignment_opt));
 			}
-			size_t size_in_bytes = size_bits / 8;
-			size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
-
-			return EvalResult::from_int(static_cast<long long>(alignment));
+			return EvalResult::error("Alignment not available for type");
 		}
 	} else {
 		// alignof(expression) - determine the alignment from the expression's type
@@ -1324,15 +1374,10 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 									}
 								}
 
-								// For primitive types
-								int size_bits = type_spec.size_in_bits();
-								if (size_bits == 0) {
-									size_bits = get_type_size_bits(type_spec.category());
+								if (auto alignment_opt = tryGetConstexprTypeAlignment(type_spec); alignment_opt.has_value()) {
+									return EvalResult::from_int(static_cast<long long>(*alignment_opt));
 								}
-								size_t size_in_bytes = size_bits / 8;
-								size_t alignment = calculate_alignment_from_size(size_in_bytes, type_spec.category());
-
-								return EvalResult::from_int(static_cast<long long>(alignment));
+								return EvalResult::error("Alignment not available for identifier type");
 							}
 						}
 					}
@@ -1342,7 +1387,15 @@ EvalResult Evaluator::evaluate_alignof(const AlignofExprNode& alignof_expr, Eval
 				return EvalResult::error("alignof: identifier not found in symbol table");
 			}
 
-			// For other expressions, return error
+			if (context.parser) {
+				if (auto expr_type_opt = context.parser->get_expression_type(expr_node); expr_type_opt.has_value()) {
+					if (auto alignment_opt = tryGetConstexprTypeAlignment(*expr_type_opt); alignment_opt.has_value()) {
+						return EvalResult::from_int(static_cast<long long>(*alignment_opt));
+					}
+					return EvalResult::error("alignof operand has incomplete or dependent type", EvalErrorType::TemplateDependentExpression);
+				}
+			}
+
 			return EvalResult::error("alignof with complex expression not yet supported in constexpr");
 		}
 	}
