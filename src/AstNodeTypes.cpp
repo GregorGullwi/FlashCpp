@@ -1120,6 +1120,7 @@ LayoutBaseCollections collectLayoutBaseCollections(StructTypeInfo& struct_info) 
 							base.is_deferred);
 					}
 				}
+				self(self, getBaseStructInfo(base));
 				continue;
 			}
 
@@ -1267,6 +1268,9 @@ void StructTypeInfo::recalculateLayout() {
 	}
 
 	finalizeLayoutSize(current_offset, max_alignment);
+	if (own_type_index_.has_value()) {
+		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(*own_type_index_);
+	}
 }
 
 // Finalize struct layout with base classes
@@ -1323,6 +1327,9 @@ bool StructTypeInfo::finalizeWithBases() {
 
 	// Step 5: Pad to alignment
 	finalizeLayoutSize(current_offset, max_alignment);
+	if (own_type_index_.has_value()) {
+		FlashCpp::gLazyMemberResolver.invalidateEntriesOwnedBy(*own_type_index_);
+	}
 
 	return true;
 }
