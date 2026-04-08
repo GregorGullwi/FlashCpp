@@ -5,14 +5,31 @@
 
 ## Next agent starting point
 
-- Completed in the latest follow-up slice:
-  - extracted `Parser::normalizeDependentNonTypeTemplateArgs(...)` from `parse_type_specifier`
-  - extracted shared `Parser::resolveAliasTemplateInstantiation(...)` helpers and routed top-level plus struct-local `using` alias registration through them
-- Validation after that slice: `make main CXX=clang++` and `bash tests/run_all_tests.sh`
-- Recommended next steps:
-  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template path so alias materialization stops diverging between alias declarations and ordinary type parsing.
-  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp` onto the same structured helper result instead of open-coded name recovery.
-  3. Continue Phase 1 by moving more dependent non-type argument creation sites to one canonical helper/carrier rather than rebuilding `is_value` / `is_dependent` state ad hoc.
+- Completed in this slice:
+  - fixed the struct-local type alias static-initializer bug by teaching `ExpressionSubstitutor`
+    to resolve `QualifiedIdentifierNode` namespaces like `constant_type` through the current
+    instantiated owner type before falling back to template-name parsing
+  - threaded the current instantiated owner type name into the static-member substitution paths in
+    `Parser_Templates_Inst_ClassTemplate.cpp` and `Parser_Templates_Lazy.cpp`
+  - added `tests/test_struct_local_alias_static_init_ret0.cpp`
+  - Fixed hash drift in `ValueArgKey::hash()` (`src/TemplateTypes.h:200`): changed
+    `std::hash<uint32_t>{}(dependent_name.handle)` to `std::hash<StringHandle>{}(dependent_name)`
+    so both `TemplateTypeArg::hash()` and `ValueArgKey::hash()` use the same hash strategy for
+    dependent names (Phase 1 canonicalization).
+  - Added `tests/test_toplevel_alias_chain_nontype_ret42.cpp` — covers top-level `using` alias
+    chain with bool/int non-type template arguments (`bool_constant<true/false>` accessed through
+    `true_type`/`false_type` aliases and `cond_val<B>`).
+  - removed the fixed struct-local alias static-init issue from `docs/KNOWN_ISSUES.md`
+- Validation: `make main CXX=clang++` and `bash tests/run_all_tests.sh` — 1945 pass, 0 fail.
+- Recommended next steps (priority order):
+  1. Reuse `resolveAliasTemplateInstantiation(...)` from the general type-specifier alias-template
+     path so alias materialization stops diverging between alias declarations and ordinary type
+     parsing.
+  2. Collapse the remaining alias/class instantiation fallback logic in `ExpressionSubstitutor.cpp`
+     onto the same structured helper result instead of open-coded name recovery.
+  3. Continue Phase 1: extract `materialize_placeholder_args` lambda
+     (`src/Parser_Templates_Inst_Deduction.cpp:2059-2178`) to a `Parser` member function (template
+     on `ParamContainer`/`ArgContainer` like the existing `resolveBaseInitializerNameForTemplateArgs`).
 
 ---
 

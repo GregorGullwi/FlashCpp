@@ -81,6 +81,10 @@ public:
 	/// @return A new expression with template parameters substituted
 	ASTNode substitute(const ASTNode& expr);
 
+	void setCurrentOwnerTypeName(StringHandle owner_type_name) {
+		current_owner_type_name_ = owner_type_name;
+	}
+
 private:
 	// Handlers for different expression types
 	ASTNode substituteConstructorCall(const ConstructorCallNode& ctor);
@@ -118,4 +122,5 @@ private:
 	const std::unordered_map<StringHandle, std::vector<TemplateTypeArg>, TransparentStringHash, std::equal_to<>> pack_map_;
 	Parser& parser_;
 	const std::vector<std::string_view> template_param_order_;
+	StringHandle current_owner_type_name_{};
 };

@@ -915,6 +915,7 @@ bool Parser::instantiateLazyStaticMember(StringHandle instantiated_class_name, S
 
 			if (!param_map.empty()) {
 				ExpressionSubstitutor substitutor(param_map, *this);
+				substitutor.setCurrentOwnerTypeName(struct_info->getName());
 				substituted_initializer = substitutor.substitute(lazy_info.initializer.value());
 				FLASH_LOG(Templates, Debug, "Applied general template parameter substitution to lazy static member initializer");
 			}

@@ -1047,6 +1047,39 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 		}
 	}
 
+	if (current_owner_type_name_.isValid() && !ns_name.empty()) {
+		StringHandle qualified_alias_handle = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(current_owner_type_name_)
+				.append("::")
+				.append(ns_name)
+				.commit());
+		auto alias_it = getTypesByNameMap().find(qualified_alias_handle);
+		if (alias_it != getTypesByNameMap().end() && alias_it->second != nullptr) {
+			const TypeInfo* alias_info = alias_it->second;
+			ResolvedAliasTypeInfo resolved_alias = resolveAliasTypeInfo(
+				alias_info->registeredTypeIndex().withCategory(alias_info->typeEnum()));
+			const TypeInfo* resolved_type_info = resolved_alias.terminal_type_info;
+			if (!resolved_type_info && resolved_alias.type_index.is_valid()) {
+				resolved_type_info = tryGetTypeInfo(resolved_alias.type_index);
+			}
+			if (resolved_type_info != nullptr) {
+				StringHandle resolved_name_handle = resolved_type_info->name();
+				NamespaceHandle new_ns_handle = gNamespaceRegistry.getOrCreateNamespace(
+					NamespaceRegistry::GLOBAL_NAMESPACE,
+					resolved_name_handle);
+				QualifiedIdentifierNode& new_qual_id = gChunkedAnyStorage.emplace_back<QualifiedIdentifierNode>(
+					new_ns_handle,
+					qual_id.identifier_token());
+				FLASH_LOG(Templates, Debug, "  Resolved struct-local alias namespace '", ns_name,
+						  "' -> ", StringTable::getStringView(resolved_name_handle),
+						  " in owner ", StringTable::getStringView(current_owner_type_name_));
+				ExpressionNode& new_expr = gChunkedAnyStorage.emplace_back<ExpressionNode>(new_qual_id);
+				return ASTNode(&new_expr);
+			}
+		}
+	}
+
 	// Check if the namespace name contains template parameters (hash-based naming)
 	std::string_view base_template_name = extractBaseTemplateName(ns_name);
 	if (base_template_name.empty()) {

@@ -449,6 +449,7 @@ static std::optional<NormalizedInitializer> tryEarlyNormalizeTemplateStaticMembe
 		}
 		if (!param_map.empty()) {
 			ExpressionSubstitutor substitutor(param_map, *parser);
+			substitutor.setCurrentOwnerTypeName(struct_info->getName());
 			initializer = substitutor.substitute(initializer.value());
 		}
 	}
@@ -2715,6 +2716,7 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						// Use ExpressionSubstitutor to substitute template parameters in the initializer
 						if (!param_map.empty()) {
 							ExpressionSubstitutor substitutor(param_map, *this, template_param_order);
+							substitutor.setCurrentOwnerTypeName(struct_info->getName());
 							substituted_initializer = substitutor.substitute(static_member.initializer.value());
 							FLASH_LOG(Templates, Debug, "Substituted template parameters in static member initializer");
 						}
