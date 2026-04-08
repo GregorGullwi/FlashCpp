@@ -775,6 +775,13 @@ std::optional<std::vector<TemplateTypeArg>> Parser::parse_explicit_template_argu
 						dependent_arg.type_index = nativeTypeIndex(TypeCategory::Bool);	// noexcept, sizeof, alignof return bool/size_t
 						dependent_arg.is_value = true;  // This is a non-type (value) template argument
 						dependent_arg.is_dependent = true;
+						if (std::holds_alternative<IdentifierNode>(expr)) {
+							const auto& id = std::get<IdentifierNode>(expr);
+							dependent_arg.dependent_name = StringTable::getOrInternStringHandle(id.name());
+						} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+							const auto& qual_id = std::get<QualifiedIdentifierNode>(expr);
+							dependent_arg.dependent_name = StringTable::getOrInternStringHandle(qual_id.full_name());
+						}
 
 						// Check for pack expansion (...)
 						if (peek() == "..."_tok) {

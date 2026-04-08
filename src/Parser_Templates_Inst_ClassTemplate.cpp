@@ -4233,6 +4233,19 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 						} else {
 							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted unary operator");
 						}
+					} else if (std::holds_alternative<QualifiedIdentifierNode>(expr)) {
+						FLASH_LOG(Templates, Debug, "Processing QualifiedIdentifierNode in deferred base argument");
+						ExpressionSubstitutor substitutor(name_substitution_map, *this, template_param_order);
+						ASTNode substituted_node = substitutor.substitute(arg_info.node);
+						if (auto value = try_evaluate_constant_expression(substituted_node)) {
+							FLASH_LOG_FORMAT(Templates, Debug, "Evaluated substituted qualified identifier to value {}", value->value);
+							TemplateTypeArg val_arg(value->value, value->type);
+							val_arg.is_pack = arg_info.is_pack;
+							resolved_args.push_back(val_arg);
+							continue;
+						} else {
+							FLASH_LOG(Templates, Debug, "Failed to evaluate substituted qualified identifier");
+						}
 					} else {
 						// Try to evaluate non-type template argument after substitution
 						if (auto value = try_evaluate_constant_expression(arg_info.node)) {
