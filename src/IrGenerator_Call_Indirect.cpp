@@ -264,7 +264,12 @@ ExprResult AstToIr::generateMemberFunctionCallIr(const CallExprNode& callExprNod
 		if (sema_ && sema_normalized_current_function_) {
 			callee_type = sema_->getExpressionType(object_node);
 		}
-		if (!callee_type.has_value() && parser_) {
+		const bool needs_parser_callee_recovery =
+			!callee_type.has_value() ||
+			(callee_type->category() != TypeCategory::Struct &&
+			 !callee_type->is_function_pointer() &&
+			 !callee_type->has_function_signature());
+		if (needs_parser_callee_recovery && parser_) {
 			callee_type = parser_->get_expression_type(object_node);
 		}
 		if (!callee_type.has_value()) {
