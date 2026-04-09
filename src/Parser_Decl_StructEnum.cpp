@@ -519,15 +519,15 @@ ParseResult Parser::parse_struct_declaration_with_specs(bool pre_is_constexpr, b
 					return ParseResult::error("Expected member name after ::", current_token_);
 				}
 				auto post_info = *post_info_opt;
-					if (!post_info.member_type_chain.empty()) {
-						StringBuilder member_chain_builder;
-						for (StringHandle member_name : post_info.member_type_chain) {
-							member_chain_builder.append("::");
-							member_chain_builder.append(StringTable::getStringView(member_name));
-						}
-						std::string_view member_chain = member_chain_builder.commit();
-						FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", base_class_name, member_chain);
+				if (!post_info.member_type_chain.empty()) {
+					StringBuilder member_chain_builder;
+					for (StringHandle member_name : post_info.member_type_chain) {
+						member_chain_builder.append("::");
+						member_chain_builder.append(StringTable::getStringView(member_name));
 					}
+					std::string_view member_chain = member_chain_builder.commit();
+					FLASH_LOG_FORMAT(Templates, Debug, "Found member type access after template args: {}{}", base_class_name, member_chain);
+				}
 
 				// Check if any template arguments are dependent
 				// This includes both explicit dependent flags AND types whose names contain template parameters

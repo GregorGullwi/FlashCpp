@@ -234,7 +234,13 @@ std::vector<TemplateTypeArg> ExpressionSubstitutor::collectCurrentBoundTemplateA
 			if (pack_it != pack_map_.end()) {
 				bound_args.insert(bound_args.end(), pack_it->second.begin(), pack_it->second.end());
 				++pack_bindings_consumed;
+				continue;
 			}
+			throw InternalError(
+				"ExpressionSubstitutor missing binding for ordered template parameter '" +
+				std::string(param_name) +
+				"' while collecting bound args for " +
+				std::string(use_site));
 		}
 		if (scalar_bindings_consumed != param_map_.size() || pack_bindings_consumed != pack_map_.size()) {
 			throw InternalError("ExpressionSubstitutor missing template parameter order entries while collecting bound args for " + std::string(use_site));
@@ -1162,6 +1168,20 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					if (!base_template_name.empty()) {
 						std::vector<TemplateTypeArg> current_inst_args =
 							collectCurrentBoundTemplateArgs("ExpressionSubstitutor::substituteQualifiedIdentifier");
+						StringHandle dependent_base_handle =
+							StringTable::getOrInternStringHandle(dependent_base_name);
+						auto dependent_base_it = getTypesByNameMap().find(dependent_base_handle);
+						if (dependent_base_it != getTypesByNameMap().end() &&
+							dependent_base_it->second != nullptr &&
+							dependent_base_it->second->isTemplateInstantiation()) {
+							MaterializedStoredTemplateArgs concrete_base_args =
+								materializeStoredTemplateArgs(
+									*dependent_base_it->second,
+									/*evaluate_dependent_member_values=*/true);
+							if (!concrete_base_args.args.empty()) {
+								current_inst_args = std::move(concrete_base_args.args);
+							}
+						}
 						if (!current_inst_args.empty()) {
 							Parser::AliasTemplateMaterializationResult materialized_alias_base =
 								parser_.materializeTemplateInstantiationForLookup(

@@ -244,6 +244,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializeTemplateInstantiat
 const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 	const TypeSpecifierNode& alias_type_spec,
 	TypeIndex fallback_type_index,
+	const InlineVector<ASTNode, 4>& template_params,
 	const std::vector<TemplateTypeArg>& template_args) {
 	const TypeInfo* original_alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
 	if (!original_alias_target_info) {
@@ -269,10 +270,12 @@ const TypeInfo* Parser::materializeInstantiatedMemberAliasTarget(
 
 	std::string_view base_template_name =
 		StringTable::getStringView(dependent_base_info->baseTemplateName());
+	std::vector<TemplateTypeArg> concrete_base_args =
+		materializeTemplateArgs(*dependent_base_info, template_params, template_args);
 	AliasTemplateMaterializationResult materialized_alias_base =
 		materializeTemplateInstantiationForLookup(
 			base_template_name,
-			template_args);
+			concrete_base_args);
 	if (materialized_alias_base.instantiated_name.empty()) {
 		return nullptr;
 	}
@@ -1147,6 +1150,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	}
 
 	StructDeclarationNode& spec_struct = spec_node.as<StructDeclarationNode>();
+	InlineVector<ASTNode, 4> no_template_params;
 
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {
@@ -1225,6 +1229,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 					materializeInstantiatedMemberAliasTarget(
 						alias_type_spec,
 						alias_target_index,
+						no_template_params,
 						template_args);
 				concrete_member_info != nullptr) {
 				alias_target_index =
