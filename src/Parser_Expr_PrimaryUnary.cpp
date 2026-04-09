@@ -724,6 +724,41 @@ ParseResult Parser::parse_unary_expression(ExpressionContext context) {
 		// Parse the expression inside noexcept(...)
 		ParseResult expr_result = parse_expression(DEFAULT_PRECEDENCE, ExpressionContext::Normal);
 		if (expr_result.is_error()) {
+			if (parsing_template_depth_ > 0 || !current_template_param_names_.empty()) {
+				FLASH_LOG(Templates, Debug, "Recovering dependent noexcept operand after parse failure");
+				int paren_depth = 1;
+				while (!current_token_.kind().is_eof() && paren_depth > 0) {
+					if (current_token_.type() == Token::Type::Punctuator) {
+						if (current_token_.value() == "(") {
+							++paren_depth;
+						} else if (current_token_.value() == ")") {
+							--paren_depth;
+						}
+					}
+					advance();
+				}
+				if (paren_depth != 0) {
+					return ParseResult::error("Expected ')' after noexcept expression", current_token_);
+				}
+
+				static size_t dependent_noexcept_counter = 0;
+				std::string placeholder_name = std::string(
+					StringBuilder()
+						.append("__dependent_noexcept_expr_")
+						.append(++dependent_noexcept_counter)
+						.commit());
+				StringHandle placeholder_handle = StringTable::getOrInternStringHandle(placeholder_name);
+				Token placeholder_token(
+					Token::Type::Identifier,
+					placeholder_handle.view(),
+					noexcept_token.line(),
+					noexcept_token.column(),
+					noexcept_token.file_index());
+				auto placeholder_expr = emplace_node<ExpressionNode>(
+					TemplateParameterReferenceNode(placeholder_handle, placeholder_token));
+				auto noexcept_expr = emplace_node<ExpressionNode>(NoexceptExprNode(placeholder_expr, noexcept_token));
+				return ParseResult::success(noexcept_expr);
+			}
 			return ParseResult::error("Expected expression after 'noexcept('", current_token_);
 		}
 
