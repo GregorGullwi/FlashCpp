@@ -614,6 +614,7 @@ Parser::AliasTemplateMaterializationResult Parser::materializePrimaryTemplateOwn
 		if (instantiated.has_value() && instantiated->is<StructDeclarationNode>()) {
 			result.instantiated_name = StringTable::getStringView(
 				instantiated->as<StructDeclarationNode>().name());
+			result.instantiated_struct_node = instantiated;
 		} else {
 			result.instantiated_name =
 				get_instantiated_class_name(candidate_name, completed_args);
@@ -4247,6 +4248,11 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										identifier_token.value(),
 										{},
 										*explicit_template_args);
+								// Register instantiated struct for late materialization so member function bodies get generated
+								if (materialized_owner.instantiated_struct_node.has_value() &&
+									materialized_owner.instantiated_struct_node->is<StructDeclarationNode>()) {
+									registerLateMaterializedTopLevelNode(*materialized_owner.instantiated_struct_node);
+								}
 								std::string_view instantiated_type_name = materialized_owner.instantiated_name;
 								const TypeInfo* instantiated_type_info = materialized_owner.resolved_type_info;
 								if (instantiated_type_name.empty()) {
