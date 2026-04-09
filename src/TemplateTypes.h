@@ -137,6 +137,7 @@ struct TypeIndexArg {
 			   (!function_signature.has_value() ||
 				equalFunctionSignatureIdentity(*function_signature, *other.function_signature)) &&
 			   is_dependent == other.is_dependent &&
+			   // dependent_name only contributes when the arg is still dependent.
 			   (!is_dependent || dependent_name == other.dependent_name);
 	}
 
