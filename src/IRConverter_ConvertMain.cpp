@@ -7282,6 +7282,12 @@ void IrToObjConverter<TWriterClass>::handleFunctionDecl(const IrInstruction& ins
 						for (size_t i = 0; i < base_struct_info->vtable.size(); ++i) {
 							const StructMemberFunction* vfunc = base_struct_info->vtable[i];
 							const StructMemberFunction* selected_vfunc = vfunc;
+							// TODO: Destructor entries in secondary vtables need a virtual thunk
+							// that adjusts 'this' by -offset_to_top before calling the most-derived
+							// destructor. Without thunks, polymorphic deletion through a non-primary
+							// base pointer will invoke the wrong destructor. This requires the same
+							// thunk generation infrastructure needed for covariant return types
+							// (see docs/REMAINING_ISSUES_PLAN.md, Issue 3a).
 							if (vfunc && !vfunc->is_destructor) {
 								for (const auto& candidate : struct_info->member_functions) {
 									if ((candidate.is_virtual || candidate.is_override) &&
