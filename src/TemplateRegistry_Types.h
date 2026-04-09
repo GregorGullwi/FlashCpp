@@ -317,7 +317,8 @@ struct TemplateTypeArg {
 			  member_pointer_kind == other.member_pointer_kind &&
 			  is_value == other.is_value &&
 			  is_dependent == other.is_dependent &&
-			  dependent_name == other.dependent_name &&
+			  // dependent_name only contributes when the arg is still dependent.
+			  (!is_dependent || dependent_name == other.dependent_name) &&
 			  (!is_value || value == other.value) &&
 			  is_template_template_arg == other.is_template_template_arg &&
 			  (!is_template_template_arg || template_name_handle == other.template_name_handle)))
