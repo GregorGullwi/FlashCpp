@@ -1145,23 +1145,20 @@ TypeIndex Parser::substitute_template_parameter(
 				}
 
 				const std::string_view base_template_name = type_name.substr(0, param_pos - 1);
-				auto template_opt = gTemplateRegistry.lookupTemplate(base_template_name);
-				if (!template_opt.has_value() || !template_opt->is<TemplateClassDeclarationNode>()) {
-					return;
-				}
-
 				FLASH_LOG(Templates, Debug, "substitute_template_parameter: '", type_name,
 						  "' is a dependent placeholder for template '", base_template_name, "' - instantiating with concrete args");
 
-				instantiateAndNormalize(
-					base_template_name,
-					template_args,
-					/*force_eager=*/false);
-				const std::string_view instantiated_name = get_instantiated_class_name(base_template_name, template_args);
-				if (const TypeInfo* resolved_type_info = lookupTypeInfoByName(instantiated_name)) {
+				std::vector<TemplateTypeArg> concrete_args(template_args.begin(), template_args.end());
+				if (!areTemplateArgsConcrete(concrete_args)) {
+					return;
+				}
+
+				AliasTemplateMaterializationResult materialized_type =
+					materializeTemplateInstantiationForLookup(base_template_name, concrete_args);
+				if (const TypeInfo* resolved_type_info = materialized_type.resolved_type_info) {
 					assignResolvedType(*resolved_type_info);
 					substitution_applied = true;
-					FLASH_LOG(Templates, Debug, "  Resolved to '", instantiated_name, "' (type_index=", current_type_index, ")");
+					FLASH_LOG(Templates, Debug, "  Resolved to '", materialized_type.instantiated_name, "' (type_index=", current_type_index, ")");
 				}
 			});
 	}
