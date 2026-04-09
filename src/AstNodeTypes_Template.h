@@ -808,11 +808,17 @@ public:
 
 	void add_deferred_template_base_class(StringHandle base_template_name,
 										  std::vector<TemplateArgumentNodeInfo> args,
-										  std::optional<StringHandle> member_type,
+										  std::vector<StringHandle> member_type_chain,
 										  AccessSpecifier access,
 										  bool is_virtual = false,
 										  bool is_pack_expansion = false) {
-		deferred_template_base_classes_.emplace_back(base_template_name, std::move(args), member_type, access, is_virtual, is_pack_expansion);
+		deferred_template_base_classes_.emplace_back(
+			base_template_name,
+			std::move(args),
+			std::move(member_type_chain),
+			access,
+			is_virtual,
+			is_pack_expansion);
 	}
 
 	void add_member_function(ASTNode function_decl, AccessSpecifier access,

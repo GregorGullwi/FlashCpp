@@ -1148,6 +1148,47 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 
 	// Helper lambda to register type aliases with qualified names
 	auto register_type_aliases = [&]() {
+		auto resolveConcreteSiblingAlias = [&](const TypeSpecifierNode& alias_type_spec) -> const TypeInfo* {
+			if (alias_type_spec.token().type() == Token::Type::Identifier &&
+				!alias_type_spec.token().value().empty()) {
+				StringHandle direct_sibling_handle = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(instantiated_name)
+						.append("::")
+						.append(alias_type_spec.token().value())
+						.commit());
+				auto direct_sibling_it = getTypesByNameMap().find(direct_sibling_handle);
+				if (direct_sibling_it != getTypesByNameMap().end() &&
+					direct_sibling_it->second != nullptr) {
+					return direct_sibling_it->second;
+				}
+			}
+
+			const TypeInfo* alias_target_info = tryGetTypeInfo(alias_type_spec.type_index());
+			if (alias_target_info == nullptr) {
+				return nullptr;
+			}
+
+			std::string_view alias_target_name =
+				StringTable::getStringView(alias_target_info->name());
+			size_t scope_pos = alias_target_name.rfind("::");
+			if (scope_pos == std::string_view::npos) {
+				return nullptr;
+			}
+
+			StringHandle sibling_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::")
+					.append(alias_target_name.substr(scope_pos + 2))
+					.commit());
+			auto sibling_it = getTypesByNameMap().find(sibling_handle);
+			if (sibling_it == getTypesByNameMap().end()) {
+				return nullptr;
+			}
+			return sibling_it->second;
+		};
+
 		for (const auto& type_alias : spec_struct.type_aliases()) {
 			// Build the qualified name using StringBuilder
 			StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(StringBuilder()
@@ -1160,6 +1201,24 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 			TypeIndex alias_target_index = alias_type_spec.type_index();
 			int alias_size_bits = alias_type_spec.size_in_bits();
 			TypeSpecifierNode alias_registration_type_spec = alias_type_spec;
+			if (const TypeInfo* concrete_sibling_alias =
+					resolveConcreteSiblingAlias(alias_type_spec);
+				concrete_sibling_alias != nullptr) {
+				alias_target_index =
+					concrete_sibling_alias->registeredTypeIndex().withCategory(
+						concrete_sibling_alias->typeEnum());
+				alias_size_bits = concrete_sibling_alias->sizeInBits().value;
+				if (const TypeSpecifierNode* concrete_alias_spec =
+						concrete_sibling_alias->aliasTypeSpecifier()) {
+					alias_registration_type_spec = *concrete_alias_spec;
+				} else {
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(
+						concrete_sibling_alias->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						concrete_sibling_alias->sizeInBits());
+				}
+			}
 			if (const TypeInfo* concrete_member_info =
 					materializeInstantiatedMemberAliasTarget(
 						alias_type_spec,
@@ -1215,6 +1274,90 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 					  ", type_index=", alias_target_index);
 		}
 	};
+	auto register_nested_class_aliases = [&]() {
+		for (const auto& nested_class : spec_struct.nested_classes()) {
+			if (!nested_class.is<StructDeclarationNode>()) {
+				continue;
+			}
+
+			const StructDeclarationNode& nested_struct =
+				nested_class.as<StructDeclarationNode>();
+			std::string_view original_nested_name = StringBuilder()
+				.append(StringTable::getStringView(spec_struct.name()))
+				.append("::")
+				.append(nested_struct.name())
+				.commit();
+			auto original_nested_it = getTypesByNameMap().find(
+				StringTable::getOrInternStringHandle(original_nested_name));
+			if (original_nested_it == getTypesByNameMap().end() ||
+				original_nested_it->second == nullptr) {
+				continue;
+			}
+
+			const TypeInfo* original_nested_info = original_nested_it->second;
+			StringHandle qualified_nested_name = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(instantiated_name)
+					.append("::")
+					.append(nested_struct.name())
+					.commit());
+			if (getTypesByNameMap().find(qualified_nested_name) ==
+				getTypesByNameMap().end()) {
+				TypeIndex nested_target_index =
+					original_nested_info->registeredTypeIndex().withCategory(
+						original_nested_info->typeEnum());
+				TypeSpecifierNode nested_alias_spec(
+					nested_target_index,
+					original_nested_info->sizeInBits(),
+					Token(),
+					CVQualifier::None,
+					ReferenceQualifier::None);
+				TypeInfo& nested_alias_info = add_type_alias_copy(
+					qualified_nested_name,
+					nested_target_index,
+					original_nested_info->sizeInBits().value,
+					nested_alias_spec);
+				getTypesByNameMap().insert_or_assign(
+					qualified_nested_name,
+					&nested_alias_info);
+			}
+
+			for (const auto& type_alias : nested_struct.type_aliases()) {
+				StringHandle qualified_alias_name = StringTable::getOrInternStringHandle(
+					StringBuilder()
+						.append(StringTable::getStringView(qualified_nested_name))
+						.append("::")
+						.append(type_alias.alias_name)
+						.commit());
+				const TypeSpecifierNode& alias_type_spec =
+					type_alias.type_node.as<TypeSpecifierNode>();
+				TypeIndex alias_target_index = alias_type_spec.type_index();
+				TypeSpecifierNode alias_registration_type_spec = alias_type_spec;
+				if (const TypeInfo* alias_target_info = tryGetTypeInfo(alias_target_index);
+					alias_target_info != nullptr &&
+					StringTable::getStringView(alias_target_info->name()) ==
+						original_nested_name) {
+					alias_target_index =
+						original_nested_info->registeredTypeIndex().withCategory(
+							original_nested_info->typeEnum());
+					alias_registration_type_spec.set_type_index(alias_target_index);
+					alias_registration_type_spec.set_category(
+						original_nested_info->typeEnum());
+					alias_registration_type_spec.set_size_in_bits(
+						original_nested_info->sizeInBits());
+				}
+
+				TypeInfo& alias_type_info = add_type_alias_copy(
+					qualified_alias_name,
+					alias_target_index,
+					alias_registration_type_spec.size_in_bits(),
+					alias_registration_type_spec);
+				getTypesByNameMap().insert_or_assign(
+					qualified_alias_name,
+					&alias_type_info);
+			}
+		}
+	};
 
 	// Check if we already have this instantiation
 	auto existing_type = getTypesByNameMap().find(StringTable::getOrInternStringHandle(instantiated_name));
@@ -1224,6 +1367,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 		// Even if the struct is already instantiated, we need to register type aliases
 		// with qualified names if they haven't been registered yet
 		register_type_aliases();
+		register_nested_class_aliases();
 
 		return std::nullopt;	 // Already instantiated
 	}
@@ -1336,6 +1480,7 @@ std::optional<ASTNode> Parser::instantiate_full_specialization(
 	// Copy type aliases from the specialization
 	// Type aliases need to be registered with qualified names (e.g., "MyType_bool::type")
 	register_type_aliases();
+	register_nested_class_aliases();
 
 	// Check if there's an explicit constructor - if not, we need to generate a default one
 	bool has_constructor = false;

@@ -265,7 +265,7 @@ struct QualifiedIdParseResult {
 // Result of consuming ::member type access and ... pack expansion after template arguments
 // in a base class specifier. Shared across all base class parsing sites.
 struct BaseClassPostTemplateInfo {
-	std::optional<StringHandle> member_type_name;
+	std::vector<StringHandle> member_type_chain;
 	std::optional<Token> member_name_token;
 	bool is_pack_expansion = false;
 };
@@ -1564,6 +1564,9 @@ private:	 // Resume private methods
 		// Centralizes the parsing so all call sites get consistent behavior.
 		// Returns std::nullopt if '::' is found but not followed by an identifier (parse error).
 	std::optional<BaseClassPostTemplateInfo> consume_base_class_qualifiers_after_template_args();
+	const TypeInfo* resolveBaseClassMemberTypeChain(
+		std::string_view base_class_name,
+		const std::vector<StringHandle>& member_type_chain);
 
 		// Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.
 		// Shared across all base class deferral sites.

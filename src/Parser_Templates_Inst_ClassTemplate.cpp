@@ -4429,43 +4429,29 @@ std::optional<ASTNode> Parser::try_instantiate_class_template(std::string_view t
 			}
 
 			std::string_view final_base_name = base_template_name;
-			if (deferred_base.member_type.has_value()) {
-				std::string_view member_name = StringTable::getStringView(*deferred_base.member_type);
-
-				StringBuilder alias_builder;
-				alias_builder.append(base_template_name);
-				static constexpr std::string_view kScopeSeparator = "::"sv;
-				alias_builder.append(kScopeSeparator);
-				alias_builder.append(member_name);
-				std::string_view alias_name = alias_builder.commit();
-
-				auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
-				if (alias_it == getTypesByNameMap().end()) {
-					// Try looking up through inheritance (e.g., __or_<...>::type where type is inherited)
-					const TypeInfo* inherited_alias = lookup_inherited_type_alias(base_template_name, member_name);
-					if (inherited_alias == nullptr) {
-						// This can happen when templates are instantiated with void/dependent arguments
-						// during template metaprogramming (e.g., SFINAE). The code may still compile
-						// and run correctly, so log at Debug level rather than Error.
-						FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ", alias_name,
-								  " (this may be expected for SFINAE/dependent template arguments)");
-						continue;
+			if (!deferred_base.member_type_chain.empty()) {
+				const TypeInfo* resolved_type =
+					resolveBaseClassMemberTypeChain(base_template_name, deferred_base.member_type_chain);
+				if (resolved_type == nullptr) {
+					StringBuilder unresolved_base_builder;
+					unresolved_base_builder.append(base_template_name);
+					for (StringHandle member_name : deferred_base.member_type_chain) {
+						unresolved_base_builder.append("::");
+						unresolved_base_builder.append(StringTable::getStringView(member_name));
 					}
-					// The inherited_alias is a type alias - resolve it to the underlying type
-					// If type_index_ is valid, use it to get the actual type name
-					if (const TypeInfo* underlying_type = tryGetTypeInfo(inherited_alias->type_index_)) {
-						final_base_name = StringTable::getStringView(underlying_type->name());
-					} else {
-						// Fallback: use the alias name if type_index is invalid
-						final_base_name = StringTable::getStringView(inherited_alias->name());
-					}
-					struct_info->addBaseClass(final_base_name, inherited_alias->type_index_, deferred_base.access, deferred_base.is_virtual);
-					FLASH_LOG_FORMAT(Templates, Debug, "Resolved deferred inherited member alias base to {}", final_base_name);
+					std::string_view unresolved_base_name = unresolved_base_builder.commit();
+					FLASH_LOG(Templates, Debug, "Deferred template base alias not found: ",
+							  unresolved_base_name,
+							  " (this may be expected for SFINAE/dependent template arguments)");
 					continue;
 				}
 
-				final_base_name = alias_name;
-				struct_info->addBaseClass(final_base_name, alias_it->second->type_index_, deferred_base.access, deferred_base.is_virtual);
+				final_base_name = StringTable::getStringView(resolved_type->name());
+				struct_info->addBaseClass(
+					final_base_name,
+					resolved_type->type_index_,
+					deferred_base.access,
+					deferred_base.is_virtual);
 				continue;
 			}
 

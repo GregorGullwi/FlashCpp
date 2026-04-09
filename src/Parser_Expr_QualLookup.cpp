@@ -625,10 +625,10 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 	// In this parser, peek() returns current_token_.kind(), so peek() == "::"_tok
 	// is equivalent to this check. We advance() past '::' first, then check
 	// the new current_token_ for the member name.
-	if (peek() == "::"_tok) {
+	while (peek() == "::"_tok) {
 		advance(); // consume ::, now current_token_ is the token after ::
 		if (current_token_.kind().is_identifier()) {
-			info.member_type_name = current_token_.handle();
+			info.member_type_chain.push_back(current_token_.handle());
 			info.member_name_token = current_token_;
 			advance(); // consume member name
 		} else {
@@ -645,6 +645,80 @@ std::optional<BaseClassPostTemplateInfo> Parser::consume_base_class_qualifiers_a
 	}
 
 	return info;
+}
+
+const TypeInfo* Parser::resolveBaseClassMemberTypeChain(
+	std::string_view base_class_name,
+	const std::vector<StringHandle>& member_type_chain) {
+	if (member_type_chain.empty()) {
+		return findTypeByName(StringTable::getOrInternStringHandle(base_class_name));
+	}
+
+	const TypeInfo* resolved_type = nullptr;
+	std::string_view current_base_name = base_class_name;
+	for (StringHandle member_name_handle : member_type_chain) {
+		std::string_view member_name = StringTable::getStringView(member_name_handle);
+		StringHandle qualified_member_handle = StringTable::getOrInternStringHandle(
+			StringBuilder()
+				.append(current_base_name)
+				.append("::")
+				.append(member_name)
+				.commit());
+
+		auto alias_it = getTypesByNameMap().find(qualified_member_handle);
+		resolved_type =
+			alias_it != getTypesByNameMap().end() ? alias_it->second : nullptr;
+		if (resolved_type == nullptr) {
+			resolved_type = lookup_inherited_type_alias(current_base_name, member_name);
+		}
+		if (resolved_type == nullptr) {
+			return nullptr;
+		}
+
+		size_t max_alias_depth = 10;
+		while (max_alias_depth-- > 0) {
+			const TypeInfo* underlying = tryGetTypeInfo(resolved_type->type_index_);
+			if (underlying == nullptr || underlying == resolved_type) {
+				break;
+			}
+
+			FLASH_LOG_FORMAT(
+				Templates,
+				Debug,
+				"Resolving base member alias '{}::{}' -> underlying type_index={}, type={}",
+				current_base_name,
+				member_name,
+				resolved_type->type_index_,
+				static_cast<int>(underlying->category()));
+
+			resolved_type = underlying;
+			if (underlying->isStruct()) {
+				break;
+			}
+		}
+
+		const std::string_view resolved_name =
+			StringTable::getStringView(resolved_type->name());
+		if (size_t scope_pos = resolved_name.rfind("::");
+			scope_pos != std::string_view::npos &&
+			resolved_name.substr(0, scope_pos) != current_base_name) {
+			StringHandle concrete_nested_handle = StringTable::getOrInternStringHandle(
+				StringBuilder()
+					.append(current_base_name)
+					.append("::")
+					.append(resolved_name.substr(scope_pos + 2))
+					.commit());
+			auto concrete_nested_it = getTypesByNameMap().find(concrete_nested_handle);
+			if (concrete_nested_it != getTypesByNameMap().end() &&
+				concrete_nested_it->second != nullptr) {
+				resolved_type = concrete_nested_it->second;
+			}
+		}
+
+		current_base_name = StringTable::getStringView(resolved_type->name());
+	}
+
+	return resolved_type;
 }
 
 // Helper: Build TemplateArgumentNodeInfo vector from parsed template args and AST nodes.

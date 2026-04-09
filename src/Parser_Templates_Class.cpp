@@ -1424,7 +1424,7 @@ ParseResult Parser::parse_template_declaration() {
 					std::string_view base_class_name = base_class_name_builder.commit();
 					std::vector<ASTNode> template_arg_nodes;
 					std::optional<std::vector<TemplateTypeArg>> base_template_args_opt;
-					std::optional<StringHandle> member_type_name;
+					std::vector<StringHandle> member_type_chain;
 					std::optional<Token> member_name_token;
 
 					// Check if this is a template base class (e.g., Base<T>)
@@ -1441,7 +1441,7 @@ ParseResult Parser::parse_template_declaration() {
 							return ParseResult::error("Expected member name after ::", current_token_);
 						}
 						auto post_info = *post_info_opt;
-						member_type_name = post_info.member_type_name;
+						member_type_chain = post_info.member_type_chain;
 						member_name_token = post_info.member_name_token;
 
 						std::vector<TemplateTypeArg> base_template_args = *base_template_args_opt;
@@ -1462,7 +1462,7 @@ ParseResult Parser::parse_template_declaration() {
 							auto arg_infos = build_template_arg_infos(base_template_args, template_arg_nodes);
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
 							continue;  // Skip to next base class or exit loop
 						}
 
@@ -1473,19 +1473,22 @@ ParseResult Parser::parse_template_declaration() {
 						}
 
 						// Resolve member type alias if present (e.g., Base<T>::type)
-						if (member_type_name.has_value()) {
-							StringBuilder qualified_builder;
-							qualified_builder.append(base_class_name);
-							qualified_builder.append("::"sv);
-							qualified_builder.append(StringTable::getStringView(*member_type_name));
-							std::string_view alias_name = qualified_builder.commit();
-
-							auto alias_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(alias_name));
-							if (alias_it == getTypesByNameMap().end()) {
-								return ParseResult::error("Base class '" + std::string(alias_name) + "' not found", member_name_token.value_or(base_name_token));
+						if (!member_type_chain.empty()) {
+							const TypeInfo* resolved_type =
+								resolveBaseClassMemberTypeChain(base_class_name, member_type_chain);
+							if (resolved_type == nullptr) {
+								std::string_view unresolved_base_name = base_class_name;
+								for (StringHandle member_name : member_type_chain) {
+									unresolved_base_name = StringBuilder()
+										.append(unresolved_base_name)
+										.append("::")
+										.append(StringTable::getStringView(member_name))
+										.commit();
+								}
+								return ParseResult::error("Base class '" + std::string(unresolved_base_name) + "' not found", member_name_token.value_or(base_name_token));
 							}
 
-							base_class_name = alias_name;
+							base_class_name = StringTable::getStringView(resolved_type->name());
 							if (member_name_token.has_value()) {
 								base_name_token = *member_name_token;
 							}
@@ -2860,7 +2863,7 @@ ParseResult Parser::parse_template_declaration() {
 							auto arg_infos = build_template_arg_infos(template_args, template_arg_nodes);
 
 							StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
-							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+							struct_ref.add_deferred_template_base_class(template_name_handle, std::move(arg_infos), std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
 							continue;  // Skip to next base class or exit loop
 						}
 
@@ -4589,7 +4592,7 @@ ParseResult Parser::parse_member_struct_template_base_class_list(
 			StringHandle template_name_handle = StringTable::getOrInternStringHandle(base_class_name);
 			struct_ref.add_deferred_template_base_class(
 				template_name_handle, std::move(arg_infos),
-				post_info.member_type_name, base_access, is_virtual_base, post_info.is_pack_expansion);
+				std::move(post_info.member_type_chain), base_access, is_virtual_base, post_info.is_pack_expansion);
 		} else {
 			// Simple identifier base class – look it up now; defer only if it's a template parameter
 			auto type_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(base_class_name));
