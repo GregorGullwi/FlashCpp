@@ -742,6 +742,51 @@ inline std::string_view generateInstantiatedNameFromArgs(
 
 } // namespace FlashCpp
 
+inline TemplateTypeArg rebindDependentTemplateTypeArg(
+	const TemplateTypeArg& substituted_arg,
+	const TemplateTypeArg& dependent_pattern) {
+	TemplateTypeArg rebound_arg = substituted_arg;
+	rebound_arg.cv_qualifier = static_cast<CVQualifier>(
+		static_cast<uint8_t>(rebound_arg.cv_qualifier) |
+		static_cast<uint8_t>(dependent_pattern.cv_qualifier));
+	rebound_arg.pointer_depth = static_cast<uint8_t>(
+		rebound_arg.pointer_depth + dependent_pattern.pointer_depth);
+	for (const auto& pointer_cv : dependent_pattern.pointer_cv_qualifiers) {
+		rebound_arg.pointer_cv_qualifiers.push_back(pointer_cv);
+	}
+	// Rebinding `T&` / `T&&` must follow ordinary reference-collapsing rules:
+	// an outer lvalue reference always wins, while an outer rvalue reference only
+	// applies when the substituted argument was not already a reference.
+	if (dependent_pattern.ref_qualifier == ReferenceQualifier::LValueReference) {
+		rebound_arg.ref_qualifier = ReferenceQualifier::LValueReference;
+	} else if (dependent_pattern.ref_qualifier == ReferenceQualifier::RValueReference &&
+			   rebound_arg.ref_qualifier == ReferenceQualifier::None) {
+		rebound_arg.ref_qualifier = ReferenceQualifier::RValueReference;
+	}
+	rebound_arg.is_dependent = false;
+	rebound_arg.dependent_name = {};
+	return rebound_arg;
+}
+
+inline TemplateTypeArg rebindDependentTemplateTypeArg(
+	const TemplateTypeArg& substituted_arg,
+	const TypeInfo::TemplateArgInfo& dependent_pattern) {
+	TemplateTypeArg pattern_arg;
+	pattern_arg.type_index = dependent_pattern.type_index;
+	pattern_arg.is_value = dependent_pattern.is_value;
+	pattern_arg.value = dependent_pattern.intValue();
+	pattern_arg.pointer_depth = static_cast<uint8_t>(dependent_pattern.pointer_depth);
+	pattern_arg.pointer_cv_qualifiers = dependent_pattern.pointer_cv_qualifiers;
+	pattern_arg.ref_qualifier = dependent_pattern.ref_qualifier;
+	pattern_arg.cv_qualifier = dependent_pattern.cv_qualifier;
+	pattern_arg.array_size = dependent_pattern.array_size;
+	pattern_arg.is_array = dependent_pattern.is_array;
+	pattern_arg.function_signature = dependent_pattern.function_signature;
+	pattern_arg.dependent_name = dependent_pattern.dependent_name;
+	pattern_arg.is_dependent = dependent_pattern.dependent_name.isValid();
+	return rebindDependentTemplateTypeArg(substituted_arg, pattern_arg);
+}
+
 // Convert a TypeInfo::TemplateArgInfo to a TemplateTypeArg, optionally substituting
 // dependent names from the provided template parameter/argument lists.
 // This is the single authoritative conversion point — all call sites that previously
@@ -772,7 +817,12 @@ inline TemplateTypeArg materializeTemplateArg(
 			if (!template_params[i].template is<TemplateParameterNode>())
 				continue;
 			if (template_params[i].template as<TemplateParameterNode>().name() == dep_name) {
-				concrete_arg = template_args[i];
+				const TemplateTypeArg& substituted_arg = template_args[i];
+				if (!arg_info.is_value && !substituted_arg.is_value) {
+					concrete_arg = rebindDependentTemplateTypeArg(substituted_arg, arg_info);
+				} else {
+					concrete_arg = substituted_arg;
+				}
 				break;
 			}
 		}

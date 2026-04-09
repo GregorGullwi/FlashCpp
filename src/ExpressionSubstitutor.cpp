@@ -1109,7 +1109,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 				std::string_view dep_name = StringTable::getStringView(ta.dependent_name);
 				auto subst_it = param_map_.find(dep_name);
 				if (subst_it != param_map_.end()) {
-					ta = subst_it->second;
+					ta = rebindDependentTemplateTypeArg(subst_it->second, ta);
 					FLASH_LOG(Templates, Debug, "  Substituted dependent arg '", dep_name,
 							  "' -> is_value=", ta.is_value, ", value=", ta.value,
 							  ", type_index=", ta.type_index);
@@ -1159,7 +1159,7 @@ ASTNode ExpressionSubstitutor::substituteQualifiedIdentifier(const QualifiedIden
 					std::string_view arg_type_name = StringTable::getStringView(arg_ti->name());
 					auto subst_it = param_map_.find(arg_type_name);
 					if (subst_it != param_map_.end()) {
-						ta = subst_it->second;
+						ta = rebindDependentTemplateTypeArg(subst_it->second, ta);
 						FLASH_LOG(Templates, Debug, "  Substituted template arg '", arg_type_name,
 								  "' with concrete type_index=", ta.type_index);
 					}
