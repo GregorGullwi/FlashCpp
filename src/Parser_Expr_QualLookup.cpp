@@ -813,16 +813,13 @@ ParseResult Parser::validate_and_add_base_class(
 			std::vector<TemplateTypeArg> no_template_args;
 			std::vector<TemplateTypeArg> concrete_args =
 				materializeTemplateArgs(*base_type_info, no_template_params, no_template_args);
-			std::string_view concrete_base_name = StringTable::getStringView(base_type_info->baseTemplateName());
-			std::string_view instantiated_name =
-				instantiate_and_register_base_template(concrete_base_name, concrete_args);
-			if (!instantiated_name.empty()) {
-				concrete_base_name = instantiated_name;
-			}
-
-			auto concrete_it = getTypesByNameMap().find(StringTable::getOrInternStringHandle(concrete_base_name));
-			if (concrete_it != getTypesByNameMap().end() && concrete_it->second != nullptr) {
-				base_type_info = concrete_it->second;
+			std::string_view concrete_base_name = buildQualifiedNameFromHandle(
+				base_type_info->sourceNamespace(),
+				StringTable::getStringView(base_type_info->baseTemplateName()));
+			AliasTemplateMaterializationResult materialized_base =
+				materializeTemplateInstantiationForLookup(concrete_base_name, concrete_args);
+			if (materialized_base.resolved_type_info != nullptr) {
+				base_type_info = materialized_base.resolved_type_info;
 			}
 		}
 	}
