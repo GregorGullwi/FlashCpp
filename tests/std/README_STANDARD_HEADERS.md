@@ -26,14 +26,14 @@ This directory contains test files for C++ standard library headers to assess Fl
 | `<span>` | `test_std_span.cpp` | ❌ Codegen Error | ~1480ms (targeted retest 2026-04-08). The newer self-referential template member-operator matching fix adds focused regression coverage for pointer/mixed-member layouts, but the libstdc++ `<span>` repro still fails later in the same iterator/ranges stack. Current blockers remain placeholder-sized `move` / `fill_n` parameters, missing `_Extent` symbol recovery in `__extent_storage::_M_extent`, the `bool -> int` constructor-init recovery miss in `__max_size_type`, and a final `Operator-` failure. |
 | `<tuple>` | `test_std_tuple.cpp` | 💥 Crash | ~1960ms (targeted retest 2026-04-06). Deferred `_Tuple_impl<I + 1, Rest...>` base arguments with non-type expressions now substitute/evaluate instead of stopping at the old post-parse `PackExpansionExprNode` boundary, but the current run still falls later into `_Head_base` default-non-type evaluation / repeated deferred-base recursion and segfaults. |
 | `<vector>` | `test_std_vector.cpp` | ❌ Compile Error | ~7830ms (targeted retest 2026-04-03). Base-member lookup is no longer the first stop; the current Linux repro now gets much deeper into `__copy_move_a` / `__copy_move_backward_a` / relocation helpers before failing on non-type deduction gaps, static-assert follow-ons, and a later unknown-type Itanium mangling abort. |
-| `<deque>` | `test_std_deque.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<deque>` | `test_std_deque.cpp` | ❌ Compile Error | ~800ms (targeted retest 2026-04-09). Dependent `decltype(swap(...))` / `noexcept(swap(...))` operands in `bits/move.h` now recover far enough to get past the earlier `type_traits` stop, but `<deque>` currently fails later in `<concepts>` on parsing the alias template `using __cref = const remove_reference_t<_Tp>&;`. |
 | `<list>` | `test_std_list.cpp` | ❌ Codegen Error | member '_M_impl' not found in struct 'std::__cxx11::list' |
 | `<queue>` | `test_std_queue.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
 | `<stack>` | `test_std_stack.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<memory>` | `test_std_memory.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
-| `<functional>` | `test_std_functional.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<memory>` | `test_std_memory.cpp` | ❌ Compile Error | ~1470ms (targeted retest 2026-04-09). Dependent `swap` probes in `type_traits` no longer stop first inside `bits/move.h`; the current blocker is later `<concepts>` parsing on `using __cref = const remove_reference_t<_Tp>&;`. |
+| `<functional>` | `test_std_functional.cpp` | ❌ Compile Error | ~1310ms (targeted retest 2026-04-09). Same new state as `<memory>` / `<deque>`: after the dependent `swap` probe recovery, parsing now advances into `<concepts>` and fails on the alias template `using __cref = const remove_reference_t<_Tp>&;`. |
 | `<map>` | `test_std_map.cpp` | ❌ Codegen Error | member 'first' not found in struct 'std::iterator' |
-| `<set>` | `test_std_set.cpp` | ❌ Codegen Error | Itanium mangling: unresolved 'auto' type reached mangling |
+| `<set>` | `test_std_set.cpp` | ❌ Compile Error | ~1070ms (targeted retest 2026-04-09). Same new state as `<deque>`: the earlier `type_traits` `swap` probe no longer stops first, and parsing now fails later in `<concepts>` on `using __cref = const remove_reference_t<_Tp>&;`. |
 | `<ranges>` | `test_std_ranges.cpp` | 💥 Crash | ~12960ms (targeted retest 2026-04-06). The earlier `streamoff`, `size_t(-1)`, and alias-constructor fixes still hold, and qualified direct-init parsing now also gets past the inherited `std::__str_concat` / `__str` stop from `<string>`. The current Linux repro now crashes later after much deeper `basic_string` / iterator instantiation. |
 | `<iostream>` | `test_std_iostream.cpp` | 💥 Crash | ~4760ms (targeted retest 2026-04-02). The earlier `wmemchr` ambiguity is fixed and it gets much further, but still hits later ranges/string-view issues (`Operator-`, `make_move_iterator`, unresolved `auto`) before crashing in `IROperandHelpers::toIrValue` |
 | `<sstream>` | `test_std_sstream.cpp` | ❌ Codegen Error | char_traits member functions not found during deferred body codegen |
@@ -110,6 +110,10 @@ This directory contains test files for C++ standard library headers to assess Fl
 #### 2026-04-08 Retests
 
 - `<span>` was re-checked after tightening self-referential template member-operator parameter matching so overload lookup no longer keys off raw pattern layout state. The new regression tests cover pointer-member and mixed-member template layouts, but the real `<span>` repro still fails later in codegen on the same iterator/ranges follow-ons (`move` / `fill_n`, `_Extent`, `__max_size_type`, final `Operator-`), so the table entry stays in the codegen-error bucket with the updated timing above.
+
+#### 2026-04-09 Retests
+
+- Added focused recovery for dependent `decltype(swap(...))` / `noexcept(swap(...))` probes plus regression test `tests/test_dependent_swap_decltype_noexcept_ret0.cpp`. With that change, `<memory>`, `<functional>`, `<deque>`, and `<set>` no longer stop first in `bits/move.h` / `type_traits` on the `__is_swappable` / `__is_nothrow_swappable` probes. They now all progress into `<concepts>` and fail later on parsing the alias template `using __cref = const remove_reference_t<_Tp>&;`.
 
 #### 2026-04-07 Retests
 

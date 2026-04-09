@@ -124,6 +124,112 @@ std::vector<ASTNode> materializeTemplateArgumentNodes(
 	return result;
 }
 
+bool astNodeHasDeferredTemplateDependency(const ASTNode& node);
+
+bool typeRefersToCurrentTemplateParam(
+	const TypeSpecifierNode& type_spec,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	if (type_spec.category() == TypeCategory::Template) {
+		return true;
+	}
+	if (type_spec.category() != TypeCategory::UserDefined &&
+		type_spec.category() != TypeCategory::TypeAlias) {
+		return false;
+	}
+	if (!type_spec.type_index().is_valid()) {
+		return true;
+	}
+	StringHandle token_handle = StringTable::getOrInternStringHandle(type_spec.token().value());
+	if (token_handle.isValid() &&
+		std::find(current_template_param_names.begin(), current_template_param_names.end(), token_handle) != current_template_param_names.end()) {
+		return true;
+	}
+	if (const TypeInfo* type_info = tryGetTypeInfo(type_spec.type_index())) {
+		return std::find(current_template_param_names.begin(), current_template_param_names.end(), type_info->name()) != current_template_param_names.end();
+	}
+	return false;
+}
+
+bool argTypesAreDeferredTemplateDependent(
+	const std::vector<TypeSpecifierNode>& arg_types,
+	const InlineVector<StringHandle, 4>& current_template_param_names) {
+	return std::any_of(
+		arg_types.begin(),
+		arg_types.end(),
+		[&](const TypeSpecifierNode& arg_type) {
+			return typeRefersToCurrentTemplateParam(arg_type, current_template_param_names);
+		});
+}
+
+bool callTemplateArgumentsAreDependent(const std::vector<ASTNode>& template_args) {
+	for (const ASTNode& template_arg : template_args) {
+		if (astNodeHasDeferredTemplateDependency(template_arg)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool expressionHasDeferredTemplateDependency(const ExpressionNode& expr) {
+	return std::visit(
+		[](const auto& inner) -> bool {
+			using T = std::decay_t<decltype(inner)>;
+			if constexpr (std::is_same_v<T, TemplateParameterReferenceNode>) {
+				return true;
+			} else if constexpr (std::is_same_v<T, NoexceptExprNode>) {
+				return astNodeHasDeferredTemplateDependency(inner.expr());
+			} else if constexpr (std::is_same_v<T, CallExprNode>) {
+				if (inner.callee().declaration().type_node().template is<TypeSpecifierNode>()) {
+					const TypeSpecifierNode& callee_type = inner.callee().declaration().type_node().template as<TypeSpecifierNode>();
+					if (callee_type.category() == TypeCategory::Template) {
+						return true;
+					}
+					if ((callee_type.category() == TypeCategory::UserDefined ||
+						 callee_type.category() == TypeCategory::TypeAlias) &&
+						!callee_type.type_index().is_valid()) {
+						return true;
+					}
+				}
+				if (callTemplateArgumentsAreDependent(inner.template_arguments())) {
+					return true;
+				}
+				if (inner.has_receiver() && astNodeHasDeferredTemplateDependency(inner.receiver())) {
+					return true;
+				}
+				bool has_dependent_arg = false;
+				inner.arguments().visit([&](ASTNode arg) {
+					if (!has_dependent_arg && astNodeHasDeferredTemplateDependency(arg)) {
+						has_dependent_arg = true;
+					}
+				});
+				return has_dependent_arg;
+			} else {
+				return false;
+			}
+		},
+		expr);
+}
+
+bool astNodeHasDeferredTemplateDependency(const ASTNode& node) {
+	if (!node.has_value()) {
+		return false;
+	}
+	if (node.is<ExpressionNode>()) {
+		return expressionHasDeferredTemplateDependency(node.as<ExpressionNode>());
+	}
+	return false;
+}
+
+bool argsHaveDeferredTemplateDependency(const ChunkedVector<ASTNode>& args) {
+	bool has_dependent_arg = false;
+	args.visit([&](ASTNode arg) {
+		if (!has_dependent_arg && astNodeHasDeferredTemplateDependency(arg)) {
+			has_dependent_arg = true;
+		}
+	});
+	return has_dependent_arg;
+}
+
 void syncTemplateArgumentNodeMetadata(
 	std::vector<ASTNode>& template_arg_nodes,
 	const std::vector<TemplateTypeArg>& template_args) {
@@ -3262,6 +3368,16 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 				result = function_call_node;
 				return ParseResult::success(*result);
 			} else {
+				bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+				if (has_dependent_call_args ||
+					argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					result = emplace_node<ExpressionNode>(
+						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+					return ParseResult::success(*result);
+				}
 				// Template instantiation failed - always return error.
 				// In SFINAE context (e.g., requires expression), the caller
 				// (parse_requires_expression) handles errors by marking the
@@ -3672,6 +3788,15 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					return ParseResult::success(*result);
 				};
 
+				auto make_dependent_call_result = [&]() -> ParseResult {
+					FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+					auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+					auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+					result = emplace_node<ExpressionNode>(
+						makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args_ref), identifier_token));
+					return ParseResult::success(*result);
+				};
+
 				if (all_overloads.empty()) {
 					std::optional<ASTNode> instantiated_func;
 					if (current_linkage_ != Linkage::C) {
@@ -3698,6 +3823,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (in_sfinae_context_) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
+					}
+					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
 				}
@@ -3758,6 +3886,9 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 					if (in_sfinae_context_) {
 						result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 						return ParseResult::success(*result);
+					}
+					if (argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+						return make_dependent_call_result();
 					}
 					return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "\'", identifier_token);
 				}
@@ -5711,7 +5842,18 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 										FLASH_LOG(Templates, Debug, "Creating dependent call expression for call to '", identifier_token.value(), "'");
 
 										// Create a placeholder declaration for the dependent function call
-										auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, 1, identifier_token, CVQualifier::None);
+										TypeSpecifierNode placeholder_type(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+										if (const std::vector<ASTNode>* template_overloads = gTemplateRegistry.lookupAllTemplates(identifier_token.value())) {
+											for (const ASTNode& template_overload : *template_overloads) {
+												const FunctionDeclarationNode* function_decl = get_function_decl_node(template_overload);
+												if (!function_decl || !function_decl->decl_node().type_node().is<TypeSpecifierNode>()) {
+													continue;
+												}
+												placeholder_type = function_decl->decl_node().type_node().as<TypeSpecifierNode>();
+												break;
+											}
+										}
+										auto type_node = emplace_node<TypeSpecifierNode>(placeholder_type);
 										auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
 										const DeclarationNode& decl_ref = placeholder_decl.as<DeclarationNode>();
 
@@ -5787,11 +5929,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 													setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 												}
 											}
-										} else {
-											// In SFINAE context (e.g., requires expression), function lookup failure
-											// means the constraint is not satisfied - not an error
-											if (in_sfinae_context_) {
-												// Create a placeholder node to indicate failed lookup
+									} else {
+										bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+										if (has_dependent_call_args ||
+											argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+											FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+											auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+											auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+											result = emplace_node<ExpressionNode>(
+												makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+											return ParseResult::success(*result);
+										}
+										// In SFINAE context (e.g., requires expression), function lookup failure
+										// means the constraint is not satisfied - not an error
+										if (in_sfinae_context_) {
+											// Create a placeholder node to indicate failed lookup
 												// The requires expression will treat this as "constraint not satisfied"
 												result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 											} else {
@@ -5840,11 +5992,21 @@ ParseResult Parser::parse_primary_expression(ExpressionContext context) {
 														setCallMangledName(result->as<ExpressionNode>(), func_decl.mangled_name());
 													}
 												}
-											} else {
-												// In SFINAE context (e.g., requires expression), function lookup failure
-												// means the constraint is not satisfied - not an error
-												if (in_sfinae_context_) {
-													// Create a placeholder node to indicate failed lookup
+										} else {
+											bool has_dependent_call_args = argsHaveDeferredTemplateDependency(args);
+											if (has_dependent_call_args ||
+												argTypesAreDeferredTemplateDependent(arg_types, current_template_param_names_)) {
+												FLASH_LOG(Templates, Debug, "Creating dependent call expression for implicit call to '", identifier_token.value(), "'");
+												auto type_node = emplace_node<TypeSpecifierNode>(TypeCategory::Bool, TypeQualifier::None, get_type_size_bits(TypeCategory::Bool), identifier_token, CVQualifier::None);
+												auto placeholder_decl = emplace_node<DeclarationNode>(type_node, identifier_token);
+												result = emplace_node<ExpressionNode>(
+													makeDirectCallExpr(placeholder_decl.as<DeclarationNode>(), std::move(args), identifier_token));
+												return ParseResult::success(*result);
+											}
+											// In SFINAE context (e.g., requires expression), function lookup failure
+											// means the constraint is not satisfied - not an error
+											if (in_sfinae_context_) {
+												// Create a placeholder node to indicate failed lookup
 													result = emplace_node<ExpressionNode>(createBoundIdentifier(identifier_token));
 												} else {
 													return ParseResult::error("No matching function for call to '" + std::string(identifier_token.value()) + "'", identifier_token);
