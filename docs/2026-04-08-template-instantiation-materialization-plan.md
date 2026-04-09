@@ -8,9 +8,10 @@
 ### Do this next
 
 1. Continue the remaining `src/Parser_Expr_QualLookup.cpp` audit beyond
-   base-class parsing, especially the `substitute_template_parameter(...)`
-   branches that still hand-roll placeholder instantiation / name recovery for
-   qualified member types and template-template placeholders.
+   the now-fixed brace-init / base fallback / template-template alias-chain
+   slices, especially the `substitute_template_parameter(...)` branches that
+   still hand-roll placeholder instantiation / name recovery for qualified
+   member types and underscore-dependent placeholders.
 2. Route those remaining qualified-lookup / constexpr-member lookup consumers
    through the same parser-owned materialization rules used by
    `materializeTemplateInstantiationForLookup(...)`, so late consumers no
@@ -21,6 +22,30 @@
 
 ### Latest completed slice
 
+  - taught unqualified template brace initialization to recognize alias
+    templates as first-class materialization candidates instead of falling
+    through with `Missing semicolon` at `Alias<T>{...}`
+  - switched `parse_template_brace_initialization(...)` onto
+    `materializeTemplateInstantiationForLookup(...)` so alias templates,
+    registry fallback, and resolved `TypeInfo` lookup use the same parser-owned
+    path as the other materialization hardening work
+  - extended dependent template-parameter placeholders in
+    `src/Parser_TypeSpecifiers.cpp` to preserve chained member access like
+    `TT<T>::type::type` instead of truncating after the first `::type`
+  - taught `substitute_template_parameter(...)` to replay those preserved
+    member chains against the concrete instantiation, including
+    template-template parameters
+  - replaced the remaining incomplete-base fallback in
+    `validate_and_add_base_class(...)` with
+    `materializeTemplateInstantiationForLookup(...)` so base lookup no longer
+    hand-rolls another instantiation / lookup path
+  - added:
+    - `tests/test_alias_template_brace_init_ret42.cpp`
+    - `tests/test_template_template_alias_chain_ret42.cpp`
+    - `tests/test_template_template_full_spec_alias_chain_ret42.cpp`
+  - Validation after this slice:
+    - `.\build_flashcpp.bat`
+    - `pwsh -NoProfile -ExecutionPolicy Bypass -File .\tests\run_all_tests.ps1 test_alias_template_brace_init_ret42.cpp test_template_template_alias_chain_ret42.cpp test_template_template_full_spec_alias_chain_ret42.cpp test_qualified_base_nested_member_alias_ret42.cpp test_qualified_base_full_spec_alias_chain_ret42.cpp`
   - taught base-class post-template parsing / deferral to keep the full
     member-type chain after template arguments (for patterns like
     `Base<T>::type::type`) instead of only remembering one trailing `::member`
