@@ -3875,7 +3875,7 @@ EvalResult Evaluator::evaluate_member_access(const MemberAccessNode& member_acce
 			if (!init_arg_result.success()) {
 				return init_arg_result;
 			}
-			if (!init_arg_result.object_member_bindings.empty()) {
+			if (init_arg_result.object_type_index.is_valid() || !init_arg_result.object_member_bindings.empty()) {
 				return init_arg_result;
 			}
 
@@ -4331,7 +4331,7 @@ EvalResult Evaluator::evaluate_nested_member_access(
 							if (matching_ctor) {
 								std::unordered_map<std::string_view, EvalResult> ctor_param_bindings;
 								std::vector<EvalResult> ctor_args;
-								ctor_args.push_back(intermediate_result);
+								ctor_args.push_back(std::move(intermediate_result));
 								auto bind_result = bind_pre_evaluated_arguments(
 									matching_ctor->parameter_nodes(),
 									ctor_args,
