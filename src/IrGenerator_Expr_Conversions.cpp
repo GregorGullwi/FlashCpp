@@ -1355,13 +1355,17 @@ ExprResult AstToIr::generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperat
 
 		return generateBuiltinIncDec(false, unaryOperatorNode.is_prefix(), operandHandledAsIdentifier, unaryOperatorNode, operand_result, operandType, result_var);
 	} else if (unaryOperatorNode.op() == "&") {
-		if (operandType == TypeCategory::FunctionPointer &&
-			operandIrOperands.storage == ValueStorage::ContainsAddress) {
-			return operandIrOperands;
-		}
 		// Address-of operator: &x
 		// Get the current pointer depth from operandIrOperands
 		unsigned long long operand_ptr_depth = static_cast<unsigned long long>(operandIrOperands.pointer_depth.value);
+		if (operandIrOperands.storage == ValueStorage::ContainsAddress) {
+			return makeExprResult(
+				operandIrOperands.type_index.withCategory(operandType),
+				SizeInBits{POINTER_SIZE_BITS},
+				operandIrOperands.value,
+				PointerDepth{static_cast<int>(operand_ptr_depth + 1)},
+				ValueStorage::ContainsData);
+		}
 
 		// Create typed payload with TypedValue
 		AddressOfOp op;

@@ -674,7 +674,8 @@ void AstToIr::fillInCachedDefaultArguments(CallOp& call_op, const std::vector<Ca
 	}
 }
 
-ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode) {
+ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
+											  ExpressionContext context) {
 	// Ternary operator: condition ? true_expr : false_expr
 	// Generate IR:
 	// 1. Evaluate condition
@@ -701,6 +702,47 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	cond_branch.label_false = false_label;
 	cond_branch.condition = toTypedValue(condition_operands);
 	ir_.addInstruction(IrInstruction(IrOpcode::ConditionalBranch, std::move(cond_branch), ternaryNode.get_token()));
+
+	auto selectResultTypeIndex = [](TypeCategory merged_type, const ExprResult& preferred,
+									const ExprResult* fallback = nullptr) {
+		if (!carriesSemanticTypeIndex(merged_type)) {
+			return nativeTypeIndex(merged_type);
+		}
+		if (preferred.type_index.is_valid() && preferred.typeEnum() == merged_type) {
+			return preferred.type_index;
+		}
+		if (fallback && fallback->type_index.is_valid() && fallback->typeEnum() == merged_type) {
+			return fallback->type_index;
+		}
+		return nativeTypeIndex(merged_type);
+	};
+
+	auto materializeAddressResult = [&](ExprResult branch_result) {
+		if (branch_result.storage == ValueStorage::ContainsAddress) {
+			return branch_result;
+		}
+		if (const auto* base_name = std::get_if<StringHandle>(&branch_result.value)) {
+			TempVar addr_var = emitAddressOf(
+				branch_result.category(),
+				branch_result.size_in_bits.value,
+				IrValue(*base_name),
+				ternaryNode.get_token());
+			branch_result.value = IrOperand{addr_var};
+			branch_result.storage = ValueStorage::ContainsAddress;
+			return branch_result;
+		}
+		if (const auto* temp_var = std::get_if<TempVar>(&branch_result.value)) {
+			TempVar addr_var = emitAddressOf(
+				branch_result.category(),
+				branch_result.size_in_bits.value,
+				IrValue(*temp_var),
+				ternaryNode.get_token());
+			branch_result.value = IrOperand{addr_var};
+			branch_result.storage = ValueStorage::ContainsAddress;
+			return branch_result;
+		}
+		throw InternalError("Conditional expression in lvalue-address context produced unsupported operand");
+	};
 
 	// True branch label
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = true_label}, ternaryNode.get_token()));
@@ -738,27 +780,40 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	}
 
 	// Evaluate true expression
-	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>());
+	ExprResult true_result = visitExpressionNode(ternaryNode.true_expr().as<ExpressionNode>(), context);
+	if (context == ExpressionContext::LValueAddress) {
+		true_result = materializeAddressResult(std::move(true_result));
+	}
 
 	// Finalize common_cat: if both sema and parser inference failed, fall back to
 	// true branch type.  This is correct for same-type ternaries; for mixed-type
 	// ternaries the sema or parser paths above should have resolved the common type.
 	// NOTE: sema does not yet cover all contexts (e.g. catch-block bodies), so we
 	// cannot treat a miss here as an InternalError even in normalized bodies.
-	if (common_cat == TypeCategory::Invalid)
+	if (context != ExpressionContext::LValueAddress && common_cat == TypeCategory::Invalid)
 		common_cat = true_result.category();
-	TypeCategory common_type = common_cat;
+	TypeCategory common_type = context == ExpressionContext::LValueAddress
+		? true_result.category()
+		: common_cat;
+
+	auto makeMergedBranchValue = [&](const ExprResult& branch_result, IrValue value) {
+		if (context == ExpressionContext::LValueAddress) {
+			return makeTypedValue(TypeCategory::UnsignedLongLong, SizeInBits{POINTER_SIZE_BITS}, value);
+		}
+		return makeTypedValue(branch_result.type_index, branch_result.size_in_bits, value);
+	};
 
 	// Convert true result to common type if needed.
 	// NOTE: sema annotations were already consumed above when determining common_type
 	// via getSemaAnnotatedTargetType. The actual conversion uses common_type directly;
 	// there is no need to re-query the annotation here since both paths would produce
 	// the same generateTypeConversion call (sema_target == common_type by construction).
-	if (true_result.typeEnum() != common_type)
+	if (context != ExpressionContext::LValueAddress &&
+		true_result.typeEnum() != common_type)
 		true_result = generateTypeConversion(true_result, true_result.category(), common_type, ternaryNode.get_token());
 
 	int result_size = get_type_size_bits(common_type);
-	if (result_size == 0)
+	if (context == ExpressionContext::LValueAddress || result_size == 0)
 		result_size = true_result.size_in_bits.value;
 
 	// Create result variable to hold the final value
@@ -767,10 +822,12 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	// Assign true_expr result to result variable
 	AssignmentOp assign_true_op;
 	assign_true_op.result = result_var;
-	assign_true_op.lhs.setType(common_type);
-	assign_true_op.lhs.size_in_bits = SizeInBits{result_size};
-	assign_true_op.lhs.value = result_var;
-	assign_true_op.rhs = toTypedValue(true_result);
+	assign_true_op.lhs = makeMergedBranchValue(
+		true_result,
+		IrValue(result_var));
+	assign_true_op.rhs = makeMergedBranchValue(
+		true_result,
+		toIrValue(true_result.value));
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_true_op), ternaryNode.get_token()));
 
 	// Unconditional branch to end
@@ -780,26 +837,39 @@ ExprResult AstToIr::generateTernaryOperatorIr(const TernaryOperatorNode& ternary
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = false_label}, ternaryNode.get_token()));
 
 	// Evaluate false expression
-	ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>());
+	ExprResult false_result = visitExpressionNode(ternaryNode.false_expr().as<ExpressionNode>(), context);
+	if (context == ExpressionContext::LValueAddress) {
+		false_result = materializeAddressResult(std::move(false_result));
+	}
 
 	// Convert false result to common type if needed (same reasoning as true branch above).
-	if (false_result.typeEnum() != common_type)
+	if (context != ExpressionContext::LValueAddress &&
+		false_result.typeEnum() != common_type)
 		false_result = generateTypeConversion(false_result, false_result.category(), common_type, ternaryNode.get_token());
 
 	// Assign false_expr result to result variable
 	AssignmentOp assign_false_op;
 	assign_false_op.result = result_var;
-	assign_false_op.lhs.setType(common_type);
-	assign_false_op.lhs.size_in_bits = SizeInBits{result_size};
-	assign_false_op.lhs.value = result_var;
-	assign_false_op.rhs = toTypedValue(false_result);
+	assign_false_op.lhs = makeMergedBranchValue(
+		false_result,
+		IrValue(result_var));
+	assign_false_op.rhs = makeMergedBranchValue(
+		false_result,
+		toIrValue(false_result.value));
 	ir_.addInstruction(IrInstruction(IrOpcode::Assignment, std::move(assign_false_op), ternaryNode.get_token()));
 
 	// End label (merge point)
 	ir_.addInstruction(IrInstruction(IrOpcode::Label, LabelOp{.label_name = end_label}, ternaryNode.get_token()));
 
 	// Return the result variable
-	return makeExprResult(nativeTypeIndex(common_type), SizeInBits{result_size}, IrOperand{result_var}, PointerDepth{}, ValueStorage::ContainsData);
+	return makeExprResult(
+		selectResultTypeIndex(common_type, true_result, &false_result),
+		SizeInBits{result_size},
+		IrOperand{result_var},
+		PointerDepth{},
+		context == ExpressionContext::LValueAddress
+			? ValueStorage::ContainsAddress
+			: ValueStorage::ContainsData);
 }
 
 ExprResult AstToIr::generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode) {

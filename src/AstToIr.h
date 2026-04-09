@@ -277,7 +277,8 @@ private:
 		int accumulated_offset = 0);
 	ExprResult generateUnaryOperatorIr(const UnaryOperatorNode& unaryOperatorNode,
 									   ExpressionContext context = ExpressionContext::Load);
-	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode);
+	ExprResult generateTernaryOperatorIr(const TernaryOperatorNode& ternaryNode,
+										ExpressionContext context);
 	ExprResult generateBinaryOperatorIr(const BinaryOperatorNode& binaryOperatorNode);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<TypeSpecifierNode>& param_types, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);
 	std::string_view generateMangledNameForCall(std::string_view name, const TypeSpecifierNode& return_type, const std::vector<ASTNode>& param_nodes, bool is_variadic, std::string_view struct_name, const std::vector<std::string>& namespace_path, bool is_const_method);

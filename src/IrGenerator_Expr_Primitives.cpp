@@ -20,7 +20,7 @@ ExprResult AstToIr::visitExpressionNode(const ExpressionNode& exprNode,
 		} else if constexpr (std::is_same_v<T, UnaryOperatorNode>) {
 			return generateUnaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, TernaryOperatorNode>) {
-			return generateTernaryOperatorIr(expr);
+			return generateTernaryOperatorIr(expr, context);
 		} else if constexpr (std::is_same_v<T, ArraySubscriptNode>) {
 			return generateArraySubscriptIr(expr, context);
 		} else if constexpr (std::is_same_v<T, MemberAccessNode>) {
